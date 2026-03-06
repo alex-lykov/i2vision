@@ -1,47 +1,36 @@
+// Root build configuration for multi-module project
 plugins {
-    kotlin("jvm") version "2.2.21"
-    kotlin("plugin.serialization") version "2.2.21" // Added kotlinx.serialization plugin
-    application
-    id("com.github.johnrengelman.shadow") version "8.1.1"
+    kotlin("jvm") version "2.2.21" apply false
+    kotlin("plugin.serialization") version "2.2.21" apply false
 }
 
-group = "com.boxtox"
+group = "com.alyk.ai.koog"
 version = "1.0-SNAPSHOT"
 
-repositories {
-    mavenCentral()
-    maven("https://packages.jetbrains.team/maven/p/koog/koog")
+allprojects {
+    repositories {
+        mavenCentral()
+        maven("https://packages.jetbrains.team/maven/p/koog/koog")
+    }
 }
 
-dependencies {
-    // Koog core (this should contain everything)
-    implementation("ai.koog:koog-agents:0.6.3")
-
-    // Kotlin coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
-
-    // Kotlin serialization
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
-
-    // Logging
-    implementation("org.slf4j:slf4j-simple:2.0.9")
-
-    testImplementation(kotlin("test"))
-}
-
-application {
-    mainClass.set("com.alyk.ai.koog.MainKt")
-}
-kotlin {
-    jvmToolchain(21)
-}
-
-tasks.test {
-    useJUnitPlatform()
-}
-
-tasks.withType<JavaExec> {
-    standardInput = System.`in`
-    // Add this to keep the process alive
-    isIgnoreExitValue = false
+subprojects {
+    apply(plugin = "org.jetbrains.kotlin.jvm")
+    apply(plugin = "org.jetbrains.kotlin.plugin.serialization")
+    
+    group = rootProject.group
+    version = rootProject.version
+    
+    configure<org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension> {
+        jvmToolchain(21)
+    }
+    
+    dependencies {
+        // Common dependencies for all modules
+        add("implementation", "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
+        add("implementation", "org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
+        add("implementation", "org.slf4j:slf4j-api:2.0.9")
+        
+        add("testImplementation", "org.jetbrains.kotlin:kotlin-test")
+    }
 }

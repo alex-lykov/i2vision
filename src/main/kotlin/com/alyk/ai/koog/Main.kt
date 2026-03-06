@@ -2,7 +2,6 @@ package com.alyk.ai.koog
 
 import ai.koog.agents.core.agent.AIAgent
 import ai.koog.prompt.executor.llms.all.simpleOllamaAIExecutor
-import ai.koog.prompt.executor.ollama.client.OllamaClient
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.llm.LLMProvider
 import java.nio.file.Files
@@ -36,64 +35,62 @@ data class ScanProjectArgs(val path: String)
 
 class CodingAgent {
 
-    private val ollamaClient: OllamaClient
-    private val agent: AIAgent<String, String>
+    // Agent configuration - shared across all agent instances
+    private val promptExecutor = simpleOllamaAIExecutor()
+    private val llmModel = LLModel(
+        id = "gpt-oss:20b",
+        provider = LLMProvider.Ollama,
+        contextLength = 1024,
+        maxOutputTokens = 256,
+        capabilities = null
+    )
+    
+    private val systemPrompt = """
+        You are an expert AI programmer and a helpful coding assistant.
+        You can help with writing code, debugging, and answering questions about software development.
+        
+        You have access to the following tools:
+        
+        1. **read_file**: Reads the content of a file.
+           - Input: {"tool": "read_file", "args": {"path": "path/to/file.txt"}}
+           - Output: The content of the file, or an error message.
+        
+        2. **write_file**: Writes content to a file.
+           - Input: {"tool": "write_file", "args": {"path": "path/to/file.txt", "content": "file content"}}
+           - Output: "Successfully wrote to path/to/file.txt" or an error message.
+        
+        3. **scan_project**: Scans a directory and lists its contents.
+           - Input: {"tool": "scan_project", "args": {"path": "path/to/directory"}}
+           - Output: A list of files and directories, or an error message.
+        
+        You should always follow this thought-action-observation loop:
+        
+        1. **Thought**: First, think step-by-step about what you need to do.
+        2. **Action**: If you decide to use a tool, output a JSON object in the format: `{"tool": "tool_name", "args": {...}}`.
+        3. **Observation**: After an Action, the tool's output will be provided to you.
+        4. **Answer**: If you have enough information, provide your final answer.
+        
+        Always start with a Thought.
+    """.trimIndent()
+
     private val json = Json { ignoreUnknownKeys = true }
     private val conversationHistory = mutableListOf<String>()
 
     init {
         println("🔧 Initializing Coding Agent...")
-
-        // 1. Connect to local Ollama
-        ollamaClient = OllamaClient(baseUrl = "http://localhost:11434")
-
-        // 2. Create the model
-        val modelName = "gpt-oss:20b"
-        val llmModel = LLModel(
-            id = modelName,
-            provider = LLMProvider.Ollama,
-            contextLength = 4096,
-            maxOutputTokens = 2048,
-            capabilities = null
-        )
-
-        // 3. Create prompt executor using the simple helper function
-        val promptExecutor = simpleOllamaAIExecutor()
-
-        // 4. Create the AI agent - now we can use it directly since simpleOllamaAIExecutor returns the correct type
-        agent = AIAgent(
+        println("✅ Agent ready! How can I help you today?")
+    }
+    
+    /**
+     * Creates a new AIAgent instance for each interaction.
+     * AIAgent is single-use, so we need to create a new one each time.
+     */
+    private fun createAgent(): AIAgent<String, String> {
+        return AIAgent(
             promptExecutor = promptExecutor,
             llmModel = llmModel,
-            systemPrompt = """
-                You are an expert AI programmer and a helpful coding assistant.
-                You can help with writing code, debugging, and answering questions about software development.
-                
-                You have access to the following tools:
-                
-                1. **read_file**: Reads the content of a file.
-                   - Input: {"tool": "read_file", "args": {"path": "path/to/file.txt"}}
-                   - Output: The content of the file, or an error message.
-                
-                2. **write_file**: Writes content to a file.
-                   - Input: {"tool": "write_file", "args": {"path": "path/to/file.txt", "content": "file content"}}
-                   - Output: "Successfully wrote to path/to/file.txt" or an error message.
-                
-                3. **scan_project**: Scans a directory and lists its contents.
-                   - Input: {"tool": "scan_project", "args": {"path": "path/to/directory"}}
-                   - Output: A list of files and directories, or an error message.
-                
-                You should always follow this thought-action-observation loop:
-                
-                1. **Thought**: First, think step-by-step about what you need to do.
-                2. **Action**: If you decide to use a tool, output a JSON object in the format: `{"tool": "tool_name", "args": {...}}`.
-                3. **Observation**: After an Action, the tool's output will be provided to you.
-                4. **Answer**: If you have enough information, provide your final answer.
-                
-                Always start with a Thought.
-            """.trimIndent()
+            systemPrompt = systemPrompt
         )
-
-        println("✅ Agent initialized! How can I help you today?")
     }
 
     suspend fun processUserInput(input: String): String {
@@ -151,45 +148,70 @@ class CodingAgent {
         return fileList.toString()
     }
 
-    private suspend fun askAgent(initialPrompt: String): String {
+    private suspend fun askAgent(userInput: String): String {
         println("🤖 Thinking...")
-        var currentPrompt = conversationHistory.joinToString("\n")
+        
+        // Build the full conversation context
+        val fullPrompt = if (conversationHistory.isEmpty()) {
+            userInput
+        } else {
+            conversationHistory.joinToString("\n") + "\nUser: $userInput"
+        }
+        
+        // Create a new agent for this interaction (AIAgent is single-use)
+        val agent = createAgent()
+        
+        var currentPrompt = fullPrompt
         var finalResponse = "Agent did not provide a final response."
+        val maxIterations = 10 // Increased for complex tasks
 
-        for (i in 0 until 5) {
-            val agentResponse: String = agent.run(currentPrompt)
-            println("RAW AGENT RESPONSE:\n$agentResponse\n---")
+        for (iteration in 0 until maxIterations) {
+            try {
+                val agentResponse: String = agent.run(currentPrompt)
+                println("RAW AGENT RESPONSE (iteration ${iteration + 1}):\n$agentResponse\n---")
 
-            if (agentResponse.isBlank()) {
-                return "Agent did not provide a response."
-            }
-
-            val actionJson = extractActionJson(agentResponse)
-            val answer = extractAnswer(agentResponse)
-
-            if (actionJson != null) {
-                try {
-                    val toolCall = json.decodeFromString<ToolCall>(actionJson)
-                    println("🛠️ Agent wants to use tool: ${toolCall.tool}")
-
-                    val toolOutput = executeTool(toolCall)
-                    println("✅ Tool output received.")
-
-                    currentPrompt += "\n$agentResponse\nObservation: $toolOutput\nThought:"
-                    finalResponse = "Agent executed a tool. Waiting for its next thought..."
-                } catch (e: Exception) {
-                    println("❌ Error executing tool or parsing JSON: ${e.message}")
-                    currentPrompt += "\n$agentResponse\nObservation: Error: ${e.message}\nThought:"
-                    finalResponse = "Error during tool execution."
+                if (agentResponse.isBlank()) {
+                    return "Agent did not provide a response."
                 }
-            } else if (answer != null) {
-                finalResponse = answer
-                break
-            } else {
-                finalResponse = agentResponse
-                break
+
+                val actionJson = extractActionJson(agentResponse)
+                val answer = extractAnswer(agentResponse)
+
+                if (actionJson != null) {
+                    try {
+                        val toolCall = json.decodeFromString<ToolCall>(actionJson)
+                        println("🛠️ Agent wants to use tool: ${toolCall.tool}")
+
+                        val toolOutput = executeTool(toolCall)
+                        println("✅ Tool output received.")
+
+                        // Add the agent's response and tool output to the conversation
+                        currentPrompt += "\n\n$agentResponse\n\nObservation: $toolOutput\n\nThought:"
+                        finalResponse = "Agent executed a tool. Processing..."
+                    } catch (e: Exception) {
+                        println("❌ Error executing tool or parsing JSON: ${e.message}")
+                        currentPrompt += "\n\n$agentResponse\n\nObservation: Error: ${e.message}\n\nThought:"
+                        finalResponse = "Error during tool execution."
+                    }
+                } else if (answer != null) {
+                    finalResponse = answer
+                    break
+                } else {
+                    // If no action and no explicit answer, treat the whole response as the answer
+                    finalResponse = agentResponse
+                    break
+                }
+            } catch (e: Exception) {
+                println("❌ Error during agent execution: ${e.message}")
+                return "Error: ${e.message}"
             }
         }
+        
+        if (finalResponse == "Agent did not provide a final response." || 
+            finalResponse == "Agent executed a tool. Processing...") {
+            return "Agent reached maximum iterations without providing a final answer. Last response: $finalResponse"
+        }
+        
         return finalResponse
     }
     

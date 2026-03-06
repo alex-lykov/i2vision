@@ -1,10 +1,53 @@
 package com.alyk.ai.koog.context.hierarchy
 
+import java.nio.file.Path
+import java.nio.file.Paths
+import kotlin.io.path.exists
+import kotlin.io.path.extension
+import kotlin.io.path.isRegularFile
+import kotlin.io.path.walk
+
 /**
  * Parse codebase into three hierarchical levels with extracted
  * relationships between components.
  */
 class HierarchyBuilder {
+    private var projectRoot: Path? = null
+    private val sourceExtensions = setOf("kt", "java", "kts", "gradle")
+
+    /**
+     * Initialize the hierarchy builder with a project path
+     */
+    fun initialize(projectPath: String) {
+        this.projectRoot = Paths.get(projectPath)
+    }
+
+    /**
+     * Scan and return all source files in the project
+     */
+    suspend fun scanProjectFiles(): List<String> {
+        val root = projectRoot ?: return emptyList()
+        if (!root.exists()) return emptyList()
+
+        return root.walk()
+            .filter { it.isRegularFile() }
+            .filter { it.extension in sourceExtensions }
+            .map { it.toString() }
+            .toList()
+    }
+
+    /**
+     * Get project root path
+     */
+    fun getProjectRoot(): String? = projectRoot?.toString()
+
+    /**
+     * Check if a file is within the project
+     */
+    fun isInProject(filePath: String): Boolean {
+        val root = projectRoot ?: return false
+        return Paths.get(filePath).startsWith(root)
+    }
     /**
      * Level 1 (Architecture): Module boundaries, data flows, API contracts, external dependencies
      */

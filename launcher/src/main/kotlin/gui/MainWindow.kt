@@ -10,18 +10,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberWindowState
+import com.alyk.ai.koog.core.session.project.JsonProjectRepository
+import com.alyk.ai.koog.core.session.project.ProjectRepository
 import core.AgentLauncher
 import core.OutputEvent
 import core.TaskMode
-import gui.components.OutputConsole
-import gui.components.QuickActions
-import gui.components.StatusBar
-import gui.components.TaskInput
+import gui.components.*
 import kotlinx.coroutines.launch
 
 @Composable
 fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
     val scope = rememberCoroutineScope()
+    val projectRepository: ProjectRepository = remember { JsonProjectRepository() }
     var events by remember { mutableStateOf<List<OutputEvent>>(emptyList()) }
     var status by remember { mutableStateOf(agentLauncher.getStatus()) }
 
@@ -38,10 +38,16 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
     Window(
         onCloseRequest = onCloseRequest,
         title = "KOOG Coding Agent",
-        state = rememberWindowState(width = 900.dp, height = 600.dp, position = WindowPosition.Aligned(Alignment.Center))
+        state = rememberWindowState(width = 900.dp, height = 700.dp, position = WindowPosition.Aligned(Alignment.Center))
     ) {
         MaterialTheme {
             Column(modifier = Modifier.fillMaxSize()) {
+                ProjectManagementPanel(
+                    projectRepository = projectRepository,
+                    onProjectSelected = { project ->
+                        events = events + OutputEvent.System("Project selected: ${project.name}")
+                    }
+                )
                 StatusBar(
                     status = status,
                     onSwitchClick = {

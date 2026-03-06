@@ -12,8 +12,11 @@ dependencies {
     implementation(project(":switching:analyzer"))
     implementation(project(":switching:monitor"))
     implementation(project(":switching:decision"))
+    implementation(project(":context:hierarchy"))
+    implementation(project(":context:provider"))
     implementation("ai.koog:koog-agents:0.6.3")
     implementation("org.slf4j:slf4j-simple:2.0.9")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.0")
     implementation(compose.desktop.currentOs)
 }
 

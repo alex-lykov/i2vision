@@ -42,6 +42,7 @@ sealed class OutputEvent {
 }
 
 data class Config(
+    val projectPath: String? = null,
     val defaultModel: String = "gpt-oss:20b",
     val maxContextLength: Int = 1024
 )

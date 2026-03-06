@@ -1,5 +1,7 @@
 package com.alyk.ai.koog.core.orchestrator
 
+import com.alyk.ai.koog.context.hierarchy.HierarchyBuilder
+import com.alyk.ai.koog.context.provider.ContextProvider
 import com.alyk.ai.koog.core.session.SessionStore
 import com.alyk.ai.koog.models.wrappers.ModelWrapper
 import com.alyk.ai.koog.switching.decision.DecisionEngine
@@ -11,23 +13,37 @@ import com.alyk.ai.koog.switching.decision.DecisionEngine
 class AgentOrchestrator(
     private val sessionStore: SessionStore,
     private val decisionEngine: DecisionEngine,
+    private val contextProvider: ContextProvider,
+    private val hierarchyBuilder: HierarchyBuilder,
     private val localModel: ModelWrapper,
     private val cloudModel: ModelWrapper? = null
 ) {
     /**
      * Initialize and maintain references to local/cloud model wrappers
      */
-    fun initialize() {
-        // TODO: Initialize model wrappers
+    suspend fun initialize(projectPath: String? = null) {
+        projectPath?.let {
+            contextProvider.loadProject(it)
+        }
     }
 
     /**
      * Route incoming tasks based on decision engine recommendations
      */
     suspend fun routeTask(task: String, sessionId: String): String {
-        // Simplified first step: route all tasks to local model.
-        // Decision engine and switching stay pluggable but are not enforced yet.
-        return localModel.generate(task)
+        val context = contextProvider.getContextForTask(task)
+        val promptWithContext = buildPrompt(task, context)
+        return localModel.generate(promptWithContext)
+    }
+
+    private fun buildPrompt(task: String, context: String): String {
+        return """
+            |Task: $task
+            |
+            |$context
+            |
+            |Please complete the task considering the project context above.
+        """.trimMargin()
     }
 
     /**

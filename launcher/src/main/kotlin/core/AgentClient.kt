@@ -16,8 +16,8 @@ class AgentClient(
         emit(OutputEvent.Complete)
     }
 
-    fun initialize() {
-        orchestrator.initialize()
+    suspend fun initialize(projectPath: String? = null) {
+        orchestrator.initialize(projectPath)
     }
 
     fun shutdown() {

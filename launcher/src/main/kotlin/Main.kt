@@ -1,11 +1,28 @@
 import cli.CliLauncher
+import com.alyk.ai.koog.core.orchestrator.AgentOrchestrator
+import com.alyk.ai.koog.core.session.SessionStore
+import com.alyk.ai.koog.models.wrappers.LocalModelWrapper
+import com.alyk.ai.koog.switching.analyzer.ContextAnalyzer
+import com.alyk.ai.koog.switching.decision.DecisionEngine
+import com.alyk.ai.koog.switching.monitor.PerformanceMonitor
 import core.*
 import gui.launch
 import kotlinx.coroutines.flow.Flow
 import java.time.Duration
 
 class AgentLauncherImpl : AgentLauncher {
-    private val client = AgentClient()
+    private val orchestrator = AgentOrchestrator(
+        sessionStore = SessionStore(),
+        decisionEngine = DecisionEngine(
+            contextAnalyzer = ContextAnalyzer(),
+            performanceMonitor = PerformanceMonitor()
+        ),
+        localModel = LocalModelWrapper(
+            modelName = "gpt-oss:20b",
+            maxContextLength = 1024
+        )
+    )
+    private val client = AgentClient(orchestrator)
     private val switchControl = SwitchControl()
     private val listeners = mutableListOf<StatusListener>()
 
@@ -23,7 +40,7 @@ class AgentLauncherImpl : AgentLauncher {
     }
 
     override fun getStatus(): core.AgentStatus {
-        return core.AgentStatus(
+        return AgentStatus(
             currentModel = ModelType.LOCAL,
             contextUsage = 0.7f,
             filesLoaded = 12,
@@ -57,6 +74,6 @@ fun main(args: Array<String>) {
         cli.launch()
     } else {
         println("Starting in GUI mode")
-        launch()
+        launch(launcher)
     }
 }

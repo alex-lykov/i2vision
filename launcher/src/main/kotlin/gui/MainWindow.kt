@@ -3,20 +3,38 @@ package gui
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material.MaterialTheme
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberWindowState
+import core.AgentLauncher
+import core.OutputEvent
+import core.TaskMode
 import gui.components.OutputConsole
 import gui.components.QuickActions
 import gui.components.StatusBar
 import gui.components.TaskInput
+import kotlinx.coroutines.launch
 
 @Composable
-fun MainWindow(onCloseRequest: () -> Unit) {
+fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
+    val scope = rememberCoroutineScope()
+    var events by remember { mutableStateOf<List<OutputEvent>>(emptyList()) }
+    var status by remember { mutableStateOf(agentLauncher.getStatus()) }
+
+    fun submitTask(task: String, mode: TaskMode) {
+        if (task.isBlank()) return
+        scope.launch {
+            agentLauncher.processTask(task, mode).collect { event ->
+                events = events + event
+                status = agentLauncher.getStatus()
+            }
+        }
+    }
+
     Window(
         onCloseRequest = onCloseRequest,
         title = "KOOG Coding Agent",
@@ -25,20 +43,22 @@ fun MainWindow(onCloseRequest: () -> Unit) {
         MaterialTheme {
             Column(modifier = Modifier.fillMaxSize()) {
                 StatusBar(
-                    status = TODO(),
-                    onSwitchClick = TODO()
+                    status = status,
+                    onSwitchClick = {
+                        events = events + OutputEvent.System("Model switch requested (simplified mode)")
+                    }
                 )
                 TaskInput(
-                    onProcess = TODO(),
-                    onAnalyze = TODO(),
-                    onDebug = TODO()
+                    onProcess = { submitTask(it, TaskMode.CURRENT_MODEL) },
+                    onAnalyze = { submitTask(it, TaskMode.SMART_ANALYZE) },
+                    onDebug = { submitTask(it, TaskMode.DEBUG) }
                 )
                 QuickActions(
-                    onAction = TODO()
+                    onAction = { submitTask(it, TaskMode.CURRENT_MODEL) }
                 )
                 OutputConsole(
-                    events = TODO(),
-                    onClear = TODO()
+                    events = events,
+                    onClear = { events = emptyList() }
                 )
             }
         }

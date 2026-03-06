@@ -41,8 +41,10 @@ sealed class OutputEvent {
     object Complete : OutputEvent()
 }
 
-// Dummy Config class for compilation
-class Config {}
+data class Config(
+    val defaultModel: String = "gpt-oss:20b",
+    val maxContextLength: Int = 1024
+)
 
 // Dummy ModelType enum for compilation
 enum class ModelType {

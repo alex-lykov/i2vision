@@ -1,20 +1,23 @@
 package core
 
+import com.alyk.ai.koog.core.orchestrator.AgentOrchestrator
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 
-class AgentClient {
+class AgentClient(
+    private val orchestrator: AgentOrchestrator
+) {
     fun processTask(task: String, mode: TaskMode): Flow<OutputEvent> = flow {
-        // Implementation for processing task
-        emit(OutputEvent.Standard("Processing task: $task"))
-        // Simulate processing
-        kotlinx.coroutines.delay(1000)
-        emit(OutputEvent.Success("Task completed successfully"))
+        emit(OutputEvent.System("Routing task using ${mode.name} mode"))
+        emit(OutputEvent.Progress(20, "Analyzing request"))
+        val result = orchestrator.routeTask(task, sessionId = "default")
+        emit(OutputEvent.Progress(100, "Completed"))
+        emit(OutputEvent.Success(result))
         emit(OutputEvent.Complete)
     }
 
     fun initialize() {
-        // Initialize connection to core modules
+        orchestrator.initialize()
     }
 
     fun shutdown() {

@@ -1,6 +1,11 @@
 package com.alyk.ai.koog.models.wrappers
 
+import ai.koog.agents.core.agent.AIAgent
+import ai.koog.prompt.executor.llms.all.simpleOllamaAIExecutor
+import ai.koog.prompt.llm.LLMProvider
+import ai.koog.prompt.llm.LLModel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 
 /**
  * Abstract model-specific implementations into unified interface
@@ -22,14 +27,30 @@ class LocalModelWrapper(
     override val maxContextLength: Int,
     private val baseUrl: String = "http://localhost:11434"
 ) : ModelWrapper {
+    private val systemPrompt = """
+        You are a Kotlin coding assistant.
+        Keep answers concise and practical.
+    """.trimIndent()
+
     override suspend fun generate(prompt: String): String {
-        // TODO: Implement Ollama HTTP client
-        return "Local model response (stub)"
+        val agent = AIAgent(
+            promptExecutor = simpleOllamaAIExecutor(),
+            llmModel = LLModel(
+                id = modelName,
+                provider = LLMProvider.Ollama,
+                contextLength = maxContextLength.toLong(),
+                maxOutputTokens = 512L,
+                capabilities = emptyList()
+            ),
+            systemPrompt = systemPrompt
+        )
+        return agent.run(prompt)
     }
 
     override suspend fun generateStreaming(prompt: String): Flow<String> {
-        // TODO: Implement streaming
-        return kotlinx.coroutines.flow.flowOf("Streaming (stub)")
+        return flow {
+            emit(generate(prompt))
+        }
     }
 
     override fun estimateTokens(text: String): Int {

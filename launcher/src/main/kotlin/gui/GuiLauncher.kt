@@ -1,9 +1,10 @@
 package gui
 
 import androidx.compose.ui.window.application
+import core.AgentLauncher
 
-fun launch() {
+fun launch(agentLauncher: AgentLauncher) {
     application {
-        MainWindow(::exitApplication)
+        MainWindow(agentLauncher = agentLauncher, onCloseRequest = ::exitApplication)
     }
 }

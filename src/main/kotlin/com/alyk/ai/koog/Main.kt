@@ -1,6 +1,7 @@
-package com.boxtox
+package com.alyk.ai.koog
 
 import ai.koog.agents.core.agent.AIAgent
+import ai.koog.prompt.executor.llms.all.simpleOllamaAIExecutor
 import ai.koog.prompt.executor.ollama.client.OllamaClient
 import ai.koog.prompt.llm.LLModel
 import ai.koog.prompt.llm.LLMProvider
@@ -13,12 +14,9 @@ import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.FileVisitResult
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.decodeFromString
 import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.builtins.serializer
 
 // Define data classes for tool calls
 @Serializable
@@ -50,7 +48,7 @@ class CodingAgent {
         ollamaClient = OllamaClient(baseUrl = "http://localhost:11434")
 
         // 2. Create the model
-        val modelName = "codellama:7b"
+        val modelName = "gpt-oss:20b"
         val llmModel = LLModel(
             id = modelName,
             provider = LLMProvider.Ollama,
@@ -59,36 +57,14 @@ class CodingAgent {
             capabilities = null
         )
 
-        // 3. Create prompt executor using reflection
-        // Find and instantiate the executor class, then use Java reflection to call AIAgent
-        val promptExecutor = runBlocking {
-            try {
-                // Try common class names and package paths
-                val classNames = listOf(
-                    "ai.koog.prompt.executor.ollama.OllamaPromptExecutor",
-                    "ai.koog.prompt.executor.ollama.OllamaExecutor",
-                    "ai.koog.prompt.executor.ollama.executor.OllamaPromptExecutor"
-                )
-                
-                var executor: Any? = null
-                for (className in classNames) {
-                    try {
-                        val executorClass = Class.forName(className)
-                        executor = executorClass.getConstructor(OllamaClient::class.java).newInstance(ollamaClient)
-                        break
-                    } catch (e: Exception) {
-                        continue
-                    }
-                }
-                
-                executor ?: throw IllegalStateException("Could not find Ollama prompt executor class. Tried: $classNames")
-            } catch (e: Exception) {
-                throw IllegalStateException("Failed to create prompt executor: ${e.message}. Please check Koog library version and API.", e)
-            }
-        }
+        // 3. Create prompt executor using the simple helper function
+        val promptExecutor = simpleOllamaAIExecutor()
 
-        // 4. Create the AI agent using Java reflection to bypass type checking
-        val systemPromptText = """
+        // 4. Create the AI agent - now we can use it directly since simpleOllamaAIExecutor returns the correct type
+        agent = AIAgent(
+            promptExecutor = promptExecutor,
+            llmModel = llmModel,
+            systemPrompt = """
                 You are an expert AI programmer and a helpful coding assistant.
                 You can help with writing code, debugging, and answering questions about software development.
                 
@@ -115,15 +91,7 @@ class CodingAgent {
                 
                 Always start with a Thought.
             """.trimIndent()
-        
-        // Use Java reflection to create AIAgent since we can't import PromptExecutor at compile time
-        val agentClass = AIAgent::class.java
-        @Suppress("UNCHECKED_CAST")
-        agent = agentClass.getConstructor(
-            Class.forName("ai.koog.prompt.executor.PromptExecutor"),
-            LLModel::class.java,
-            String::class.java
-        ).newInstance(promptExecutor, llmModel, systemPromptText) as AIAgent<String, String>
+        )
 
         println("✅ Agent initialized! How can I help you today?")
     }

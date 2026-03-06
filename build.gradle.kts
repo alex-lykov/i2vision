@@ -30,7 +30,7 @@ dependencies {
 }
 
 application {
-    mainClass.set("MainKt")
+    mainClass.set("com.alyk.ai.koog.MainKt")
 }
 kotlin {
     jvmToolchain(21)
@@ -38,4 +38,10 @@ kotlin {
 
 tasks.test {
     useJUnitPlatform()
+}
+
+tasks.withType<JavaExec> {
+    standardInput = System.`in`
+    // Add this to keep the process alive
+    isIgnoreExitValue = false
 }

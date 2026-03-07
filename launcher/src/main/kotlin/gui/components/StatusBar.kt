@@ -29,10 +29,10 @@ fun StatusBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        // Model Indicator
+        // Model Indicator with Alert Badge
         Row(verticalAlignment = Alignment.CenterVertically) {
             val color = when (status.currentModel) {
-                ModelType.LOCAL -> Color.Green
+                ModelType.LOCAL -> if (status.hasPerformanceAlert) Color.Red else Color.Green
                 ModelType.CLOUD -> Color.Blue
                 ModelType.SWITCHING -> Color.Yellow
                 ModelType.ERROR -> Color.Red
@@ -40,7 +40,21 @@ fun StatusBar(
             Box(modifier = Modifier.size(12.dp).clip(CircleShape).background(color))
             Spacer(modifier = Modifier.width(8.dp))
             Text(text = status.currentModel.name)
+            if (status.hasPerformanceAlert) {
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(text = "⚠️", color = Color.Red)
+            }
         }
+
+        // Response Time
+        Text(
+            text = "${status.avgResponseTimeMs}ms",
+            color = when {
+                status.avgResponseTimeMs > 15000 -> Color.Red
+                status.avgResponseTimeMs > 5000 -> Color(0xFFFFA500) // Orange
+                else -> Color.DarkGray
+            }
+        )
 
         Button(onClick = onSwitchClick) {
             Text("SWITCH")
@@ -57,9 +71,26 @@ fun StatusBar(
         Text(text = "📁 ${status.filesLoaded}")
 
         // Session Time
-        // Note: Duration formatting might need a helper or simple logic
         val minutes = status.sessionTime.toMinutes()
         val seconds = status.sessionTime.seconds % 60
         Text(text = "⏱️ %02d:%02d".format(minutes, seconds))
+    }
+
+    // Performance Warnings (if any)
+    if (status.performanceWarnings.isNotEmpty()) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFFFFF3E0)) // Light orange background
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+        ) {
+            status.performanceWarnings.take(2).forEach { warning ->
+                Text(
+                    text = "⚠️ $warning",
+                    color = Color(0xFFEF6C00), // Dark orange
+                    style = androidx.compose.material.MaterialTheme.typography.caption
+                )
+            }
+        }
     }
 }

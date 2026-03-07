@@ -16,17 +16,19 @@ import java.time.Duration
 class AgentLauncherImpl : AgentLauncher {
     private val hierarchyBuilder = HierarchyBuilder()
     private val contextProvider = ContextProvider(hierarchyBuilder)
+    private val performanceMonitor = PerformanceMonitor()
     private val orchestrator = AgentOrchestrator(
         sessionStore = SessionStore(),
         decisionEngine = DecisionEngine(
             contextAnalyzer = ContextAnalyzer(),
-            performanceMonitor = PerformanceMonitor()
+            performanceMonitor = performanceMonitor
         ),
         contextProvider = contextProvider,
         hierarchyBuilder = hierarchyBuilder,
         localModel = LocalModelWrapper(
             modelName = "gpt-oss:20b",
-            maxContextLength = 1024
+            maxContextLength = 1024,
+            performanceMonitor = performanceMonitor
         )
     )
     private val client = AgentClient(orchestrator)
@@ -50,6 +52,10 @@ class AgentLauncherImpl : AgentLauncher {
     }
 
     override fun getStatus(): core.AgentStatus {
+        val stats = orchestrator.getPerformanceStats()
+        val warnings = orchestrator.getPerformanceWarnings()
+        val alerts = orchestrator.getPerformanceAlerts()
+        
         return AgentStatus(
             currentModel = ModelType.LOCAL,
             contextUsage = 0.7f,
@@ -57,7 +63,10 @@ class AgentLauncherImpl : AgentLauncher {
             sessionTime = Duration.ofMinutes(5),
             confidence = 0.85f,
             lastSwitch = null,
-            errors = emptyList()
+            errors = emptyList(),
+            avgResponseTimeMs = stats.avgResponseTimeMs,
+            performanceWarnings = warnings.map { "[${it.severity}] ${it.message}" },
+            hasPerformanceAlert = alerts.isNotEmpty()
         )
     }
 
@@ -71,6 +80,10 @@ class AgentLauncherImpl : AgentLauncher {
 
     override fun addStatusListener(listener: StatusListener) {
         listeners.add(listener)
+    }
+
+    override suspend fun loadProject(projectPath: String): Result<Unit> {
+        return orchestrator.loadProject(projectPath)
     }
 }
 

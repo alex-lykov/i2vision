@@ -2,7 +2,10 @@ package com.alyk.ai.koog.switching.decision
 
 import com.alyk.ai.koog.models.wrappers.ModelWrapper
 import com.alyk.ai.koog.switching.analyzer.ContextAnalyzer
+import com.alyk.ai.koog.switching.monitor.Alert
 import com.alyk.ai.koog.switching.monitor.PerformanceMonitor
+import com.alyk.ai.koog.switching.monitor.PerformanceStats
+import com.alyk.ai.koog.switching.monitor.WarningSignal
 
 /**
  * Aggregate analyzer inputs, apply weighted rules, and determine
@@ -36,6 +39,21 @@ class DecisionEngine(
         // TODO: Implement confidence calculation
         return 0.5
     }
+
+    /**
+     * Get performance monitoring statistics
+     */
+    fun getPerformanceStats(): PerformanceStats = performanceMonitor.getStats()
+
+    /**
+     * Get current warning signals from performance monitoring
+     */
+    fun getPerformanceWarnings(): List<WarningSignal> = performanceMonitor.detectWarningSignals()
+
+    /**
+     * Check for performance alerts that exceed thresholds
+     */
+    fun getPerformanceAlerts(): List<Alert> = performanceMonitor.checkThresholds()
 }
 
 data class ModelDecision(

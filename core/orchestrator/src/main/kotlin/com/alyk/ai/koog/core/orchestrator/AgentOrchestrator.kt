@@ -23,9 +23,26 @@ class AgentOrchestrator(
      */
     suspend fun initialize(projectPath: String? = null) {
         projectPath?.let {
-            contextProvider.loadProject(it)
+            loadProject(it)
         }
     }
+
+    /**
+     * Load or switch to a different project at runtime
+     */
+    suspend fun loadProject(projectPath: String): Result<Unit> {
+        return try {
+            contextProvider.loadProject(projectPath)
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Get currently loaded project information
+     */
+    fun getCurrentProject(): String? = contextProvider.getProjectRoot()
 
     /**
      * Route incoming tasks based on decision engine recommendations
@@ -67,6 +84,27 @@ class AgentOrchestrator(
     fun getHealthStatus(): HealthStatus {
         // Minimal health status for launcher integration.
         return HealthStatus(isHealthy = true, activeSessions = 0)
+    }
+
+    /**
+     * Get performance monitoring statistics
+     */
+    fun getPerformanceStats(): com.alyk.ai.koog.switching.monitor.PerformanceStats {
+        return decisionEngine.getPerformanceStats()
+    }
+
+    /**
+     * Get current warning signals from performance monitoring
+     */
+    fun getPerformanceWarnings(): List<com.alyk.ai.koog.switching.monitor.WarningSignal> {
+        return decisionEngine.getPerformanceWarnings()
+    }
+
+    /**
+     * Check for performance alerts that exceed thresholds
+     */
+    fun getPerformanceAlerts(): List<com.alyk.ai.koog.switching.monitor.Alert> {
+        return decisionEngine.getPerformanceAlerts()
     }
 }
 

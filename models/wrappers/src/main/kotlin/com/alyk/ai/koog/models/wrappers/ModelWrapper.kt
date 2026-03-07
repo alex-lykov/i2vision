@@ -4,8 +4,10 @@ import ai.koog.agents.core.agent.AIAgent
 import ai.koog.prompt.executor.llms.all.simpleOllamaAIExecutor
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
+import com.alyk.ai.koog.switching.monitor.PerformanceMonitor
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlin.system.measureTimeMillis
 
 /**
  * Abstract model-specific implementations into unified interface
@@ -25,7 +27,8 @@ interface ModelWrapper {
 class LocalModelWrapper(
     override val modelName: String,
     override val maxContextLength: Int,
-    private val baseUrl: String = "http://localhost:11434"
+    private val baseUrl: String = "http://localhost:11434",
+    private val performanceMonitor: PerformanceMonitor? = null
 ) : ModelWrapper {
     private val systemPrompt = """
         You are a Kotlin coding assistant.
@@ -44,7 +47,18 @@ class LocalModelWrapper(
             ),
             systemPrompt = systemPrompt
         )
-        return agent.run(prompt)
+
+        var response: String
+        val responseTime = measureTimeMillis {
+            response = agent.run(prompt)
+        }
+
+        // Record performance metrics
+        val tokensUsed = estimateTokens(prompt)
+        val tokensGenerated = estimateTokens(response)
+        performanceMonitor?.recordMetric(responseTime, tokensUsed, tokensGenerated)
+
+        return response
     }
 
     override suspend fun generateStreaming(prompt: String): Flow<String> {

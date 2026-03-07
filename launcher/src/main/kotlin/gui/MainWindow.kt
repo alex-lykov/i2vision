@@ -45,7 +45,15 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
                 ProjectManagementPanel(
                     projectRepository = projectRepository,
                     onProjectSelected = { project ->
-                        events = events + OutputEvent.System("Project selected: ${project.name}")
+                        scope.launch {
+                            val result = agentLauncher.loadProject(project.path)
+                            if (result.isSuccess) {
+                                events = events + OutputEvent.System("Project loaded: ${project.name} (${project.path})")
+                                status = agentLauncher.getStatus()
+                            } else {
+                                events = events + OutputEvent.Error("Failed to load project: ${result.exceptionOrNull()?.message}")
+                            }
+                        }
                     }
                 )
                 StatusBar(

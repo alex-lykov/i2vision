@@ -12,6 +12,7 @@ interface AgentLauncher {
     fun processTask(task: String, mode: TaskMode): Flow<OutputEvent>
     fun switchModel(target: ModelType): Result<Unit>
     fun addStatusListener(listener: StatusListener)
+    suspend fun loadProject(projectPath: String): Result<Unit>
 }
 
 data class AgentStatus(
@@ -21,7 +22,10 @@ data class AgentStatus(
     val sessionTime: Duration,
     val confidence: Float,
     val lastSwitch: Instant?,
-    val errors: List<String>
+    val errors: List<String>,
+    val avgResponseTimeMs: Long = 0,
+    val performanceWarnings: List<String> = emptyList(),
+    val hasPerformanceAlert: Boolean = false
 )
 
 enum class TaskMode {
@@ -43,7 +47,7 @@ sealed class OutputEvent {
 
 data class Config(
     val projectPath: String? = null,
-    val defaultModel: String = "gpt-oss:20b",
+    val defaultModel: String = "qwen3:4b",
     val maxContextLength: Int = 1024
 )
 

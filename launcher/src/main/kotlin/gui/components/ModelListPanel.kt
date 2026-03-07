@@ -25,80 +25,63 @@ fun ModelListPanel(
     var selectedModel by remember { mutableStateOf<ModelInfo?>(null) }
     var showDetails by remember { mutableStateOf(false) }
 
-    Card(
+    RightPanelCardWithCount(
+        title = "Available Models",
+        count = models.size,
         modifier = modifier
-            .fillMaxWidth()
-            .padding(8.dp),
-        elevation = 4.dp
     ) {
-        Column(
-            modifier = Modifier.padding(12.dp)
-        ) {
-            // Header
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+        currentModelId?.let { current ->
+            Text(
+                text = "Active: ${current.substringAfter(":")}",
+                style = MaterialTheme.typography.caption,
+                color = MaterialTheme.colors.primary
+            )
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        if (models.isEmpty()) {
+            Text(
+                text = "No models found. Check Ollama models directory.",
+                style = MaterialTheme.typography.body2,
+                color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier.heightIn(max = 250.dp)
             ) {
-                Text(
-                    text = "Available Models (${models.size})",
-                    style = MaterialTheme.typography.h6
-                )
-                
-                currentModelId?.let { current ->
-                    Text(
-                        text = "Active: ${current.substringAfter(":")}",
-                        style = MaterialTheme.typography.caption,
-                        color = MaterialTheme.colors.primary
+                items(models) { model ->
+                    ModelListItem(
+                        model = model,
+                        isCurrent = model.id == currentModelId,
+                        isSelected = model == selectedModel,
+                        onSelect = {
+                            selectedModel = model
+                            showDetails = true
+                        },
+                        onActivate = { onModelSelected(model) }
                     )
                 }
             }
+        }
 
-            Spacer(Modifier.height(8.dp))
-
-            if (models.isEmpty()) {
-                Text(
-                    text = "No models found. Check Ollama models directory.",
-                    style = MaterialTheme.typography.body2,
-                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
-                )
-            } else {
-                LazyColumn(
-                    modifier = Modifier.heightIn(max = 250.dp)
-                ) {
-                    items(models) { model ->
-                        ModelListItem(
-                            model = model,
-                            isCurrent = model.id == currentModelId,
-                            isSelected = model == selectedModel,
-                            onSelect = {
-                                selectedModel = model
-                                showDetails = true
-                            },
-                            onActivate = { onModelSelected(model) }
-                        )
-                    }
+        // Model Details Dialog
+        if (showDetails && selectedModel != null) {
+            ModelDetailsDialog(
+                model = selectedModel!!,
+                isCurrent = selectedModel!!.id == currentModelId,
+                onDismiss = { showDetails = false },
+                onActivate = {
+                    onModelSelected(selectedModel!!)
+                    showDetails = false
                 }
-            }
-
-            // Model Details Dialog
-            if (showDetails && selectedModel != null) {
-                ModelDetailsDialog(
-                    model = selectedModel!!,
-                    isCurrent = selectedModel!!.id == currentModelId,
-                    onDismiss = { showDetails = false },
-                    onActivate = {
-                        onModelSelected(selectedModel!!)
-                        showDetails = false
-                    }
-                )
-            }
+            )
         }
     }
 }
 
 @Composable
-private fun ModelListItem(
+internal fun ModelListItem(
     model: ModelInfo,
     isCurrent: Boolean,
     isSelected: Boolean,
@@ -156,7 +139,7 @@ private fun ModelListItem(
 }
 
 @Composable
-private fun ModelDetailsDialog(
+internal fun ModelDetailsDialog(
     model: ModelInfo,
     isCurrent: Boolean,
     onDismiss: () -> Unit,
@@ -175,7 +158,7 @@ private fun ModelDetailsDialog(
                 DetailRow("Digest", model.digest.take(16) + "...")
                 DetailRow("Layers", model.layers.toString())
                 DetailRow("Path", model.path)
-                
+
                 if (model.error != null) {
                     Spacer(Modifier.height(8.dp))
                     Text(
@@ -184,7 +167,7 @@ private fun ModelDetailsDialog(
                         style = MaterialTheme.typography.caption
                     )
                 }
-                
+
                 if (isCurrent) {
                     Spacer(Modifier.height(8.dp))
                     Text(
@@ -211,7 +194,7 @@ private fun ModelDetailsDialog(
 }
 
 @Composable
-private fun DetailRow(label: String, value: String) {
+fun DetailRow(label: String, value: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -230,3 +213,4 @@ private fun DetailRow(label: String, value: String) {
         )
     }
 }
+

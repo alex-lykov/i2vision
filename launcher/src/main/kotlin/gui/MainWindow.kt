@@ -28,6 +28,7 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
     fun submitTask(task: String, mode: TaskMode) {
         if (task.isBlank()) return
         scope.launch {
+            events = events + OutputEvent.System(">>> $task")
             agentLauncher.processTask(task, mode).collect { event ->
                 events = events + event
                 status = agentLauncher.getStatus()
@@ -45,35 +46,30 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
                 modifier = Modifier.fillMaxSize().padding(8.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Left side: Terminal window (prompt + output combined)
-                Column(
-                    modifier = Modifier.weight(0.6f).fillMaxHeight(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    TaskInput(
-                        onProcess = { submitTask(it, TaskMode.CURRENT_MODEL) },
-                        onAnalyze = { submitTask(it, TaskMode.SMART_ANALYZE) },
-                        onDebug = { submitTask(it, TaskMode.DEBUG) }
-                    )
-                    OutputConsole(
-                        events = events,
-                        onClear = { events = emptyList() },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
+                // Left side: IntelliJ-style Terminal (prompt at bottom, output above)
+                Terminal(
+                    events = events,
+                    onClear = { events = emptyList() },
+                    onSubmit = { task, mode -> submitTask(task, mode) },
+                    modifier = Modifier.weight(0.6f).fillMaxHeight()
+                )
 
                 // Right side: Management panels
                 Column(
                     modifier = Modifier.weight(0.4f).fillMaxHeight(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    // Performance Card (separate)
+                    PerformanceCard(status = status)
+                    
+                    // Project Management Card
                     ProjectManagementPanel(
                         projectRepository = projectRepository,
                         onProjectSelected = { project ->
                             scope.launch {
                                 val result = agentLauncher.loadProject(project.path)
                                 if (result.isSuccess) {
-                                    events = events + OutputEvent.System("Project loaded: ${project.name} (${project.path})")
+                                    events = events + OutputEvent.System("Project loaded: ${project.name}")
                                     status = agentLauncher.getStatus()
                                 } else {
                                     events = events + OutputEvent.Error("Failed to load project: ${result.exceptionOrNull()?.message}")
@@ -81,6 +77,7 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
                             }
                         }
                     )
+                    
                     ModelListPanel(
                         models = availableModels,
                         currentModelId = status.currentModelId,
@@ -94,14 +91,9 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
                             }
                         }
                     )
+                    
                     QuickActions(
                         onAction = { submitTask(it, TaskMode.CURRENT_MODEL) }
-                    )
-                    StatusBar(
-                        status = status,
-                        onSwitchClick = {
-                            events = events + OutputEvent.System("Model switch requested")
-                        }
                     )
                 }
             }

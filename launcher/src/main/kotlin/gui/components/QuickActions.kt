@@ -11,7 +11,10 @@ import androidx.compose.ui.unit.dp
 fun QuickActions(
     onAction: (String) -> Unit
 ) {
-    Column(modifier = Modifier.padding(16.dp)) {
+    RightPanelCard(
+        title = "Quick Actions",
+        modifier = Modifier.padding(8.dp)
+    ) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { onAction("Review code") }, modifier = Modifier.weight(1f)) { Text("Review") }
             Button(onClick = { onAction("Refactor code") }, modifier = Modifier.weight(1f)) { Text("Refactor") }

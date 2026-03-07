@@ -1,7 +1,6 @@
 package gui
 
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.*
 import androidx.compose.material.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,6 +21,7 @@ import kotlinx.coroutines.launch
 fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
     val scope = rememberCoroutineScope()
     val projectRepository: ProjectRepository = remember { JsonProjectRepository() }
+    val availableModels = remember { agentLauncher.getAvailableModels() }
     var events by remember { mutableStateOf<List<OutputEvent>>(emptyList()) }
     var status by remember { mutableStateOf(agentLauncher.getStatus()) }
 
@@ -38,42 +38,72 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
     Window(
         onCloseRequest = onCloseRequest,
         title = "KOOG Coding Agent",
-        state = rememberWindowState(width = 900.dp, height = 700.dp, position = WindowPosition.Aligned(Alignment.Center))
+        state = rememberWindowState(width = 1200.dp, height = 800.dp, position = WindowPosition.Aligned(Alignment.Center))
     ) {
         MaterialTheme {
-            Column(modifier = Modifier.fillMaxSize()) {
-                ProjectManagementPanel(
-                    projectRepository = projectRepository,
-                    onProjectSelected = { project ->
-                        scope.launch {
-                            val result = agentLauncher.loadProject(project.path)
-                            if (result.isSuccess) {
-                                events = events + OutputEvent.System("Project loaded: ${project.name} (${project.path})")
-                                status = agentLauncher.getStatus()
-                            } else {
-                                events = events + OutputEvent.Error("Failed to load project: ${result.exceptionOrNull()?.message}")
+            Row(
+                modifier = Modifier.fillMaxSize().padding(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // Left side: Terminal window (prompt + output combined)
+                Column(
+                    modifier = Modifier.weight(0.6f).fillMaxHeight(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    TaskInput(
+                        onProcess = { submitTask(it, TaskMode.CURRENT_MODEL) },
+                        onAnalyze = { submitTask(it, TaskMode.SMART_ANALYZE) },
+                        onDebug = { submitTask(it, TaskMode.DEBUG) }
+                    )
+                    OutputConsole(
+                        events = events,
+                        onClear = { events = emptyList() },
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                // Right side: Management panels
+                Column(
+                    modifier = Modifier.weight(0.4f).fillMaxHeight(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    ProjectManagementPanel(
+                        projectRepository = projectRepository,
+                        onProjectSelected = { project ->
+                            scope.launch {
+                                val result = agentLauncher.loadProject(project.path)
+                                if (result.isSuccess) {
+                                    events = events + OutputEvent.System("Project loaded: ${project.name} (${project.path})")
+                                    status = agentLauncher.getStatus()
+                                } else {
+                                    events = events + OutputEvent.Error("Failed to load project: ${result.exceptionOrNull()?.message}")
+                                }
                             }
                         }
-                    }
-                )
-                StatusBar(
-                    status = status,
-                    onSwitchClick = {
-                        events = events + OutputEvent.System("Model switch requested (simplified mode)")
-                    }
-                )
-                TaskInput(
-                    onProcess = { submitTask(it, TaskMode.CURRENT_MODEL) },
-                    onAnalyze = { submitTask(it, TaskMode.SMART_ANALYZE) },
-                    onDebug = { submitTask(it, TaskMode.DEBUG) }
-                )
-                QuickActions(
-                    onAction = { submitTask(it, TaskMode.CURRENT_MODEL) }
-                )
-                OutputConsole(
-                    events = events,
-                    onClear = { events = emptyList() }
-                )
+                    )
+                    ModelListPanel(
+                        models = availableModels,
+                        currentModelId = status.currentModelId,
+                        onModelSelected = { model ->
+                            val result = agentLauncher.switchToModel(model.id)
+                            if (result.isSuccess) {
+                                events = events + OutputEvent.System("Switched to model: ${model.id}")
+                                status = agentLauncher.getStatus()
+                            } else {
+                                events = events + OutputEvent.Error("Failed to switch model: ${result.exceptionOrNull()?.message}")
+                            }
+                        }
+                    )
+                    QuickActions(
+                        onAction = { submitTask(it, TaskMode.CURRENT_MODEL) }
+                    )
+                    StatusBar(
+                        status = status,
+                        onSwitchClick = {
+                            events = events + OutputEvent.System("Model switch requested")
+                        }
+                    )
+                }
             }
         }
     }

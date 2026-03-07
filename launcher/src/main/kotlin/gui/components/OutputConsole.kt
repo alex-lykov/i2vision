@@ -19,7 +19,8 @@ import java.time.format.DateTimeFormatter
 @Composable
 fun OutputConsole(
     events: List<OutputEvent>,
-    onClear: () -> Unit
+    onClear: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val listState = rememberLazyListState()
 
@@ -29,7 +30,7 @@ fun OutputConsole(
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
         Box(
             modifier = Modifier
                 .weight(1f)

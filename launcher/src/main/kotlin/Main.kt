@@ -4,8 +4,11 @@ import com.alyk.ai.koog.context.provider.ContextProvider
 import com.alyk.ai.koog.core.orchestrator.AgentOrchestrator
 import com.alyk.ai.koog.core.session.SessionStore
 import com.alyk.ai.koog.models.wrappers.LocalModelWrapper
+import com.alyk.ai.koog.models.wrappers.ModelInfo
+import com.alyk.ai.koog.models.wrappers.ModelRegistry
 import com.alyk.ai.koog.switching.analyzer.ContextAnalyzer
 import com.alyk.ai.koog.switching.decision.DecisionEngine
+import com.alyk.ai.koog.switching.decision.ModelSwitchControl
 import com.alyk.ai.koog.switching.monitor.PerformanceMonitor
 import core.*
 import gui.launch
@@ -17,6 +20,13 @@ class AgentLauncherImpl : AgentLauncher {
     private val hierarchyBuilder = HierarchyBuilder()
     private val contextProvider = ContextProvider(hierarchyBuilder)
     private val performanceMonitor = PerformanceMonitor()
+    private val modelRegistry = ModelRegistry("D:\\dev\\AI\\ollama\\models")
+    private val initialModel = LocalModelWrapper(
+        modelName = "qwen3:4b",
+        maxContextLength = 4096,
+        performanceMonitor = performanceMonitor
+    )
+    private val modelSwitchControl = ModelSwitchControl(performanceMonitor, initialModel)
     private val orchestrator = AgentOrchestrator(
         sessionStore = SessionStore(),
         decisionEngine = DecisionEngine(
@@ -25,22 +35,26 @@ class AgentLauncherImpl : AgentLauncher {
         ),
         contextProvider = contextProvider,
         hierarchyBuilder = hierarchyBuilder,
-        localModel = LocalModelWrapper(
-            modelName = "gpt-oss:20b",
-            maxContextLength = 1024,
-            performanceMonitor = performanceMonitor
-        )
+        localModel = initialModel
     )
     private val client = AgentClient(orchestrator)
-    private val switchControl = SwitchControl()
     private val listeners = mutableListOf<StatusListener>()
+    private var availableModels: List<ModelInfo> = emptyList()
 
     override fun initialize(config: Config): Result<Unit> {
-        runBlocking {
-            orchestrator.initialize(config.projectPath)
-            client.initialize(config.projectPath)
+        return try {
+            // Scan available models from Ollama directory
+            availableModels = modelRegistry.scanModels()
+            println("Found ${availableModels.size} models: ${availableModels.map { it.id }}")
+            
+            runBlocking {
+                orchestrator.initialize(config.projectPath)
+                client.initialize(config.projectPath)
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
         }
-        return Result.success(Unit)
     }
 
     override fun start() {
@@ -55,6 +69,7 @@ class AgentLauncherImpl : AgentLauncher {
         val stats = orchestrator.getPerformanceStats()
         val warnings = orchestrator.getPerformanceWarnings()
         val alerts = orchestrator.getPerformanceAlerts()
+        val currentModelId = modelSwitchControl.getCurrentModelId()
         
         return AgentStatus(
             currentModel = ModelType.LOCAL,
@@ -66,8 +81,23 @@ class AgentLauncherImpl : AgentLauncher {
             errors = emptyList(),
             avgResponseTimeMs = stats.avgResponseTimeMs,
             performanceWarnings = warnings.map { "[${it.severity}] ${it.message}" },
-            hasPerformanceAlert = alerts.isNotEmpty()
+            hasPerformanceAlert = alerts.isNotEmpty(),
+            currentModelId = currentModelId
         )
+    }
+
+    /**
+     * Get list of available models from registry
+     */
+    override fun getAvailableModels(): List<ModelInfo> = availableModels
+    
+    /**
+     * Switch to a specific model by ID
+     */
+    override fun switchToModel(modelId: String): Result<Unit> {
+        return modelSwitchControl.switchToModel(modelId) { id, monitor ->
+            modelRegistry.createModelWrapper(id, monitor)
+        }
     }
 
     override fun processTask(task: String, mode: TaskMode): Flow<OutputEvent> {
@@ -75,7 +105,7 @@ class AgentLauncherImpl : AgentLauncher {
     }
 
     override fun switchModel(target: ModelType): Result<Unit> {
-        return switchControl.switchModel(target)
+        return Result.success(Unit)
     }
 
     override fun addStatusListener(listener: StatusListener) {

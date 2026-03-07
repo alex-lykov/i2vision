@@ -13,6 +13,16 @@ interface AgentLauncher {
     fun switchModel(target: ModelType): Result<Unit>
     fun addStatusListener(listener: StatusListener)
     suspend fun loadProject(projectPath: String): Result<Unit>
+    
+    /**
+     * Get list of available models from registry
+     */
+    fun getAvailableModels(): List<com.alyk.ai.koog.models.wrappers.ModelInfo>
+    
+    /**
+     * Switch to a specific model by ID
+     */
+    fun switchToModel(modelId: String): Result<Unit>
 }
 
 data class AgentStatus(
@@ -25,7 +35,8 @@ data class AgentStatus(
     val errors: List<String>,
     val avgResponseTimeMs: Long = 0,
     val performanceWarnings: List<String> = emptyList(),
-    val hasPerformanceAlert: Boolean = false
+    val hasPerformanceAlert: Boolean = false,
+    val currentModelId: String = ""
 )
 
 enum class TaskMode {

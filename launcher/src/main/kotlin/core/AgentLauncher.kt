@@ -9,6 +9,7 @@ interface AgentLauncher {
     fun start()
     fun shutdown()
     fun getStatus(): AgentStatus
+    fun getStatusStream(): Flow<AgentStatus>
     fun processTask(task: String, mode: TaskMode): Flow<OutputEvent>
     fun switchModel(target: ModelType): Result<Unit>
     fun addStatusListener(listener: StatusListener)

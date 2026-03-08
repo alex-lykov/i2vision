@@ -12,9 +12,12 @@ import com.alyk.ai.koog.switching.decision.ModelSwitchControl
 import com.alyk.ai.koog.switching.monitor.PerformanceMonitor
 import core.*
 import gui.launch
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import java.time.Duration
+import java.time.Instant
 
 class AgentLauncherImpl : AgentLauncher {
     private val hierarchyBuilder = HierarchyBuilder()
@@ -40,9 +43,12 @@ class AgentLauncherImpl : AgentLauncher {
     private val client = AgentClient(orchestrator)
     private val listeners = mutableListOf<StatusListener>()
     private var availableModels: List<ModelInfo> = emptyList()
+    private val statusUpdateScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private var sessionStartTime = Instant.now()
 
     override fun initialize(config: Config): Result<Unit> {
         return try {
+            sessionStartTime = Instant.now()
             // Scan available models from Ollama directory
             availableModels = modelRegistry.scanModels()
             println("Found ${availableModels.size} models: ${availableModels.map { it.id }}")
@@ -62,7 +68,17 @@ class AgentLauncherImpl : AgentLauncher {
     }
 
     override fun shutdown() {
+        statusUpdateScope.cancel()
         client.shutdown()
+    }
+
+    override fun getStatusStream(): Flow<AgentStatus> {
+        return flow {
+            while (currentCoroutineContext().isActive) {
+                emit(getStatus())
+                delay(1000) // Update every second
+            }
+        }.flowOn(Dispatchers.Default)
     }
 
     override fun getStatus(): core.AgentStatus {
@@ -70,14 +86,15 @@ class AgentLauncherImpl : AgentLauncher {
         val warnings = orchestrator.getPerformanceWarnings()
         val alerts = orchestrator.getPerformanceAlerts()
         val currentModelId = modelSwitchControl.getCurrentModelId()
+        val sessionTime = Duration.between(sessionStartTime, Instant.now())
         
         return AgentStatus(
             currentModel = ModelType.LOCAL,
-            contextUsage = 0.7f,
+            contextUsage = 0.7f, // TODO: Calculate actual context usage
             filesLoaded = contextProvider.getLoadedFiles().size,
-            sessionTime = Duration.ofMinutes(5),
-            confidence = 0.85f,
-            lastSwitch = null,
+            sessionTime = sessionTime,
+            confidence = 0.85f, // TODO: Calculate actual confidence
+            lastSwitch = null, // TODO: Track last switch time
             errors = emptyList(),
             avgResponseTimeMs = stats.avgResponseTimeMs,
             performanceWarnings = warnings.map { "[${it.severity}] ${it.message}" },

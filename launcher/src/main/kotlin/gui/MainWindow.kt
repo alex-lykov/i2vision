@@ -25,13 +25,19 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
     var events by remember { mutableStateOf<List<OutputEvent>>(emptyList()) }
     var status by remember { mutableStateOf(agentLauncher.getStatus()) }
 
+    // Subscribe to real-time status updates
+    LaunchedEffect(agentLauncher) {
+        agentLauncher.getStatusStream().collect { newStatus ->
+            status = newStatus
+        }
+    }
+
     fun submitTask(task: String, mode: TaskMode) {
         if (task.isBlank()) return
         scope.launch {
             events = events + OutputEvent.System(">>> $task")
             agentLauncher.processTask(task, mode).collect { event ->
                 events = events + event
-                status = agentLauncher.getStatus()
             }
         }
     }
@@ -70,7 +76,6 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
                                 val result = agentLauncher.loadProject(project.path)
                                 if (result.isSuccess) {
                                     events = events + OutputEvent.System("Project loaded: ${project.name}")
-                                    status = agentLauncher.getStatus()
                                 } else {
                                     events = events + OutputEvent.Error("Failed to load project: ${result.exceptionOrNull()?.message}")
                                 }
@@ -85,7 +90,6 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
                             val result = agentLauncher.switchToModel(model.id)
                             if (result.isSuccess) {
                                 events = events + OutputEvent.System("Switched to model: ${model.id}")
-                                status = agentLauncher.getStatus()
                             } else {
                                 events = events + OutputEvent.Error("Failed to switch model: ${result.exceptionOrNull()?.message}")
                             }

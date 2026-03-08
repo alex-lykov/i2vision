@@ -1,6 +1,8 @@
 package gui
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -62,12 +64,9 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
 
                 // Right side: Management panels
                 Column(
-                    modifier = Modifier.weight(0.4f).fillMaxHeight(),
+                    modifier = Modifier.weight(0.4f).fillMaxHeight().verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // Performance Card (separate)
-                    PerformanceCard(status = status)
-                    
                     // Project Management Card
                     ProjectManagementPanel(
                         projectRepository = projectRepository,
@@ -82,8 +81,17 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
                             }
                         }
                     )
-                    
-                    ModelListPanel(
+                    // Performance Card (separate)
+                    PerformanceCard(status = status)
+
+                    // System Monitor
+                    SystemMonitor()
+
+                    // Combined Ollama Monitor and Control
+                    OllamaMonitorAndControl()
+
+
+/*                    ModelListPanel(
                         models = availableModels,
                         currentModelId = status.currentModelId,
                         onModelSelected = { model ->
@@ -94,7 +102,7 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
                                 events = events + OutputEvent.Error("Failed to switch model: ${result.exceptionOrNull()?.message}")
                             }
                         }
-                    )
+                    )*/
                     
                     QuickActions(
                         onAction = { submitTask(it, TaskMode.CURRENT_MODEL) }

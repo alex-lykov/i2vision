@@ -1,5 +1,6 @@
 package cli
 
+import com.alyk.ai.koog.config.ConfigLoader
 import core.AgentLauncher
 import core.ModelType
 import core.TaskMode
@@ -8,8 +9,12 @@ import kotlinx.coroutines.runBlocking
 class CliLauncher(private val launcher: AgentLauncher) {
 
     fun launch() = runBlocking {
+        val config = ConfigLoader.load()
+        launcher.initialize(config)
+        
         println("KOOG Coding Agent CLI")
         println("Type '/help' for commands")
+        println("Using Ollama API: ${config.ollamaApiUrl}")
 
         while (true) {
             print("> ")

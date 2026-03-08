@@ -1,5 +1,7 @@
-package com.alyk.ai.koog.models.wrappers
+package com.alyk.ai.koog.models.cloud
 
+import com.alyk.ai.koog.models.wrappers.ModelWrapper
+import com.alyk.ai.koog.switching.monitor.PerformanceMonitor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -12,40 +14,59 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 
 /**
- * Registry for managing local Ollama models
- * Cloud model support is handled through factory pattern
+ * Registry for managing cloud-hosted Ollama models
+ * Supports multiple cloud providers and authentication
  */
-class ModelRegistry(private val ollamaApiUrl: String = "http://localhost:11434") {
-    
-    private val models = mutableMapOf<String, ModelInfo>()
+class CloudModelRegistry(
+    private val cloudConfigs: List<OllamaCloudConfig>
+) {
+    private val models = mutableMapOf<String, CloudModelInfo>()
     private val httpClient = HttpClient.newHttpClient()
     
     /**
-     * Fetch available models from local Ollama API
+     * Scan all configured cloud endpoints for available models
      */
-    suspend fun scanModels(): List<ModelInfo> = withContext(Dispatchers.IO) {
+    suspend fun scanModels(): List<CloudModelInfo> = withContext(Dispatchers.IO) {
         models.clear()
+        val allModels = mutableListOf<CloudModelInfo>()
         
-        try {
-            val request = HttpRequest.newBuilder()
-                .uri(URI.create("$ollamaApiUrl/api/tags"))
-                .GET()
-                .build()
-                
-            val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-            
-            if (response.statusCode() == 200) {
-                parseModelsResponse(response.body())
-            } else {
-                emptyList()
+        cloudConfigs.forEach { config ->
+            try {
+                val modelsFromEndpoint = fetchModelsFromEndpoint(config)
+                allModels.addAll(modelsFromEndpoint)
+            } catch (e: Exception) {
+                println("Failed to fetch models from ${config.apiUrl}: ${e.message}")
             }
-        } catch (e: Exception) {
-            println("Failed to fetch models from API: ${e.message}")
-            emptyList()
+        }
+        
+        allModels.forEach { model ->
+            models[model.id] = model
+        }
+        
+        allModels
+    }
+    
+    private suspend fun fetchModelsFromEndpoint(config: OllamaCloudConfig): List<CloudModelInfo> {
+        val requestBuilder = HttpRequest.newBuilder()
+            .uri(URI.create("${config.apiUrl}/api/tags"))
+            .GET()
+            
+        // Add authentication header if API key is provided
+        config.apiKey?.let { apiKey ->
+            requestBuilder.header("Authorization", "Bearer $apiKey")
+        }
+        
+        val request = requestBuilder.build()
+        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
+        
+        if (response.statusCode() == 200) {
+            return parseCloudModelsResponse(response.body(), config)
+        } else {
+            throw Exception("HTTP ${response.statusCode()}: ${response.body()}")
         }
     }
     
-    private fun parseModelsResponse(response: String): List<ModelInfo> {
+    private fun parseCloudModelsResponse(response: String, config: OllamaCloudConfig): List<CloudModelInfo> {
         return try {
             val json = Json { ignoreUnknownKeys = true }
             val jsonObject = json.decodeFromString<JsonObject>(response)
@@ -55,7 +76,7 @@ class ModelRegistry(private val ollamaApiUrl: String = "http://localhost:11434")
                 val modelObj = modelElement as? JsonObject ?: return@mapNotNull null
                 val name = modelObj["name"]?.jsonPrimitive?.content ?: return@mapNotNull null
                 
-                // Parse model info from API response
+                // Parse model info
                 val size = modelObj["size"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
                 val digest = modelObj["digest"]?.jsonPrimitive?.content ?: "unknown"
                 val modified = modelObj["modified_at"]?.jsonPrimitive?.content ?: "unknown"
@@ -64,49 +85,28 @@ class ModelRegistry(private val ollamaApiUrl: String = "http://localhost:11434")
                 val parts = name.split(":")
                 val modelName = parts[0]
                 val tag = parts.getOrNull(1) ?: "latest"
-                val modelId = name
+                val modelId = "${config.provider.name.lowercase()}:$name"
                 
-                // Infer context length from model name
-                val contextLength = inferContextLength(modelId)
+                // Infer context length
+                val contextLength = inferContextLength(name)
                 
-                val modelInfo = ModelInfo(
+                CloudModelInfo(
                     id = modelId,
                     name = modelName,
                     tag = tag,
                     size = size,
                     contextLength = contextLength,
                     digest = digest,
-                    layers = 0, // API doesn't provide layer count
-                    path = "api://$ollamaApiUrl"
+                    layers = 0,
+                    path = config.apiUrl,
+                    cloudConfig = config,
+                    provider = config.provider,
+                    region = config.region,
+                    isAvailable = true
                 )
-                
-                models[modelId] = modelInfo
-                modelInfo
             }
         } catch (e: Exception) {
-            println("Error parsing models response: ${e.message}")
-            emptyList()
-        }
-    }
-    
-    /**
-     * Get running models from Ollama API
-     */
-    suspend fun getRunningModels(): List<ModelInfo> = withContext(Dispatchers.IO) {
-        try {
-            val request = HttpRequest.newBuilder()
-                .uri(URI.create("$ollamaApiUrl/api/ps"))
-                .GET()
-                .build()
-                
-            val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-            
-            if (response.statusCode() == 200) {
-                parseModelsResponse(response.body())
-            } else {
-                emptyList()
-            }
-        } catch (e: Exception) {
+            println("Error parsing cloud models response: ${e.message}")
             emptyList()
         }
     }
@@ -134,35 +134,35 @@ class ModelRegistry(private val ollamaApiUrl: String = "http://localhost:11434")
     }
     
     /**
-     * Get a specific model by ID
-     */
-    fun getModel(modelId: String): ModelInfo? = models[modelId]
-    
-    /**
-     * Get all available models
-     */
-    fun getAllModels(): List<ModelInfo> = models.values.toList()
-    
-    /**
-     * Create a ModelWrapper for the specified local model
+     * Create a ModelWrapper for the specified cloud model
      */
     fun createModelWrapper(
         modelId: String,
-        performanceMonitor: com.alyk.ai.koog.switching.monitor.PerformanceMonitor? = null
+        performanceMonitor: PerformanceMonitor? = null
     ): ModelWrapper? {
         val model = models[modelId] ?: return null
         
-        return LocalModelWrapper(
-            modelName = model.id,
+        return OllamaCloudModelWrapper(
+            modelName = model.name,
             maxContextLength = model.contextLength,
+            cloudConfig = model.cloudConfig,
             performanceMonitor = performanceMonitor
         )
     }
     
     /**
-     * Check if a model exists
+     * Get models by provider
      */
-    fun hasModel(modelId: String): Boolean = models.containsKey(modelId)
+    fun getModelsByProvider(provider: CloudProvider): List<CloudModelInfo> {
+        return models.values.filter { it.provider == provider }
+    }
+    
+    /**
+     * Get models by region
+     */
+    fun getModelsByRegion(region: String): List<CloudModelInfo> {
+        return models.values.filter { it.region == region }
+    }
     
     /**
      * Close HTTP client
@@ -173,9 +173,9 @@ class ModelRegistry(private val ollamaApiUrl: String = "http://localhost:11434")
 }
 
 /**
- * Information about an available model
+ * Extended model information for cloud models
  */
-data class ModelInfo(
+data class CloudModelInfo(
     val id: String,
     val name: String,
     val tag: String,
@@ -184,6 +184,10 @@ data class ModelInfo(
     val digest: String,
     val layers: Int,
     val path: String,
+    val cloudConfig: OllamaCloudConfig,
+    val provider: CloudProvider,
+    val region: String?,
+    val isAvailable: Boolean,
     val error: String? = null
 ) {
     val formattedSize: String
@@ -193,4 +197,7 @@ data class ModelInfo(
             size > 1_000 -> "${size / 1_000} KB"
             else -> "$size B"
         }
+        
+    val displayName: String
+        get() = "${provider.name.lowercase()}:${name}:${tag}"
 }

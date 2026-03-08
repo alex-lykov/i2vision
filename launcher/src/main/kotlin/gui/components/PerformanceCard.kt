@@ -25,6 +25,10 @@ fun PerformanceCard(
         ModelType.CLOUD -> Color.Blue
         ModelType.SWITCHING -> Color.Yellow
         ModelType.ERROR -> Color.Red
+        ModelType.CLOUD_OLLAMA -> Color.Cyan
+        ModelType.CLOUD_HF -> Color.Magenta
+        ModelType.CLOUD_REPLICATE -> Color(0xFF9C27B0)
+        ModelType.CLOUD_ANYSCALE -> Color(0xFF3F51B5)
     }
 
     RightPanelCardWithStatus(

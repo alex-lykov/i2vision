@@ -17,9 +17,11 @@ rootProject.name = "koog-coding-agent"
 include("core:orchestrator")
 include("core:session")
 include("core:coroutines")
+include("core:config")
 
 // Model modules
 include("models:wrappers")
+include("models:cloud")
 
 // Switching modules
 include("switching:analyzer")

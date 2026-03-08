@@ -1,5 +1,6 @@
 package core
 
+import com.alyk.ai.koog.config.Config
 import kotlinx.coroutines.flow.Flow
 import java.time.Duration
 import java.time.Instant
@@ -57,13 +58,14 @@ sealed class OutputEvent {
     object Complete : OutputEvent()
 }
 
-data class Config(
-    val projectPath: String? = null,
-    val defaultModel: String = "qwen3:4b",
-    val maxContextLength: Int = 1024
-)
-
-// Dummy ModelType enum for compilation
+// ModelType enum for different model sources
 enum class ModelType {
-    LOCAL, CLOUD, SWITCHING, ERROR
+    LOCAL,           // Local Ollama instance
+    CLOUD,           // Cloud-hosted Ollama
+    SWITCHING,       // Automatic switching enabled
+    ERROR,           // Model in error state
+    CLOUD_OLLAMA,    // Ollama Cloud service
+    CLOUD_HF,        // Hugging Face inference
+    CLOUD_REPLICATE, // Replicate API
+    CLOUD_ANYSCALE   // Anyscale endpoint
 }

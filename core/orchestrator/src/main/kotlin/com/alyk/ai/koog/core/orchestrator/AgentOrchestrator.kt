@@ -5,6 +5,7 @@ import com.alyk.ai.koog.context.provider.ContextProvider
 import com.alyk.ai.koog.core.session.SessionStore
 import com.alyk.ai.koog.models.wrappers.ModelWrapper
 import com.alyk.ai.koog.switching.decision.DecisionEngine
+import com.alyk.ai.koog.switching.decision.ModelSwitchControl
 
 /**
  * Central coordination of all agent components, managing request routing,
@@ -16,7 +17,8 @@ class AgentOrchestrator(
     private val contextProvider: ContextProvider,
     private val hierarchyBuilder: HierarchyBuilder,
     private val localModel: ModelWrapper,
-    private val cloudModel: ModelWrapper? = null
+    private val cloudModel: ModelWrapper? = null,
+    private val modelSwitchControl: ModelSwitchControl? = null
 ) {
     /**
      * Initialize and maintain references to local/cloud model wrappers
@@ -50,7 +52,10 @@ class AgentOrchestrator(
     suspend fun routeTask(task: String, sessionId: String): String {
         val context = contextProvider.getContextForTask(task)
         val promptWithContext = buildPrompt(task, context)
-        return localModel.generate(promptWithContext)
+        
+        // Use current model from ModelSwitchControl if available, otherwise fall back to localModel
+        val currentModel = modelSwitchControl?.getCurrentModel() ?: localModel
+        return currentModel.generate(promptWithContext)
     }
 
     private fun buildPrompt(task: String, context: String): String {

@@ -6,9 +6,11 @@ plugins {
 }
 
 dependencies {
+    implementation(project(":core:config"))
     implementation(project(":core:orchestrator"))
     implementation(project(":core:session"))
     implementation(project(":models:wrappers"))
+    implementation(project(":models:cloud"))
     implementation(project(":switching:analyzer"))
     implementation(project(":switching:monitor"))
     implementation(project(":switching:decision"))

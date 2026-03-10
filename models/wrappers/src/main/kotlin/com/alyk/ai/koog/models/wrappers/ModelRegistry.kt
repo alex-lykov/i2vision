@@ -148,7 +148,7 @@ class ModelRegistry(private val ollamaApiUrl: String = "http://localhost:11434")
      */
     fun createModelWrapper(
         modelId: String,
-        performanceMonitor: com.alyk.ai.koog.switching.monitor.PerformanceMonitor? = null
+        performanceMonitor: PerformanceMonitor? = null
     ): ModelWrapper? {
         val model = models[modelId] ?: return null
         

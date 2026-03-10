@@ -1,0 +1,194 @@
+title Koog Coding Agent - Application Flow Diagram
+
+// Participants
+actor "User" as User
+participant "Main.kt" as Main
+participant "AgentLauncherImpl" as Launcher
+participant "ConfigLoader" as Config
+participant "UnifiedModelManager" as ModelManager
+participant "ModelRegistry" as LocalRegistry
+participant "CloudModelRegistry" as CloudRegistry
+participant "AgentOrchestrator" as Orchestrator
+participant "ContextProvider" as Context
+participant "HierarchyBuilder" as Hierarchy
+participant "DecisionEngine" as Decision
+participant "ModelSwitchControl" as SwitchControl
+participant "PerformanceMonitor" as PerfMonitor
+participant "AgentClient" as Client
+database "Local Models" as LocalDB
+database "Cloud APIs" as CloudAPIs
+participant "GUI Components" as GUI
+
+== Application Startup ==
+
+User -> Main: launch application
+Main -> Main: parse args (--cli or GUI)
+Main -> Launcher: create AgentLauncherImpl
+Launcher -> Config: load configuration
+Config --> Launcher: return Config
+Launcher -> ModelManager: create UnifiedModelManager
+Launcher -> LocalRegistry: create ModelRegistry
+Launcher -> CloudRegistry: create CloudModelRegistry (if configured)
+Launcher -> PerfMonitor: create PerformanceMonitor
+Launcher -> SwitchControl: create ModelSwitchControl
+Launcher -> Orchestrator: create AgentOrchestrator
+Launcher -> Client: create AgentClient
+
+Launcher -> Launcher: initialize(config)
+Launcher -> ModelManager: scanAllModels()
+ModelManager -> LocalRegistry: scanModels()
+LocalRegistry --> ModelManager: local models
+ModelManager -> CloudRegistry: scanModels() (if configured)
+CloudRegistry --> ModelManager: cloud models
+ModelManager --> Launcher: all available models
+
+Launcher -> Orchestrator: initialize(projectPath)
+Orchestrator -> Context: loadProject(projectPath)
+Context -> Hierarchy: initialize(projectPath)
+Hierarchy -> Hierarchy: scanProjectFiles()
+Hierarchy --> Context: loaded files
+Context --> Orchestrator: project loaded
+Orchestrator --> Launcher: initialization complete
+
+alt GUI Mode
+    Launcher -> GUI: launch(launcher)
+    GUI -> Launcher: getStatusStream()
+    Launcher --> GUI: status flow
+else CLI Mode
+    Launcher -> CLI: launch()
+end
+
+== Task Processing Flow ==
+
+User -> GUI: submit task
+GUI -> Launcher: processTask(task, mode)
+
+Launcher -> Launcher: detectAndSwitchToRunningModel()
+Launcher -> ModelManager: getRunningModels()
+ModelManager -> LocalRegistry: getRunningModels()
+LocalRegistry --> ModelManager: running models
+ModelManager --> Launcher: running models list
+
+alt running model found and different from current
+    Launcher -> SwitchControl: switchToModel(modelId)
+    SwitchControl -> ModelManager: createModelWrapper(modelId)
+    ModelManager --> SwitchControl: ModelWrapper
+    SwitchControl --> Launcher: switch complete
+end
+
+Launcher -> Client: processTask(task, mode)
+Client -> Orchestrator: routeTask(task, sessionId)
+
+Orchestrator -> Context: getContextForTask(task)
+Context -> Context: findRelevantFiles(task)
+Context --> Orchestrator: context string
+Orchestrator -> Orchestrator: buildPrompt(task, context)
+
+Orchestrator -> SwitchControl: getCurrentModel()
+SwitchControl --> Orchestrator: current ModelWrapper
+Orchestrator -> ModelWrapper: generate(promptWithContext)
+ModelWrapper --> Orchestrator: response
+Orchestrator --> Client: response
+Client --> GUI: OutputEvent flow
+GUI --> User: display response
+
+== Model Decision & Switching ==
+
+Orchestrator -> Decision: getPerformanceStats()
+Decision -> PerfMonitor: getStats()
+PerfMonitor --> Decision: PerformanceStats
+Decision --> Orchestrator: stats
+
+Orchestrator -> Decision: getPerformanceWarnings()
+Decision -> PerfMonitor: detectWarningSignals()
+PerfMonitor --> Decision: warnings
+Decision --> Orchestrator: warnings
+
+Orchestrator -> Decision: getPerformanceAlerts()
+Decision -> PerfMonitor: checkThresholds()
+PerfMonitor --> Decision: alerts
+Decision --> Orchestrator: alerts
+
+alt performance issues detected
+    Decision -> Decision: shouldUseCloudModel()
+    Decision -> Decision: selectBestCloudModel()
+    Decision --> Orchestrator: cloud model recommendation
+else
+    Decision -> Decision: selectBestLocalModel()
+    Decision --> Orchestrator: local model recommendation
+end
+
+== GUI Model Management ==
+
+User -> GUI: interact with OllamaMonitorAndControl
+GUI -> ModelManager: getLocalModels()
+ModelManager -> LocalRegistry: scanModels()
+LocalRegistry --> ModelManager: local models
+ModelManager --> GUI: models list
+
+GUI -> ModelManager: getCloudModels()
+ModelManager -> CloudRegistry: scanModels()
+CloudRegistry --> ModelManager: cloud models
+ModelManager --> GUI: cloud models
+
+User -> GUI: pull model request
+GUI -> LocalRegistry: pullModel(modelName)
+LocalRegistry -> LocalDB: download model
+LocalDB --> LocalRegistry: model files
+LocalRegistry --> GUI: progress updates
+GUI --> User: show progress
+
+User -> GUI: start/stop model
+GUI -> LocalRegistry: startModel(modelName)
+LocalRegistry -> LocalDB: load model
+LocalDB --> LocalRegistry: model running
+LocalRegistry --> GUI: status update
+GUI --> User: updated model status
+
+== Performance Monitoring ==
+
+ModelWrapper -> PerfMonitor: recordResponse(time, tokens)
+PerfMonitor -> PerfMonitor: updateStats()
+PerfMonitor -> PerfMonitor: detectWarningSignals()
+PerfMonitor -> PerfMonitor: checkThresholds()
+
+PerfMonitor --> Decision: performance data
+Decision --> SwitchControl: switching recommendations
+SwitchControl --> Launcher: model switch events
+Launcher --> GUI: status updates
+
+== Error Handling & Fallback ==
+
+alt ModelWrapper fails
+    ModelWrapper -> Orchestrator: error
+    Orchestrator -> Orchestrator: handleFallback(sessionId, error)
+    Orchestrator --> Client: fallback response
+else ContextProvider fails
+    Context -> Orchestrator: error
+    Orchestrator -> Context: retry with reduced context
+    Context --> Orchestrator: minimal context
+end
+
+== Status Monitoring ==
+
+GUI -> Launcher: getStatus()
+Launcher -> Orchestrator: getPerformanceStats()
+Launcher -> Orchestrator: getPerformanceWarnings()
+Launcher -> Orchestrator: getPerformanceAlerts()
+Launcher -> SwitchControl: getCurrentModelId()
+Launcher -> Context: getLoadedFiles()
+Launcher -> Launcher: calculate context usage
+Launcher --> GUI: AgentStatus
+GUI --> User: display status
+
+== Shutdown ==
+
+User -> GUI: close application
+GUI -> Launcher: shutdown()
+Launcher -> ModelManager: close()
+ModelManager -> LocalRegistry: close()
+ModelManager -> CloudRegistry: close()
+Launcher -> Client: shutdown()
+Launcher -> Launcher: cancel status scope
+Launcher --> GUI: shutdown complete
+GUI --> User: application closed

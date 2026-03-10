@@ -6,29 +6,31 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.*
-import androidx.compose.runtime.*
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import core.OutputEvent
 import core.TaskMode
-import java.time.LocalTime
+import gui.data.TerminalEventDto
+import gui.viewmodel.TerminalViewModel
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 @Composable
 fun Terminal(
-    events: List<OutputEvent>,
-    onClear: () -> Unit,
-    onSubmit: (String, TaskMode) -> Unit,
+    viewModel: TerminalViewModel,
     modifier: Modifier = Modifier
 ) {
-    var text by remember { mutableStateOf("") }
+    val state by viewModel.state.collectAsState()
     val listState = rememberLazyListState()
 
-    LaunchedEffect(events.size) {
-        if (events.isNotEmpty()) {
-            listState.animateScrollToItem(events.size - 1)
+    LaunchedEffect(state.events.size) {
+        if (state.events.isNotEmpty()) {
+            listState.animateScrollToItem(state.events.size - 1)
         }
     }
 
@@ -49,19 +51,24 @@ fun Terminal(
                     state = listState,
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(events) { event ->
-                        val time = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss"))
-                        val (styleInfo, message) = when (event) {
-                            is OutputEvent.Standard -> (Color.White to "") to event.text
-                            is OutputEvent.Success -> (Color.Green to "✓") to event.text
-                            is OutputEvent.Warning -> (Color(0xFFFFA500) to "⚠") to event.text
-                            is OutputEvent.Error -> (Color.Red to "✗") to event.text
-                            is OutputEvent.System -> (Color.Cyan to "ℹ") to event.text
-                            is OutputEvent.Debug -> (Color.Gray to "🐛") to event.text
-                            is OutputEvent.Progress -> (Color.White to "⏳") to "[${event.percent}%] ${event.message}"
-                            OutputEvent.Complete -> (Color.Green to "✓") to "Task Complete"
+                    items(state.events) { event ->
+                        val time = event.timestamp.atZone(ZoneId.systemDefault())
+                            .format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+                        val (color, prefix) = when (event.type) {
+                            TerminalEventDto.EventType.STANDARD -> Color.White to ""
+                            TerminalEventDto.EventType.SUCCESS -> Color.Green to "✓"
+                            TerminalEventDto.EventType.WARNING -> Color(0xFFFFA500) to "⚠"
+                            TerminalEventDto.EventType.ERROR -> Color.Red to "✗"
+                            TerminalEventDto.EventType.SYSTEM -> Color.Cyan to "ℹ"
+                            TerminalEventDto.EventType.DEBUG -> Color.Gray to "🐛"
+                            TerminalEventDto.EventType.PROGRESS -> Color.White to "⏳"
+                            TerminalEventDto.EventType.COMPLETE -> Color.Green to "✓"
                         }
-                        val (color, prefix) = styleInfo
+                        val message = if (event.type == TerminalEventDto.EventType.PROGRESS && event.progressPercent != null) {
+                            "[${event.progressPercent}%] ${event.message}"
+                        } else {
+                            event.message
+                        }
                         Text(
                             text = if (prefix.isEmpty()) "[$time] $message" else "[$time] $prefix $message",
                             color = color,
@@ -82,6 +89,26 @@ fun Terminal(
                     .background(Color(0xFF252526))
                     .padding(12.dp)
             ) {
+                // Agent selector (simplified - always uses ImplementationAgent)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Agent: ${state.selectedAgentType.name}",
+                        color = Color(0xFF00FF00),
+                        style = MaterialTheme.typography.caption
+                    )
+                    // Simplified mode: Always uses ImplementationAgent
+                    // Router defaults to ImplementationAgent, UI can override in future
+                    Text(
+                        text = "⚙️ Implementation (Default)",
+                        color = Color(0xFF00FF00),
+                        style = MaterialTheme.typography.caption
+                    )
+                }
+                
                 // Prompt line
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -94,8 +121,8 @@ fun Terminal(
                         modifier = Modifier.padding(end = 8.dp)
                     )
                     TextField(
-                        value = text,
-                        onValueChange = { text = it },
+                        value = state.inputText,
+                        onValueChange = { viewModel.updateInputText(it) },
                         modifier = Modifier.weight(1f),
                         placeholder = { Text("Enter task (e.g., 'Add error handling')", color = Color.Gray) },
                         colors = TextFieldDefaults.textFieldColors(
@@ -105,7 +132,8 @@ fun Terminal(
                             focusedIndicatorColor = Color.Green,
                             unfocusedIndicatorColor = Color(0xFF404040)
                         ),
-                        singleLine = true
+                        singleLine = true,
+                        enabled = !state.isProcessing
                     )
                 }
 
@@ -120,40 +148,43 @@ fun Terminal(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             onClick = { 
-                                if (text.isNotBlank()) {
-                                    onSubmit(text, TaskMode.CURRENT_MODEL)
-                                    text = ""
+                                if (state.inputText.isNotBlank()) {
+                                    viewModel.submitTask(state.inputText, TaskMode.CURRENT_MODEL)
                                 }
                             },
-                            colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF0D7377))
+                            colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF0D7377)),
+                            enabled = !state.isProcessing
                         ) {
                             Text("PROCESS", color = Color.White)
                         }
                         Button(
                             onClick = { 
-                                if (text.isNotBlank()) {
-                                    onSubmit(text, TaskMode.SMART_ANALYZE)
-                                    text = ""
+                                if (state.inputText.isNotBlank()) {
+                                    viewModel.submitTask(state.inputText, TaskMode.SMART_ANALYZE)
                                 }
                             },
-                            colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF1470B8))
+                            colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFF1470B8)),
+                            enabled = !state.isProcessing
                         ) {
                             Text("ANALYZE", color = Color.White)
                         }
                         Button(
                             onClick = { 
-                                if (text.isNotBlank()) {
-                                    onSubmit(text, TaskMode.DEBUG)
-                                    text = ""
+                                if (state.inputText.isNotBlank()) {
+                                    viewModel.submitTask(state.inputText, TaskMode.DEBUG)
                                 }
                             },
-                            colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFB8860B))
+                            colors = ButtonDefaults.buttonColors(backgroundColor = Color(0xFFB8860B)),
+                            enabled = !state.isProcessing
                         ) {
                             Text("DEBUG", color = Color.White)
                         }
                     }
                     
-                    TextButton(onClick = onClear) {
+                    TextButton(
+                        onClick = { viewModel.clear() },
+                        enabled = !state.isProcessing
+                    ) {
                         Text("Clear", color = Color.Gray)
                     }
                 }

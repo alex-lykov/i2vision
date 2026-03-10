@@ -11,14 +11,12 @@ dependencies {
     implementation(project(":core:session"))
     implementation(project(":models:wrappers"))
     implementation(project(":models:cloud"))
-    implementation(project(":switching:analyzer"))
-    implementation(project(":switching:monitor"))
-    implementation(project(":switching:decision"))
-    implementation(project(":context:hierarchy"))
-    implementation(project(":context:provider"))
+    implementation(project(":switching"))
+    implementation(project(":context"))
     implementation("ai.koog:koog-agents:0.6.3")
     implementation("org.slf4j:slf4j-simple:2.0.9")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing")
     implementation(compose.desktop.currentOs)
 }
 

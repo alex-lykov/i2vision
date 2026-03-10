@@ -13,56 +13,28 @@ plugins {
 
 rootProject.name = "koog-coding-agent"
 
-// Core modules
+// Core modules (keep split for now - can consolidate later if needed)
 include("core:orchestrator")
 include("core:session")
 include("core:coroutines")
 include("core:config")
 
-// Model modules
+// Model modules (keep split - wrappers vs cloud makes sense)
 include("models:wrappers")
 include("models:cloud")
 
-// Switching modules
-include("switching:analyzer")
-include("switching:monitor")
-include("switching:decision")
-
-// Context modules
-include("context:hierarchy")
-include("context:provider")
-include("context:navigation")
-
-// Server modules
+// Consolidated modules (flattened from nested structure)
+include("switching")
+include("context")
+include("pipeline")
+include("learning")
 include("server")
-include("server:routes")
-include("server:streaming")
+include("database")
+include("ui")
+include("security")
 
 // Kotlin analysis
 include("kotlin:analysis")
-
-// Database
-include("database")
-include("database:repositories")
-
-// Learning modules
-include("learning:tracker")
-include("learning:optimizer")
-include("learning:patterns")
-
-// Pipeline modules
-include("pipeline:parser")
-include("pipeline:assembler")
-include("pipeline:execution")
-include("pipeline:processor")
-
-// UI modules
-include("ui:chat")
-include("ui:config")
-
-// Security
-include("security")
-include("security:access")
 
 // Launcher (contains main)
 include("launcher")

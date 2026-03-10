@@ -14,35 +14,31 @@ import androidx.compose.ui.window.rememberWindowState
 import com.alyk.ai.koog.core.session.project.JsonProjectRepository
 import com.alyk.ai.koog.core.session.project.ProjectRepository
 import core.AgentLauncher
-import core.OutputEvent
 import core.TaskMode
 import gui.components.*
-import kotlinx.coroutines.launch
+import gui.viewmodel.MainViewModel
+import gui.viewmodel.TerminalViewModel
 
 @Composable
 fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
-    val scope = rememberCoroutineScope()
+    // Use rememberCoroutineScope() which provides the correct Main dispatcher for Compose Desktop
+    val coroutineScope = rememberCoroutineScope()
+    
+    // Create ViewModels
+    val mainViewModel = remember {
+        MainViewModel(agentLauncher, coroutineScope)
+    }
+    val terminalViewModel = remember {
+        TerminalViewModel(mainViewModel)
+    }
+    
+    // Observe state from ViewModels
+    val terminalState by terminalViewModel.state.collectAsState()
+    val agentStatus by mainViewModel.agentStatus.collectAsState()
+    val mcpStatus by mainViewModel.mcpStatus.collectAsState()
+    
     val projectRepository: ProjectRepository = remember { JsonProjectRepository() }
     val availableModels = remember { agentLauncher.getAvailableModels() }
-    var events by remember { mutableStateOf<List<OutputEvent>>(emptyList()) }
-    var status by remember { mutableStateOf(agentLauncher.getStatus()) }
-
-    // Subscribe to real-time status updates
-    LaunchedEffect(agentLauncher) {
-        agentLauncher.getStatusStream().collect { newStatus ->
-            status = newStatus
-        }
-    }
-
-    fun submitTask(task: String, mode: TaskMode) {
-        if (task.isBlank()) return
-        scope.launch {
-            events = events + OutputEvent.System(">>> $task")
-            agentLauncher.processTask(task, mode).collect { event ->
-                events = events + event
-            }
-        }
-    }
 
     Window(
         onCloseRequest = onCloseRequest,
@@ -56,9 +52,7 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
             ) {
                 // Left side: IntelliJ-style Terminal (prompt at bottom, output above)
                 Terminal(
-                    events = events,
-                    onClear = { events = emptyList() },
-                    onSubmit = { task, mode -> submitTask(task, mode) },
+                    viewModel = terminalViewModel,
                     modifier = Modifier.weight(0.6f).fillMaxHeight()
                 )
 
@@ -71,18 +65,15 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
                     ProjectManagementPanel(
                         projectRepository = projectRepository,
                         onProjectSelected = { project ->
-                            scope.launch {
-                                val result = agentLauncher.loadProject(project.path)
-                                if (result.isSuccess) {
-                                    events = events + OutputEvent.System("Project loaded: ${project.name}")
-                                } else {
-                                    events = events + OutputEvent.Error("Failed to load project: ${result.exceptionOrNull()?.message}")
-                                }
+                            mainViewModel.loadProject(project.path) { success, error ->
+                                // Result handled in ViewModel, events added automatically
                             }
                         }
                     )
                     // Performance Card (separate)
-                    PerformanceCard(status = status)
+                    agentStatus?.let { status ->
+                        PerformanceCard(status = status)
+                    }
 
                     // System Monitor
                     SystemMonitor()
@@ -105,7 +96,9 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
                     )*/
                     
                     QuickActions(
-                        onAction = { submitTask(it, TaskMode.CURRENT_MODEL) }
+                        onAction = { task ->
+                            mainViewModel.submitTask(task, TaskMode.CURRENT_MODEL)
+                        }
                     )
                 }
             }

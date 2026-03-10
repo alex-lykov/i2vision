@@ -1,6 +1,7 @@
 package core
 
 import com.alyk.ai.koog.config.Config
+import com.alyk.ai.koog.core.orchestrator.mcp.McpStatus
 import kotlinx.coroutines.flow.Flow
 import java.time.Duration
 import java.time.Instant
@@ -11,7 +12,7 @@ interface AgentLauncher {
     fun shutdown()
     fun getStatus(): AgentStatus
     fun getStatusStream(): Flow<AgentStatus>
-    fun processTask(task: String, mode: TaskMode): Flow<OutputEvent>
+    fun processTask(task: String, mode: TaskMode, agentType: gui.data.AgentTypeDto = gui.data.AgentTypeDto.IMPLEMENTATION): Flow<OutputEvent>
     fun switchModel(target: ModelType): Result<Unit>
     fun addStatusListener(listener: StatusListener)
     suspend fun loadProject(projectPath: String): Result<Unit>
@@ -25,6 +26,16 @@ interface AgentLauncher {
      * Switch to a specific model by ID
      */
     fun switchToModel(modelId: String): Result<Unit>
+    
+    /**
+     * Get MCP integration status
+     */
+    fun getMcpStatus(): McpStatus
+    
+    /**
+     * Get available MCP tools for current project
+     */
+    fun getAvailableMCPTools(): Flow<String>
 }
 
 data class AgentStatus(

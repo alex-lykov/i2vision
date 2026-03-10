@@ -1,13 +1,15 @@
+import ai.koog.agents.core.tools.ToolRegistry
 import cli.CliLauncher
 import com.alyk.ai.koog.config.Config
 import com.alyk.ai.koog.config.ConfigLoader
 import com.alyk.ai.koog.context.hierarchy.HierarchyBuilder
 import com.alyk.ai.koog.context.provider.ContextProvider
 import com.alyk.ai.koog.core.orchestrator.AgentOrchestrator
+import com.alyk.ai.koog.core.orchestrator.mcp.McpStatus
 import com.alyk.ai.koog.core.session.SessionStore
-import com.alyk.ai.koog.models.wrappers.LocalModelWrapper
 import com.alyk.ai.koog.models.wrappers.ModelInfo
 import com.alyk.ai.koog.models.wrappers.ModelRegistry
+import com.alyk.ai.koog.models.wrappers.ModelWrapper
 import com.alyk.ai.koog.switching.analyzer.ContextAnalyzer
 import com.alyk.ai.koog.switching.decision.DecisionEngine
 import com.alyk.ai.koog.switching.decision.ModelSwitchControl
@@ -28,25 +30,11 @@ class AgentLauncherImpl : AgentLauncher {
     private val config: Config = ConfigLoader.load()
     private val localRegistry = ModelRegistry(config.ollamaApiUrl)
     private val unifiedModelManager = UnifiedModelManager(localRegistry, config.cloudConfigs)
-    private val initialModel = LocalModelWrapper(
-        modelName = "qwen3:4b",
-        maxContextLength = 4096,
-        performanceMonitor = performanceMonitor
-    )
-    private val modelSwitchControl = ModelSwitchControl(performanceMonitor, initialModel)
-    private val orchestrator = AgentOrchestrator(
-        sessionStore = SessionStore(),
-        decisionEngine = DecisionEngine(
-            contextAnalyzer = ContextAnalyzer(),
-            performanceMonitor = performanceMonitor
-        ),
-        contextProvider = contextProvider,
-        hierarchyBuilder = hierarchyBuilder,
-        localModel = initialModel,
-        cloudModel = null,
-        modelSwitchControl = modelSwitchControl
-    )
-    private val client = AgentClient(orchestrator)
+    // Initial model will be set during initialize() to the smallest available model
+    private lateinit var initialModel: ModelWrapper
+    private lateinit var modelSwitchControl: ModelSwitchControl
+    private lateinit var orchestrator: AgentOrchestrator
+    private lateinit var client: AgentClient
     private val listeners = mutableListOf<StatusListener>()
     private var availableModels: List<ModelInfo> = emptyList()
     private val statusUpdateScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
@@ -86,6 +74,39 @@ class AgentLauncherImpl : AgentLauncher {
                 cloudModels.forEach { model ->
                     println("    - ${model.id} (${model.formattedSize})")
                 }
+                
+                // Select smallest available model as initial model
+                val smallestModel = localModels.minByOrNull { it.size }
+                    ?: throw IllegalStateException("No local models available")
+                
+                println("📦 [INIT] Selecting smallest model as initial: ${smallestModel.id} (${smallestModel.formattedSize})")
+                
+                // Create initial model wrapper
+                initialModel = unifiedModelManager.createModelWrapper(
+                    smallestModel.id,
+                    performanceMonitor
+                ) ?: throw IllegalStateException("Failed to create model wrapper for ${smallestModel.id}")
+                
+                // Initialize model switch control with the smallest model
+                modelSwitchControl = ModelSwitchControl(performanceMonitor, initialModel)
+                
+                // Initialize orchestrator with the selected model
+                orchestrator = AgentOrchestrator(
+                    sessionStore = SessionStore(),
+                    decisionEngine = DecisionEngine(
+                        contextAnalyzer = ContextAnalyzer(),
+                        performanceMonitor = performanceMonitor
+                    ),
+                    contextProvider = contextProvider,
+                    hierarchyBuilder = hierarchyBuilder,
+                    localModel = initialModel,
+                    cloudModel = null,
+                    modelSwitchControl = modelSwitchControl,
+                    mcpToolRegistry = ToolRegistry.EMPTY
+                )
+                
+                // Initialize client with orchestrator
+                client = AgentClient(orchestrator)
                 
                 orchestrator.initialize(config.projectPath)
                 client.initialize(config.projectPath)
@@ -173,7 +194,8 @@ class AgentLauncherImpl : AgentLauncher {
     }
 
     /**
-     * Auto-detect running models and switch to the first one found
+     * Auto-detect running models and switch to the smallest one
+     * Delegates to ModelSwitchControl for proper separation of concerns
      */
     private suspend fun detectAndSwitchToRunningModel(): Result<Unit> {
         return try {
@@ -184,31 +206,26 @@ class AgentLauncherImpl : AgentLauncher {
             println("🔍 [SWITCH] Current model: $currentModelId")
             println("🔍 [SWITCH] Found ${runningModels.size} running models:")
             runningModels.forEach { model ->
-                println("  - ${model.id}")
+                println("  - ${model.id} (${model.formattedSize})")
             }
             
-            if (runningModels.isNotEmpty()) {
-                val firstRunningModel = runningModels.first()
-                println("🔄 [SWITCH] Found running model: ${firstRunningModel.id}")
-                
-                // Only switch if it's different from current model
-                if (firstRunningModel.id != currentModelId) {
-                    println("🔄 [SWITCH] Switching from $currentModelId to ${firstRunningModel.id}")
-                    
-                    // Switch to the running model
-                    modelSwitchControl.switchToModel(firstRunningModel.id) { id, monitor ->
-                        unifiedModelManager.createModelWrapper(id, monitor)
-                    }
-                    
-                    println("✅ [SWITCH] Successfully switched to running model: ${firstRunningModel.id}")
-                } else {
-                    println("ℹ️ [SWITCH] Model ${firstRunningModel.id} is already current, no switch needed")
-                }
-                Result.success(Unit)
-            } else {
-                println("ℹ️ [SWITCH] No running models found, keeping current model: $currentModelId")
-                Result.success(Unit)
+            // Use ModelSwitchControl to select and switch to smallest running model
+            val result = modelSwitchControl.detectAndSwitchToSmallestRunningModel(runningModels) { id, monitor ->
+                unifiedModelManager.createModelWrapper(id, monitor)
             }
+            
+            if (result.isSuccess) {
+                val smallestModel = runningModels.minByOrNull { it.size }
+                if (smallestModel != null && smallestModel.id != currentModelId) {
+                    println("✅ [SWITCH] Successfully switched to smallest running model: ${smallestModel.id} (${smallestModel.formattedSize})")
+                } else if (smallestModel != null) {
+                    println("ℹ️ [SWITCH] Already using smallest running model: ${smallestModel.id}")
+                } else {
+                    println("ℹ️ [SWITCH] No running models found, keeping current model: $currentModelId")
+                }
+            }
+            
+            result
         } catch (e: Exception) {
             println("❌ [SWITCH] Error detecting running models: ${e.message}")
             e.printStackTrace()
@@ -216,7 +233,7 @@ class AgentLauncherImpl : AgentLauncher {
         }
     }
 
-    override fun processTask(task: String, mode: TaskMode): Flow<OutputEvent> {
+    override fun processTask(task: String, mode: TaskMode, agentType: gui.data.AgentTypeDto): Flow<OutputEvent> {
         return flow {
             // Before processing, check if we should switch to a running model
             try {
@@ -227,8 +244,8 @@ class AgentLauncherImpl : AgentLauncher {
                 println("Warning: Failed to detect running models: ${e.message}")
             }
             
-            // Process the task with the current model
-            client.processTask(task, mode).collect { event ->
+            // Process the task with the selected agent type
+            client.processTask(task, mode, agentType).collect { event ->
                 emit(event)
             }
         }
@@ -244,6 +261,20 @@ class AgentLauncherImpl : AgentLauncher {
 
     override suspend fun loadProject(projectPath: String): Result<Unit> {
         return orchestrator.loadProject(projectPath)
+    }
+
+    /**
+     * Get MCP integration status
+     */
+    override fun getMcpStatus(): McpStatus {
+        return orchestrator.getMcpStatus()
+    }
+
+    /**
+     * Get available MCP tools for current project
+     */
+    override fun getAvailableMCPTools(): Flow<String> {
+        return orchestrator.getAvailableMCPTools()
     }
 }
 

@@ -12,23 +12,23 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-import core.AgentStatus
-import core.ModelType
+import gui.data.AgentStatusDto
+import gui.data.ModelTypeDto
 
 @Composable
 fun PerformanceCard(
-    status: AgentStatus,
+    status: AgentStatusDto,
     modifier: Modifier = Modifier
 ) {
     val statusColor = when (status.currentModel) {
-        ModelType.LOCAL -> if (status.hasPerformanceAlert) Color.Red else Color.Green
-        ModelType.CLOUD -> Color.Blue
-        ModelType.SWITCHING -> Color.Yellow
-        ModelType.ERROR -> Color.Red
-        ModelType.CLOUD_OLLAMA -> Color.Cyan
-        ModelType.CLOUD_HF -> Color.Magenta
-        ModelType.CLOUD_REPLICATE -> Color(0xFF9C27B0)
-        ModelType.CLOUD_ANYSCALE -> Color(0xFF3F51B5)
+        ModelTypeDto.LOCAL -> if (status.hasPerformanceAlert) Color.Red else Color.Green
+        ModelTypeDto.CLOUD -> Color.Blue
+        ModelTypeDto.SWITCHING -> Color.Yellow
+        ModelTypeDto.ERROR -> Color.Red
+        ModelTypeDto.CLOUD_OLLAMA -> Color.Cyan
+        ModelTypeDto.CLOUD_HF -> Color.Magenta
+        ModelTypeDto.CLOUD_REPLICATE -> Color(0xFF9C27B0)
+        ModelTypeDto.CLOUD_ANYSCALE -> Color(0xFF3F51B5)
     }
 
     RightPanelCardWithStatus(

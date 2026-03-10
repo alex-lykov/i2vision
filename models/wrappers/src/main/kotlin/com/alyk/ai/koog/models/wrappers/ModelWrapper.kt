@@ -4,10 +4,16 @@ import ai.koog.agents.core.agent.AIAgent
 import ai.koog.prompt.executor.llms.all.simpleOllamaAIExecutor
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
-import com.alyk.ai.koog.switching.monitor.PerformanceMonitor
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlin.system.measureTimeMillis
+
+/**
+ * Simple interface for performance monitoring to avoid circular dependency
+ */
+interface PerformanceMonitor {
+    fun recordMetric(responseTime: Long, tokensUsed: Int, tokensGenerated: Int)
+}
 
 /**
  * Abstract model-specific implementations into unified interface

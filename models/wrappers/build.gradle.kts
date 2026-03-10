@@ -1,5 +1,6 @@
 dependencies {
     implementation(project(":core:coroutines"))
-    implementation(project(":switching:monitor"))
+    // Note: PerformanceMonitor is passed as parameter, not imported
+    // This avoids circular dependency with :switching
     implementation("ai.koog:koog-agents:0.6.3")
 }

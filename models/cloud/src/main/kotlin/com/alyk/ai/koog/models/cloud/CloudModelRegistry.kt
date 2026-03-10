@@ -1,7 +1,7 @@
 package com.alyk.ai.koog.models.cloud
 
 import com.alyk.ai.koog.models.wrappers.ModelWrapper
-import com.alyk.ai.koog.switching.monitor.PerformanceMonitor
+import com.alyk.ai.koog.models.wrappers.PerformanceMonitor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json

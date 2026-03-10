@@ -5,7 +5,7 @@ import ai.koog.prompt.executor.llms.all.simpleOllamaAIExecutor
 import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
 import com.alyk.ai.koog.models.wrappers.ModelWrapper
-import com.alyk.ai.koog.switching.monitor.PerformanceMonitor
+import com.alyk.ai.koog.models.wrappers.PerformanceMonitor
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlin.system.measureTimeMillis

@@ -1,90 +1,52 @@
 package com.alyk.ai.koog.models.wrappers
 
+import com.alyk.ai.koog.models.common.LocalOllamaRepository
+import com.alyk.ai.koog.models.common.OllamaModelMetadata
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonPrimitive
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 
 /**
- * Registry for managing local Ollama models
- * Cloud model support is handled through factory pattern
+ * Legacy registry for managing local Ollama models
+ * @deprecated Use UnifiedModelService with LocalOllamaRepository instead
  */
 class ModelRegistry(private val ollamaApiUrl: String = "http://localhost:11434") {
     
-    private val models = mutableMapOf<String, ModelInfo>()
-    private val httpClient = HttpClient.newHttpClient()
+    private val repository: LocalOllamaRepository = LocalOllamaRepository(ollamaApiUrl)
+    private var cachedModels = mutableMapOf<String, ModelInfo>()
     
     /**
      * Fetch available models from local Ollama API
      */
     suspend fun scanModels(): List<ModelInfo> = withContext(Dispatchers.IO) {
-        models.clear()
-        
         try {
-            val request = HttpRequest.newBuilder()
-                .uri(URI.create("$ollamaApiUrl/api/tags"))
-                .GET()
-                .build()
-                
-            val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-            
-            if (response.statusCode() == 200) {
-                parseModelsResponse(response.body())
-            } else {
-                emptyList()
-            }
+            val result = repository.scanModels()
+            result.fold(
+                onSuccess = { ollamaModels: List<OllamaModelMetadata> ->
+                    cachedModels.clear()
+                    val modelInfos = ollamaModels.map { ollamaModel: OllamaModelMetadata ->
+                        val modelInfo = ModelInfo(
+                            id = ollamaModel.id,
+                            name = ollamaModel.name,
+                            tag = ollamaModel.tag,
+                            size = ollamaModel.size,
+                            contextLength = ollamaModel.contextLength,
+                            digest = ollamaModel.digest,
+                            layers = ollamaModel.layers,
+                            path = ollamaModel.baseUrl,
+                            error = ollamaModel.error
+                        )
+                        cachedModels[ollamaModel.id] = modelInfo
+                        modelInfo
+                    }
+                    modelInfos
+                },
+                onFailure = { error ->
+                    println("Failed to fetch models from API: ${error.message}")
+                    emptyList()
+                }
+            )
         } catch (e: Exception) {
             println("Failed to fetch models from API: ${e.message}")
-            emptyList()
-        }
-    }
-    
-    private fun parseModelsResponse(response: String): List<ModelInfo> {
-        return try {
-            val json = Json { ignoreUnknownKeys = true }
-            val jsonObject = json.decodeFromString<JsonObject>(response)
-            val modelsArray = jsonObject["models"]?.jsonArray ?: return emptyList()
-            
-            modelsArray.mapNotNull { modelElement ->
-                val modelObj = modelElement as? JsonObject ?: return@mapNotNull null
-                val name = modelObj["name"]?.jsonPrimitive?.content ?: return@mapNotNull null
-                
-                // Parse model info from API response
-                val size = modelObj["size"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
-                val digest = modelObj["digest"]?.jsonPrimitive?.content ?: "unknown"
-                val modified = modelObj["modified_at"]?.jsonPrimitive?.content ?: "unknown"
-                
-                // Extract model name and tag
-                val parts = name.split(":")
-                val modelName = parts[0]
-                val tag = parts.getOrNull(1) ?: "latest"
-                val modelId = name
-                
-                // Infer context length from model name
-                val contextLength = inferContextLength(modelId)
-                
-                val modelInfo = ModelInfo(
-                    id = modelId,
-                    name = modelName,
-                    tag = tag,
-                    size = size,
-                    contextLength = contextLength,
-                    digest = digest,
-                    layers = 0, // API doesn't provide layer count
-                    path = "api://$ollamaApiUrl"
-                )
-                
-                models[modelId] = modelInfo
-                modelInfo
-            }
-        } catch (e: Exception) {
-            println("Error parsing models response: ${e.message}")
             emptyList()
         }
     }
@@ -94,15 +56,29 @@ class ModelRegistry(private val ollamaApiUrl: String = "http://localhost:11434")
      */
     suspend fun getRunningModels(): List<ModelInfo> = withContext(Dispatchers.IO) {
         try {
-            val request = HttpRequest.newBuilder()
-                .uri(URI.create("$ollamaApiUrl/api/ps"))
-                .GET()
-                .build()
-                
-            val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-            
-            if (response.statusCode() == 200) {
-                parseModelsResponse(response.body())
+            if (repository is LocalOllamaRepository) {
+                val result = (repository as LocalOllamaRepository).getRunningModels()
+                result.fold(
+                    onSuccess = { ollamaModels: List<OllamaModelMetadata> ->
+                        ollamaModels.map { ollamaModel: OllamaModelMetadata ->
+                            ModelInfo(
+                                id = ollamaModel.id,
+                                name = ollamaModel.name,
+                                tag = ollamaModel.tag,
+                                size = ollamaModel.size,
+                                contextLength = ollamaModel.contextLength,
+                                digest = ollamaModel.digest,
+                                layers = ollamaModel.layers,
+                                path = ollamaModel.baseUrl,
+                                error = ollamaModel.error
+                            )
+                        }
+                    },
+                    onFailure = { error ->
+                        println("Failed to get running models: ${error.message}")
+                        emptyList()
+                    }
+                )
             } else {
                 emptyList()
             }
@@ -111,37 +87,15 @@ class ModelRegistry(private val ollamaApiUrl: String = "http://localhost:11434")
         }
     }
     
-    private fun inferContextLength(modelId: String): Int {
-        val lower = modelId.lowercase()
-        return when {
-            lower.contains("70b") -> 8192
-            lower.contains("32b") -> 8192
-            lower.contains("14b") -> 4096
-            lower.contains("8b") -> 4096
-            lower.contains("7b") -> 4096
-            lower.contains("4b") -> 4096
-            lower.contains("3b") -> 2048
-            lower.contains("gpt-oss") && lower.contains("20b") -> 16384
-            lower.contains("mistral") && lower.contains("7b") -> 32768
-            lower.contains("llama3") && lower.contains("70b") -> 8192
-            lower.contains("llama3") && lower.contains("8b") -> 8192
-            lower.contains("codellama") && lower.contains("70b") -> 16384
-            lower.contains("codellama") && lower.contains("34b") -> 16384
-            lower.contains("codellama") && lower.contains("13b") -> 16384
-            lower.contains("codellama") && lower.contains("7b") -> 16384
-            else -> 4096
-        }
-    }
-    
     /**
      * Get a specific model by ID
      */
-    fun getModel(modelId: String): ModelInfo? = models[modelId]
+    fun getModel(modelId: String): ModelInfo? = cachedModels[modelId]
     
     /**
      * Get all available models
      */
-    fun getAllModels(): List<ModelInfo> = models.values.toList()
+    fun getAllModels(): List<ModelInfo> = cachedModels.values.toList()
     
     /**
      * Create a ModelWrapper for the specified local model
@@ -150,7 +104,7 @@ class ModelRegistry(private val ollamaApiUrl: String = "http://localhost:11434")
         modelId: String,
         performanceMonitor: PerformanceMonitor? = null
     ): ModelWrapper? {
-        val model = models[modelId] ?: return null
+        val model = cachedModels[modelId] ?: return null
         
         return LocalModelWrapper(
             modelName = model.id,
@@ -162,13 +116,13 @@ class ModelRegistry(private val ollamaApiUrl: String = "http://localhost:11434")
     /**
      * Check if a model exists
      */
-    fun hasModel(modelId: String): Boolean = models.containsKey(modelId)
+    fun hasModel(modelId: String): Boolean = cachedModels.containsKey(modelId)
     
     /**
      * Close HTTP client
      */
     fun close() {
-        httpClient.close()
+        repository.close()
     }
 }
 

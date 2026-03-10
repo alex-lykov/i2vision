@@ -20,6 +20,7 @@ include("core:coroutines")
 include("core:config")
 
 // Model modules (keep split - wrappers vs cloud makes sense)
+include("models:common")
 include("models:wrappers")
 include("models:cloud")
 

@@ -44,40 +44,76 @@ class MainViewModel(
     val availableMcpTools: StateFlow<List<String>> = _availableMcpTools.asStateFlow()
 
     init {
+        println("[VIEWMODEL] Initializing MainViewModel...")
+        
         // Subscribe to agent status stream
         coroutineScope.launch {
-            agentLauncher.getStatusStream().collect { status ->
-                _agentStatus.value = mapToStatusDto(status)
+            println("[VIEWMODEL] Subscribing to agent status stream...")
+            try {
+                agentLauncher.getStatusStream().collect { status ->
+                    val dto = mapToStatusDto(status)
+                    val previousStatus = _agentStatus.value
+                    
+                    // Only log when status actually changes
+                    if (previousStatus == null || 
+                        previousStatus.filesLoaded != dto.filesLoaded ||
+                        previousStatus.currentModelId != dto.currentModelId ||
+                        kotlin.math.abs(previousStatus.contextUsage - dto.contextUsage) > 0.01f) {
+                        println("[VIEWMODEL] Status update: model=${dto.currentModelId}, files=${dto.filesLoaded}, context=${(dto.contextUsage * 100).toInt()}%")
+                    }
+                    
+                    _agentStatus.value = dto
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Cancellation is expected when view model is disposed
+                println("[VIEWMODEL] Status stream cancelled (expected)")
+            } catch (e: Exception) {
+                println("[VIEWMODEL] ❌ Error in status stream: ${e.message}")
+                e.printStackTrace()
             }
         }
 
         // Subscribe to MCP status
         coroutineScope.launch {
+            println("[VIEWMODEL] Getting MCP status...")
             val mcpStatus = agentLauncher.getMcpStatus()
+            println("[VIEWMODEL] MCP status: $mcpStatus")
             _mcpStatus.value = mapToMcpStatusDto(mcpStatus)
         }
 
         // Subscribe to MCP tools
         coroutineScope.launch {
+            println("[VIEWMODEL] Subscribing to MCP tools...")
             agentLauncher.getAvailableMCPTools().collect { tool ->
+                println("[VIEWMODEL] Received MCP tool: $tool")
                 _availableMcpTools.value = _availableMcpTools.value + tool
+                println("[VIEWMODEL] MCP tools count: ${_availableMcpTools.value.size}")
             }
         }
+        
+        println("[VIEWMODEL] MainViewModel initialization complete")
     }
 
     /**
      * Submit a task for processing
      */
     fun submitTask(task: String, mode: TaskMode) {
-        if (task.isBlank()) return
+        println("[VIEWMODEL] submitTask called: task='$task', mode=$mode")
+        
+        if (task.isBlank()) {
+            println("[VIEWMODEL] Task is blank, returning")
+            return
+        }
 
         coroutineScope.launch {
             val selectedAgent = _terminalState.value.selectedAgentType
+            println("[VIEWMODEL] Selected agent: $selectedAgent")
             
             _terminalState.value = _terminalState.value.copy(
                 isProcessing = true,
                 inputText = ""
             )
+            println("[VIEWMODEL] Terminal state updated: isProcessing=true")
 
             // Add user input event with agent info
             addTerminalEvent(
@@ -235,7 +271,34 @@ class MainViewModel(
             avgResponseTimeMs = status.avgResponseTimeMs,
             performanceWarnings = status.performanceWarnings,
             hasPerformanceAlert = status.hasPerformanceAlert,
-            currentModelId = status.currentModelId
+            currentModelId = status.currentModelId,
+            // Enhanced monitoring
+            totalRequests = status.totalRequests,
+            totalTokensUsed = status.totalTokensUsed,
+            totalTokensGenerated = status.totalTokensGenerated,
+            maxResponseTimeMs = status.maxResponseTimeMs,
+            toolUsageStats = status.toolUsageStats?.let {
+                ToolUsageStatsDto(
+                    totalToolCalls = it.totalToolCalls,
+                    recentToolCalls = it.recentToolCalls,
+                    successRate = it.successRate,
+                    avgToolDurationMs = it.avgToolDurationMs,
+                    toolBreakdown = it.toolBreakdown
+                )
+            },
+            fileAccessStats = status.fileAccessStats?.let {
+                FileAccessStatsDto(
+                    totalFileOperations = it.totalFileOperations,
+                    readOperations = it.readOperations,
+                    writeOperations = it.writeOperations,
+                    searchOperations = it.searchOperations,
+                    listOperations = it.listOperations,
+                    successfulOperations = it.successfulOperations,
+                    failedOperations = it.failedOperations
+                )
+            },
+            projectPath = status.projectPath,
+            mcpToolsCount = status.mcpToolsCount
         )
     }
 

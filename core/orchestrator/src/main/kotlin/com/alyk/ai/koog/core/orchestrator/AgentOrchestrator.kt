@@ -35,62 +35,132 @@ class AgentOrchestrator(
     private val mcpIntegration = McpIntegration(contextProvider, mcpToolRegistry)
     private val workspaceFactory = WorkspaceFactory(contextProvider, emptyList())
     private var agentRouter: AgentRouter? = null
+    private val toolUsageTracker = com.alyk.ai.koog.core.orchestrator.tools.ToolUsageTracker()
+    private var useCloudModel: Boolean = false
     
     /**
      * Initialize and maintain references to local/cloud model wrappers
      */
     suspend fun initialize(projectPath: String? = null) {
-        projectPath?.let {
-            loadProject(it)
+        Logger.info("ORCHESTRATOR", "Initializing AgentOrchestrator...")
+        Logger.debug("ORCHESTRATOR", "Project path: ${projectPath ?: "null"}")
+        
+        if (projectPath != null) {
+            Logger.info("ORCHESTRATOR", "Project path provided, loading project...")
+            loadProject(projectPath)
+        } else {
+            Logger.info("ORCHESTRATOR", "No project path, activating MCP structure without project...")
+            // Activate MCP structure even without a project
+            activateMcpStructure(projectPath)
         }
         
-        // Initialize agent router with workspaces
-        val workspaces = workspaceFactory.createAllWorkspaces(projectPath)
-        val currentModel = modelSwitchControl?.getCurrentModel() ?: localModel
+        Logger.info("ORCHESTRATOR", "AgentOrchestrator initialization complete")
+    }
+    
+    /**
+     * Activate MCP structure: Initialize agent router with workspaces and MCP tools
+     * This should be called both during initialization and when a project is loaded
+     */
+    private suspend fun activateMcpStructure(projectPath: String?) {
+        Logger.info("ORCHESTRATOR", "Activating MCP structure...")
+        Logger.debug("ORCHESTRATOR", "Project path: ${projectPath ?: "null"}")
+        
+        val currentModel = selectModel()
+        Logger.debug("ORCHESTRATOR", "Current model: ${currentModel.modelName} (${if (useCloudModel) "cloud" else "local"})")
         
         // Collect MCP tools for Implementation workspace
         val mcpToolsList = mutableListOf<com.alyk.ai.koog.core.orchestrator.mcp.ProjectMcpTool>()
         if (mcpIntegration.isInitialized()) {
+            Logger.debug("ORCHESTRATOR", "MCP integration initialized, collecting tools...")
             kotlinx.coroutines.runBlocking {
                 mcpIntegration.getAvailableTools().collect { tool ->
                     mcpToolsList.add(tool)
+                    Logger.debug("ORCHESTRATOR", "Collected MCP tool: ${tool.name}")
                 }
             }
+            Logger.info("ORCHESTRATOR", "Collected ${mcpToolsList.size} MCP tools")
+        } else {
+            Logger.warn("ORCHESTRATOR", "MCP integration not initialized, no MCP tools available")
         }
         
+        // Create Koog ToolRegistry with file access tools for all agents
+        Logger.debug("ORCHESTRATOR", "Creating Koog ToolRegistry with file access tools...")
+        val projectRoot = contextProvider.getProjectRoot() ?: projectPath ?: "."
+        Logger.debug("ORCHESTRATOR", "Project root for tools: $projectRoot")
+        val koogToolRegistry = com.alyk.ai.koog.core.orchestrator.tools.KoogToolRegistryBuilder(contextProvider).build()
+        Logger.info("ORCHESTRATOR", "✅ Created Koog ToolRegistry with file access tools")
+        
+        // Combine with MCP tool registry
+        val combinedToolRegistry = mcpIntegration.getCurrentToolRegistry() + koogToolRegistry
+        Logger.info("ORCHESTRATOR", "✅ Combined with MCP tools: ${mcpToolsList.size} MCP tools")
+        
         // Update workspace factory with MCP tools
+        Logger.debug("ORCHESTRATOR", "Creating workspaces...")
         val updatedWorkspaceFactory = WorkspaceFactory(contextProvider, mcpToolsList)
         val updatedWorkspaces = updatedWorkspaceFactory.createAllWorkspaces(projectPath)
+        Logger.info("ORCHESTRATOR", "Created ${updatedWorkspaces.size} workspaces: ${updatedWorkspaces.keys.joinToString()}")
         
+        // Initialize agent router with all workspaces and ToolRegistry (layered MCP architecture)
+        Logger.debug("ORCHESTRATOR", "Initializing agent router with all agents...")
         agentRouter = AgentRouter(
-            ideaAgent = IdeaAgent(updatedWorkspaces[com.alyk.ai.koog.core.orchestrator.mcp.workspace.WorkspaceType.IDEA]!!),
-            architectureAgent = ArchitectureAgent(updatedWorkspaces[com.alyk.ai.koog.core.orchestrator.mcp.workspace.WorkspaceType.ARCHITECTURE]!!),
-            moduleAgent = ModuleAgent(updatedWorkspaces[com.alyk.ai.koog.core.orchestrator.mcp.workspace.WorkspaceType.MODULE]!!),
-            testAgent = TestAgent(updatedWorkspaces[com.alyk.ai.koog.core.orchestrator.mcp.workspace.WorkspaceType.TEST]!!),
+            ideaAgent = IdeaAgent(
+                updatedWorkspaces[com.alyk.ai.koog.core.orchestrator.mcp.workspace.WorkspaceType.IDEA]!!,
+                combinedToolRegistry
+            ),
+            architectureAgent = ArchitectureAgent(
+                updatedWorkspaces[com.alyk.ai.koog.core.orchestrator.mcp.workspace.WorkspaceType.ARCHITECTURE]!!,
+                combinedToolRegistry
+            ),
+            moduleAgent = ModuleAgent(
+                updatedWorkspaces[com.alyk.ai.koog.core.orchestrator.mcp.workspace.WorkspaceType.MODULE]!!,
+                combinedToolRegistry
+            ),
+            testAgent = TestAgent(
+                updatedWorkspaces[com.alyk.ai.koog.core.orchestrator.mcp.workspace.WorkspaceType.TEST]!!,
+                combinedToolRegistry
+            ),
             implementationAgent = ImplementationAgent(
                 updatedWorkspaces[com.alyk.ai.koog.core.orchestrator.mcp.workspace.WorkspaceType.IMPLEMENTATION]!!,
-                currentModel
+                currentModel,
+                combinedToolRegistry,
+                toolUsageTracker
             )
         )
+        
+        Logger.info("ORCHESTRATOR", "✅ Activated MCP structure with ${updatedWorkspaces.size} workspaces")
+        Logger.info("ORCHESTRATOR", "✅ All agents initialized with Koog ToolRegistry (file access tools enabled)")
     }
 
     /**
-     * Load or switch to a different project at runtime and integrate with MCP tools
+     * Load or switch to a different project at runtime and activate MCP structure
+     * This activates the layered MCP agent architecture for the selected project
      */
     suspend fun loadProject(projectPath: String): Result<Unit> {
         return try {
-            // Load project context
+            Logger.info("ORCHESTRATOR", "📦 Loading project: $projectPath")
+            
+            // Step 1: Load project context
+            Logger.debug("ORCHESTRATOR", "Step 1: Loading project context...")
             contextProvider.loadProject(projectPath)
+            val loadedFiles = contextProvider.getLoadedFiles()
+            Logger.info("ORCHESTRATOR", "✅ Project context loaded - ${loadedFiles.size} files loaded")
+            Logger.debug("ORCHESTRATOR", "Loaded files: ${loadedFiles.take(10).joinToString(", ")}${if (loadedFiles.size > 10) "..." else ""}")
             
-            // Initialize MCP integration for the project
+            // Step 2: Initialize MCP integration for the project
+            Logger.debug("ORCHESTRATOR", "Step 2: Initializing MCP integration...")
             val enhancedRegistry = mcpIntegration.initializeForProject(projectPath)
+            Logger.info("ORCHESTRATOR", "✅ MCP integration initialized")
             
-            println("[MCP] Successfully linked project $projectPath with MCP integration")
-            println("[MCP] Available MCP tools: ${mcpIntegration.getAvailableTools()}")
+            // Step 3: Activate MCP structure (workspaces + agent router)
+            // This creates all workspaces and initializes the agent router with MCP tools
+            Logger.debug("ORCHESTRATOR", "Step 3: Activating MCP structure...")
+            activateMcpStructure(projectPath)
+            
+            Logger.info("ORCHESTRATOR", "✅ Successfully activated MCP structure for project: $projectPath")
             
             Result.success(Unit)
         } catch (e: Exception) {
-            println("[MCP] Failed to link project to MCP: ${e.message}")
+            Logger.error("ORCHESTRATOR", "❌ Failed to load project and activate MCP structure: ${e.message}", e)
             Result.failure(e)
         }
     }
@@ -99,28 +169,96 @@ class AgentOrchestrator(
      * Get currently loaded project information
      */
     fun getCurrentProject(): String? = contextProvider.getProjectRoot()
+    
+    /**
+     * Select the appropriate model (local or cloud) based on current settings
+     */
+    private fun selectModel(): ModelWrapper {
+        return when {
+            useCloudModel && cloudModel != null -> {
+                Logger.debug("ORCHESTRATOR", "Using cloud model: ${cloudModel.modelName}")
+                cloudModel
+            }
+            modelSwitchControl != null -> {
+                val model = modelSwitchControl.getCurrentModel()
+                Logger.debug("ORCHESTRATOR", "Using model from switch control: ${model.modelName}")
+                model
+            }
+            else -> {
+                Logger.debug("ORCHESTRATOR", "Using default local model: ${localModel.modelName}")
+                localModel
+            }
+        }
+    }
+    
+    /**
+     * Switch to cloud model if available
+     */
+    fun switchToCloudModel(): Result<Unit> {
+        return if (cloudModel != null) {
+            useCloudModel = true
+            modelSwitchControl?.switchModel(cloudModel)
+            Logger.info("ORCHESTRATOR", "Switched to cloud model: ${cloudModel.modelName}")
+            Result.success(Unit)
+        } else {
+            Logger.warn("ORCHESTRATOR", "No cloud model available")
+            Result.failure(IllegalStateException("No cloud model configured"))
+        }
+    }
+    
+    /**
+     * Switch back to local model
+     */
+    fun switchToLocalModel(): Result<Unit> {
+        useCloudModel = false
+        modelSwitchControl?.switchModel(localModel)
+        Logger.info("ORCHESTRATOR", "Switched to local model: ${localModel.modelName}")
+        return Result.success(Unit)
+    }
+    
+    /**
+     * Check if cloud model is available
+     */
+    fun hasCloudModel(): Boolean = cloudModel != null
+    
+    /**
+     * Get current model type (local or cloud)
+     */
+    fun getCurrentModelType(): String = if (useCloudModel && cloudModel != null) "cloud" else "local"
 
     /**
      * Route incoming tasks using the layered agent router
      * Simplified: Always uses ImplementationAgent (can be controlled via UI)
      */
     suspend fun routeTask(task: String, sessionId: String, agentType: com.alyk.ai.koog.core.orchestrator.router.AgentType = com.alyk.ai.koog.core.orchestrator.router.AgentType.IMPLEMENTATION): String {
+        Logger.info("ORCHESTRATOR", "Routing task: '$task' (session: $sessionId, agent: $agentType)")
+        
         val router = agentRouter ?: run {
+            Logger.warn("ORCHESTRATOR", "Agent router not initialized, using fallback direct model")
             // Fallback to direct model if router not initialized
             val context = contextProvider.getContextForTask(task)
+            Logger.debug("ORCHESTRATOR", "Context retrieved: ${context.length} chars")
             val mcpTools = getAvailableMCPTools()
             val promptWithContext = buildPrompt(task, context, mcpTools)
-            val currentModel = modelSwitchControl?.getCurrentModel() ?: localModel
+            val currentModel = selectModel()
+            Logger.debug("ORCHESTRATOR", "Using model: ${currentModel.modelName} (${if (useCloudModel) "cloud" else "local"})")
             return currentModel.generate(promptWithContext)
         }
         
+        val projectPath = getCurrentProject()
+        val loadedFiles = contextProvider.getLoadedFiles()
+        Logger.debug("ORCHESTRATOR", "Project path: ${projectPath ?: "null"}")
+        Logger.debug("ORCHESTRATOR", "Loaded files: ${loadedFiles.size}")
+        
         val taskContext = TaskContext(
-            projectPath = getCurrentProject(),
-            currentFiles = contextProvider.getLoadedFiles(),
+            projectPath = projectPath,
+            currentFiles = loadedFiles,
             sessionId = sessionId
         )
         
+        Logger.debug("ORCHESTRATOR", "Calling router.routeTask with agent type: $agentType")
         val response = router.routeTask(task, taskContext, agentType)
+        Logger.info("ORCHESTRATOR", "Task completed, response length: ${response.result.length}")
         return response.result
     }
     
@@ -195,6 +333,29 @@ class AgentOrchestrator(
      */
     fun getPerformanceStats(): com.alyk.ai.koog.switching.monitor.PerformanceStats {
         return decisionEngine.getPerformanceStats()
+    }
+    
+    /**
+     * Get tool usage statistics
+     */
+    fun getToolUsageStats(): com.alyk.ai.koog.core.orchestrator.tools.ToolUsageStats {
+        return toolUsageTracker.getToolUsageStats()
+    }
+    
+    /**
+     * Get file access statistics
+     */
+    fun getFileAccessStats(): com.alyk.ai.koog.core.orchestrator.tools.FileAccessStats {
+        return toolUsageTracker.getFileAccessStats()
+    }
+    
+    /**
+     * Verify file access tools are working
+     * This can be called to test tool functionality
+     */
+    fun verifyFileAccessTools(): com.alyk.ai.koog.core.orchestrator.tools.VerificationReport {
+        val verifier = com.alyk.ai.koog.core.orchestrator.tools.ToolVerification(contextProvider, toolUsageTracker)
+        return verifier.verifyFileAccessTools()
     }
 
     /**

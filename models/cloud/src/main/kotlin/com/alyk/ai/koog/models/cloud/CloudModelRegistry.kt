@@ -1,27 +1,35 @@
 package com.alyk.ai.koog.models.cloud
 
+import com.alyk.ai.koog.models.common.CloudOllamaRepository
+import com.alyk.ai.koog.models.common.CloudRepositoryConfig
+import com.alyk.ai.koog.models.common.RepositoryType
 import com.alyk.ai.koog.models.wrappers.ModelWrapper
 import com.alyk.ai.koog.models.wrappers.PerformanceMonitor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonPrimitive
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 
 /**
- * Registry for managing cloud-hosted Ollama models
- * Supports multiple cloud providers and authentication
+ * Legacy registry for managing cloud-hosted Ollama models
+ * @deprecated Use UnifiedModelService with CloudOllamaRepository instead
  */
 class CloudModelRegistry(
     private val cloudConfigs: List<OllamaCloudConfig>
 ) {
+    private val repositories = cloudConfigs.map { config ->
+        CloudOllamaRepository(
+            CloudRepositoryConfig(
+                name = config.provider.name,
+                url = config.apiUrl,
+                apiKey = config.apiKey,
+                provider = RepositoryType.valueOf(config.provider.name),
+                region = config.region,
+                maxOutputTokens = config.maxOutputTokens,
+                timeoutMs = config.timeoutMs,
+                retryAttempts = config.retryAttempts
+            )
+        )
+    }
     private val models = mutableMapOf<String, CloudModelInfo>()
-    private val httpClient = HttpClient.newHttpClient()
     
     /**
      * Scan all configured cloud endpoints for available models
@@ -30,107 +38,47 @@ class CloudModelRegistry(
         models.clear()
         val allModels = mutableListOf<CloudModelInfo>()
         
-        cloudConfigs.forEach { config ->
+        repositories.forEach { repository ->
             try {
-                val modelsFromEndpoint = fetchModelsFromEndpoint(config)
-                allModels.addAll(modelsFromEndpoint)
+                val result = repository.scanModels()
+                result.fold(
+                    onSuccess = { ollamaModels ->
+                        val cloudModels = ollamaModels.map { ollamaModel ->
+                            val cloudModelInfo = CloudModelInfo(
+                                id = ollamaModel.id,
+                                name = ollamaModel.name,
+                                tag = ollamaModel.tag,
+                                size = ollamaModel.size,
+                                contextLength = ollamaModel.contextLength,
+                                digest = ollamaModel.digest,
+                                layers = ollamaModel.layers,
+                                path = ollamaModel.baseUrl,
+                                cloudConfig = findConfigForUrl(ollamaModel.baseUrl),
+                                provider = CloudProvider.valueOf(ollamaModel.repositoryType.name),
+                                region = null, // Could be extracted from config if needed
+                                isAvailable = true,
+                                error = ollamaModel.error
+                            )
+                            models[ollamaModel.id] = cloudModelInfo
+                            cloudModelInfo
+                        }
+                        allModels.addAll(cloudModels)
+                    },
+                    onFailure = { error ->
+                        println("Failed to scan cloud repository: ${error.message}")
+                    }
+                )
             } catch (e: Exception) {
-                println("Failed to fetch models from ${config.apiUrl}: ${e.message}")
+                println("Failed to scan cloud repository: ${e.message}")
             }
-        }
-        
-        allModels.forEach { model ->
-            models[model.id] = model
         }
         
         allModels
     }
     
-    private suspend fun fetchModelsFromEndpoint(config: OllamaCloudConfig): List<CloudModelInfo> {
-        val requestBuilder = HttpRequest.newBuilder()
-            .uri(URI.create("${config.apiUrl}/api/tags"))
-            .GET()
-            
-        // Add authentication header if API key is provided
-        config.apiKey?.let { apiKey ->
-            requestBuilder.header("Authorization", "Bearer $apiKey")
-        }
-        
-        val request = requestBuilder.build()
-        val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-        
-        if (response.statusCode() == 200) {
-            return parseCloudModelsResponse(response.body(), config)
-        } else {
-            throw Exception("HTTP ${response.statusCode()}: ${response.body()}")
-        }
-    }
-    
-    private fun parseCloudModelsResponse(response: String, config: OllamaCloudConfig): List<CloudModelInfo> {
-        return try {
-            val json = Json { ignoreUnknownKeys = true }
-            val jsonObject = json.decodeFromString<JsonObject>(response)
-            val modelsArray = jsonObject["models"]?.jsonArray ?: return emptyList()
-            
-            modelsArray.mapNotNull { modelElement ->
-                val modelObj = modelElement as? JsonObject ?: return@mapNotNull null
-                val name = modelObj["name"]?.jsonPrimitive?.content ?: return@mapNotNull null
-                
-                // Parse model info
-                val size = modelObj["size"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
-                val digest = modelObj["digest"]?.jsonPrimitive?.content ?: "unknown"
-                val modified = modelObj["modified_at"]?.jsonPrimitive?.content ?: "unknown"
-                
-                // Extract model name and tag
-                val parts = name.split(":")
-                val modelName = parts[0]
-                val tag = parts.getOrNull(1) ?: "latest"
-                val modelId = "${config.provider.name.lowercase()}:$name"
-                
-                // Infer context length
-                val contextLength = inferContextLength(name)
-                
-                CloudModelInfo(
-                    id = modelId,
-                    name = modelName,
-                    tag = tag,
-                    size = size,
-                    contextLength = contextLength,
-                    digest = digest,
-                    layers = 0,
-                    path = config.apiUrl,
-                    cloudConfig = config,
-                    provider = config.provider,
-                    region = config.region,
-                    isAvailable = true
-                )
-            }
-        } catch (e: Exception) {
-            println("Error parsing cloud models response: ${e.message}")
-            emptyList()
-        }
-    }
-    
-    private fun inferContextLength(modelId: String): Int {
-        val lower = modelId.lowercase()
-        return when {
-            lower.contains("70b") -> 8192
-            lower.contains("32b") -> 8192
-            lower.contains("14b") -> 4096
-            lower.contains("8b") -> 4096
-            lower.contains("7b") -> 4096
-            lower.contains("4b") -> 4096
-            lower.contains("3b") -> 2048
-            lower.contains("gpt-oss") && lower.contains("20b") -> 16384
-            lower.contains("mistral") && lower.contains("7b") -> 32768
-            lower.contains("llama3") && lower.contains("70b") -> 8192
-            lower.contains("llama3") && lower.contains("8b") -> 8192
-            lower.contains("codellama") && lower.contains("70b") -> 16384
-            lower.contains("codellama") && lower.contains("34b") -> 16384
-            lower.contains("codellama") && lower.contains("13b") -> 16384
-            lower.contains("codellama") && lower.contains("7b") -> 16384
-            else -> 4096
-        }
+    private fun findConfigForUrl(url: String): OllamaCloudConfig {
+        return cloudConfigs.find { it.apiUrl == url } 
+            ?: OllamaCloudConfig(url) // Fallback config
     }
     
     /**
@@ -165,10 +113,10 @@ class CloudModelRegistry(
     }
     
     /**
-     * Close HTTP client
+     * Close all repositories
      */
     fun close() {
-        httpClient.close()
+        repositories.forEach { it.close() }
     }
 }
 

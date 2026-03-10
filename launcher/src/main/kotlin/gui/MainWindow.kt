@@ -71,15 +71,25 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
                         }
                     )
                     // Performance Card (separate)
-                    agentStatus?.let { status ->
-                        PerformanceCard(status = status)
+                    val currentStatus = agentStatus
+                    if (currentStatus != null) {
+                        PerformanceCard(status = currentStatus)
+                    } else {
+                        RightPanelCardWithStatus(
+                            title = "Performance",
+                            statusText = "Loading...",
+                            statusColor = androidx.compose.ui.graphics.Color.Gray,
+                            modifier = Modifier
+                        ) {
+                            androidx.compose.material.Text("Waiting for status...")
+                        }
                     }
 
                     // System Monitor
                     SystemMonitor()
 
                     // Combined Ollama Monitor and Control
-                    OllamaMonitorAndControl()
+                    OllamaMonitorAndControl(agentLauncher.getUnifiedModelManager())
 
 
 /*                    ModelListPanel(

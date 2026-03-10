@@ -18,6 +18,7 @@ import core.*
 import gui.launch
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import java.time.Duration
@@ -42,8 +43,12 @@ class AgentLauncherImpl : AgentLauncher {
 
     override fun initialize(config: Config): Result<Unit> {
         return try {
+            println("[INIT] ========================================")
+            println("[INIT] Initializing AgentLauncher...")
+            println("[INIT] ========================================")
             sessionStartTime = Instant.now()
-            println("Using Ollama API: ${config.ollamaApiUrl}")
+            println("[INIT] Using Ollama API: ${config.ollamaApiUrl}")
+            println("[INIT] Project path: ${config.projectPath ?: "null"}")
             
             // Show cloud configuration
             if (config.cloudConfigs.isNotEmpty()) {
@@ -75,22 +80,55 @@ class AgentLauncherImpl : AgentLauncher {
                     println("    - ${model.id} (${model.formattedSize})")
                 }
                 
-                // Select smallest available model as initial model
-                val smallestModel = localModels.minByOrNull { it.size }
-                    ?: throw IllegalStateException("No local models available")
+                // Select smallest available model as initial model (prefer local, fallback to cloud)
+                val smallestLocalModel = localModels.minByOrNull { it.size }
+                val smallestCloudModel = cloudModels.minByOrNull { it.size }
                 
-                println("📦 [INIT] Selecting smallest model as initial: ${smallestModel.id} (${smallestModel.formattedSize})")
+                val initialModelInfo = when {
+                    smallestLocalModel != null -> {
+                        println("📦 [INIT] Selecting smallest local model as initial: ${smallestLocalModel.id} (${smallestLocalModel.formattedSize})")
+                        smallestLocalModel
+                    }
+                    smallestCloudModel != null -> {
+                        println("📦 [INIT] No local models, selecting cloud model as initial: ${smallestCloudModel.id} (${smallestCloudModel.formattedSize})")
+                        smallestCloudModel
+                    }
+                    else -> throw IllegalStateException("No models available (local or cloud)")
+                }
                 
                 // Create initial model wrapper
                 initialModel = unifiedModelManager.createModelWrapper(
-                    smallestModel.id,
+                    initialModelInfo.id,
                     performanceMonitor
-                ) ?: throw IllegalStateException("Failed to create model wrapper for ${smallestModel.id}")
+                ) ?: throw IllegalStateException("Failed to create model wrapper for ${initialModelInfo.id}")
                 
-                // Initialize model switch control with the smallest model
+                // Create cloud model wrapper if cloud models are available and different from initial
+                val cloudModelWrapper: ModelWrapper? = if (cloudModels.isNotEmpty() && smallestCloudModel != null && smallestCloudModel.id != initialModelInfo.id) {
+                    unifiedModelManager.createModelWrapper(
+                        smallestCloudModel.id,
+                        performanceMonitor
+                    ).also {
+                        if (it != null) {
+                            println("☁️ [INIT] Cloud model available: ${smallestCloudModel.id}")
+                        }
+                    }
+                } else if (cloudModels.isNotEmpty() && smallestLocalModel != null) {
+                    // If we're using local, still create a cloud model wrapper for fallback
+                    unifiedModelManager.createModelWrapper(
+                        smallestCloudModel?.id ?: cloudModels.first().id,
+                        performanceMonitor
+                    ).also {
+                        if (it != null) {
+                            println("☁️ [INIT] Cloud model available for fallback: ${smallestCloudModel?.id ?: cloudModels.first().id}")
+                        }
+                    }
+                } else null
+                
+                // Initialize model switch control with the initial model
                 modelSwitchControl = ModelSwitchControl(performanceMonitor, initialModel)
                 
-                // Initialize orchestrator with the selected model
+                // Initialize orchestrator with both local and cloud models
+                println("[INIT] Creating AgentOrchestrator...")
                 orchestrator = AgentOrchestrator(
                     sessionStore = SessionStore(),
                     decisionEngine = DecisionEngine(
@@ -100,7 +138,7 @@ class AgentLauncherImpl : AgentLauncher {
                     contextProvider = contextProvider,
                     hierarchyBuilder = hierarchyBuilder,
                     localModel = initialModel,
-                    cloudModel = null,
+                    cloudModel = cloudModelWrapper,
                     modelSwitchControl = modelSwitchControl,
                     mcpToolRegistry = ToolRegistry.EMPTY
                 )
@@ -108,11 +146,20 @@ class AgentLauncherImpl : AgentLauncher {
                 // Initialize client with orchestrator
                 client = AgentClient(orchestrator)
                 
+                println("[INIT] Initializing orchestrator with project path: ${config.projectPath ?: "null"}")
                 orchestrator.initialize(config.projectPath)
+                println("[INIT] Orchestrator initialized")
+                
+                println("[INIT] Initializing client with project path: ${config.projectPath ?: "null"}")
                 client.initialize(config.projectPath)
+                println("[INIT] Client initialized")
             }
+            println("[INIT] ✅ Agent initialized successfully")
+            println("[INIT] ========================================")
             Result.success(Unit)
         } catch (e: Exception) {
+            println("[INIT] ❌ Initialization failed: ${e.message}")
+            e.printStackTrace()
             Result.failure(e)
         }
     }
@@ -129,19 +176,72 @@ class AgentLauncherImpl : AgentLauncher {
 
     override fun getStatusStream(): Flow<AgentStatus> {
         return flow {
-            while (currentCoroutineContext().isActive) {
-                emit(getStatus())
-                delay(1000) // Update every second
+            try {
+                while (currentCoroutineContext().isActive) {
+                    try {
+                        emit(getStatus())
+                        delay(2000) // Update every 2 seconds to reduce load
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        // Cancellation is expected when scope is cancelled
+                        println("[STATUS] Status stream cancelled (expected)")
+                        break
+                    } catch (e: Exception) {
+                        println("[STATUS] Error in status stream: ${e.message}")
+                        delay(5000) // Wait longer on error
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Ignore cancellation exceptions
+                println("[STATUS] Status stream scope cancelled")
             }
         }.flowOn(Dispatchers.Default)
     }
 
+    private var lastStatusHash: Int = 0
+    
     override fun getStatus(): core.AgentStatus {
+        if (!::orchestrator.isInitialized) {
+            println("[STATUS] Orchestrator not initialized yet, returning default status")
+            return core.AgentStatus(
+                currentModel = core.ModelType.ERROR,
+                contextUsage = 0.0f,
+                filesLoaded = 0,
+                sessionTime = Duration.ZERO,
+                confidence = 0.0f,
+                lastSwitch = null,
+                errors = listOf("Orchestrator not initialized"),
+                currentModelId = "unknown",
+                toolUsageStats = core.ToolUsageStats(0, 0, 0.0f, 0, emptyMap()),
+                fileAccessStats = core.FileAccessStats(0, 0, 0, 0, 0, 0, 0),
+                projectPath = null,
+                mcpToolsCount = 0
+            )
+        }
+        
         val stats = orchestrator.getPerformanceStats()
         val warnings = orchestrator.getPerformanceWarnings()
         val alerts = orchestrator.getPerformanceAlerts()
         val currentModelId = modelSwitchControl.getCurrentModelId()
         val sessionTime = Duration.between(sessionStartTime, Instant.now())
+        
+        // Get tool usage and file access stats
+        val toolUsageStats = orchestrator.getToolUsageStats()
+        val fileAccessStats = orchestrator.getFileAccessStats()
+        
+        // Get MCP status and tool count (cache to avoid blocking)
+        val mcpStatus = orchestrator.getMcpStatus()
+        val mcpToolsCount = if (mcpStatus is com.alyk.ai.koog.core.orchestrator.mcp.McpStatus.CONNECTED) {
+            // Use cached count or estimate from MCP status
+            6 // Default from logs, could be cached
+        } else {
+            0
+        }
+        
+        // Get project info
+        val projectPath = when (mcpStatus) {
+            is com.alyk.ai.koog.core.orchestrator.mcp.McpStatus.CONNECTED -> mcpStatus.projectPath
+            else -> orchestrator.getCurrentProject()
+        }
         
         // Calculate actual context usage
         val contextUsage = try {
@@ -160,8 +260,17 @@ class AgentLauncherImpl : AgentLauncher {
             // Clamp between 0 and 1
             usageRatio.coerceIn(0f, 1f)
         } catch (e: Exception) {
-            println("Error calculating context usage: ${e.message}")
+            println("[STATUS] ❌ Error calculating context usage: ${e.message}")
             0.0f // Fallback to 0 if calculation fails
+        }
+        
+        val filesLoaded = contextProvider.getLoadedFiles().size
+        
+        // Only log when status changes significantly
+        val currentHash = (filesLoaded * 1000 + stats.totalRequests * 100 + contextUsage.toInt() * 10).hashCode()
+        if (currentHash != lastStatusHash) {
+            println("[STATUS] Update: model=$currentModelId, files=$filesLoaded, context=${(contextUsage * 100).toInt()}%, requests=${stats.totalRequests}, tools=${toolUsageStats.totalToolCalls}")
+            lastStatusHash = currentHash
         }
         
         return AgentStatus(
@@ -175,7 +284,33 @@ class AgentLauncherImpl : AgentLauncher {
             avgResponseTimeMs = stats.avgResponseTimeMs,
             performanceWarnings = warnings.map { "[${it.severity}] ${it.message}" },
             hasPerformanceAlert = alerts.isNotEmpty(),
-            currentModelId = currentModelId
+            currentModelId = currentModelId,
+            // Enhanced monitoring
+            totalRequests = stats.totalRequests,
+            totalTokensUsed = stats.totalTokensUsed,
+            totalTokensGenerated = stats.totalTokensGenerated,
+            maxResponseTimeMs = stats.maxResponseTimeMs,
+            toolUsageStats = core.ToolUsageStats(
+                totalToolCalls = toolUsageStats.totalToolCalls,
+                recentToolCalls = toolUsageStats.recentToolCalls,
+                successRate = toolUsageStats.successRate,
+                avgToolDurationMs = toolUsageStats.avgToolDurationMs,
+                toolBreakdown = toolUsageStats.toolBreakdown
+            ),
+            fileAccessStats = core.FileAccessStats(
+                totalFileOperations = fileAccessStats.totalFileOperations,
+                readOperations = fileAccessStats.readOperations,
+                writeOperations = fileAccessStats.writeOperations,
+                searchOperations = fileAccessStats.searchOperations,
+                listOperations = fileAccessStats.listOperations,
+                successfulOperations = fileAccessStats.successfulOperations,
+                failedOperations = fileAccessStats.failedOperations
+            ),
+            projectPath = when (mcpStatus) {
+                is com.alyk.ai.koog.core.orchestrator.mcp.McpStatus.CONNECTED -> mcpStatus.projectPath
+                else -> null
+            },
+            mcpToolsCount = mcpToolsCount
         )
     }
 
@@ -185,11 +320,30 @@ class AgentLauncherImpl : AgentLauncher {
     override fun getAvailableModels(): List<ModelInfo> = availableModels
     
     /**
+     * Get the UnifiedModelManager for advanced model operations
+     */
+    override fun getUnifiedModelManager(): UnifiedModelManager = unifiedModelManager
+    
+    /**
      * Switch to a specific model by ID
      */
     override fun switchToModel(modelId: String): Result<Unit> {
-        return modelSwitchControl.switchToModel(modelId) { id, monitor ->
-            unifiedModelManager.createModelWrapper(id, monitor)
+        // Check if this is a cloud model
+        val isCloudModel = modelId.contains(":") && modelId.split(":").first().lowercase() in 
+            listOf("generic", "ollama_cloud", "hugging_face", "replicate", "anyscale")
+        
+        return if (isCloudModel) {
+            // Switch to cloud model via orchestrator
+            orchestrator.switchToCloudModel()
+        } else {
+            // Switch to local model
+            val result = modelSwitchControl.switchToModel(modelId) { id, monitor ->
+                unifiedModelManager.createModelWrapper(id, monitor)
+            }
+            if (result.isSuccess) {
+                orchestrator.switchToLocalModel()
+            }
+            result
         }
     }
 
@@ -252,7 +406,19 @@ class AgentLauncherImpl : AgentLauncher {
     }
 
     override fun switchModel(target: ModelType): Result<Unit> {
-        return Result.success(Unit)
+        return when (target) {
+            ModelType.CLOUD, ModelType.CLOUD_OLLAMA, ModelType.CLOUD_HF, 
+            ModelType.CLOUD_REPLICATE, ModelType.CLOUD_ANYSCALE -> {
+                if (orchestrator.hasCloudModel()) {
+                    orchestrator.switchToCloudModel()
+                } else {
+                    Result.failure(IllegalStateException("No cloud model configured"))
+                }
+            }
+            else -> {
+                orchestrator.switchToLocalModel()
+            }
+        }
     }
 
     override fun addStatusListener(listener: StatusListener) {
@@ -260,6 +426,10 @@ class AgentLauncherImpl : AgentLauncher {
     }
 
     override suspend fun loadProject(projectPath: String): Result<Unit> {
+        if (!::orchestrator.isInitialized) {
+            println("[PROJECT] Orchestrator not initialized yet, cannot load project")
+            return Result.failure(IllegalStateException("Orchestrator not initialized"))
+        }
         return orchestrator.loadProject(projectPath)
     }
 
@@ -267,6 +437,10 @@ class AgentLauncherImpl : AgentLauncher {
      * Get MCP integration status
      */
     override fun getMcpStatus(): McpStatus {
+        if (!::orchestrator.isInitialized) {
+            println("[MCP] Orchestrator not initialized yet, returning error status")
+            return McpStatus.ERROR("Orchestrator not initialized")
+        }
         return orchestrator.getMcpStatus()
     }
 
@@ -274,6 +448,10 @@ class AgentLauncherImpl : AgentLauncher {
      * Get available MCP tools for current project
      */
     override fun getAvailableMCPTools(): Flow<String> {
+        if (!::orchestrator.isInitialized) {
+            println("[MCP] Orchestrator not initialized yet, returning empty flow")
+            return emptyFlow()
+        }
         return orchestrator.getAvailableMCPTools()
     }
 }

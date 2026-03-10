@@ -3,6 +3,7 @@ package gui.components
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.Divider
 import androidx.compose.material.LinearProgressIndicator
 import androidx.compose.material.MaterialTheme
 import androidx.compose.material.Text
@@ -132,6 +133,124 @@ fun PerformanceCard(
                             text = "⚠️ $warning",
                             color = Color(0xFFEF6C00),
                             style = MaterialTheme.typography.caption
+                        )
+                    }
+                }
+            }
+            
+            // Enhanced Monitoring Section
+            Spacer(Modifier.height(8.dp))
+            Divider(color = MaterialTheme.colors.onSurface.copy(alpha = 0.1f))
+            Spacer(Modifier.height(8.dp))
+            
+            // Tokens and Requests
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text(
+                        text = "Requests: ${status.totalRequests}",
+                        style = MaterialTheme.typography.caption,
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
+                    )
+                    Text(
+                        text = "Tokens: ${status.totalTokensUsed}/${status.totalTokensGenerated}",
+                        style = MaterialTheme.typography.caption,
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
+                    )
+                }
+                if (status.maxResponseTimeMs > 0) {
+                    Text(
+                        text = "Max: ${status.maxResponseTimeMs}ms",
+                        style = MaterialTheme.typography.caption,
+                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
+                    )
+                }
+            }
+            
+            // Tool Usage Stats
+            status.toolUsageStats?.let { toolStats ->
+                if (toolStats.totalToolCalls > 0) {
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "🔧 Tools: ${toolStats.totalToolCalls}",
+                            style = MaterialTheme.typography.caption,
+                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
+                        )
+                        Text(
+                            text = "${(toolStats.successRate * 100).toInt()}% success",
+                            style = MaterialTheme.typography.caption,
+                            color = if (toolStats.successRate > 0.9f) Color.Green else Color(0xFFFFA500)
+                        )
+                    }
+                }
+            }
+            
+            // File Access Stats
+            status.fileAccessStats?.let { fileStats ->
+                if (fileStats.totalFileOperations > 0) {
+                    Spacer(Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "📁 Files: ${fileStats.totalFileOperations}",
+                            style = MaterialTheme.typography.caption,
+                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            if (fileStats.readOperations > 0) {
+                                Text(
+                                    text = "R:${fileStats.readOperations}",
+                                    style = MaterialTheme.typography.caption,
+                                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
+                                )
+                            }
+                            if (fileStats.writeOperations > 0) {
+                                Text(
+                                    text = "W:${fileStats.writeOperations}",
+                                    style = MaterialTheme.typography.caption,
+                                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
+                                )
+                            }
+                            if (fileStats.searchOperations > 0) {
+                                Text(
+                                    text = "S:${fileStats.searchOperations}",
+                                    style = MaterialTheme.typography.caption,
+                                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Project and MCP Info
+            if (status.projectPath != null || status.mcpToolsCount > 0) {
+                Spacer(Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    if (status.projectPath != null) {
+                        Text(
+                            text = "📂 ${status.projectPath.split("/").last()}",
+                            style = MaterialTheme.typography.caption,
+                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
+                        )
+                    }
+                    if (status.mcpToolsCount > 0) {
+                        Text(
+                            text = "🔌 MCP: ${status.mcpToolsCount}",
+                            style = MaterialTheme.typography.caption,
+                            color = MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
                         )
                     }
                 }

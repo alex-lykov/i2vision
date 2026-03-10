@@ -36,6 +36,11 @@ interface AgentLauncher {
      * Get available MCP tools for current project
      */
     fun getAvailableMCPTools(): Flow<String>
+    
+    /**
+     * Get the UnifiedModelManager for advanced model operations
+     */
+    fun getUnifiedModelManager(): UnifiedModelManager
 }
 
 data class AgentStatus(
@@ -49,7 +54,34 @@ data class AgentStatus(
     val avgResponseTimeMs: Long = 0,
     val performanceWarnings: List<String> = emptyList(),
     val hasPerformanceAlert: Boolean = false,
-    val currentModelId: String = ""
+    val currentModelId: String = "",
+    // Enhanced monitoring fields
+    val totalRequests: Int = 0,
+    val totalTokensUsed: Int = 0,
+    val totalTokensGenerated: Int = 0,
+    val maxResponseTimeMs: Long = 0,
+    val toolUsageStats: ToolUsageStats? = null,
+    val fileAccessStats: FileAccessStats? = null,
+    val projectPath: String? = null,
+    val mcpToolsCount: Int = 0
+)
+
+data class ToolUsageStats(
+    val totalToolCalls: Int,
+    val recentToolCalls: Int,
+    val successRate: Float,
+    val avgToolDurationMs: Long,
+    val toolBreakdown: Map<String, Int>
+)
+
+data class FileAccessStats(
+    val totalFileOperations: Int,
+    val readOperations: Int,
+    val writeOperations: Int,
+    val searchOperations: Int,
+    val listOperations: Int,
+    val successfulOperations: Int,
+    val failedOperations: Int
 )
 
 enum class TaskMode {

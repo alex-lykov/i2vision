@@ -22,6 +22,7 @@
             <option value="$PROJECT_DIR$/learning" />
             <option value="$PROJECT_DIR$/models" />
             <option value="$PROJECT_DIR$/models/cloud" />
+            <option value="$PROJECT_DIR$/models/common" />
             <option value="$PROJECT_DIR$/models/wrappers" />
             <option value="$PROJECT_DIR$/pipeline" />
             <option value="$PROJECT_DIR$/security" />

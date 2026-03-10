@@ -1,5 +1,6 @@
 package com.alyk.ai.koog.core.orchestrator.agents
 
+import ai.koog.agents.core.tools.ToolRegistry
 import com.alyk.ai.koog.core.orchestrator.mcp.workspace.McpWorkspace
 import com.alyk.ai.koog.core.orchestrator.router.AgentResponse
 import com.alyk.ai.koog.core.orchestrator.router.AgentResponseChunk
@@ -11,33 +12,32 @@ import kotlinx.coroutines.flow.flow
 /**
  * Architecture Agent: Handles system design, structure, and patterns
  * Uses MCP Workspace: Architecture
+ * Has access to Koog file access tools for analyzing code structure
  */
 class ArchitectureAgent(
-    workspace: McpWorkspace
-) : BaseAgent(AgentType.ARCHITECTURE, workspace) {
+    workspace: McpWorkspace,
+    toolRegistry: ToolRegistry = ToolRegistry.EMPTY
+) : BaseAgent(AgentType.ARCHITECTURE, workspace, toolRegistry) {
     
     override suspend fun process(task: String, context: TaskContext): AgentResponse {
-        // TODO: Implement architecture design with MCP tools
-        val workspaceContext = workspace.getContext()
+        // Use Koog AIAgent with ToolRegistry for analyzing architecture
+        val prompt = buildPromptWithContext(
+            task,
+            context,
+            "Analyze the codebase structure, module boundaries, and dependencies to design architecture."
+        )
+        
+        // Create AIAgent with tools - can read files and search codebase
+        val agent = createKoogAgent()
+        val result = agent.run(prompt)
         
         return AgentResponse(
             agentType = AgentType.ARCHITECTURE,
-            result = """
-                [Architecture Agent] Processing: $task
-                
-                Workspace: ${workspace.name}
-                Context: $workspaceContext
-                
-                This is a stub implementation. The Architecture Agent will:
-                - Design system architecture
-                - Define module boundaries
-                - Apply design patterns
-                - Create architecture diagrams
-                - Use MCP tools for architecture analysis
-            """.trimIndent(),
+            result = result,
             metadata = mapOf(
                 "workspace" to workspace.name,
-                "agent" to "architecture"
+                "agent" to "architecture",
+                "tools_used" to "true"
             )
         )
     }

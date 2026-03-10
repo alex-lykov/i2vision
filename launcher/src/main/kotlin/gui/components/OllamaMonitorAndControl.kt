@@ -19,6 +19,7 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import core.UnifiedModelManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -76,7 +77,8 @@ private suspend fun stopOllamaService() = withContext(Dispatchers.IO) {
 
 @Composable
 fun OllamaMonitorAndControl(
-    modifier: Modifier = Modifier
+    unifiedModelManager: UnifiedModelManager,
+    //modifier: UnifiedModelManager = Modifier
 ) {
     val scope = rememberCoroutineScope()
     var availableModels by remember { mutableStateOf<List<OllamaModel>>(emptyList()) }
@@ -96,6 +98,7 @@ fun OllamaMonitorAndControl(
     var isServiceStarting by remember { mutableStateOf(false) }
     var isServiceStopping by remember { mutableStateOf(false) }
     var unifiedModels by remember { mutableStateOf<List<UnifiedModel>>(emptyList()) }
+    var cloudModels by remember { mutableStateOf<List<LibraryModel>>(emptyList()) }
 
     // Trigger recomposition when pullProgress changes
     LaunchedEffect(pullProgress) {
@@ -113,9 +116,24 @@ fun OllamaMonitorAndControl(
     val quickStartFocusRequester = remember { FocusRequester() }
     var quickStartExpanded by remember { mutableStateOf(false) }
 
-    // Load library models at boot
+    // Load library models at boot using UnifiedModelManager
     LaunchedEffect(Unit) {
-        libraryModels = loadLibraryModels()
+        try {
+            println("[LIBRARY] Loading cloud models using UnifiedModelManager...")
+            val cloudModelInfos = unifiedModelManager.getCloudModels()
+            cloudModels = cloudModelInfos.map { modelInfo ->
+                LibraryModel(
+                    name = modelInfo.name,
+                    description = "Cloud model: ${modelInfo.id}",
+                    tags = listOf("cloud", modelInfo.tag),
+                    size = modelInfo.formattedSize
+                )
+            }
+            println("[LIBRARY] Loaded ${cloudModels.size} cloud models")
+        } catch (e: Exception) {
+            println("[LIBRARY] Failed to load cloud models: ${e.message}")
+            cloudModels = emptyList()
+        }
     }
 
     // Update data every 3 seconds
@@ -138,28 +156,76 @@ fun OllamaMonitorAndControl(
         }
     }
 
-    // Update unified models when available or library models change
-    LaunchedEffect(availableModels, libraryModels, runningModels) {
+    // Update unified models when available, library, cloud, and running models change
+    LaunchedEffect(availableModels, libraryModels, cloudModels, runningModels) {
         val runningModelNames = runningModels.map { it.name }.toSet()
         val availableModelNames = availableModels.map { it.name }.toSet()
 
         val combined = mutableListOf<UnifiedModel>()
 
-        // Add available/running models
+        // Add available/running models (but exclude cloud-named models that should show cloud UI)
         availableModels.forEach { model ->
+            // Skip models that have cloud naming patterns - they'll be handled by cloud logic
+            val isCloudNamed = model.name.contains("-cloud", ignoreCase = true) ||
+                             model.name.contains("cloud", ignoreCase = true) ||
+                             model.name.startsWith("generic:", ignoreCase = true) ||
+                             model.name.startsWith("hugging_face:", ignoreCase = true)
+            
+            if (!isCloudNamed) {
+                combined.add(
+                    UnifiedModel(
+                        name = model.name,
+                        size = model.formattedSize,
+                        status = if (runningModelNames.contains(model.name)) ModelStatus.RUNNING else ModelStatus.LOADED,
+                        digest = model.digest
+                    )
+                )
+            }
+        }
+
+        // Add cloud models (including cloud-named models that are locally available)
+        cloudModels.forEach { cloudModel ->
+            // Handle name matching with tags - check if available models contain the cloud model name (with or without tag)
+            val isLocallyAvailable = availableModelNames.any { availableName ->
+                // Check exact match first
+                availableName == cloudModel.name ||
+                // Check if available name starts with cloud model name (handles tag differences)
+                availableName.startsWith("${cloudModel.name}:") ||
+                // Check if cloud model name starts with available name (reverse check)
+                cloudModel.name.startsWith("${availableName.split(":").first()}:")
+            }
+            val isRunning = runningModelNames.any { runningName ->
+                runningName == cloudModel.name ||
+                runningName.startsWith("${cloudModel.name}:") ||
+                cloudModel.name.startsWith("${runningName.split(":").first()}:")
+            }
+            
+            println("[DEBUG] Cloud model: ${cloudModel.name}, available: $isLocallyAvailable, running: $isRunning")
+            println("[DEBUG] Available models: ${availableModelNames.joinToString(", ")}")
+            
             combined.add(
                 UnifiedModel(
-                    name = model.name,
-                    size = model.formattedSize,
-                    status = if (runningModelNames.contains(model.name)) ModelStatus.RUNNING else ModelStatus.LOADED,
-                    digest = model.digest
+                    name = cloudModel.name,
+                    description = cloudModel.description,
+                    tags = cloudModel.tags,
+                    size = cloudModel.size,
+                    status = when {
+                        isRunning -> ModelStatus.RUNNING
+                        isLocallyAvailable -> ModelStatus.LOADED  // Available locally but show cloud UI
+                        else -> ModelStatus.CLOUD  // True cloud-only model
+                    },
+                    libraryInfo = LibraryInfo(
+                        description = cloudModel.description,
+                        tags = cloudModel.tags,
+                        size = cloudModel.size
+                    )
                 )
             )
         }
 
-        // Add library models that aren't already available
+        // Add library models that aren't already available or in cloud
         libraryModels.forEach { libModel ->
-            if (!availableModelNames.contains(libModel.name)) {
+            if (!availableModelNames.contains(libModel.name) && !cloudModels.any { it.name == libModel.name }) {
                 combined.add(
                     UnifiedModel(
                         name = libModel.name,
@@ -181,14 +247,15 @@ fun OllamaMonitorAndControl(
             when (it.status) {
                 ModelStatus.RUNNING -> 0
                 ModelStatus.LOADED -> 1
-                ModelStatus.LIBRARY -> 2
+                ModelStatus.CLOUD -> 2
+                ModelStatus.LIBRARY -> 3
             }
         }.thenBy { it.name })
     }
 
     RightPanelCard(
         title = "Ollama Control",
-        modifier = modifier
+        //modifier = modifier
     ) {
         Column {
             // Connection Status and Control Buttons Row
@@ -322,8 +389,32 @@ fun OllamaMonitorAndControl(
                         onClick = {
                             isLoadingLibrary = true
                             scope.launch {
-                                libraryModels = loadLibraryModels()
-                                isLoadingLibrary = false
+                                try {
+                                    println("[LIBRARY] Refreshing cloud models using UnifiedModelManager...")
+                                    // Refresh all models from unified service
+                                    val refreshResult = unifiedModelManager.scanAllModels()
+                                    if (refreshResult.isNotEmpty()) {
+                                        val cloudModelInfos = unifiedModelManager.getCloudModels()
+                                        cloudModels = cloudModelInfos.map { modelInfo ->
+                                            LibraryModel(
+                                                name = modelInfo.name,
+                                                description = "Cloud model: ${modelInfo.id}",
+                                                tags = listOf("cloud", modelInfo.tag),
+                                                size = modelInfo.formattedSize
+                                            )
+                                        }
+                                        println("[LIBRARY] Refreshed ${cloudModels.size} cloud models")
+                                    } else {
+                                        println("[LIBRARY] No models found during refresh")
+                                        cloudModels = emptyList()
+                                    }
+                                } catch (e: Exception) {
+                                    println("[LIBRARY] Failed to refresh cloud models: ${e.message}")
+                                    // Fallback to old method if unified manager fails
+                                    libraryModels = loadLibraryModels()
+                                } finally {
+                                    isLoadingLibrary = false
+                                }
                             }
                         },
                         enabled = !isLoadingLibrary,
@@ -1094,6 +1185,7 @@ private fun UnifiedModelItem(
         ModelStatus.RUNNING -> MaterialTheme.colors.primary.copy(alpha = 0.15f)
         ModelStatus.LIBRARY -> Color(0xFFFFF3E0)
         ModelStatus.LOADED -> MaterialTheme.colors.surface
+        ModelStatus.CLOUD -> Color(0xFFE3F2FD)
     }
 
     Row(
@@ -1109,12 +1201,14 @@ private fun UnifiedModelItem(
                 ModelStatus.RUNNING -> Icons.Default.CheckCircle
                 ModelStatus.LOADED -> Icons.Default.Settings
                 ModelStatus.LIBRARY -> Icons.Default.Settings
+                ModelStatus.CLOUD -> Icons.Default.Settings
             },
             contentDescription = null,
             tint = when (model.status) {
                 ModelStatus.RUNNING -> MaterialTheme.colors.primary
                 ModelStatus.LOADED -> MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
                 ModelStatus.LIBRARY -> MaterialTheme.colors.secondary
+                ModelStatus.CLOUD -> Color(0xFF2196F3)
             },
             modifier = Modifier.size(20.dp)
         )
@@ -1154,12 +1248,14 @@ private fun UnifiedModelItem(
                         ModelStatus.RUNNING -> "🟢 Running"
                         ModelStatus.LOADED -> "📦 Loaded"
                         ModelStatus.LIBRARY -> "📚 Library"
+                        ModelStatus.CLOUD -> "☁️ Cloud"
                     },
                     style = MaterialTheme.typography.caption,
                     color = when (model.status) {
                         ModelStatus.RUNNING -> Color(0xFF4CAF50)
                         ModelStatus.LOADED -> MaterialTheme.colors.primary
                         ModelStatus.LIBRARY -> MaterialTheme.colors.secondary
+                        ModelStatus.CLOUD -> Color(0xFF2196F3)
                     }
                 )
 
@@ -1484,6 +1580,75 @@ private fun UnifiedModelItem(
                             )
                         }
                     }
+
+                    ModelStatus.CLOUD -> {
+                        // Check if cloud model is actually available locally by checking model status
+                        val isLocallyAvailable = model.status == ModelStatus.LOADED || model.status == ModelStatus.RUNNING
+                        
+                        if (isLocallyAvailable) {
+                            // Model is available locally - show START/STOP actions like LOADED models
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                TextButton(
+                                    onClick = {
+                                        isStarting = true
+                                        onStart()
+                                        scope.launch {
+                                            // Wait for actual start operation to complete
+                                            // The startModel function now waits up to 15 seconds plus 2s delay
+                                            kotlinx.coroutines.delay(18000) // Slightly longer than startModel timeout
+                                            isStarting = false
+                                        }
+                                    },
+                                    modifier = Modifier.height(32.dp).defaultMinSize(minWidth = 50.dp),
+                                    enabled = !isStarting && !isRemoving
+                                ) {
+                                    if (isStarting) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp,
+                                            color = Color(0xFF4CAF50)
+                                        )
+                                    } else {
+                                        Text("START", style = MaterialTheme.typography.caption)
+                                    }
+                                }
+                                TextButton(
+                                    onClick = {
+                                        isRemoving = true
+                                        onRemove()
+                                        scope.launch {
+                                            kotlinx.coroutines.delay(5000) // Wait for remove operation to complete
+                                            isRemoving = false
+                                        }
+                                    },
+                                    modifier = Modifier.height(32.dp).defaultMinSize(minWidth = 50.dp),
+                                    enabled = !isRemoving && !isStarting
+                                ) {
+                                    if (isRemoving) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            strokeWidth = 2.dp,
+                                            color = Color(0xFFFF9800)
+                                        )
+                                    } else {
+                                        Text("REMOVE", style = MaterialTheme.typography.caption, color = Color(0xFFFF9800))
+                                    }
+                                }
+                            }
+                        } else {
+                            // True cloud-only model - show PULL action
+                            TextButton(
+                                onClick = onPull,
+                                modifier = Modifier.height(32.dp).defaultMinSize(minWidth = 50.dp)
+                            ) {
+                                Text(
+                                    "PULL",
+                                    style = MaterialTheme.typography.caption,
+                                    color = Color(0xFF2196F3)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1655,7 +1820,8 @@ data class LibraryInfo(
 enum class ModelStatus {
     LIBRARY,     // Available in library but not installed
     LOADED,      // Installed locally
-    RUNNING      // Currently running
+    RUNNING,     // Currently running
+    CLOUD        // Available from cloud repository
 }
 
 // Repository for library models

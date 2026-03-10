@@ -44,7 +44,40 @@ data class AgentStatusDto(
     val avgResponseTimeMs: Long,
     val performanceWarnings: List<String>,
     val hasPerformanceAlert: Boolean,
-    val currentModelId: String
+    val currentModelId: String,
+    // Enhanced monitoring fields
+    val totalRequests: Int = 0,
+    val totalTokensUsed: Int = 0,
+    val totalTokensGenerated: Int = 0,
+    val maxResponseTimeMs: Long = 0,
+    val toolUsageStats: ToolUsageStatsDto? = null,
+    val fileAccessStats: FileAccessStatsDto? = null,
+    val projectPath: String? = null,
+    val mcpToolsCount: Int = 0
+)
+
+/**
+ * Tool usage statistics DTO
+ */
+data class ToolUsageStatsDto(
+    val totalToolCalls: Int,
+    val recentToolCalls: Int,
+    val successRate: Float,
+    val avgToolDurationMs: Long,
+    val toolBreakdown: Map<String, Int>
+)
+
+/**
+ * File access statistics DTO
+ */
+data class FileAccessStatsDto(
+    val totalFileOperations: Int,
+    val readOperations: Int,
+    val writeOperations: Int,
+    val searchOperations: Int,
+    val listOperations: Int,
+    val successfulOperations: Int,
+    val failedOperations: Int
 )
 
 /**

@@ -6,6 +6,7 @@ import ai.koog.prompt.llm.LLMProvider
 import ai.koog.prompt.llm.LLModel
 import com.alyk.ai.koog.models.wrappers.ModelWrapper
 import com.alyk.ai.koog.models.wrappers.PerformanceMonitor
+import com.alyk.ai.koog.models.wrappers.TokenEstimator
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlin.system.measureTimeMillis
@@ -57,13 +58,43 @@ class OllamaCloudModelWrapper(
 
     override suspend fun generateStreaming(prompt: String): Flow<String> {
         return flow {
-            emit(generate(prompt))
+            val agent = AIAgent(
+                promptExecutor = simpleOllamaAIExecutor(
+                    baseUrl = cloudConfig.apiUrl
+                ),
+                llmModel = LLModel(
+                    id = modelName,
+                    provider = LLMProvider.Ollama,
+                    contextLength = maxContextLength.toLong(),
+                    maxOutputTokens = cloudConfig.maxOutputTokens,
+                    capabilities = emptyList()
+                ),
+                systemPrompt = systemPrompt
+            )
+            
+            val startTime = System.currentTimeMillis()
+            val response = agent.run(prompt)
+            val responseTime = System.currentTimeMillis() - startTime
+            
+            // Record performance metrics
+            val tokensUsed = estimateTokens(prompt)
+            val tokensGenerated = estimateTokens(response)
+            performanceMonitor?.recordMetric(responseTime.toLong(), tokensUsed, tokensGenerated)
+            
+            // Emit response in chunks for streaming effect
+            val chunkSize = 50
+            var offset = 0
+            while (offset < response.length) {
+                val chunk = response.substring(offset, minOf(offset + chunkSize, response.length))
+                emit(chunk)
+                offset += chunkSize
+                kotlinx.coroutines.delay(10) // Small delay for streaming effect
+            }
         }
     }
 
     override fun estimateTokens(text: String): Int {
-        // TODO: Implement proper token counting for cloud models
-        return text.length / 4 // Rough estimate
+        return TokenEstimator.estimateTokens(text)
     }
 }
 
@@ -85,5 +116,15 @@ enum class CloudProvider {
     OLLAMA_CLOUD,
     HUGGING_FACE,
     REPLICATE,
-    ANYSCALE
+    ANYSCALE;
+    
+    companion object {
+        fun fromString(value: String): CloudProvider {
+            return try {
+                valueOf(value.uppercase().replace("-", "_"))
+            } catch (e: Exception) {
+                GENERIC
+            }
+        }
+    }
 }

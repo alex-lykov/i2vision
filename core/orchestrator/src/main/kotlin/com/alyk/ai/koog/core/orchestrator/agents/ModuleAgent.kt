@@ -1,5 +1,6 @@
 package com.alyk.ai.koog.core.orchestrator.agents
 
+import ai.koog.agents.core.tools.ToolRegistry
 import com.alyk.ai.koog.core.orchestrator.mcp.workspace.McpWorkspace
 import com.alyk.ai.koog.core.orchestrator.router.AgentResponse
 import com.alyk.ai.koog.core.orchestrator.router.AgentResponseChunk
@@ -11,33 +12,32 @@ import kotlinx.coroutines.flow.flow
 /**
  * Module Agent: Handles module-level changes and refactoring
  * Uses MCP Workspace: Module
+ * Has access to Koog file access tools for module operations
  */
 class ModuleAgent(
-    workspace: McpWorkspace
-) : BaseAgent(AgentType.MODULE, workspace) {
+    workspace: McpWorkspace,
+    toolRegistry: ToolRegistry = ToolRegistry.EMPTY
+) : BaseAgent(AgentType.MODULE, workspace, toolRegistry) {
     
     override suspend fun process(task: String, context: TaskContext): AgentResponse {
-        // TODO: Implement module-level operations with MCP tools
-        val workspaceContext = workspace.getContext()
+        // Use Koog AIAgent with ToolRegistry for module operations
+        val prompt = buildPromptWithContext(
+            task,
+            context,
+            "Analyze module structure and dependencies to perform module-level operations."
+        )
+        
+        // Create AIAgent with tools - can read/write files for refactoring
+        val agent = createKoogAgent()
+        val result = agent.run(prompt)
         
         return AgentResponse(
             agentType = AgentType.MODULE,
-            result = """
-                [Module Agent] Processing: $task
-                
-                Workspace: ${workspace.name}
-                Context: $workspaceContext
-                
-                This is a stub implementation. The Module Agent will:
-                - Refactor modules
-                - Restructure packages
-                - Manage module dependencies
-                - Extract/create modules
-                - Use MCP tools for module analysis
-            """.trimIndent(),
+            result = result,
             metadata = mapOf(
                 "workspace" to workspace.name,
-                "agent" to "module"
+                "agent" to "module",
+                "tools_used" to "true"
             )
         )
     }

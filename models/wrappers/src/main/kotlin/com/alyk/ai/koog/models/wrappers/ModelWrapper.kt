@@ -74,8 +74,7 @@ class LocalModelWrapper(
     }
 
     override fun estimateTokens(text: String): Int {
-        // TODO: Implement token counting
-        return text.length / 4 // Rough estimate
+        return TokenEstimator.estimateTokens(text)
     }
 }
 
@@ -85,20 +84,82 @@ class LocalModelWrapper(
 class CloudModelWrapper(
     override val modelName: String,
     override val maxContextLength: Int,
-    private val apiKey: String
+    private val apiKey: String,
+    private val baseUrl: String = "https://api.openai.com/v1",
+    private val performanceMonitor: PerformanceMonitor? = null
 ) : ModelWrapper {
+    private val systemPrompt = """
+        You are a Kotlin coding assistant.
+        Keep answers concise and practical.
+        You have access to cloud resources for enhanced performance.
+    """.trimIndent()
+
     override suspend fun generate(prompt: String): String {
-        // TODO: Implement cloud API client
-        return "Cloud model response (stub)"
+        val agent = AIAgent(
+            promptExecutor = simpleOllamaAIExecutor(
+                baseUrl = baseUrl
+            ),
+            llmModel = LLModel(
+                id = modelName,
+                provider = LLMProvider.Ollama,
+                contextLength = maxContextLength.toLong(),
+                maxOutputTokens = 2048L,
+                capabilities = emptyList()
+            ),
+            systemPrompt = systemPrompt
+        )
+
+        var response: String
+        val responseTime = measureTimeMillis {
+            response = agent.run(prompt)
+        }
+
+        // Record performance metrics
+        val tokensUsed = estimateTokens(prompt)
+        val tokensGenerated = estimateTokens(response)
+        performanceMonitor?.recordMetric(responseTime, tokensUsed, tokensGenerated)
+
+        return response
     }
 
     override suspend fun generateStreaming(prompt: String): Flow<String> {
-        // TODO: Implement streaming
-        return kotlinx.coroutines.flow.flowOf("Streaming (stub)")
+        return flow {
+            val agent = AIAgent(
+                promptExecutor = simpleOllamaAIExecutor(
+                    baseUrl = baseUrl
+                ),
+                llmModel = LLModel(
+                    id = modelName,
+                    provider = LLMProvider.Ollama,
+                    contextLength = maxContextLength.toLong(),
+                    maxOutputTokens = 2048L,
+                    capabilities = emptyList()
+                ),
+                systemPrompt = systemPrompt
+            )
+            
+            val startTime = System.currentTimeMillis()
+            val response = agent.run(prompt)
+            val responseTime = System.currentTimeMillis() - startTime
+            
+            // Record performance metrics
+            val tokensUsed = estimateTokens(prompt)
+            val tokensGenerated = estimateTokens(response)
+            performanceMonitor?.recordMetric(responseTime, tokensUsed, tokensGenerated)
+            
+            // Emit response in chunks for streaming effect
+            val chunkSize = 50
+            var offset = 0
+            while (offset < response.length) {
+                val chunk = response.substring(offset, minOf(offset + chunkSize, response.length))
+                emit(chunk)
+                offset += chunkSize
+                kotlinx.coroutines.delay(10) // Small delay for streaming effect
+            }
+        }
     }
 
     override fun estimateTokens(text: String): Int {
-        // TODO: Implement token counting
-        return text.length / 4
+        return TokenEstimator.estimateTokens(text)
     }
 }

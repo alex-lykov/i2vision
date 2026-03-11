@@ -27,6 +27,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
@@ -100,6 +101,9 @@ fun OllamaMonitorAndControl(
     var unifiedModels by remember { mutableStateOf<List<UnifiedModel>>(emptyList()) }
     var cloudModels by remember { mutableStateOf<List<LibraryModel>>(emptyList()) }
 
+    // State for tracking cloud models that have been started (must remember so updates survive recomposition)
+    val runningCloudModels = remember { mutableStateOf<Set<String>>(emptySet()) }
+
     // Trigger recomposition when pullProgress changes
     LaunchedEffect(pullProgress) {
         if (pullProgress.isNotBlank()) {
@@ -116,7 +120,7 @@ fun OllamaMonitorAndControl(
     val quickStartFocusRequester = remember { FocusRequester() }
     var quickStartExpanded by remember { mutableStateOf(false) }
 
-    // Load library models at boot using UnifiedModelManager
+    // Load cloud and library (registry) models at boot so both appear in the list for pick/pull
     LaunchedEffect(Unit) {
         try {
             println("[LIBRARY] Loading cloud models using UnifiedModelManager...")
@@ -124,7 +128,7 @@ fun OllamaMonitorAndControl(
             cloudModels = cloudModelInfos.map { modelInfo ->
                 LibraryModel(
                     name = modelInfo.name,
-                    description = "Cloud model: ${modelInfo.id}",
+                    description = modelInfo.id,
                     tags = listOf("cloud", modelInfo.tag),
                     size = modelInfo.formattedSize
                 )
@@ -133,6 +137,14 @@ fun OllamaMonitorAndControl(
         } catch (e: Exception) {
             println("[LIBRARY] Failed to load cloud models: ${e.message}")
             cloudModels = emptyList()
+        }
+        try {
+            println("[LIBRARY] Loading library (registry) models for pick/pull...")
+            libraryModels = loadLibraryModels()
+            println("[LIBRARY] Loaded ${libraryModels.size} library models")
+        } catch (e: Exception) {
+            println("[LIBRARY] Failed to load library models: ${e.message}")
+            libraryModels = emptyList()
         }
     }
 
@@ -156,10 +168,13 @@ fun OllamaMonitorAndControl(
         }
     }
 
-    // Update unified models when available, library, cloud, and running models change
-    LaunchedEffect(availableModels, libraryModels, cloudModels, runningModels) {
+    // Update unified models when available, library, cloud, and running models change.
+    // Use stable key for runningCloudModels (string) to avoid LaunchedEffect restart loops from Set reference churn.
+    val runningCloudKey = runningCloudModels.value.joinToString(",")
+    LaunchedEffect(availableModels, libraryModels, cloudModels, runningModels, runningCloudKey) {
         val runningModelNames = runningModels.map { it.name }.toSet()
         val availableModelNames = availableModels.map { it.name }.toSet()
+        val runningCloudModelNames = runningCloudModels.value
 
         val combined = mutableListOf<UnifiedModel>()
 
@@ -198,10 +213,11 @@ fun OllamaMonitorAndControl(
                 runningName == cloudModel.name ||
                 runningName.startsWith("${cloudModel.name}:") ||
                 cloudModel.name.startsWith("${runningName.split(":").first()}:")
-            }
-            
-            println("[DEBUG] Cloud model: ${cloudModel.name}, available: $isLocallyAvailable, running: $isRunning")
-            println("[DEBUG] Available models: ${availableModelNames.joinToString(", ")}")
+            } || runningCloudModelNames.contains(cloudModel.name) || 
+               runningCloudModelNames.any { runningCloud ->
+                   runningCloud.startsWith("${cloudModel.name}:") ||
+                   cloudModel.name.startsWith("${runningCloud.split(":").first()}:")
+               }
             
             combined.add(
                 UnifiedModel(
@@ -390,8 +406,7 @@ fun OllamaMonitorAndControl(
                             isLoadingLibrary = true
                             scope.launch {
                                 try {
-                                    println("[LIBRARY] Refreshing cloud models using UnifiedModelManager...")
-                                    // Refresh all models from unified service
+                                    println("[LIBRARY] Refreshing cloud models...")
                                     val refreshResult = unifiedModelManager.scanAllModels()
                                     if (refreshResult.isNotEmpty()) {
                                         val cloudModelInfos = unifiedModelManager.getCloudModels()
@@ -405,13 +420,21 @@ fun OllamaMonitorAndControl(
                                         }
                                         println("[LIBRARY] Refreshed ${cloudModels.size} cloud models")
                                     } else {
-                                        println("[LIBRARY] No models found during refresh")
                                         cloudModels = emptyList()
                                     }
+                                    println("[LIBRARY] Updating library repo from URL...")
+                                    val repoModels = LibraryModelRepository.updateFromUrl()
+                                    libraryModels = repoModels.sortedBy { m ->
+                                        when {
+                                            m.name.contains("7b") -> 7
+                                            m.name.contains("13b") -> 13
+                                            m.name.contains("70b") -> 70
+                                            else -> 7
+                                        }
+                                    }
+                                    println("[LIBRARY] Library repo: ${libraryModels.size} models")
                                 } catch (e: Exception) {
-                                    println("[LIBRARY] Failed to refresh cloud models: ${e.message}")
-                                    // Fallback to old method if unified manager fails
-                                    libraryModels = loadLibraryModels()
+                                    println("[LIBRARY] Refresh failed: ${e.message}")
                                 } finally {
                                     isLoadingLibrary = false
                                 }
@@ -420,7 +443,7 @@ fun OllamaMonitorAndControl(
                         enabled = !isLoadingLibrary,
                         modifier = Modifier.height(32.dp).defaultMinSize(minWidth = 100.dp)
                     ) {
-                            Text("Update from URL", style = MaterialTheme.typography.caption)
+                        Text("Update from URL", style = MaterialTheme.typography.caption)
                     }
 
                     TextButton(
@@ -531,7 +554,7 @@ fun OllamaMonitorAndControl(
                 TextButton(
                     onClick = {
                         if (selectedModelName.isNotBlank()) {
-                            scope.launch { startModel(selectedModelName) }
+                            scope.launch { startModel(selectedModelName, runningCloudModels) }
                         }
                     },
                     enabled = selectedModelName.isNotBlank(),
@@ -547,7 +570,7 @@ fun OllamaMonitorAndControl(
             // Single Models tab - no need for separate Running tab since we have status indicators
             Spacer(Modifier.height(6.dp))
 
-            UnifiedModelsList(unifiedModels, listState, scope, pullProgressStates, { modelName ->
+            UnifiedModelsList(unifiedModels, listState, scope, pullProgressStates, availableModels, runningCloudModels, { modelName ->
                 scope.launch {
                     pullModel(modelName) { progress ->
                         pullProgress = progress
@@ -962,6 +985,8 @@ private fun UnifiedModelsList(
     listState: androidx.compose.foundation.lazy.LazyListState,
     scope: kotlinx.coroutines.CoroutineScope,
     pullProgressStates: List<PullProgress>,
+    availableModels: List<OllamaModel>,  // Add availableModels parameter
+    runningCloudModels: MutableState<Set<String>>,  // Add runningCloudModels parameter
     onPullModel: (String) -> Unit,
     onUpdateProgressStates: (List<PullProgress>) -> Unit
 ) {
@@ -1003,7 +1028,15 @@ private fun UnifiedModelsList(
                             onUpdateProgressStates((pullProgressStates + startProgress).takeLast(10))
 
                             try {
-                                startModel(model.name)
+                                // Find the actual model name from available models (handles tag differences)
+                                val actualModelName = availableModels.find { available ->
+                                    available.name == model.name ||
+                                    available.name.startsWith("${model.name}:") ||
+                                    model.name.startsWith("${available.name.split(":").first()}:")
+                                }?.name ?: model.name
+                                
+                                println("[DEBUG] Starting model: display='${model.name}', actual='$actualModelName'")
+                                startModel(actualModelName, runningCloudModels)
 
                                 // Update progress to completed
                                 val completedProgress = startProgress.copy(
@@ -1060,7 +1093,7 @@ private fun UnifiedModelsList(
                             onUpdateProgressStates((pullProgressStates + stopProgress).takeLast(10))
 
                             try {
-                                stopModel(model.name)
+                                stopModel(model.name, runningCloudModels)
 
                                 // Update progress to completed
                                 stopProgress = stopProgress.copy(
@@ -1107,6 +1140,15 @@ private fun UnifiedModelsList(
                         scope.launch {
                             println("[${java.time.LocalDateTime.now()}] USER CLICKED REMOVE for model: ${model.name}")
 
+                            // Find the actual model name from available models (handles tag differences)
+                            val actualModelName = availableModels.find { available ->
+                                available.name == model.name ||
+                                available.name.startsWith("${model.name}:") ||
+                                model.name.startsWith("${available.name.split(":").first()}:")
+                            }?.name ?: model.name
+                            
+                            println("[DEBUG] Removing model: display='${model.name}', actual='$actualModelName'")
+
                             // Add remove progress state
                             var removeProgress = PullProgress(
                                 modelName = model.name,
@@ -1118,7 +1160,7 @@ private fun UnifiedModelsList(
                             onUpdateProgressStates((pullProgressStates + removeProgress).takeLast(10))
 
                             try {
-                                removeModel(model.name)
+                                removeModel(actualModelName)
 
                                 // Update progress to completed
                                 val completedProgress = removeProgress.copy(
@@ -1245,8 +1287,8 @@ private fun UnifiedModelItem(
                 // Status badge
                 Text(
                     text = when (model.status) {
-                        ModelStatus.RUNNING -> "🟢 Running"
-                        ModelStatus.LOADED -> "📦 Loaded"
+                        ModelStatus.RUNNING -> "🟢"
+                        ModelStatus.LOADED -> ""
                         ModelStatus.LIBRARY -> "📚 Library"
                         ModelStatus.CLOUD -> "☁️ Cloud"
                     },
@@ -1582,71 +1624,20 @@ private fun UnifiedModelItem(
                     }
 
                     ModelStatus.CLOUD -> {
-                        // Check if cloud model is actually available locally by checking model status
-                        val isLocallyAvailable = model.status == ModelStatus.LOADED || model.status == ModelStatus.RUNNING
+                        // Check if cloud model is actually available locally
+                        // Note: This case handles true cloud-only models (not cloud-named local models)
+                        // Cloud-named local models get ModelStatus.LOADED status, not CLOUD
                         
-                        if (isLocallyAvailable) {
-                            // Model is available locally - show START/STOP actions like LOADED models
-                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                TextButton(
-                                    onClick = {
-                                        isStarting = true
-                                        onStart()
-                                        scope.launch {
-                                            // Wait for actual start operation to complete
-                                            // The startModel function now waits up to 15 seconds plus 2s delay
-                                            kotlinx.coroutines.delay(18000) // Slightly longer than startModel timeout
-                                            isStarting = false
-                                        }
-                                    },
-                                    modifier = Modifier.height(32.dp).defaultMinSize(minWidth = 50.dp),
-                                    enabled = !isStarting && !isRemoving
-                                ) {
-                                    if (isStarting) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(16.dp),
-                                            strokeWidth = 2.dp,
-                                            color = Color(0xFF4CAF50)
-                                        )
-                                    } else {
-                                        Text("START", style = MaterialTheme.typography.caption)
-                                    }
-                                }
-                                TextButton(
-                                    onClick = {
-                                        isRemoving = true
-                                        onRemove()
-                                        scope.launch {
-                                            kotlinx.coroutines.delay(5000) // Wait for remove operation to complete
-                                            isRemoving = false
-                                        }
-                                    },
-                                    modifier = Modifier.height(32.dp).defaultMinSize(minWidth = 50.dp),
-                                    enabled = !isRemoving && !isStarting
-                                ) {
-                                    if (isRemoving) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(16.dp),
-                                            strokeWidth = 2.dp,
-                                            color = Color(0xFFFF9800)
-                                        )
-                                    } else {
-                                        Text("REMOVE", style = MaterialTheme.typography.caption, color = Color(0xFFFF9800))
-                                    }
-                                }
-                            }
-                        } else {
-                            // True cloud-only model - show PULL action
-                            TextButton(
-                                onClick = onPull,
-                                modifier = Modifier.height(32.dp).defaultMinSize(minWidth = 50.dp)
-                            ) {
-                                Text(
-                                    "PULL",
-                                    style = MaterialTheme.typography.caption,
-                                    color = Color(0xFF2196F3)
-                                )
-                            }
+                        // For true cloud models, always show PULL since they're not locally available
+                        TextButton(
+                            onClick = onPull,
+                            modifier = Modifier.height(32.dp).defaultMinSize(minWidth = 50.dp)
+                        ) {
+                            Text(
+                                "PULL",
+                                style = MaterialTheme.typography.caption,
+                                color = Color(0xFF2196F3)
+                            )
                         }
                     }
                 }
@@ -1829,8 +1820,9 @@ object LibraryModelRepository {
     private var _cachedModels: List<LibraryModel> = emptyList()
     private var _lastUpdated: Long = 0
     
-    // Default URL to fetch models from (can be configured)
-    private val DEFAULT_LIBRARY_URL = "https://registry.ollama.ai/api/v1/models"
+    // ollama.com public API (same shape as local /api/tags). Fallback: third-party library list.
+    private val DEFAULT_LIBRARY_URL = "https://ollama.com/api/tags"
+    private val FALLBACK_LIBRARY_URL = "https://yuma-shintani.github.io/ollama-model-library/model.json"
     
     // Get cached models
     fun getCachedModels(): List<LibraryModel> {
@@ -1842,79 +1834,93 @@ object LibraryModelRepository {
         return _lastUpdated
     }
     
-    // Update models from URL
+    // Update models from URL; try fallback if primary returns no models
     suspend fun updateFromUrl(url: String = DEFAULT_LIBRARY_URL): List<LibraryModel> = withContext(Dispatchers.IO) {
-        try {
-            println("[LIBRARY] Fetching models from: $url")
-            val client = HttpClient.newHttpClient()
-            val request = HttpRequest.newBuilder()
-                .uri(java.net.URI.create(url))
-                .timeout(java.time.Duration.ofSeconds(30))
-                .header("Accept", "application/json")
-                .build()
-            
-            val response = client.send(request, HttpResponse.BodyHandlers.ofString())
-            
-            if (response.statusCode() == 200) {
-                val responseBody = response.body()
-                val models = parseModelsFromJson(responseBody)
-                _cachedModels = models
-                _lastUpdated = System.currentTimeMillis()
-                println("[LIBRARY] Successfully loaded ${models.size} models")
-                models
-            } else {
-                println("[LIBRARY] Failed to fetch models: HTTP ${response.statusCode()}")
-                emptyList()
+        fun fetch(u: String): List<LibraryModel> {
+            try {
+                println("[LIBRARY] Fetching from: $u")
+                val client = HttpClient.newHttpClient()
+                val request = HttpRequest.newBuilder()
+                    .uri(java.net.URI.create(u))
+                    .timeout(java.time.Duration.ofSeconds(30))
+                    .header("Accept", "application/json")
+                    .build()
+                val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+                if (response.statusCode() != 200) {
+                    println("[LIBRARY] HTTP ${response.statusCode()}")
+                    return emptyList()
+                }
+                val body = response.body()
+                val models = parseModelsFromJson(body)
+                if (models.isEmpty() && body.isNotBlank()) {
+                    println("[LIBRARY] Parse returned 0 models. Response sample: ${body.take(400)}")
+                }
+                return models
+            } catch (e: Exception) {
+                println("[LIBRARY] Fetch error: ${e.message}")
+                return emptyList()
             }
-        } catch (e: Exception) {
-            println("[LIBRARY] Error fetching models: ${e.message}")
-            e.printStackTrace()
-            emptyList()
         }
+        val models = fetch(url)
+        val result = if (models.isEmpty() && url == DEFAULT_LIBRARY_URL) fetch(FALLBACK_LIBRARY_URL) else models
+        if (result.isNotEmpty()) {
+            _cachedModels = result
+            _lastUpdated = System.currentTimeMillis()
+            println("[LIBRARY] Loaded ${result.size} models")
+        }
+        result
     }
     
-    // Parse models from JSON response
+    // Helper: get string from JSON element without extra quotes (JsonPrimitive.content)
+    private fun stringVal(je: kotlinx.serialization.json.JsonElement?): String? =
+        (je as? JsonPrimitive)?.content?.removeSurrounding("\"")
+
+    // Parse models from JSON (ollama.com/api/tags or local /api/tags shape: { "models": [ { "name", "model", "details"? } ] })
     private fun parseModelsFromJson(json: String): List<LibraryModel> {
         return try {
-            // Parse Ollama registry API response
             val jsonElement = Json.parseToJsonElement(json)
             val models = mutableListOf<LibraryModel>()
-            
-            if (jsonElement is JsonObject) {
-                val modelsArray = jsonElement["models"] as? JsonArray ?: return emptyList()
-                
-                modelsArray.forEach { modelElement ->
-                    if (modelElement is JsonObject) {
-                        val name = modelElement["name"]?.toString() ?: return@forEach
-                        val description = modelElement["description"]?.toString() ?: "No description available"
-                        val tags = mutableListOf<String>()
-                        
-                        // Extract tags if available
-                        val tagsArray = modelElement["tags"] as? JsonArray
-                        tagsArray?.forEach { tag ->
-                            tags.add(tag.toString())
-                        }
-                        
-                        // Estimate size based on model name patterns
-                        val size = estimateModelSize(name)
-                        
-                        models.add(
-                            LibraryModel(
-                                name = name,
-                                description = description,
-                                tags = tags,
-                                size = size
-                            )
+            val modelsArray = when (jsonElement) {
+                is JsonObject -> jsonElement["models"] as? JsonArray
+                    ?: jsonElement["items"] as? JsonArray
+                    ?: jsonElement["data"] as? JsonArray
+                is JsonArray -> jsonElement
+                else -> null
+            }
+            if (modelsArray == null) {
+                val keys = (jsonElement as? JsonObject)?.keys?.joinToString()
+                println("[LIBRARY] Parse: no models array (top-level keys: $keys)")
+                return emptyList()
+            }
+
+            modelsArray.forEach { modelElement ->
+                if (modelElement is JsonObject) {
+                    val name = stringVal(modelElement["name"]) ?: stringVal(modelElement["model"]) ?: return@forEach
+                    val details = modelElement["details"] as? JsonObject
+                    val paramSize = details?.let { stringVal(it["parameter_size"]) }
+                    val family = details?.let { stringVal(it["family"]) }
+                    val description = stringVal(modelElement["description"])
+                        ?: paramSize?.let { "$family $it" }?.trim()
+                        ?: family
+                        ?: "No description available"
+                    val tags = mutableListOf<String>()
+                    family?.let { tags.add(it) }
+                    val tagsArray = modelElement["tags"] as? JsonArray
+                    tagsArray?.forEach { tag -> stringVal(tag)?.let { tags.add(it) } }
+                    models.add(
+                        LibraryModel(
+                            name = name,
+                            description = description,
+                            tags = tags,
+                            size = paramSize?.let { "~$it" } ?: estimateModelSize(name)
                         )
-                    }
+                    )
                 }
             }
-            
             models
         } catch (e: Exception) {
             println("[LIBRARY] Error parsing JSON: ${e.message}")
-            // Fallback to some default models if parsing fails
-            getDefaultModels()
+            emptyList()
         }
     }
     
@@ -1932,10 +1938,7 @@ object LibraryModelRepository {
         }
     }
     
-    // Get default models if URL fetching fails
-    fun getDefaultModels(): List<LibraryModel> {
-        return emptyList()
-    }
+    fun getDefaultModels(): List<LibraryModel> = emptyList()
     
     // Clear cache
     fun clearCache() {
@@ -1962,33 +1965,18 @@ private suspend fun loadLibraryModels(): List<LibraryModel> = withContext(Dispat
         }
     }
     
-    // Return cached models (or default if cache is empty)
-    val allModels = if (cachedModels.isNotEmpty()) {
-        cachedModels
-    } else {
-        println("[LIBRARY] No cache available, using default models")
-        LibraryModelRepository.getDefaultModels()
-    }
+    val allModels = if (cachedModels.isNotEmpty()) cachedModels else emptyList()
 
-    // Filter out coding models and sort by context length (ascending)
-    allModels
-        .filter { model ->
-            // Filter out coding-specific models
-            !model.tags.contains("code") &&
-                    !model.tags.contains("programming") &&
-                    !model.name.lowercase().contains("code")
+    // Sort by context length (smaller first) for display
+    allModels.sortedBy { model ->
+        val paramSize = when {
+            model.name.contains("7b") -> 7
+            model.name.contains("13b") -> 13
+            model.name.contains("70b") -> 70
+            else -> 7
         }
-        .sortedBy { model ->
-            // Sort by context length (smaller context first)
-            // Extract parameter size from name for rough context estimation
-            val paramSize = when {
-                model.name.contains("7b") -> 7
-                model.name.contains("13b") -> 13
-                model.name.contains("70b") -> 70
-                else -> 7 // default
-            }
-            paramSize
-        }
+        paramSize
+    }
 }
 
 private suspend fun downloadModel(modelName: String) = withContext(Dispatchers.IO) {
@@ -2074,45 +2062,35 @@ private suspend fun updateAllData(onResult: (List<OllamaModel>, List<OllamaModel
         }
     }
 
-private suspend fun startModel(modelName: String) = withContext(Dispatchers.IO) {
+/** True if the model is a cloud model (name-based; used to choose start/stop flow). */
+private fun isCloudModelName(modelName: String): Boolean =
+    modelName.contains("-cloud", ignoreCase = true) || modelName.contains("cloud", ignoreCase = true)
+
+private suspend fun startModel(modelName: String, runningCloudModels: MutableState<Set<String>>) = withContext(Dispatchers.IO) {
     println("[${java.time.LocalDateTime.now()}] Starting model operation: $modelName")
     try {
-        // Add a small delay to prevent immediate restart after stop
-        kotlinx.coroutines.delay(2000)
-
-        // First check if model is already running
-        val client = HttpClient.newHttpClient()
-        try {
-            println("[${java.time.LocalDateTime.now()}] Checking if model $modelName is already running...")
-            val psRequest = HttpRequest.newBuilder()
-                .uri(java.net.URI.create("http://localhost:11434/api/ps"))
-                .timeout(java.time.Duration.ofSeconds(5))
-                .GET()
-                .build()
-
-            val psResponse = client.send(psRequest, HttpResponse.BodyHandlers.ofString())
-
-            if (psResponse.statusCode() == 200) {
-                val psBody = psResponse.body()
-                println("[${java.time.LocalDateTime.now()}] Model status check response: ${psResponse.statusCode()}")
-                if (psBody.contains("\"name\": \"$modelName\"")) {
-                    println("[${java.time.LocalDateTime.now()}] Model $modelName is already running - skipping start")
-                    return@withContext
-                }
-            } else {
-                println("[${java.time.LocalDateTime.now()}] Model status check failed with code: ${psResponse.statusCode()}")
-            }
-        } catch (e: Exception) {
-            println("[${java.time.LocalDateTime.now()}] Error checking initial model status: ${e.message}")
+        if (isCloudModelName(modelName)) {
+            startCloudModel(modelName, runningCloudModels)
+        } else {
+            startLocalModel(modelName)
         }
+    } catch (e: Exception) {
+        println("[${java.time.LocalDateTime.now()}] ERROR: Failed to start model $modelName: ${e.message}")
+        throw Exception("Failed to start model: ${e.message}")
+    }
+}
 
-        println("[${java.time.LocalDateTime.now()}] Sending start request for model: $modelName")
-        val request = HttpRequest.newBuilder()
-            .uri(java.net.URI.create("http://localhost:11434/api/generate"))
-            .header("Content-Type", "application/json")
-            .POST(
-                HttpRequest.BodyPublishers.ofString(
-                    """
+/** Cloud start: rely on HTTP connection flow only. Update running state from response success/failure; no /api/ps polling. */
+private suspend fun startCloudModel(modelName: String, runningCloudModels: MutableState<Set<String>>) {
+    kotlinx.coroutines.delay(2000)
+    val client = HttpClient.newHttpClient()
+    println("[${java.time.LocalDateTime.now()}] Sending start request for cloud model: $modelName")
+    val request = HttpRequest.newBuilder()
+        .uri(java.net.URI.create("http://localhost:11434/api/generate"))
+        .header("Content-Type", "application/json")
+        .POST(
+            HttpRequest.BodyPublishers.ofString(
+                """
                 {
                     "model": "$modelName",
                     "prompt": "",
@@ -2120,205 +2098,268 @@ private suspend fun startModel(modelName: String) = withContext(Dispatchers.IO) 
                     "keep_alive": -1
                 }
             """.trimIndent()
-                )
             )
-            .build()
+        )
+        .build()
 
-        val response = client.send(request, HttpResponse.BodyHandlers.ofString())
-        println("[${java.time.LocalDateTime.now()}] Start request response status: ${response.statusCode()}")
-        if (response.statusCode() != 200) {
-            println("[${java.time.LocalDateTime.now()}] Start request failed for model $modelName. Response: ${response.body()}")
-            throw Exception("Failed to start model: HTTP ${response.statusCode()}")
-        }
+    val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+    val responseBody = response.body()
+    println("[${java.time.LocalDateTime.now()}] Cloud start response: ${response.statusCode()} - $responseBody")
 
-        println("[${java.time.LocalDateTime.now()}] Start request sent successfully for model: $modelName")
-        println("[${java.time.LocalDateTime.now()}] Response body: ${response.body()}")
+    if (response.statusCode() != 200) {
+        println("[${java.time.LocalDateTime.now()}] Cloud start failed for $modelName. Response: $responseBody")
+        throw Exception("Failed to start cloud model: HTTP ${response.statusCode()}")
+    }
 
-        // Wait a bit after successful load before checking running status
-        println("[${java.time.LocalDateTime.now()}] Waiting 3 seconds for model to initialize...")
-        kotlinx.coroutines.delay(3000) // Wait 3 seconds for model to fully initialize
-
-        // Wait for model to actually become running (poll /api/ps)
-        var attempts = 0
-        val maxAttempts = 15 // Reduced from 30 to 15 seconds
-        println("[${java.time.LocalDateTime.now()}] Starting to poll model status for $modelName (max $maxAttempts attempts)")
-
-        while (attempts < maxAttempts) {
-            attempts++
-            println("[${java.time.LocalDateTime.now()}] Checking model status attempt $attempts/$maxAttempts")
-            kotlinx.coroutines.delay(1000) // Wait 1 second between checks
-
-            try {
-                val psRequest = HttpRequest.newBuilder()
-                    .uri(java.net.URI.create("http://localhost:11434/api/ps"))
-                    .timeout(java.time.Duration.ofSeconds(5))
-                    .GET()
-                    .build()
-
-                val psResponse = client.send(psRequest, HttpResponse.BodyHandlers.ofString())
-                println("[${java.time.LocalDateTime.now()}] Model status check response: ${psResponse.statusCode()}")
-
-                if (psResponse.statusCode() == 200) {
-                    val psBody = psResponse.body()
-                    println("[${java.time.LocalDateTime.now()}] Model status check response: ${psResponse.statusCode()}")
-                    println("[${java.time.LocalDateTime.now()}] Full /api/ps response body: $psBody")
-
-                    if (psBody.contains("\"name\":\"$modelName\"")) {
-                        println("[${java.time.LocalDateTime.now()}] SUCCESS: Model $modelName is now running")
-                        return@withContext
-                    } else {
-                        println("[${java.time.LocalDateTime.now()}] Model $modelName not found in running list, continuing to poll...")
-                    }
-                }
-
-                // Check if model status changed to LOADED (indicating it was stopped)
-                if (attempts > 3) { // Only check after a few attempts
-                    println("[${java.time.LocalDateTime.now()}] Model $modelName not appearing in running list, checking if it was stopped...")
-
-                    // Check current model status by fetching unified models
-                    try {
-                        println("[${java.time.LocalDateTime.now()}] Fetching model list to check status...")
-                        val modelsRequest = HttpRequest.newBuilder()
-                            .uri(java.net.URI.create("http://localhost:11434/api/tags"))
-                            .timeout(java.time.Duration.ofSeconds(5))
-                            .GET()
-                            .build()
-
-                        val modelsResponse = client.send(modelsRequest, HttpResponse.BodyHandlers.ofString())
-                        if (modelsResponse.statusCode() == 200) {
-                            val modelsBody = modelsResponse.body()
-                            println("[${java.time.LocalDateTime.now()}] Checking /api/tags response: $modelsBody")
-                            // If model exists but not in running list, it was likely stopped
-                            if (modelsBody.contains("\"name\": \"$modelName\"")) {
-                                println("[${java.time.LocalDateTime.now()}] Model $modelName exists but not running, likely stopped by user")
-                                return@withContext
-                            }
-                        }
-                    } catch (e: Exception) {
-                        println("[${java.time.LocalDateTime.now()}] Error checking model status: ${e.message}")
-                    }
-                }
-            } catch (e: Exception) {
-                println("[${java.time.LocalDateTime.now()}] Error checking model status: ${e.message}")
-            }
-
-            println("[${java.time.LocalDateTime.now()}] Waiting for model to start... attempt $attempts/$maxAttempts")
-        }
-
-        println("[${java.time.LocalDateTime.now()}] WARNING: Model $modelName may not have started properly within timeout")
-
-    } catch (e: Exception) {
-        println("[${java.time.LocalDateTime.now()}] ERROR: Failed to start model $modelName: ${e.message}")
-        throw Exception("Failed to start model: ${e.message}")
+    // Rely on HTTP success: connection accepted => consider model started for UI
+    val successByResponse = responseBody.contains("\"done\":true") ||
+        responseBody.contains("remote_host") ||
+        responseBody.contains("remote_model")
+    if (successByResponse) {
+        println("[${java.time.LocalDateTime.now()}] SUCCESS: Cloud model $modelName started (HTTP flow OK)")
+    } else {
+        println("[${java.time.LocalDateTime.now()}] Cloud model $modelName: HTTP 200, updating running state from connection flow")
+    }
+    val displayName = modelName.split(":").first()
+    withContext(Dispatchers.Main) {
+        val updated = runningCloudModels.value + modelName + displayName
+        runningCloudModels.value = updated
+        println("[DEBUG] Updated runningCloudModels to: ${runningCloudModels.value.joinToString(", ")}")
     }
 }
 
-private suspend fun stopModel(modelName: String) = withContext(Dispatchers.IO) {
+/** Local start: optional already-running check, then poll /api/ps until model appears. */
+private suspend fun startLocalModel(modelName: String) {
+    kotlinx.coroutines.delay(2000)
+    val client = HttpClient.newHttpClient()
+
+    try {
+        println("[${java.time.LocalDateTime.now()}] Checking if local model $modelName is already running...")
+        val psRequest = HttpRequest.newBuilder()
+            .uri(java.net.URI.create("http://localhost:11434/api/ps"))
+            .timeout(java.time.Duration.ofSeconds(5))
+            .GET()
+            .build()
+        val psResponse = client.send(psRequest, HttpResponse.BodyHandlers.ofString())
+        if (psResponse.statusCode() == 200 && psResponse.body().contains("\"name\": \"$modelName\"")) {
+            println("[${java.time.LocalDateTime.now()}] Model $modelName is already running - skipping start")
+            return
+        }
+    } catch (e: Exception) {
+        println("[${java.time.LocalDateTime.now()}] Error checking initial model status: ${e.message}")
+    }
+
+    println("[${java.time.LocalDateTime.now()}] Sending start request for local model: $modelName")
+    val request = HttpRequest.newBuilder()
+        .uri(java.net.URI.create("http://localhost:11434/api/generate"))
+        .header("Content-Type", "application/json")
+        .POST(
+            HttpRequest.BodyPublishers.ofString(
+                """
+                {
+                    "model": "$modelName",
+                    "prompt": "",
+                    "stream": false,
+                    "keep_alive": -1
+                }
+            """.trimIndent()
+            )
+        )
+        .build()
+
+    val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+    if (response.statusCode() != 200) {
+        println("[${java.time.LocalDateTime.now()}] Start request failed for model $modelName. Response: ${response.body()}")
+        throw Exception("Failed to start model: HTTP ${response.statusCode()}")
+    }
+
+    println("[${java.time.LocalDateTime.now()}] Waiting 3 seconds for model to initialize...")
+    kotlinx.coroutines.delay(3000)
+
+    var attempts = 0
+    val maxAttempts = 15
+    while (attempts < maxAttempts) {
+        attempts++
+        kotlinx.coroutines.delay(1000)
+        try {
+            val psRequest = HttpRequest.newBuilder()
+                .uri(java.net.URI.create("http://localhost:11434/api/ps"))
+                .timeout(java.time.Duration.ofSeconds(5))
+                .GET()
+                .build()
+            val psResponse = client.send(psRequest, HttpResponse.BodyHandlers.ofString())
+            if (psResponse.statusCode() == 200 && psResponse.body().contains("\"name\":\"$modelName\"")) {
+                println("[${java.time.LocalDateTime.now()}] SUCCESS: Local model $modelName is now running")
+                return
+            }
+            if (attempts > 3) {
+                val modelsRequest = HttpRequest.newBuilder()
+                    .uri(java.net.URI.create("http://localhost:11434/api/tags"))
+                    .timeout(java.time.Duration.ofSeconds(5))
+                    .GET()
+                    .build()
+                val modelsResponse = client.send(modelsRequest, HttpResponse.BodyHandlers.ofString())
+                if (modelsResponse.statusCode() == 200 && modelsResponse.body().contains("\"name\": \"$modelName\"")) {
+                    println("[${java.time.LocalDateTime.now()}] Model $modelName exists but not running, likely stopped by user")
+                    return
+                }
+            }
+        } catch (e: Exception) {
+            println("[${java.time.LocalDateTime.now()}] Error checking model status: ${e.message}")
+        }
+    }
+    println("[${java.time.LocalDateTime.now()}] WARNING: Local model $modelName may not have started properly within timeout")
+}
+
+private suspend fun stopModel(modelName: String, runningCloudModels: MutableState<Set<String>>) = withContext(Dispatchers.IO) {
     println("[${java.time.LocalDateTime.now()}] Stopping model operation: $modelName")
     try {
-        val client = HttpClient.newHttpClient()
+        val base = modelName.split(":").first()
+        val isCloudRunning = withContext(Dispatchers.Main) {
+            runningCloudModels.value.any { it == modelName || it == base || it.startsWith("$base:") }
+        }
+        if (isCloudModelName(modelName) || isCloudRunning) {
+            stopCloudModel(modelName, runningCloudModels)
+        } else {
+            stopLocalModel(modelName)
+        }
+    } catch (e: Exception) {
+        println("[${java.time.LocalDateTime.now()}] ERROR: Failed to stop model $modelName: ${e.message}")
+        throw Exception("Failed to stop model: ${e.message}")
+    }
+}
 
-        // Method 1: Try using /api/generate with keep_alive: 0 and shorter timeout
+/** Cloud stop: send unload/keep_alive:0; update running state from HTTP flow (and on timeout so UI doesn't stick). */
+private suspend fun stopCloudModel(modelName: String, runningCloudModels: MutableState<Set<String>>) {
+    val displayName = modelName.split(":").first()
+    // Resolve actual model name for Ollama (e.g. qwen3-coder -> qwen3-coder:480b-cloud)
+    val actualModelName = withContext(Dispatchers.Main) {
+        runningCloudModels.value.firstOrNull { it.startsWith("$displayName:") }
+            ?: runningCloudModels.value.firstOrNull { it == modelName || it == displayName }
+            ?: modelName
+    }
+    suspend fun removeFromRunning() {
+        withContext(Dispatchers.Main) {
+            // Remove both display name and full model name (e.g. qwen3-coder and qwen3-coder:480b-cloud)
+            runningCloudModels.value = runningCloudModels.value.filter {
+                it != modelName && !it.startsWith("$modelName:") && it != displayName && !it.startsWith("$displayName:")
+            }.toSet()
+            println("[${java.time.LocalDateTime.now()}] Removed cloud model $modelName from running state")
+        }
+    }
+
+    try {
+        val client = HttpClient.newHttpClient()
         try {
-            println("[${java.time.LocalDateTime.now()}] Attempting to stop model $modelName using /api/generate with keep_alive: 0")
+            println("[${java.time.LocalDateTime.now()}] Stopping cloud model $actualModelName via /api/generate keep_alive: 0")
             val request = HttpRequest.newBuilder()
                 .uri(java.net.URI.create("http://localhost:11434/api/generate"))
                 .header("Content-Type", "application/json")
-                .timeout(java.time.Duration.ofSeconds(10)) // Shorter timeout
+                .timeout(java.time.Duration.ofSeconds(10))
                 .POST(
                     HttpRequest.BodyPublishers.ofString(
                         """
+                    {
+                        "model": "$actualModelName",
+                        "prompt": "",
+                        "stream": false,
+                        "keep_alive": 0,
+                        "options": { "temperature": 0, "max_tokens": 1 }
+                    }
+                """.trimIndent()
+                    )
+                )
+                .build()
+            val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+            if (response.statusCode() == 200) {
+                println("[${java.time.LocalDateTime.now()}] Cloud stop request accepted for $actualModelName")
+                removeFromRunning()
+                return
+            }
+        } catch (_: java.net.http.HttpTimeoutException) {
+            println("[${java.time.LocalDateTime.now()}] Timeout on cloud stop - updating UI state from connection flow")
+            removeFromRunning()
+            return
+        }
+        try {
+            val process = ProcessBuilder("ollama", "stop", actualModelName).redirectErrorStream(true).start()
+            val exitCode = process.waitFor()
+            if (exitCode == 0) {
+                removeFromRunning()
+                return
+            }
+        } catch (_: Exception) { }
+        // Still update UI so button state is correct
+        removeFromRunning()
+    } catch (e: Exception) {
+        removeFromRunning()
+        throw e
+    }
+}
+
+/** Local stop: /api/generate keep_alive:0, then CLI or force unload; no cloud state. */
+private suspend fun stopLocalModel(modelName: String) {
+    val client = HttpClient.newHttpClient()
+    try {
+        val request = HttpRequest.newBuilder()
+            .uri(java.net.URI.create("http://localhost:11434/api/generate"))
+            .header("Content-Type", "application/json")
+            .timeout(java.time.Duration.ofSeconds(10))
+            .POST(
+                HttpRequest.BodyPublishers.ofString(
+                    """
                     {
                         "model": "$modelName",
                         "prompt": "",
                         "stream": false,
                         "keep_alive": 0,
-                        "options": {
-                            "temperature": 0,
-                            "max_tokens": 1
-                        }
+                        "options": { "temperature": 0, "max_tokens": 1 }
                     }
                 """.trimIndent()
-                    )
                 )
-                .build()
-
-            val response = client.send(request, HttpResponse.BodyHandlers.ofString())
-            println("[${java.time.LocalDateTime.now()}] Stop request response status: ${response.statusCode()}")
-
-            if (response.statusCode() == 200) {
-                println("[${java.time.LocalDateTime.now()}] Stop request sent successfully for model: $modelName")
-                println("[${java.time.LocalDateTime.now()}] Response body: ${response.body()}")
-                return@withContext
-            } else {
-                println("[${java.time.LocalDateTime.now()}] Stop request failed with status: ${response.statusCode()}")
-                println("[${java.time.LocalDateTime.now()}] Response body: ${response.body()}")
-            }
-        } catch (timeout: java.net.http.HttpTimeoutException) {
-            println("[${java.time.LocalDateTime.now()}] Timeout on generate API, trying alternative method...")
+            )
+            .build()
+        val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+        if (response.statusCode() == 200) {
+            println("[${java.time.LocalDateTime.now()}] Stop request sent successfully for local model: $modelName")
+            return
         }
+    } catch (_: java.net.http.HttpTimeoutException) { }
 
-        // Method 2: Try using the Ollama CLI approach if available
-        try {
-            println("[${java.time.LocalDateTime.now()}] Attempting to stop model $modelName using CLI command")
-            val process = ProcessBuilder("ollama", "stop", modelName)
-                .redirectErrorStream(true)
-                .start()
-
-            val output = process.inputStream.bufferedReader().readText()
-            val exitCode = process.waitFor()
-            println("[${java.time.LocalDateTime.now()}] CLI stop command exit code: $exitCode")
-            println("[${java.time.LocalDateTime.now()}] CLI stop command output: $output")
-
-            if (exitCode == 0) {
-                println("[${java.time.LocalDateTime.now()}] CLI stop successful for model: $modelName")
-                println("[${java.time.LocalDateTime.now()}] CLI stop output: $output")
-                return@withContext
-            } else {
-                println("[${java.time.LocalDateTime.now()}] CLI stop failed with exit code $exitCode: $output")
-            }
-        } catch (e: Exception) {
-            println("[${java.time.LocalDateTime.now()}] CLI stop not available: ${e.message}")
+    try {
+        val process = ProcessBuilder("ollama", "stop", modelName).redirectErrorStream(true).start()
+        if (process.waitFor() == 0) {
+            println("[${java.time.LocalDateTime.now()}] CLI stop successful for $modelName")
+            return
         }
+    } catch (e: Exception) {
+        println("[${java.time.LocalDateTime.now()}] CLI stop not available: ${e.message}")
+    }
 
-        // Method 3: Force unload by trying to start with keep_alive: 0 then immediately stop
-        try {
-            println("[${java.time.LocalDateTime.now()}] Trying force unload method for model $modelName...")
-            val forceRequest = HttpRequest.newBuilder()
-                .uri(java.net.URI.create("http://localhost:11434/api/generate"))
-                .header("Content-Type", "application/json")
-                .timeout(java.time.Duration.ofSeconds(5))
-                .POST(
-                    HttpRequest.BodyPublishers.ofString(
-                        """
+    try {
+        val forceRequest = HttpRequest.newBuilder()
+            .uri(java.net.URI.create("http://localhost:11434/api/generate"))
+            .header("Content-Type", "application/json")
+            .timeout(java.time.Duration.ofSeconds(5))
+            .POST(
+                HttpRequest.BodyPublishers.ofString(
+                    """
                     {
                         "model": "$modelName",
                         "prompt": "unload",
                         "stream": false,
                         "keep_alive": 0,
-                        "options": {
-                            "temperature": 0,
-                            "max_tokens": 1
-                        }
+                        "options": { "temperature": 0, "max_tokens": 1 }
                     }
                 """.trimIndent()
-                    )
                 )
-                .build()
-
-            val forceResponse = client.send(forceRequest, HttpResponse.BodyHandlers.ofString())
-            println("Force unload response: ${forceResponse.statusCode()} - ${forceResponse.body()}")
-
-        } catch (e: Exception) {
-            println("Force unload failed: ${e.message}")
-        }
-
-        throw Exception("[${java.time.LocalDateTime.now()}] All stop methods failed for model: $modelName")
-
+            )
+            .build()
+        client.send(forceRequest, HttpResponse.BodyHandlers.ofString())
     } catch (e: Exception) {
-        println("[${java.time.LocalDateTime.now()}] ERROR: Failed to stop model $modelName: ${e.message}")
-        throw Exception("Failed to stop model: ${e.message}")
+        println("Force unload failed: ${e.message}")
     }
+    throw Exception("[${java.time.LocalDateTime.now()}] All stop methods failed for model: $modelName")
 }
 
 private suspend fun stopAllModels() = withContext(Dispatchers.IO) {

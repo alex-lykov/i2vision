@@ -88,7 +88,14 @@ fun OllamaMonitorAndControl(
     var isLoading by remember { mutableStateOf(false) }
     var selectedModelName by remember { mutableStateOf("") }
     var showPullDialog by remember { mutableStateOf(false) }
-    var pullModelName by remember { mutableStateOf("") }
+    var findModelSearchQuery by remember { mutableStateOf("") }
+    var findModelSort by remember { mutableStateOf("popular") } // "popular" | "newest"
+    var findModelCategoryFilter by remember { mutableStateOf<String?>(null) } // "cloud", "embedding", "vision", "tools", "thinking", null = all
+    var findModelResults by remember { mutableStateOf<List<String>>(emptyList()) }
+    var findModelSearching by remember { mutableStateOf(false) }
+    var findModelSelected by remember { mutableStateOf<String?>(null) }
+    var findModelPage by remember { mutableStateOf(1) }
+    var findModelDetailsCache by remember { mutableStateOf<Map<String, FindModelDetails>>(emptyMap()) }
     var pullProgress by remember { mutableStateOf("") }
     var isPulling by remember { mutableStateOf(false) }
     var isConnected by remember { mutableStateOf(false) }
@@ -192,7 +199,31 @@ fun OllamaMonitorAndControl(
                         name = model.name,
                         size = model.formattedSize,
                         status = if (runningModelNames.contains(model.name)) ModelStatus.RUNNING else ModelStatus.LOADED,
-                        digest = model.digest
+                        digest = model.digest,
+                        repoType = "local"
+                    )
+                )
+            }
+        }
+
+        // Add cloud-named models from availableModels (local ollama list) that aren't in cloudModels
+        availableModels.forEach { model ->
+            val isCloudNamed = model.name.contains("-cloud", ignoreCase = true) ||
+                             model.name.contains("cloud", ignoreCase = true) ||
+                             model.name.startsWith("generic:", ignoreCase = true) ||
+                             model.name.startsWith("hugging_face:", ignoreCase = true)
+            if (isCloudNamed && !cloudModels.any { it.name == model.name || model.name.startsWith("${it.name}:") || it.name.startsWith("${model.name.substringBefore(':')}:") }) {
+                val isRunning = runningModelNames.contains(model.name) || runningCloudModelNames.contains(model.name) ||
+                    runningCloudModelNames.any { it.startsWith("${model.name.substringBefore(':')}:") }
+                combined.add(
+                    UnifiedModel(
+                        name = model.name,
+                        description = "Cloud model",
+                        tags = listOf("cloud"),
+                        size = model.formattedSize,
+                        status = if (isRunning) ModelStatus.RUNNING else ModelStatus.LOADED,
+                        libraryInfo = LibraryInfo(description = "Cloud model", tags = listOf("cloud"), size = model.formattedSize),
+                        repoType = "cloud"
                     )
                 )
             }
@@ -228,13 +259,14 @@ fun OllamaMonitorAndControl(
                     status = when {
                         isRunning -> ModelStatus.RUNNING
                         isLocallyAvailable -> ModelStatus.LOADED  // Available locally but show cloud UI
-                        else -> ModelStatus.CLOUD  // True cloud-only model
+                        else -> ModelStatus.LIBRARY  // Not installed; repoType already "cloud"
                     },
                     libraryInfo = LibraryInfo(
                         description = cloudModel.description,
                         tags = cloudModel.tags,
                         size = cloudModel.size
-                    )
+                    ),
+                    repoType = "cloud"
                 )
             )
         }
@@ -253,7 +285,8 @@ fun OllamaMonitorAndControl(
                             description = libModel.description,
                             tags = libModel.tags,
                             size = libModel.size
-                        )
+                        ),
+                        repoType = libModel.repoType
                     )
                 )
             }
@@ -263,8 +296,7 @@ fun OllamaMonitorAndControl(
             when (it.status) {
                 ModelStatus.RUNNING -> 0
                 ModelStatus.LOADED -> 1
-                ModelStatus.CLOUD -> 2
-                ModelStatus.LIBRARY -> 3
+                ModelStatus.LIBRARY -> 2
             }
         }.thenBy { it.name })
     }
@@ -424,14 +456,7 @@ fun OllamaMonitorAndControl(
                                     }
                                     println("[LIBRARY] Updating library repo from URL...")
                                     val repoModels = LibraryModelRepository.updateFromUrl()
-                                    libraryModels = repoModels.sortedBy { m ->
-                                        when {
-                                            m.name.contains("7b") -> 7
-                                            m.name.contains("13b") -> 13
-                                            m.name.contains("70b") -> 70
-                                            else -> 7
-                                        }
-                                    }
+                                    libraryModels = repoModels.sortedBy { parseSizeForSort(it.size) }
                                     println("[LIBRARY] Library repo: ${libraryModels.size} models")
                                 } catch (e: Exception) {
                                     println("[LIBRARY] Refresh failed: ${e.message}")
@@ -698,154 +723,278 @@ fun OllamaMonitorAndControl(
         }
     }
 
-    // Pull Model Dialog
+    // Find Model dialog (search via ollama.com/search, then PULL)
     if (showPullDialog) {
-        println("[DEBUG] DIALOG: Rendering PullDialog, isPulling=$isPulling, pullModelName='$pullModelName'")
+        LaunchedEffect(Unit) {
+            findModelPage = 1
+            findModelCategoryFilter = null
+            findModelSearching = true
+            findModelResults = fetchOllamaSearchResults("", "popular", 1)
+            findModelSearching = false
+        }
+        LaunchedEffect(findModelResults) {
+            if (findModelResults.isEmpty()) {
+                findModelDetailsCache = emptyMap()
+                return@LaunchedEffect
+            }
+            val results = findModelResults
+            val cache = mutableMapOf<String, FindModelDetails>()
+            results.take(15).forEach { slug ->
+                val details = fetchModelLibraryDetails(slug)
+                if (details != null) cache[slug] = details
+                if (results != findModelResults) return@LaunchedEffect
+            }
+            findModelDetailsCache = cache
+        }
+        val searchUrl = remember(findModelSearchQuery, findModelSort, findModelPage) {
+            val q = findModelSearchQuery.trim().ifBlank { "" }
+            "$OLLAMA_SEARCH_BASE?q=${java.net.URLEncoder.encode(q, "UTF-8")}&sort=$findModelSort&p=$findModelPage"
+        }
         AlertDialog(
-            onDismissRequest = { showPullDialog = false },
-            title = { Text("Pull Model") },
+            onDismissRequest = {
+                if (!isPulling) {
+                    showPullDialog = false
+                    findModelSearchQuery = ""
+                    findModelResults = emptyList()
+                    findModelSelected = null
+                }
+            },
+            title = { Text("Find Model") },
             text = {
-                Column {
-                    Text("Enter model name to pull (will be validated against library registry):")
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = pullModelName,
-                        onValueChange = { pullModelName = it },
-                        placeholder = { Text("e.g., llama2:7b, mistral:7b") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-
-                    // Test button to check if clicks work
-                    Spacer(Modifier.height(8.dp))
-                    Button(
-                        onClick = {
-                            println("[DEBUG] *** TEST BUTTON CLICKED ***")
-                        }
-                    ) {
-                        Text("TEST BUTTON")
-                    }
-
-                    // Always show current progress if we're pulling
-                    if (isPulling) {
-                        println("[DEBUG] DIALOG RENDER: isPulling=true, pullProgress='$pullProgress'")
-                        Spacer(Modifier.height(8.dp))
-
-                        println("[DEBUG] DIALOG RENDER: Showing pullProgress = '$pullProgress'")
-                        Text(
-                            text = pullProgress.ifBlank { "Connecting..." },
-                            style = MaterialTheme.typography.body2,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colors.primary,
-                            maxLines = 3
+                Column(Modifier.widthIn(min = 400.dp).heightIn(max = 560.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        OutlinedTextField(
+                            value = findModelSearchQuery,
+                            onValueChange = { findModelSearchQuery = it },
+                            placeholder = { Text("Search models...") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true
                         )
-
-                        // Enhanced progress display
+                        Spacer(Modifier.width(8.dp))
+                        Button(
+                            onClick = {
+                                findModelPage = 1
+                                findModelSearching = true
+                                scope.launch {
+                                    findModelResults = fetchOllamaSearchResults(findModelSearchQuery, findModelSort, 1)
+                                    findModelSearching = false
+                                }
+                            },
+                            enabled = !findModelSearching
+                        ) { Text("Search") }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Sort:", style = MaterialTheme.typography.caption)
+                        Spacer(Modifier.width(4.dp))
+                        listOf("popular" to "Popular", "newest" to "Newest").forEach { (value, label) ->
+                            SmallChip(
+                                selected = findModelSort == value,
+                                onClick = {
+                                    findModelSort = value
+                                    findModelPage = 1
+                                    findModelSearching = true
+                                    scope.launch {
+                                        findModelResults = fetchOllamaSearchResults(findModelSearchQuery, value, 1)
+                                        findModelSearching = false
+                                    }
+                                }
+                            ) { Text(label, style = MaterialTheme.typography.caption) }
+                            Spacer(Modifier.width(4.dp))
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        TextButton(onClick = {
+                            try { java.awt.Desktop.getDesktop().browse(java.net.URI.create(searchUrl)) } catch (_: Exception) { }
+                        }) { Text("Open in browser", style = MaterialTheme.typography.caption) }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Filter:", style = MaterialTheme.typography.caption)
+                        Spacer(Modifier.width(4.dp))
+                        listOf(
+                            null to "All",
+                            "cloud" to "Cloud",
+                            "embedding" to "Embedding",
+                            "vision" to "Vision",
+                            "tools" to "Tools",
+                            "thinking" to "Thinking"
+                        ).forEach { (value, label) ->
+                            SmallChip(
+                                selected = findModelCategoryFilter == value,
+                                onClick = { findModelCategoryFilter = value }
+                            ) { Text(label, style = MaterialTheme.typography.caption) }
+                            Spacer(Modifier.width(2.dp))
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    val displayList = remember(findModelResults, findModelCategoryFilter, findModelDetailsCache, libraryModels) {
+                        val cat = findModelCategoryFilter ?: return@remember findModelResults
+                        findModelResults.filter { slug ->
+                            slug.contains(cat, ignoreCase = true) ||
+                            findModelDetailsCache[slug]?.tags?.any { it.contains(cat, ignoreCase = true) } == true ||
+                            libraryModels.any { lib ->
+                                (lib.name.equals(slug, true) || lib.name.startsWith("${slug.substringBefore(':')}:", true)) &&
+                                (lib.tags.any { it.contains(cat, ignoreCase = true) } || lib.repoType.equals(cat, true))
+                            }
+                        }
+                    }
+                    if (findModelSearching) {
+                        Box(Modifier.fillMaxWidth().height(180.dp), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator(Modifier.size(32.dp))
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            items(displayList) { slug ->
+                                val selected = findModelSelected == slug
+                                val base = slug.substringBefore(':')
+                                val libInfo = libraryModels.find { it.name.equals(slug, ignoreCase = true) }
+                                    ?: libraryModels.find { it.name.equals(base, ignoreCase = true) }
+                                    ?: libraryModels.find { it.name.startsWith("$base:", ignoreCase = true) }
+                                val fetched = findModelDetailsCache[slug]
+                                val description = libInfo?.description?.takeIf { it.isNotBlank() } ?: fetched?.description
+                                val size = libInfo?.size?.takeIf { it != "—" && it.isNotBlank() } ?: fetched?.size
+                                val tagsFromLib = libInfo?.tags ?: emptyList()
+                                val tagsFromFetched = fetched?.tags ?: emptyList()
+                                val allTags = (tagsFromLib + tagsFromFetched).distinct()
+                                val hasCloud = libInfo?.repoType == "cloud" || slug.contains("-cloud")
+                                val chipsList = buildList {
+                                    allTags.forEach { add(it) }
+                                    size?.trimStart('~')?.takeIf { it.isNotBlank() && !contains(it) }?.let { add(it) }
+                                    if (hasCloud) add("cloud")
+                                }.distinct()
+                                val libraryUrl = "https://ollama.com/library/$slug"
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { findModelSelected = slug },
+                                    shape = MaterialTheme.shapes.medium,
+                                    elevation = if (selected) 2.dp else 0.dp,
+                                    color = if (selected) MaterialTheme.colors.primary.copy(alpha = 0.12f) else MaterialTheme.colors.surface
+                                ) {
+                                    Column(Modifier.padding(12.dp)) {
+                                        Row(
+                                            Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.Top
+                                        ) {
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = libInfo?.name ?: slug,
+                                                    style = MaterialTheme.typography.h6,
+                                                    color = if (selected) MaterialTheme.colors.primary else MaterialTheme.colors.onSurface
+                                                )
+                                                if (!libInfo?.description.isNullOrBlank()) {
+                                                    Text(
+                                                        text = libInfo!!.description,
+                                                        style = MaterialTheme.typography.body2,
+                                                        color = MaterialTheme.colors.onSurface.copy(alpha = 0.85f),
+                                                        modifier = Modifier.padding(top = 6.dp)
+                                                    )
+                                                }
+                                                if (chipsList.isNotEmpty()) {
+                                                    Row(
+                                                        modifier = Modifier.padding(top = 8.dp),
+                                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        chipsList.forEach { label ->
+                                                            Surface(
+                                                                shape = MaterialTheme.shapes.small,
+                                                                color = MaterialTheme.colors.primary.copy(alpha = 0.15f)
+                                                            ) {
+                                                                Text(
+                                                                    text = label,
+                                                                    style = MaterialTheme.typography.caption,
+                                                                    color = MaterialTheme.colors.primary,
+                                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            TextButton(
+                                                onClick = {
+                                                    findModelSelected = slug
+                                                    try { java.awt.Desktop.getDesktop().browse(java.net.URI.create(libraryUrl)) } catch (_: Exception) { }
+                                                }
+                                            ) { Text("View on ollama.com", style = MaterialTheme.typography.caption) }
+                                        }
+                                    }
+                                }
+                                Spacer(Modifier.height(4.dp))
+                            }
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    if (findModelPage > 1) {
+                                        val nextPage = findModelPage - 1
+                                        findModelPage = nextPage
+                                        findModelSearching = true
+                                        scope.launch {
+                                            findModelResults = fetchOllamaSearchResults(findModelSearchQuery, findModelSort, nextPage)
+                                            findModelSearching = false
+                                        }
+                                    }
+                                },
+                                enabled = findModelPage > 1 && !findModelSearching
+                            ) { Text("< Prev") }
+                            Spacer(Modifier.width(8.dp))
+                            Text("Page $findModelPage", style = MaterialTheme.typography.caption, color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f))
+                            Spacer(Modifier.width(8.dp))
+                            TextButton(
+                                onClick = {
+                                    val nextPage = findModelPage + 1
+                                    findModelPage = nextPage
+                                    findModelSearching = true
+                                    scope.launch {
+                                        val results = fetchOllamaSearchResults(findModelSearchQuery, findModelSort, nextPage)
+                                        findModelResults = results
+                                        findModelSearching = false
+                                        if (results.isEmpty() && nextPage > 1) findModelPage = nextPage - 1
+                                    }
+                                },
+                                enabled = !findModelSearching && findModelResults.isNotEmpty()
+                            ) { Text("Next >") }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    if (isPulling) {
+                        Spacer(Modifier.height(8.dp))
                         Card(
                             modifier = Modifier.fillMaxWidth(),
                             elevation = 2.dp,
                             backgroundColor = MaterialTheme.colors.surface.copy(alpha = 0.1f)
                         ) {
-                            Column(
-                                modifier = Modifier.padding(12.dp)
-                            ) {
-                                Text(
-                                    text = "Progress:",
-                                    style = MaterialTheme.typography.caption,
-                                    color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f)
-                                )
+                            Column(Modifier.padding(12.dp)) {
+                                Text("Progress:", style = MaterialTheme.typography.caption, color = MaterialTheme.colors.onSurface.copy(alpha = 0.7f))
                                 Spacer(Modifier.height(4.dp))
-                                Text(
-                                    text = pullProgress,
-                                    style = MaterialTheme.typography.body2,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colors.primary,
-                                    maxLines = 3
-                                )
-
-                                // Show active downloads if any
-                                val activeOperations = pullProgressStates.filter {
-                                    it.status == PullStatus.DOWNLOADING ||
-                                            it.status == PullStatus.CONNECTING ||
-                                            it.status == PullStatus.PULLING_MANIFEST ||
-                                            it.status == PullStatus.VERIFYING ||
-                                            it.status == PullStatus.STARTING ||
-                                            it.status == PullStatus.STOPPING
+                                Text(pullProgress.ifBlank { "Connecting..." }, style = MaterialTheme.typography.body2, fontFamily = FontFamily.Monospace, color = MaterialTheme.colors.primary, maxLines = 3)
+                                val activeOps = pullProgressStates.filter {
+                                    it.status == PullStatus.DOWNLOADING || it.status == PullStatus.CONNECTING ||
+                                            it.status == PullStatus.PULLING_MANIFEST || it.status == PullStatus.VERIFYING
                                 }
-
-                                if (activeOperations.isNotEmpty()) {
-                                    Spacer(Modifier.height(8.dp))
-                                    activeOperations.forEach { progress ->
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.SpaceBetween,
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                text = progress.modelName,
-                                                style = MaterialTheme.typography.caption,
-                                                modifier = Modifier.weight(1f)
-                                            )
-                                            when (progress.status) {
-                                                PullStatus.DOWNLOADING -> {
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        CircularProgressIndicator(
-                                                            progress = progress.progressPercent / 100f,
-                                                            modifier = Modifier.size(16.dp),
-                                                            strokeWidth = 2.dp
-                                                        )
-                                                        Spacer(Modifier.width(4.dp))
-                                                        Text(
-                                                            text = "${progress.progressPercent}%",
-                                                            style = MaterialTheme.typography.caption
-                                                        )
-                                                    }
-                                                }
-
-                                                PullStatus.CONNECTING -> {
-                                                    CircularProgressIndicator(
-                                                        modifier = Modifier.size(16.dp),
-                                                        strokeWidth = 2.dp
-                                                    )
-                                                }
-
-                                                PullStatus.PULLING_MANIFEST -> {
-                                                    Text(
-                                                        text = "Manifest...",
-                                                        style = MaterialTheme.typography.caption,
-                                                        color = Color(0xFF9C27B0)
-                                                    )
-                                                }
-
-                                                PullStatus.VERIFYING -> {
-                                                    Text(
-                                                        text = "Verify...",
-                                                        style = MaterialTheme.typography.caption,
-                                                        color = Color(0xFFFF9800)
-                                                    )
-                                                }
-
-                                                PullStatus.STARTING -> {
-                                                    Text(
-                                                        text = "Starting...",
-                                                        style = MaterialTheme.typography.caption,
-                                                        color = Color(0xFF4CAF50)
-                                                    )
-                                                }
-
-                                                PullStatus.STOPPING -> {
-                                                    Text(
-                                                        text = "Stopping...",
-                                                        style = MaterialTheme.typography.caption,
-                                                        color = Color(0xFFFF5252)
-                                                    )
-                                                }
-
-                                                else -> {}
+                                activeOps.forEach { p ->
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                        Text(p.modelName, style = MaterialTheme.typography.caption, modifier = Modifier.weight(1f))
+                                        if (p.status == PullStatus.DOWNLOADING) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                CircularProgressIndicator(progress = p.progressPercent / 100f, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                                Spacer(Modifier.width(4.dp))
+                                                Text("${p.progressPercent}%", style = MaterialTheme.typography.caption)
                                             }
-                                        }
-                                        Spacer(Modifier.height(2.dp))
+                                        } else { CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp) }
                                     }
+                                    Spacer(Modifier.height(2.dp))
                                 }
                             }
                         }
@@ -855,129 +1004,74 @@ fun OllamaMonitorAndControl(
             confirmButton = {
                 Button(
                     onClick = {
-                        println("[DEBUG] *** BUTTON CLICK DETECTED ***")
-                        println("[DEBUG] BUTTON CLICK: isPulling=$isPulling, pullModelName='$pullModelName'")
-                        if (pullModelName.isNotBlank()) {
+                        val slug = findModelSelected
+                        if (slug != null) {
                             isPulling = true
-                            println("[DEBUG] BUTTON: Set isPulling=true")
                             scope.launch {
-                                // Add activity log for pull start
-                                val logEntry = OllamaLogEntry(
-                                    timestamp = java.time.Instant.now(),
-                                    level = LogLevel.INFO,
-                                    message = "Starting pull for model: $pullModelName",
-                                    model = pullModelName
-                                )
-                                ollamaLogs = (ollamaLogs + logEntry).takeLast(50)
-
-                                // Add to progress states
-                                val initialProgress = PullProgress(
-                                    modelName = pullModelName,
-                                    operationType = OperationType.PULL,
-                                    status = PullStatus.CONNECTING,
-                                    message = "Starting pull..."
-                                )
-                                pullProgressStates = (pullProgressStates + initialProgress).takeLast(10)
-
-                                pullModel(pullModelName) { progress ->
-                                    println("[DEBUG] UI STATE: Updating pullProgress to: $progress")
+                                ollamaLogs = (ollamaLogs + OllamaLogEntry(java.time.Instant.now(), LogLevel.INFO, "Starting pull for model: $slug", slug)).takeLast(50)
+                                pullProgressStates = (pullProgressStates + PullProgress(modelName = slug, operationType = OperationType.PULL, status = PullStatus.CONNECTING, message = "Starting pull...")).takeLast(10)
+                                pullModel(slug) { progress ->
                                     pullProgress = progress
-
-                                    // Update progress states with detailed info
-                                    val updatedProgress =
-                                        pullProgressStates.find { it.modelName == pullModelName && it.operationType == OperationType.PULL }
-                                            ?.copy(message = progress, timestamp = System.currentTimeMillis())
-                                    if (updatedProgress != null) {
-                                        pullProgressStates = pullProgressStates.map {
-                                            if (it.modelName == pullModelName && it.operationType == OperationType.PULL) updatedProgress else it
-                                        }
-                                    } else {
-                                        // Create new progress entry if not found
-                                        val newProgress = PullProgress(
-                                            modelName = pullModelName,
-                                            operationType = OperationType.PULL,
-                                            status = when {
-                                                progress.contains("Connecting") -> PullStatus.CONNECTING
-                                                progress.contains("manifest") -> PullStatus.PULLING_MANIFEST
-                                                progress.contains("Downloading") -> PullStatus.DOWNLOADING
-                                                progress.contains("Verifying") -> PullStatus.VERIFYING
-                                                progress.contains("Successfully") -> PullStatus.COMPLETED
-                                                progress.contains("Error") -> PullStatus.ERROR
-                                                else -> PullStatus.CONNECTING
-                                            },
-                                            message = progress,
-                                            timestamp = System.currentTimeMillis()
-                                        )
-                                        pullProgressStates = (pullProgressStates + newProgress).takeLast(10)
-                                    }
-
-                                    // Add progress logs
-                                    val progressLog = OllamaLogEntry(
-                                        timestamp = java.time.Instant.now(),
-                                        level = LogLevel.INFO,
+                                    val up = pullProgressStates.find { it.modelName == slug && it.operationType == OperationType.PULL }?.copy(message = progress, timestamp = System.currentTimeMillis())
+                                    if (up != null) pullProgressStates = pullProgressStates.map { if (it.modelName == slug && it.operationType == OperationType.PULL) up else it }
+                                    else pullProgressStates = (pullProgressStates + PullProgress(
+                                        modelName = slug,
+                                        operationType = OperationType.PULL,
+                                        status = when {
+                                            progress.contains("manifest") -> PullStatus.PULLING_MANIFEST
+                                            progress.contains("Downloading") -> PullStatus.DOWNLOADING
+                                            progress.contains("Verifying") -> PullStatus.VERIFYING
+                                            progress.contains("Successfully") -> PullStatus.COMPLETED
+                                            progress.contains("Error") -> PullStatus.ERROR
+                                            else -> PullStatus.CONNECTING
+                                        },
                                         message = progress,
-                                        model = pullModelName
-                                    )
-                                    ollamaLogs = (ollamaLogs + progressLog).takeLast(50)
+                                        timestamp = System.currentTimeMillis()
+                                    )).takeLast(10)
+                                    ollamaLogs = (ollamaLogs + OllamaLogEntry(java.time.Instant.now(), LogLevel.INFO, progress, slug)).takeLast(50)
                                 }
-                                println("[DEBUG] Pull completed, showing completion for 2 seconds before closing")
-
-                                // Show completion for 2 seconds before closing dialog
                                 kotlinx.coroutines.delay(2000)
-
                                 isPulling = false
-
-                                // Remove from progress states on completion
-                                pullProgressStates = pullProgressStates.filter {
-                                    !(it.modelName == pullModelName && it.operationType == OperationType.PULL)
-                                }
-
-                                // Close dialog only after completion
+                                pullProgressStates = pullProgressStates.filter { !(it.modelName == slug && it.operationType == OperationType.PULL) }
                                 showPullDialog = false
-                                pullModelName = ""
+                                findModelSelected = null
                                 pullProgress = ""
                             }
                         }
                     },
-                    enabled = pullModelName.isNotBlank() && !isPulling
+                    enabled = findModelSelected != null && !isPulling
                 ) {
-                    println("[DEBUG] BUTTON RENDER: isPulling=$isPulling, enabled=${pullModelName.isNotBlank() && !isPulling}")
-                    if (isPulling) {
-                        println("[DEBUG] BUTTON: Showing loading spinner")
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        println("[DEBUG] BUTTON: Showing 'PULL MODEL' text")
-                        Text("PULL MODEL")
-                    }
+                    if (isPulling) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    else Text("PULL")
                 }
             },
             dismissButton = {
-                println("[DEBUG] DIALOG: Rendering dismissButton")
                 TextButton(
                     onClick = {
-                        if (isPulling) {
-                            // TODO: Implement cancellation logic
-                            isPulling = false
-                            showPullDialog = false
-                            pullModelName = ""
-                            pullProgress = ""
-                        } else {
-                            showPullDialog = false
-                            pullModelName = ""
-                            pullProgress = ""
-                        }
+                        if (isPulling) { isPulling = false; pullProgressStates = pullProgressStates.filter { it.operationType != OperationType.PULL } }
+                        showPullDialog = false
+                        pullProgress = ""
+                        findModelSearchQuery = ""
+                        findModelResults = emptyList()
+                        findModelSelected = null
                     }
-                ) {
-                    Text(if (isPulling) "Cancel" else "Close")
-                }
+                ) { Text(if (isPulling) "Cancel" else "Close") }
             }
         )
     }
 }
 
+
+@Composable
+private fun SmallChip(selected: Boolean, onClick: () -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    Surface(
+        modifier = modifier.clickable(onClick = onClick),
+        shape = MaterialTheme.shapes.small,
+        color = if (selected) MaterialTheme.colors.primary.copy(alpha = 0.2f) else MaterialTheme.colors.onSurface.copy(alpha = 0.08f)
+    ) {
+        Row(Modifier.padding(horizontal = 10.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) { content() }
+    }
+}
 
 @Composable
 private fun UnifiedModelsList(
@@ -1227,7 +1321,6 @@ private fun UnifiedModelItem(
         ModelStatus.RUNNING -> MaterialTheme.colors.primary.copy(alpha = 0.15f)
         ModelStatus.LIBRARY -> Color(0xFFFFF3E0)
         ModelStatus.LOADED -> MaterialTheme.colors.surface
-        ModelStatus.CLOUD -> Color(0xFFE3F2FD)
     }
 
     Row(
@@ -1243,14 +1336,12 @@ private fun UnifiedModelItem(
                 ModelStatus.RUNNING -> Icons.Default.CheckCircle
                 ModelStatus.LOADED -> Icons.Default.Settings
                 ModelStatus.LIBRARY -> Icons.Default.Settings
-                ModelStatus.CLOUD -> Icons.Default.Settings
             },
             contentDescription = null,
             tint = when (model.status) {
                 ModelStatus.RUNNING -> MaterialTheme.colors.primary
                 ModelStatus.LOADED -> MaterialTheme.colors.onSurface.copy(alpha = 0.6f)
                 ModelStatus.LIBRARY -> MaterialTheme.colors.secondary
-                ModelStatus.CLOUD -> Color(0xFF2196F3)
             },
             modifier = Modifier.size(20.dp)
         )
@@ -1288,16 +1379,14 @@ private fun UnifiedModelItem(
                 Text(
                     text = when (model.status) {
                         ModelStatus.RUNNING -> "🟢"
-                        ModelStatus.LOADED -> ""
-                        ModelStatus.LIBRARY -> "📚 Library"
-                        ModelStatus.CLOUD -> "☁️ Cloud"
+                        ModelStatus.LOADED -> (model.repoType ?: "local").replaceFirstChar { it.uppercase() }
+                        ModelStatus.LIBRARY -> (model.repoType ?: "local").replaceFirstChar { it.uppercase() }
                     },
                     style = MaterialTheme.typography.caption,
                     color = when (model.status) {
                         ModelStatus.RUNNING -> Color(0xFF4CAF50)
                         ModelStatus.LOADED -> MaterialTheme.colors.primary
                         ModelStatus.LIBRARY -> MaterialTheme.colors.secondary
-                        ModelStatus.CLOUD -> Color(0xFF2196F3)
                     }
                 )
 
@@ -1622,24 +1711,6 @@ private fun UnifiedModelItem(
                             )
                         }
                     }
-
-                    ModelStatus.CLOUD -> {
-                        // Check if cloud model is actually available locally
-                        // Note: This case handles true cloud-only models (not cloud-named local models)
-                        // Cloud-named local models get ModelStatus.LOADED status, not CLOUD
-                        
-                        // For true cloud models, always show PULL since they're not locally available
-                        TextButton(
-                            onClick = onPull,
-                            modifier = Modifier.height(32.dp).defaultMinSize(minWidth = 50.dp)
-                        ) {
-                            Text(
-                                "PULL",
-                                style = MaterialTheme.typography.caption,
-                                color = Color(0xFF2196F3)
-                            )
-                        }
-                    }
                 }
             }
         }
@@ -1788,7 +1859,8 @@ data class LibraryModel(
     val name: String,
     val description: String,
     val tags: List<String>,
-    val size: String
+    val size: String,
+    val repoType: String = "local"  // "local" | "cloud", set by parser from remote_host/remote_model
 )
 
 // Unified model data structure
@@ -1799,7 +1871,8 @@ data class UnifiedModel(
     val size: String,
     val status: ModelStatus,
     val libraryInfo: LibraryInfo? = null,
-    val digest: String? = null
+    val digest: String? = null,
+    val repoType: String? = null  // "local" | "cloud" from repo parser; used for label
 )
 
 data class LibraryInfo(
@@ -1809,10 +1882,9 @@ data class LibraryInfo(
 )
 
 enum class ModelStatus {
-    LIBRARY,     // Available in library but not installed
+    LIBRARY,     // From repo, not installed (label from repoType: local/cloud)
     LOADED,      // Installed locally
-    RUNNING,     // Currently running
-    CLOUD        // Available from cloud repository
+    RUNNING      // Currently running
 }
 
 // Repository for library models
@@ -1851,7 +1923,8 @@ object LibraryModelRepository {
                     return emptyList()
                 }
                 val body = response.body()
-                val models = parseModelsFromJson(body)
+                val defaultRepoType = if (u.contains("ollama.com")) "cloud" else "local"
+                val models = parseModelsFromJson(body, defaultRepoType)
                 if (models.isEmpty() && body.isNotBlank()) {
                     println("[LIBRARY] Parse returned 0 models. Response sample: ${body.take(400)}")
                 }
@@ -1876,7 +1949,7 @@ object LibraryModelRepository {
         (je as? JsonPrimitive)?.content?.removeSurrounding("\"")
 
     // Parse models from JSON (ollama.com/api/tags or local /api/tags shape: { "models": [ { "name", "model", "details"? } ] })
-    private fun parseModelsFromJson(json: String): List<LibraryModel> {
+    private fun parseModelsFromJson(json: String, defaultRepoType: String = "local"): List<LibraryModel> {
         return try {
             val jsonElement = Json.parseToJsonElement(json)
             val models = mutableListOf<LibraryModel>()
@@ -1896,6 +1969,8 @@ object LibraryModelRepository {
             modelsArray.forEach { modelElement ->
                 if (modelElement is JsonObject) {
                     val name = stringVal(modelElement["name"]) ?: stringVal(modelElement["model"]) ?: return@forEach
+                    val hasRemote = stringVal(modelElement["remote_host"]) != null || stringVal(modelElement["remote_model"]) != null
+                    val repoType = if (hasRemote) "cloud" else defaultRepoType
                     val details = modelElement["details"] as? JsonObject
                     val paramSize = details?.let { stringVal(it["parameter_size"]) }
                     val family = details?.let { stringVal(it["family"]) }
@@ -1912,7 +1987,8 @@ object LibraryModelRepository {
                             name = name,
                             description = description,
                             tags = tags,
-                            size = paramSize?.let { "~$it" } ?: estimateModelSize(name)
+                            size = paramSize?.let { "~$it" } ?: estimateModelSize(name),
+                            repoType = repoType
                         )
                     )
                 }
@@ -1966,16 +2042,16 @@ private suspend fun loadLibraryModels(): List<LibraryModel> = withContext(Dispat
     }
     
     val allModels = if (cachedModels.isNotEmpty()) cachedModels else emptyList()
+    allModels.sortedBy { parseSizeForSort(it.size) }
+}
 
-    // Sort by context length (smaller first) for display
-    allModels.sortedBy { model ->
-        val paramSize = when {
-            model.name.contains("7b") -> 7
-            model.name.contains("13b") -> 13
-            model.name.contains("70b") -> 70
-            else -> 7
-        }
-        paramSize
+/** Parse size string (e.g. "~4 GB", "~40 GB") to numeric order; larger value = larger size. */
+private fun parseSizeForSort(size: String): Long {
+    val num = size.replace(Regex("[^0-9]"), "").toLongOrNull() ?: return 0L
+    return when {
+        size.contains("GB", ignoreCase = true) -> num * 1024
+        size.contains("MB", ignoreCase = true) -> num
+        else -> num
     }
 }
 
@@ -2420,7 +2496,7 @@ private suspend fun pullModel(modelName: String, onProgress: (String) -> Unit) =
         // Update initial status
         onProgress("🔍 Starting pull for $modelName...")
 
-        // Step 1: Validate model exists in library repository
+        // Pull via local Ollama /api/pull
         onProgress("🔍 Validating model in library repository...")
         try {
             val libraryModels = LibraryModelRepository.updateFromUrl()
@@ -2443,18 +2519,10 @@ private suspend fun pullModel(modelName: String, onProgress: (String) -> Unit) =
         val client = HttpClient.newHttpClient()
         println("[${java.time.LocalDateTime.now()}] Creating download request for model: $modelName")
         val request = HttpRequest.newBuilder()
-            .uri(java.net.URI.create("https://registry.ollama.ai/api/v1/models/$modelName/pull"))
+            .uri(java.net.URI.create("http://localhost:11434/api/pull"))
             .header("Content-Type", "application/json")
             .timeout(java.time.Duration.ofMinutes(30))
-            .POST(
-                HttpRequest.BodyPublishers.ofString(
-                    """
-                {
-                    "name": "$modelName"
-                }
-            """.trimIndent()
-                )
-            )
+            .POST(HttpRequest.BodyPublishers.ofString("""{"model":"$modelName"}"""))
             .build()
 
         println("[${java.time.LocalDateTime.now()}] Sending download request for model: $modelName")
@@ -2464,8 +2532,7 @@ private suspend fun pullModel(modelName: String, onProgress: (String) -> Unit) =
         println("[${java.time.LocalDateTime.now()}] Pull request response status: ${response.statusCode()}")
 
         if (response.statusCode() == 200) {
-            println("[${java.time.LocalDateTime.now()}] Successfully connected to Ollama registry for pulling: $modelName")
-            onProgress("✅ Connected to Ollama registry, preparing to download $modelName...")
+            println("[${java.time.LocalDateTime.now()}] Pull stream started for: $modelName")
 
             var lineCount = 0
             var lastStatus = ""
@@ -2587,14 +2654,14 @@ private suspend fun pullModel(modelName: String, onProgress: (String) -> Unit) =
                 }
             }
         } else {
-            onProgress("❌ Failed to pull $modelName: HTTP ${response.statusCode()} - ${response.body()}")
+            onProgress("❌ Failed to pull $modelName: HTTP ${response.statusCode()}")
         }
     } catch (e: java.net.ConnectException) {
-        onProgress("❌ Cannot connect to Ollama registry. Check your internet connection.")
+        onProgress("❌ Cannot connect to local Ollama. Ensure Ollama is running.")
     } catch (e: java.net.SocketTimeoutException) {
         onProgress("❌ Download timeout for $modelName after 30 minutes. The model might be too large or network is slow.")
     } catch (e: java.net.UnknownHostException) {
-        onProgress("❌ Cannot resolve host 'registry.ollama.ai'. Check your internet connection.")
+        onProgress("❌ Cannot resolve Ollama host. Ensure Ollama is running.")
     } catch (e: Exception) {
         onProgress("❌ Unexpected error downloading model: ${e.message}")
     }
@@ -2623,6 +2690,71 @@ private fun parseModelsResponse(response: String): List<OllamaModel> {
             }
         }
     } catch (e: Exception) {
+        emptyList()
+    }
+}
+
+private val OLLAMA_SEARCH_BASE = "https://ollama.com/search"
+private val OLLAMA_LIBRARY_BASE = "https://ollama.com/library"
+
+data class FindModelDetails(val description: String?, val size: String?, val tags: List<String>)
+
+private suspend fun fetchModelLibraryDetails(slug: String): FindModelDetails? = withContext(Dispatchers.IO) {
+    try {
+        val client = HttpClient.newBuilder().followRedirects(java.net.http.HttpClient.Redirect.NORMAL).build()
+            val request = HttpRequest.newBuilder()
+                .uri(java.net.URI.create("$OLLAMA_LIBRARY_BASE/$slug"))
+                .timeout(java.time.Duration.ofSeconds(8))
+                .header("Accept", "text/html")
+                .header("User-Agent", "Mozilla/5.0 (compatible; KoogLauncher/1.0)")
+                .GET()
+                .build()
+            val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+            if (response.statusCode() != 200) return@withContext null
+            val html = response.body()
+            val ogDescRegex = Regex("""(?:property|name)=["']og:description["'][^>]+content=["']([^"']{10,600})["']|content=["']([^"']{10,600})["'][^>]+(?:property|name)=["']og:description["']""", RegexOption.IGNORE_CASE)
+            val ogMatch = ogDescRegex.find(html)
+            var rawDesc = ogMatch?.groupValues?.get(1)?.ifBlank { null } ?: ogMatch?.groupValues?.get(2)?.ifBlank { null }
+            if (rawDesc == null) {
+                val metaDescRegex = Regex("""<meta[^>]+name=["']description["'][^>]+content=["']([^"']{15,500})["']""", RegexOption.IGNORE_CASE)
+                rawDesc = metaDescRegex.find(html)?.groupValues?.get(1) ?: metaDescRegex.find(html)?.groupValues?.get(2)
+            }
+            if (rawDesc == null) {
+                val jsonLdRegex = Regex(""""description"\s*:\s*["']([^"']{15,500})["']""", RegexOption.IGNORE_CASE)
+                rawDesc = jsonLdRegex.find(html)?.groupValues?.get(1)
+            }
+            val description = rawDesc?.replace("&quot;", "\"")?.replace("&#39;", "'")?.replace("&amp;", "&")?.trim()?.takeIf { it.isNotBlank() }
+            val sizeRegex = Regex("""(\d+(?:\.\d+)?\s*(?:GB|MB|B|b| parameters?))""", RegexOption.IGNORE_CASE)
+            val size = sizeRegex.find(html)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotBlank() }
+            val tagRegex = Regex("""(tools|vision|embedding|cloud|thinking|24b|7b|70b|8b|13b|4b|3b|1b)""", RegexOption.IGNORE_CASE)
+            val tags = tagRegex.findAll(html).map { it.value.lowercase() }.distinct().take(6).toList()
+            if (description != null || size != null || tags.isNotEmpty()) FindModelDetails(description, size, tags) else null
+    } catch (e: Exception) {
+        null
+    }
+}
+
+private suspend fun fetchOllamaSearchResults(query: String, sort: String, page: Int = 1): List<String> = withContext(Dispatchers.IO) {
+    try {
+        val q = query.trim().ifBlank { "" }
+        val url = "$OLLAMA_SEARCH_BASE?q=${java.net.URLEncoder.encode(q, "UTF-8")}&sort=$sort&p=$page"
+        val client = HttpClient.newBuilder()
+            .followRedirects(java.net.http.HttpClient.Redirect.NORMAL)
+            .build()
+        val request = HttpRequest.newBuilder()
+            .uri(java.net.URI.create(url))
+            .timeout(java.time.Duration.ofSeconds(15))
+            .header("Accept", "text/html,application/xhtml+xml")
+            .header("User-Agent", "Mozilla/5.0 (compatible; KoogLauncher/1.0)")
+            .GET()
+            .build()
+        val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+        if (response.statusCode() != 200) return@withContext emptyList()
+        val html = response.body()
+        val slugPattern = Regex("""href=["'](?:https?://(?:www\.)?ollama\.com)?/library/([a-zA-Z0-9._-]+)["'/?#]""")
+        slugPattern.findAll(html).map { it.groupValues[1] }.distinct().toList()
+    } catch (e: Exception) {
+        println("[FIND_MODEL] Search fetch failed: ${e.message}")
         emptyList()
     }
 }

@@ -53,6 +53,21 @@ class ImplementationAgent(
         println("[IMPLEMENTATION] Processing task: '$task'")
         println("[IMPLEMENTATION] Project path from context: ${context.projectPath ?: "null"}")
 
+        // Require a project selected from the Projects card (DB); do not use current working directory
+        if (context.projectPath == null) {
+            val msg = "No project selected. Please add and select a project from the Projects card so file operations run in the correct project."
+            println("[IMPLEMENTATION] $msg")
+            return AgentResponse(
+                agentType = AgentType.IMPLEMENTATION,
+                result = msg,
+                metadata = mapOf(
+                    "workspace" to workspace.name,
+                    "agent" to "implementation",
+                    "no_project" to "true"
+                )
+            )
+        }
+
         // Fast-path: handle basic arithmetic locally (no LLM, instant)
         computeBasicArithmetic(task)?.let { arithmeticResult ->
             println("[IMPLEMENTATION] Fast arithmetic result (no LLM): $arithmeticResult")
@@ -87,11 +102,33 @@ class ImplementationAgent(
             )
         }
         
-        // Update file access tools with project root from context
-        val projectRoot = context.projectPath ?: "."
+        // Use project root from context only (project selected from Projects card / DB)
+        val projectRoot = context.projectPath!!
         println("[IMPLEMENTATION] Using project root for tools: '$projectRoot'")
-        println("[IMPLEMENTATION] Context project path: '${context.projectPath}'")
         val tools = KoogToolRegistryBuilder.FileAccessTools(projectRoot)
+        
+        // Fast-path: "list project root folders" = one list_directory on project root, no LLM
+        if (isListProjectRootTask(task)) {
+            println("[IMPLEMENTATION] Fast-path: listing project root (UI-selected project) without LLM")
+            val output = tools.listDirectory(".")
+            val result = if (output.success) {
+                "✅ Directory listing:\n${output.entries.joinToString("\n") { "${if (it.isDirectory) "📁" else "📄"} ${it.path}" }}"
+            } else {
+                "❌ Error listing directory: ${output.error}"
+            }
+            return AgentResponse(
+                agentType = AgentType.IMPLEMENTATION,
+                result = result,
+                metadata = mapOf(
+                    "workspace" to workspace.name,
+                    "agent" to "implementation",
+                    "model" to implementationModelWrapper.modelName,
+                    "tools_used" to "true",
+                    "simple_task" to "true",
+                    "simple_task_type" to "list_project_root"
+                )
+            )
+        }
         
         // Use Koog AIAgent with tool execution loop
         val prompt = buildPromptWithContext(task, context)
@@ -133,10 +170,23 @@ class ImplementationAgent(
             && !trimmed.contains("project", ignoreCase = true)
             && !trimmed.contains("directory", ignoreCase = true)
             && !trimmed.contains("list", ignoreCase = true)
-            && !trimmed.contains("show", ignoreCase = true)) {
+            && !trimmed.contains("show", ignoreCase = true)
+            && !trimmed.contains("output", ignoreCase = true)
+            && !trimmed.contains("app", ignoreCase = true)) {
             return true
         }
         return false
+    }
+
+    /**
+     * True when the task is "list project root folders" (or similar): we list the UI-selected project root
+     * with one list_directory call and no LLM iterations.
+     */
+    private fun isListProjectRootTask(task: String): Boolean {
+        val t = task.trim().lowercase()
+        if (!t.contains("list")) return false
+        return t.contains("project root") || t.contains("root folder") || t.contains("root directory") ||
+            (t.contains("root") && t.contains("folder")) || (t.contains("root") && t.contains("directory"))
     }
 
     /**
@@ -223,6 +273,9 @@ class ImplementationAgent(
         var finalResponse = ""
         var toolCallCount = 0
         val calledPaths = mutableSetOf<String>()
+        var lastSuccessfulListDirectoryOutput: String? = null
+        var lastSuccessfulToolOutput: String? = null
+        val toolCallKeys = mutableListOf<String>()
         
         for (iteration in 0 until maxIterations) {
             // Only log iteration start for first few or if verbose
@@ -277,6 +330,9 @@ class ImplementationAgent(
                 if (toolCall != null) {
                     println("[IMPLEMENTATION] 🔧 Tool call detected: ${toolCall.tool}")
                     val startTime = System.currentTimeMillis()
+                    val callKey = toolCallKey(toolCall)
+                    toolCallKeys.add(callKey)
+                    val sameCallCount = toolCallKeys.count { it == callKey }
                     
                     // Track tool calls to detect loops
                     toolCallCount++
@@ -307,6 +363,10 @@ class ImplementationAgent(
                         
                         if (success) {
                             println("[IMPLEMENTATION] ✅ Tool executed: ${toolCall.tool} (${duration}ms)")
+                            lastSuccessfulToolOutput = toolOutput
+                            if (toolCall.tool == "list_directory" || toolCall.tool == "listDirectory") {
+                                lastSuccessfulListDirectoryOutput = toolOutput
+                            }
                         } else {
                             println("[IMPLEMENTATION] ⚠️ Tool executed with errors: ${toolCall.tool} (${duration}ms)")
                         }
@@ -316,6 +376,10 @@ class ImplementationAgent(
                         // Include error context so agent can recover
                         conversationHistory.add("Tool Output: $toolOutput")
                         
+                        // If same tool+args was called 3+ times, nudge to stop and use output as answer
+                        if (sameCallCount >= 3) {
+                            conversationHistory.add("Note: You have already called ${toolCall.tool} with the same arguments $sameCallCount times. Provide a final answer based on the tool output above instead of calling again.")
+                        }
                         // If we've made many tool calls, suggest providing a final answer
                         if (toolCallCount >= 5 && iteration >= 3) {
                             conversationHistory.add("Note: You have gathered sufficient information from ${toolCallCount} tool calls. Please provide a final answer summarizing the results instead of making more tool calls.")
@@ -391,19 +455,56 @@ class ImplementationAgent(
         }
         
         if (finalResponse.isEmpty()) {
-            // Check if we have any useful information from the conversation
-            val lastAgentResponse = conversationHistory.lastOrNull { it.startsWith("Assistant:") }
-            if (lastAgentResponse != null) {
-                finalResponse = lastAgentResponse.removePrefix("Assistant: ").trim()
-                if (finalResponse.isEmpty()) {
-                    finalResponse = "Reached maximum iterations. Please try a simpler task or rephrase your request."
+            // For "list folders/root/directories" tasks, return the directory listing we got
+            val taskLower = initialPrompt.lowercase()
+            val isListFoldersTask = taskLower.contains("list") &&
+                (taskLower.contains("folder") || taskLower.contains("root") || taskLower.contains("directory") || taskLower.contains("folders"))
+            if (isListFoldersTask && lastSuccessfulListDirectoryOutput != null) {
+                finalResponse = lastSuccessfulListDirectoryOutput.trim()
+                println("[IMPLEMENTATION] ✅ Using list_directory output as final response (list-folders task)")
+            }
+            // If we had repeated identical tool calls, use last successful tool output as answer
+            if (finalResponse.isEmpty() && lastSuccessfulToolOutput != null && toolCallKeys.isNotEmpty()) {
+                val repeatedKey = toolCallKeys.groupingBy { k -> k }.eachCount().entries.firstOrNull { e -> e.value >= 3 }?.key
+                if (repeatedKey != null) {
+                    finalResponse = lastSuccessfulToolOutput.trim()
+                    println("[IMPLEMENTATION] ✅ Using last tool output as final response (repeated tool call)")
                 }
-            } else {
-                finalResponse = "Reached maximum iterations without a response. Please try a simpler task."
+            }
+            // Fallback: last assistant message or generic message
+            if (finalResponse.isEmpty()) {
+                val lastAgentResponse = conversationHistory.lastOrNull { it.startsWith("Assistant:") }
+                if (lastAgentResponse != null) {
+                    finalResponse = lastAgentResponse.removePrefix("Assistant: ").trim()
+                    if (finalResponse.isEmpty()) {
+                        finalResponse = "Reached maximum iterations. Please try a simpler task or rephrase your request."
+                    }
+                } else {
+                    finalResponse = "Reached maximum iterations without a response. Please try a simpler task."
+                }
             }
         }
         
         return finalResponse
+    }
+    
+    /** Stable key for tool+args to detect repeated identical calls */
+    private fun toolCallKey(toolCall: ToolCall): String {
+        return when (toolCall.tool) {
+            "read_file", "readFile" -> {
+                val path = try {
+                    json.decodeFromJsonElement(ReadFileArgs.serializer(), toolCall.args).path
+                } catch (_: Exception) { "" }
+                "read_file:$path"
+            }
+            "list_directory", "listDirectory" -> {
+                val path = try {
+                    json.decodeFromJsonElement(ListDirectoryArgs.serializer(), toolCall.args).path
+                } catch (_: Exception) { "" }
+                "list_directory:$path"
+            }
+            else -> "${toolCall.tool}:${toolCall.args}"
+        }
     }
     
     /**
@@ -411,44 +512,54 @@ class ImplementationAgent(
      * Looks for JSON tool calls in the response
      */
     private fun extractToolCall(response: String): ToolCall? {
+        println("[IMPLEMENTATION] 🔍 extractToolCall called with response: ${response.take(200)}...")
+        
         // First, try to extract JSON from code blocks
         val codeBlockPattern = """```(?:json)?\s*(\{[\s\S]*?\})\s*```""".toRegex()
         val codeBlockMatch = codeBlockPattern.find(response)
         if (codeBlockMatch != null) {
             var jsonString = codeBlockMatch.groupValues[1]
-            // Pre-fix Windows paths in code blocks - use string replacement for literal backslashes
-            // Handle patterns like ".\src" -> "./src" (literal dot-backslash)
-            // Replace .\ with ./ (literal string replacement, not regex)
-            if (jsonString.contains(".\"")) {
-                jsonString = jsonString.replace(".\"", "./")
-            }
-            // Replace remaining backslashes with forward slashes
-            jsonString = jsonString.replace("\\", "/")
+            println("[IMPLEMENTATION] 📦 Found JSON in code block: ${jsonString.take(150)}...")
             return tryParseToolCall(jsonString, "code block")
         }
         
         // Try to find JSON object with "tool" field
-        // Match from { to } including nested braces
-        val jsonObjectPattern = """\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}""".toRegex(RegexOption.DOT_MATCHES_ALL)
-        val matches = jsonObjectPattern.findAll(response)
-        
-        for (match in matches) {
-            var jsonString = match.value
-            // Pre-fix Windows paths before trying to parse
-            // Handle patterns like ".\src" -> "./src" (literal dot-backslash)
-            if (jsonString.contains(".\"")) {
-                jsonString = jsonString.replace(".\"", "./")
-            }
-            // Replace remaining backslashes with forward slashes
-            jsonString = jsonString.replace("\\", "/")
-            
-            // Check if it looks like a tool call
-            if (jsonString.contains("\"tool\"") || jsonString.contains("'tool'")) {
-                val toolCall = tryParseToolCall(jsonString, "json object")
-                if (toolCall != null) return toolCall
+        // Use a more robust approach to find complete JSON objects
+        val toolIndex = response.indexOf("\"tool\"")
+        if (toolIndex != -1) {
+            // Find the first opening brace in the entire response before "tool"
+            val jsonStart = response.indexOf('{')
+            if (jsonStart != -1 && jsonStart < toolIndex) {
+                // Find the matching closing brace
+                var braceCount = 0
+                var jsonEnd = -1
+                for (i in jsonStart until response.length) {
+                    when (response[i]) {
+                        '{' -> braceCount++
+                        '}' -> {
+                            braceCount--
+                            if (braceCount == 0) {
+                                jsonEnd = i + 1
+                                break
+                            }
+                        }
+                    }
+                }
+                
+                if (jsonEnd > jsonStart) {
+                    var jsonString = response.substring(jsonStart, jsonEnd)
+                    println("[IMPLEMENTATION] 📦 Found JSON object: ${jsonString.take(150)}...")
+                    
+                    // Check if it looks like a tool call
+                    if (jsonString.contains("\"tool\"") || jsonString.contains("'tool'")) {
+                        val toolCall = tryParseToolCall(jsonString, "json object")
+                        if (toolCall != null) return toolCall
+                    }
+                }
             }
         }
         
+        println("[IMPLEMENTATION] ❌ No tool call found in response")
         return null
     }
     
@@ -470,12 +581,35 @@ class ImplementationAgent(
             println("[IMPLEMENTATION] Attempting to fix JSON...")
             
             try {
-                // Fix unescaped backslashes in paths (Windows paths)
-                // Handle patterns like: ".\src\main" -> "./src/main"
+                // Fix Windows paths in JSON by properly handling escaping
                 var fixedJson = jsonString
-                    .replace("""\.\\""", "./")  // Fix .\ paths first
-                    .replace("""\\""", "/")  // Replace remaining backslashes with forward slashes
-                    .replace("""\./""", "./")  // Normalize ./
+                
+                // Fix unescaped backslashes in path values only
+                // Look for "path": "value" patterns and fix backslashes in the value
+                val pathPattern = """("path"\s*:\s*")([^"]*?)(")""".toRegex()
+                fixedJson = pathPattern.replace(fixedJson) { match ->
+                    val prefix = match.groupValues[1]
+                    val pathValue = match.groupValues[2]
+                    val suffix = match.groupValues[3]
+                    
+                    // Fix Windows paths: replace \ with / but keep other escaping intact
+                    val fixedPath = pathValue.replace("\\", "/")
+                    "$prefix$fixedPath$suffix"
+                }
+                
+                // Also fix content field if it contains paths
+                val contentPattern = """("content"\s*:\s*")([^"]*?)(")""".toRegex(RegexOption.DOT_MATCHES_ALL)
+                fixedJson = contentPattern.replace(fixedJson) { match ->
+                    val prefix = match.groupValues[1]
+                    val contentValue = match.groupValues[2]
+                    val suffix = match.groupValues[3]
+                    
+                    // Fix Windows paths in content
+                    val fixedContent = contentValue.replace("\\", "/")
+                    "$prefix$fixedContent$suffix"
+                }
+                
+                println("[IMPLEMENTATION] Fixed JSON: ${fixedJson.take(200)}...")
                 
                 // Try parsing again
                 val toolCall = json.decodeFromString<ToolCall>(fixedJson)
@@ -528,25 +662,20 @@ class ImplementationAgent(
                                 json.parseToJsonElement("{$argsJson}")
                             } catch (e: Exception) {
                                 // If that fails, try to extract just the path/content field
-                                // Use a simpler regex that captures everything between quotes, then we'll normalize
+                                // Strict: value between quotes; lenient: value truncated (missing closing quote before })
                                 val pathMatch = """["']path["']\s*:\s*["']([^"']*)["']""".toRegex().find(argsJson)
+                                    ?: """["']path["']\s*:\s*["']([^"'}\]]*)""".toRegex().find(argsJson)
                                 val contentMatch = """["']content["']\s*:\s*["']([^"']*)["']""".toRegex(RegexOption.DOT_MATCHES_ALL).find(argsJson)
                                 
                                 when (toolName) {
                                     "read_file", "readFile", "list_directory", "listDirectory" -> {
                                         if (pathMatch != null) {
-                                            // Extract raw path value (may contain backslashes like .\src)
-                                            var path = pathMatch.groupValues[1]
-                                            // Normalize Windows paths using string replacement (not regex)
-                                            // Handle .\src -> ./src
-                                            if (path.startsWith(".") && path.length > 1 && path[1] == '\\') {
-                                                path = "./" + path.substring(2)
-                                            }
-                                            // Replace all remaining backslashes with forward slashes
-                                            path = path.replace("\\", "/")
-                                            // Normalize any double slashes
-                                            path = path.replace("//", "/")
-                                            // Now escape for JSON (only quotes need escaping after normalization)
+                                            // Extract raw path value and normalize it
+                                            var path = pathMatch.groupValues[1].trim()
+                                            if (path.isEmpty() || path == "." || path == "./") path = "."
+                                            // Normalize Windows paths
+                                            path = path.replace("\\", "/").replace("//", "/")
+                                            // Escape for JSON
                                             val escapedPath = path.replace("\"", "\\\"")
                                             json.parseToJsonElement("""{"path": "$escapedPath"}""")
                                         } else {
@@ -557,12 +686,7 @@ class ImplementationAgent(
                                         if (pathMatch != null && contentMatch != null) {
                                             // Extract and normalize path
                                             var path = pathMatch.groupValues[1]
-                                            // Handle .\src -> ./src
-                                            if (path.startsWith(".") && path.length > 1 && path[1] == '\\') {
-                                                path = "./" + path.substring(2)
-                                            }
-                                            path = path.replace("\\", "/")
-                                            path = path.replace("//", "/")
+                                            path = path.replace("\\", "/").replace("//", "/")
                                             val escapedPath = path.replace("\"", "\\\"")
                                             
                                             // Extract and escape content
@@ -571,6 +695,8 @@ class ImplementationAgent(
                                             content = content.replace("\\\"", "\"")  // Unescape quotes
                                             content = content.replace("\\\\", "\\")  // Unescape backslashes
                                             content = content.replace("\\n", "\n")  // Unescape newlines
+                                            // Normalize paths in content
+                                            content = content.replace("\\", "/")
                                             // Re-escape for JSON
                                             val escapedContent = content
                                                 .replace("\\", "\\\\")
@@ -672,14 +798,38 @@ class ImplementationAgent(
             return@flow
         }
 
+        // Require a project selected from the Projects card (DB); do not use current working directory
+        if (context.projectPath == null) {
+            val msg = "No project selected. Please add and select a project from the Projects card so file operations run in the correct project."
+            println("[IMPLEMENTATION] $msg")
+            emit(AgentResponseChunk.Text(msg))
+            emit(AgentResponseChunk.Complete)
+            return@flow
+        }
+
+        // Use project root from context only (project selected from Projects card / DB)
+        val projectRoot = context.projectPath!!
+        println("[IMPLEMENTATION] Using project root for tools (streaming): '$projectRoot'")
+        val tools = KoogToolRegistryBuilder.FileAccessTools(projectRoot)
+        
+        // Fast-path: "list project root folders" = one list_directory on project root, no LLM
+        if (isListProjectRootTask(task)) {
+            println("[IMPLEMENTATION] Fast-path: listing project root (UI-selected project) without LLM")
+            emit(AgentResponseChunk.Progress(50, "Listing project root"))
+            val output = tools.listDirectory(".")
+            val result = if (output.success) {
+                "✅ Directory listing:\n${output.entries.joinToString("\n") { "${if (it.isDirectory) "📁" else "📄"} ${it.path}" }}"
+            } else {
+                "❌ Error listing directory: ${output.error}"
+            }
+            emit(AgentResponseChunk.Text(result))
+            emit(AgentResponseChunk.Progress(100, "Done"))
+            emit(AgentResponseChunk.Complete)
+            return@flow
+        }
+        
         emit(AgentResponseChunk.Progress(10, "Analyzing implementation requirements"))
         emit(AgentResponseChunk.Progress(30, "Gathering context from workspace"))
-        
-        // Update file access tools with project root from context
-        val projectRoot = context.projectPath ?: "."
-        println("[IMPLEMENTATION] Using project root for tools (streaming): '$projectRoot'")
-        println("[IMPLEMENTATION] Context project path (streaming): '${context.projectPath}'")
-        val tools = KoogToolRegistryBuilder.FileAccessTools(projectRoot)
         
         val prompt = buildPromptWithContext(task, context)
         

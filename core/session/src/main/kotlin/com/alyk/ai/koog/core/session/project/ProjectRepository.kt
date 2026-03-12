@@ -11,4 +11,6 @@ interface ProjectRepository {
     fun removeProject(id: String): Boolean
     fun setActiveProject(id: String): Boolean
     fun getActiveProject(): Project?
+    /** Clear active selection (no project selected). Returns true if there was an active project. */
+    fun clearActiveProject(): Boolean
 }

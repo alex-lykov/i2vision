@@ -235,6 +235,7 @@ class KoogToolRegistryBuilder(
         
         fun writeFile(path: String, content: String): WriteFileOutput {
             println("[TOOLS] writeFile called: path='$path', contentLength=${content.length}, projectRoot='$projectRoot'")
+            println("[TOOLS] Content preview: ${content.take(100)}...")
             return try {
             val fullPath = if (Path.of(path).isAbsolute) {
                 Paths.get(path)
@@ -242,14 +243,20 @@ class KoogToolRegistryBuilder(
                 Paths.get(this.projectRoot, path)
             }
             
+            println("[TOOLS] Resolved fullPath: '$fullPath'")
+            println("[TOOLS] File exists before write: ${Files.exists(fullPath)}")
+            
             // Create parent directories if they don't exist
             fullPath.parent?.let { parent ->
+                println("[TOOLS] Creating parent directories: '$parent'")
                 Files.createDirectories(parent)
             }
             
+            println("[TOOLS] Writing content to file...")
             fullPath.writeText(content)
+            println("[TOOLS] Write completed successfully")
             
-            WriteFileOutput(
+            val result = WriteFileOutput(
                 success = true,
                 error = null,
                 path = if (this.projectRoot.isNotEmpty()) {
@@ -259,7 +266,11 @@ class KoogToolRegistryBuilder(
                 },
                 bytesWritten = content.toByteArray().size
             )
+            println("[TOOLS] Returning success: ${result.success}, path: ${result.path}, bytes: ${result.bytesWritten}")
+            result
         } catch (e: Exception) {
+            println("[TOOLS] Write failed with exception: ${e.message}")
+            e.printStackTrace()
             WriteFileOutput(
                 success = false,
                 error = "Error writing file: ${e.message}",

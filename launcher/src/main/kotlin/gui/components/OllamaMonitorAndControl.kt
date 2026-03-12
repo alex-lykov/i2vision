@@ -79,9 +79,10 @@ private suspend fun stopOllamaService() = withContext(Dispatchers.IO) {
 @Composable
 fun OllamaMonitorAndControl(
     unifiedModelManager: UnifiedModelManager,
-    //modifier: UnifiedModelManager = Modifier
+    agentLauncher: core.AgentLauncher
 ) {
     val scope = rememberCoroutineScope()
+    val loadedModelsStore = remember { agentLauncher.getLoadedModelsStore() }
     var availableModels by remember { mutableStateOf<List<OllamaModel>>(emptyList()) }
     var runningModels by remember { mutableStateOf<List<OllamaModel>>(emptyList()) }
     var ollamaLogs by remember { mutableStateOf<List<OllamaLogEntry>>(emptyList()) }
@@ -126,6 +127,31 @@ fun OllamaMonitorAndControl(
     val logListState = rememberLazyListState()
     val quickStartFocusRequester = remember { FocusRequester() }
     var quickStartExpanded by remember { mutableStateOf(false) }
+
+    // Register before-exit hook: stop all models silently when app closes (do not mark as stopped in DB so they are restored on next boot)
+    LaunchedEffect(agentLauncher) {
+        agentLauncher.registerBeforeExit {
+            stopAllModels()
+        }
+    }
+
+    // Restore running models from DB on boot (models that were running before last exit)
+    LaunchedEffect(loadedModelsStore) {
+        kotlinx.coroutines.delay(2500) // let app and Ollama be ready before restore
+        val toRestore = loadedModelsStore.getRunning()
+        println("[MODELS] Restore check: getRunning() returned ${toRestore.size} model(s): ${toRestore.map { "${it.first}(${it.second})" }.joinToString()}")
+        if (toRestore.isNotEmpty()) {
+            println("[MODELS] Restoring ${toRestore.size} model(s) that were running before exit...")
+            toRestore.forEach { (modelId, provider) ->
+                try {
+                    startModel(modelId, runningCloudModels)
+                    println("[MODELS] Restored: $modelId ($provider)")
+                } catch (e: Exception) {
+                    println("[MODELS] Failed to restore model $modelId: ${e.message}")
+                }
+            }
+        }
+    }
 
     // Load cloud and library (registry) models at boot so both appear in the list for pick/pull
     LaunchedEffect(Unit) {
@@ -579,7 +605,10 @@ fun OllamaMonitorAndControl(
                 TextButton(
                     onClick = {
                         if (selectedModelName.isNotBlank()) {
-                            scope.launch { startModel(selectedModelName, runningCloudModels) }
+                            scope.launch {
+                                startModel(selectedModelName, runningCloudModels)
+                                loadedModelsStore.setRunning(selectedModelName, if (isCloudModelName(selectedModelName)) "cloud" else "local")
+                            }
                         }
                     },
                     enabled = selectedModelName.isNotBlank(),
@@ -595,15 +624,19 @@ fun OllamaMonitorAndControl(
             // Single Models tab - no need for separate Running tab since we have status indicators
             Spacer(Modifier.height(6.dp))
 
-            UnifiedModelsList(unifiedModels, listState, scope, pullProgressStates, availableModels, runningCloudModels, { modelName ->
-                scope.launch {
-                    pullModel(modelName) { progress ->
-                        pullProgress = progress
+            UnifiedModelsList(
+                unifiedModels, listState, scope, pullProgressStates, availableModels, runningCloudModels,
+                onPullModel = { modelName ->
+                    scope.launch {
+                        pullModel(modelName) { progress ->
+                            pullProgress = progress
+                        }
                     }
-                }
-            }) { newStates ->
-                pullProgressStates = newStates
-            }
+                },
+                onModelStarted = { id, provider -> loadedModelsStore.setRunning(id, provider) },
+                onModelStopped = { loadedModelsStore.setStopped(it) },
+                onUpdateProgressStates = { pullProgressStates = it }
+            )
 
             Spacer(Modifier.height(8.dp))
 
@@ -1079,9 +1112,11 @@ private fun UnifiedModelsList(
     listState: androidx.compose.foundation.lazy.LazyListState,
     scope: kotlinx.coroutines.CoroutineScope,
     pullProgressStates: List<PullProgress>,
-    availableModels: List<OllamaModel>,  // Add availableModels parameter
-    runningCloudModels: MutableState<Set<String>>,  // Add runningCloudModels parameter
+    availableModels: List<OllamaModel>,
+    runningCloudModels: MutableState<Set<String>>,
     onPullModel: (String) -> Unit,
+    onModelStarted: (modelId: String, provider: String) -> Unit,
+    onModelStopped: (modelId: String) -> Unit,
     onUpdateProgressStates: (List<PullProgress>) -> Unit
 ) {
     if (models.isEmpty()) {
@@ -1131,6 +1166,7 @@ private fun UnifiedModelsList(
                                 
                                 println("[DEBUG] Starting model: display='${model.name}', actual='$actualModelName'")
                                 startModel(actualModelName, runningCloudModels)
+                                onModelStarted(actualModelName, if (isCloudModelName(actualModelName)) "cloud" else "local")
 
                                 // Update progress to completed
                                 val completedProgress = startProgress.copy(
@@ -1188,6 +1224,7 @@ private fun UnifiedModelsList(
 
                             try {
                                 stopModel(model.name, runningCloudModels)
+                                onModelStopped(model.name)
 
                                 // Update progress to completed
                                 stopProgress = stopProgress.copy(
@@ -2442,33 +2479,57 @@ private suspend fun stopAllModels() = withContext(Dispatchers.IO) {
     println("[${java.time.LocalDateTime.now()}] Stopping all models operation")
     try {
         val client = HttpClient.newHttpClient()
-        println("[${java.time.LocalDateTime.now()}] Sending stop request for all models")
-        val request = HttpRequest.newBuilder()
-            .uri(java.net.URI.create("http://localhost:11434/api/generate"))
-            .header("Content-Type", "application/json")
-            .POST(
-                HttpRequest.BodyPublishers.ofString(
-                    """
-                {
-                    "model": "*",
-                    "prompt": "Hello",
-                    "keep_alive": "0"
-                }
-            """.trimIndent()
-                )
-            )
-            .build()
-
-        val response = client.send(request, HttpResponse.BodyHandlers.ofString())
-        println("[${java.time.LocalDateTime.now()}] Stop all models response status: ${response.statusCode()}")
-        if (response.statusCode() != 200) {
-            println("[${java.time.LocalDateTime.now()}] Stop all models failed. Response: ${response.body()}")
-            throw Exception("Failed to stop all models: HTTP ${response.statusCode()}")
+        // Ollama does not support model "*"; get running models from /api/ps and unload each by name
+        val runningNames = try {
+            val psRequest = HttpRequest.newBuilder()
+                .uri(java.net.URI.create("http://localhost:11434/api/ps"))
+                .timeout(java.time.Duration.ofSeconds(5))
+                .GET()
+                .build()
+            val psResponse = client.send(psRequest, HttpResponse.BodyHandlers.ofString())
+            if (psResponse.statusCode() != 200) {
+                println("[${java.time.LocalDateTime.now()}] /api/ps returned ${psResponse.statusCode()}, no models to stop")
+                emptyList()
+            } else {
+                parseModelsResponse(psResponse.body())
+                    .map { it.name }
+                    .filter { it != "koog-launcher" }
+            }
+        } catch (e: Exception) {
+            println("[${java.time.LocalDateTime.now()}] Could not get running models: ${e.message}")
+            emptyList()
         }
-        println("[${java.time.LocalDateTime.now()}] All models stopped successfully")
+        if (runningNames.isEmpty()) {
+            println("[${java.time.LocalDateTime.now()}] No running models to stop")
+            return@withContext
+        }
+        println("[${java.time.LocalDateTime.now()}] Unloading ${runningNames.size} model(s): ${runningNames.joinToString()}")
+        runningNames.forEach { modelName ->
+            try {
+                val request = HttpRequest.newBuilder()
+                    .uri(java.net.URI.create("http://localhost:11434/api/generate"))
+                    .header("Content-Type", "application/json")
+                    .timeout(java.time.Duration.ofSeconds(10))
+                    .POST(
+                        HttpRequest.BodyPublishers.ofString(
+                            """{"model": "$modelName", "prompt": "", "stream": false, "keep_alive": "0"}"""
+                        )
+                    )
+                    .build()
+                val response = client.send(request, HttpResponse.BodyHandlers.ofString())
+                if (response.statusCode() == 200) {
+                    println("[${java.time.LocalDateTime.now()}] Unloaded: $modelName")
+                } else {
+                    println("[${java.time.LocalDateTime.now()}] Unload $modelName returned ${response.statusCode()}: ${response.body()}")
+                }
+            } catch (e: Exception) {
+                println("[${java.time.LocalDateTime.now()}] Failed to unload $modelName: ${e.message}")
+            }
+        }
+        println("[${java.time.LocalDateTime.now()}] Stop-all models finished")
     } catch (e: Exception) {
-        println("[${java.time.LocalDateTime.now()}] ERROR: Failed to stop all models: ${e.message}")
-        throw Exception("Failed to stop all models: ${e.message}")
+        println("[${java.time.LocalDateTime.now()}] ERROR during stop all models: ${e.message}")
+        // Do not rethrow so app exit still completes
     }
 }
 

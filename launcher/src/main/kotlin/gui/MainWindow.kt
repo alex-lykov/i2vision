@@ -11,8 +11,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberWindowState
-import com.alyk.ai.koog.core.session.project.JsonProjectRepository
-import com.alyk.ai.koog.core.session.project.ProjectRepository
 import core.AgentLauncher
 import core.TaskMode
 import gui.components.*
@@ -37,7 +35,7 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
     val agentStatus by mainViewModel.agentStatus.collectAsState()
     val mcpStatus by mainViewModel.mcpStatus.collectAsState()
     
-    val projectRepository: ProjectRepository = remember { JsonProjectRepository() }
+    val projectRepository = remember { agentLauncher.getProjectRepository() }
     val availableModels = remember { agentLauncher.getAvailableModels() }
 
     Window(
@@ -65,9 +63,10 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
                     ProjectManagementPanel(
                         projectRepository = projectRepository,
                         onProjectSelected = { project ->
-                            mainViewModel.loadProject(project.path) { success, error ->
-                                // Result handled in ViewModel, events added automatically
-                            }
+                            mainViewModel.loadProject(project.path) { _, _ -> }
+                        },
+                        onProjectUnselected = {
+                            mainViewModel.unloadProject { _, _ -> }
                         }
                     )
                     // Performance Card (separate)
@@ -89,7 +88,7 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
                     SystemMonitor()
 
                     // Combined Ollama Monitor and Control
-                    OllamaMonitorAndControl(agentLauncher.getUnifiedModelManager())
+                    OllamaMonitorAndControl(agentLauncher.getUnifiedModelManager(), agentLauncher)
 
 
 /*                    ModelListPanel(

@@ -237,6 +237,14 @@ class McpIntegration(
      * Check if MCP is initialized for a project
      */
     fun isInitialized(): Boolean = currentProjectPath != null
+
+    /**
+     * Clear current project (e.g. when user unselects). MCP will have no project until one is loaded again.
+     */
+    fun clearProject() {
+        currentProjectPath = null
+        projectSpecificTools.clear()
+    }
     
     /**
      * Get current project path

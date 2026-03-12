@@ -53,6 +53,12 @@ class JsonProjectRepository(
 
     override fun getActiveProject(): Project? = projects.find { it.id == activeProjectId }
 
+    override fun clearActiveProject(): Boolean {
+        val had = activeProjectId != null
+        activeProjectId = null
+        return had
+    }
+
     private fun saveProjects() {
         try {
             configFile.parentFile?.mkdirs()

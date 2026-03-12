@@ -2,6 +2,8 @@ package core
 
 import com.alyk.ai.koog.config.Config
 import com.alyk.ai.koog.core.orchestrator.mcp.McpStatus
+import com.alyk.ai.koog.core.session.project.ProjectRepository
+import com.alyk.ai.koog.database.store.LoadedModelsStore
 import kotlinx.coroutines.flow.Flow
 import java.time.Duration
 import java.time.Instant
@@ -16,6 +18,8 @@ interface AgentLauncher {
     fun switchModel(target: ModelType): Result<Unit>
     fun addStatusListener(listener: StatusListener)
     suspend fun loadProject(projectPath: String): Result<Unit>
+    /** Unload current project (clear selection and agent context). */
+    suspend fun unloadProject(): Result<Unit>
     
     /**
      * Get list of available models from registry
@@ -41,6 +45,28 @@ interface AgentLauncher {
      * Get the UnifiedModelManager for advanced model operations
      */
     fun getUnifiedModelManager(): UnifiedModelManager
+
+    /**
+     * Get the project repository (projects added from UI, stored in DB).
+     * Use this for the Projects card — only these projects are linked to the agent.
+     */
+    fun getProjectRepository(): ProjectRepository
+
+    /**
+     * Store for loaded LLM model status (local/cloud). Persist on start/stop; restore running models on boot.
+     */
+    fun getLoadedModelsStore(): LoadedModelsStore
+
+    /**
+     * Register a suspend callback to run before app exit (e.g. stop all models silently).
+     * Called from GUI when window closes; then [shutdown] is invoked.
+     */
+    fun registerBeforeExit(callback: suspend () -> Unit)
+
+    /**
+     * Run all registered before-exit hooks (e.g. stop all models). Called by GUI on window close before [shutdown].
+     */
+    suspend fun runBeforeExitHooks()
 }
 
 data class AgentStatus(

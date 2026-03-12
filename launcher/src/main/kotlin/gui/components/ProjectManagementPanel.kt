@@ -17,17 +17,29 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.alyk.ai.koog.core.session.project.Project
 import com.alyk.ai.koog.core.session.project.ProjectRepository
+import kotlinx.coroutines.delay
 import javax.swing.JFileChooser
 
 @Composable
 fun ProjectManagementPanel(
     projectRepository: ProjectRepository,
     onProjectSelected: (Project) -> Unit,
+    onProjectUnselected: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var projects by remember { mutableStateOf(projectRepository.getAllProjects()) }
     var activeProject by remember { mutableStateOf(projectRepository.getActiveProject()) }
     var showAddDialog by remember { mutableStateOf(false) }
+
+    // Restore active project on boot (load it in the orchestrator so agent uses it)
+    LaunchedEffect(projectRepository) {
+        delay(1500) // let app and orchestrator be ready
+        val active = projectRepository.getActiveProject()
+        if (active != null) {
+            println("[PROJECTS] Restoring active project from DB: ${active.name} (${active.path})")
+            onProjectSelected(active)
+        }
+    }
 
     RightPanelCardWithAction(
         title = "Projects (${projects.size})",
@@ -43,6 +55,22 @@ fun ProjectManagementPanel(
             )
         } else {
             Column {
+                // Unselect control: show when a project is active
+                if (activeProject != null) {
+                    Text(
+                        text = "Unselect",
+                        style = MaterialTheme.typography.caption,
+                        color = MaterialTheme.colors.primary.copy(alpha = 0.9f),
+                        modifier = Modifier
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                            .clickable {
+                                projectRepository.clearActiveProject()
+                                activeProject = null
+                                projects = projectRepository.getAllProjects()
+                                onProjectUnselected()
+                            }
+                    )
+                }
                 projects.forEach { project ->
                     ProjectListItem(
                         project = project,

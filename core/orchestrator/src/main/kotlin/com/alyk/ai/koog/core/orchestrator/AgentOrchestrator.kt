@@ -10,7 +10,7 @@ import com.alyk.ai.koog.core.orchestrator.mcp.workspace.WorkspaceFactory
 import com.alyk.ai.koog.core.orchestrator.router.AgentResponseChunk
 import com.alyk.ai.koog.core.orchestrator.router.AgentRouter
 import com.alyk.ai.koog.core.orchestrator.router.TaskContext
-import com.alyk.ai.koog.core.session.SessionStore
+import com.alyk.ai.koog.core.session.ISessionStore
 import com.alyk.ai.koog.models.wrappers.ModelWrapper
 import com.alyk.ai.koog.switching.decision.DecisionEngine
 import com.alyk.ai.koog.switching.decision.ModelSwitchControl
@@ -22,7 +22,7 @@ import kotlinx.coroutines.flow.flow
  * model selection, and session lifecycle.
  */
 class AgentOrchestrator(
-    private val sessionStore: SessionStore,
+    private val sessionStore: ISessionStore,
     private val decisionEngine: DecisionEngine,
     private val contextProvider: ContextProvider,
     private val hierarchyBuilder: HierarchyBuilder,
@@ -161,6 +161,23 @@ class AgentOrchestrator(
             Result.success(Unit)
         } catch (e: Exception) {
             Logger.error("ORCHESTRATOR", "❌ Failed to load project and activate MCP structure: ${e.message}", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Unload the current project (e.g. when user unselects). Agent will have no project until one is loaded again.
+     */
+    suspend fun unloadProject(): Result<Unit> {
+        return try {
+            Logger.info("ORCHESTRATOR", "📤 Unloading project...")
+            contextProvider.clearProject()
+            mcpIntegration.clearProject()
+            activateMcpStructure(null)
+            Logger.info("ORCHESTRATOR", "✅ Project unloaded")
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Logger.error("ORCHESTRATOR", "❌ Failed to unload project: ${e.message}", e)
             Result.failure(e)
         }
     }

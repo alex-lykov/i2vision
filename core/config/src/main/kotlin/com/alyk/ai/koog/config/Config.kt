@@ -7,7 +7,7 @@ data class Config(
     val ollamaApiUrl: String = "http://localhost:11434",
     val maxContextLength: Int = 4096,
     val sessionTimeoutMinutes: Int = 30,
-    val projectPath: String = ".",
+    val projectPath: String? = null,
     // Cloud configuration options
     val cloudConfigs: List<CloudConfig> = emptyList(),
     val enableCloudFallback: Boolean = false,
@@ -52,7 +52,8 @@ object ConfigLoader {
             
         val projectPath = System.getenv("KOOG_PROJECT_PATH")
             ?: System.getProperty("koog.project.path")
-            ?: "."
+            ?: System.getProperty("user.dir", ".")
+            .takeIf { it.isNotBlank() }
 
         // Cloud configuration
         val enableCloudFallback = System.getenv("KOOG_ENABLE_CLOUD_FALLBACK")

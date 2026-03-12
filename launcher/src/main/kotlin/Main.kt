@@ -6,7 +6,10 @@ import com.alyk.ai.koog.context.hierarchy.HierarchyBuilder
 import com.alyk.ai.koog.context.provider.ContextProvider
 import com.alyk.ai.koog.core.orchestrator.AgentOrchestrator
 import com.alyk.ai.koog.core.orchestrator.mcp.McpStatus
-import com.alyk.ai.koog.core.session.SessionStore
+import com.alyk.ai.koog.core.session.ISessionStore
+import com.alyk.ai.koog.core.session.project.ProjectRepository
+import com.alyk.ai.koog.database.DatabaseFactory
+import com.alyk.ai.koog.database.store.LoadedModelsStore
 import com.alyk.ai.koog.models.wrappers.ModelInfo
 import com.alyk.ai.koog.models.wrappers.ModelRegistry
 import com.alyk.ai.koog.models.wrappers.ModelWrapper
@@ -21,10 +24,14 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import org.slf4j.LoggerFactory
+import session.DatabaseBackedSessionStore
+import session.DatabaseProjectRepository
 import java.time.Duration
 import java.time.Instant
 
 class AgentLauncherImpl : AgentLauncher {
+    private val log = LoggerFactory.getLogger(AgentLauncherImpl::class.java)
     private val hierarchyBuilder = HierarchyBuilder()
     private val contextProvider = ContextProvider(hierarchyBuilder)
     private val performanceMonitor = PerformanceMonitor()
@@ -40,45 +47,50 @@ class AgentLauncherImpl : AgentLauncher {
     private var availableModels: List<ModelInfo> = emptyList()
     private val statusUpdateScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var sessionStartTime = Instant.now()
+    private lateinit var projectRepository: ProjectRepository
+    private lateinit var loadedModelsStore: LoadedModelsStore
+    private val beforeExitHooks = mutableListOf<suspend () -> Unit>()
 
     override fun initialize(config: Config): Result<Unit> {
         return try {
-            println("[INIT] ========================================")
-            println("[INIT] Initializing AgentLauncher...")
-            println("[INIT] ========================================")
+            log.info("========================================")
+            log.info("Initializing AgentLauncher...")
+            log.info("========================================")
             sessionStartTime = Instant.now()
-            println("[INIT] Using Ollama API: ${config.ollamaApiUrl}")
-            println("[INIT] Project path: ${config.projectPath ?: "null"}")
+
+            val dbProvider = DatabaseFactory.init()
+            log.info("Database provider initialized (project settings, agent state, RAG, memory, prompt cache)")
+
+            val sessionStore: ISessionStore = DatabaseBackedSessionStore(dbProvider.agentState)
+            log.info("Session store: database-backed (persistent)")
+
+            projectRepository = DatabaseProjectRepository(dbProvider.projects)
+            log.info("Project repository: database-backed (projects from UI stored in DB)")
+            loadedModelsStore = dbProvider.loadedModels
+            log.info("Loaded models store: database-backed (restore running models on boot)")
+
+            log.info("Using Ollama API: {}", config.ollamaApiUrl)
+            log.info("Project path: {}", config.projectPath ?: "null")
             
-            // Show cloud configuration
             if (config.cloudConfigs.isNotEmpty()) {
-                println("Cloud providers configured:")
-                config.cloudConfigs.forEach { cloudConfig ->
-                    println("  - ${cloudConfig.provider}: ${cloudConfig.apiUrl}")
-                }
-                println("Cloud fallback enabled: ${config.enableCloudFallback}")
-                println("Cloud fallback threshold: ${config.cloudFallbackThreshold}ms")
+                log.info("Cloud providers configured: {}", config.cloudConfigs.map { it.provider })
+                config.cloudConfigs.forEach { c -> log.debug("  {}: {}", c.provider, c.apiUrl) }
+                log.info("Cloud fallback enabled={} threshold={}ms", config.enableCloudFallback, config.cloudFallbackThreshold)
             } else {
-                println("No cloud providers configured")
+                log.info("No cloud providers configured")
             }
             
-            runBlocking {
-                // Scan available models from both local and cloud sources
+            runBlocking<Unit> {
                 availableModels = unifiedModelManager.scanAllModels()
-                println("Found ${availableModels.size} models total:")
-                
+                log.info("Found {} models total", availableModels.size)
+
                 val localModels = unifiedModelManager.getLocalModels()
                 val cloudModels = unifiedModelManager.getCloudModels()
-                
-                println("  Local models: ${localModels.size}")
-                localModels.forEach { model ->
-                    println("    - ${model.id} (${model.formattedSize})")
-                }
-                
-                println("  Cloud models: ${cloudModels.size}")
-                cloudModels.forEach { model ->
-                    println("    - ${model.id} (${model.formattedSize})")
-                }
+
+                log.info("Local models: {}", localModels.size)
+                localModels.forEach { m -> log.debug("  {} ({})", m.id, m.formattedSize) }
+                log.info("Cloud models: {}", cloudModels.size)
+                cloudModels.forEach { m -> log.debug("  {} ({})", m.id, m.formattedSize) }
                 
                 // Select smallest available model as initial model (prefer local, fallback to cloud)
                 val smallestLocalModel = localModels.minByOrNull { it.size }
@@ -86,11 +98,11 @@ class AgentLauncherImpl : AgentLauncher {
                 
                 val initialModelInfo = when {
                     smallestLocalModel != null -> {
-                        println("📦 [INIT] Selecting smallest local model as initial: ${smallestLocalModel.id} (${smallestLocalModel.formattedSize})")
+                        log.info("Selecting smallest local model as initial: {} ({})", smallestLocalModel.id, smallestLocalModel.formattedSize)
                         smallestLocalModel
                     }
                     smallestCloudModel != null -> {
-                        println("📦 [INIT] No local models, selecting cloud model as initial: ${smallestCloudModel.id} (${smallestCloudModel.formattedSize})")
+                        log.info("No local models; selecting cloud model as initial: {} ({})", smallestCloudModel.id, smallestCloudModel.formattedSize)
                         smallestCloudModel
                     }
                     else -> throw IllegalStateException("No models available (local or cloud)")
@@ -108,29 +120,22 @@ class AgentLauncherImpl : AgentLauncher {
                         smallestCloudModel.id,
                         performanceMonitor
                     ).also {
-                        if (it != null) {
-                            println("☁️ [INIT] Cloud model available: ${smallestCloudModel.id}")
-                        }
+                        if (it != null) log.info("Cloud model available: {}", smallestCloudModel.id)
                     }
                 } else if (cloudModels.isNotEmpty() && smallestLocalModel != null) {
-                    // If we're using local, still create a cloud model wrapper for fallback
                     unifiedModelManager.createModelWrapper(
                         smallestCloudModel?.id ?: cloudModels.first().id,
                         performanceMonitor
                     ).also {
-                        if (it != null) {
-                            println("☁️ [INIT] Cloud model available for fallback: ${smallestCloudModel?.id ?: cloudModels.first().id}")
-                        }
+                        if (it != null) log.info("Cloud model available for fallback: {}", smallestCloudModel?.id ?: cloudModels.first().id)
                     }
                 } else null
-                
-                // Initialize model switch control with the initial model
+
                 modelSwitchControl = ModelSwitchControl(performanceMonitor, initialModel)
-                
-                // Initialize orchestrator with both local and cloud models
-                println("[INIT] Creating AgentOrchestrator...")
+
+                log.info("Creating AgentOrchestrator (sessionStore=database-backed)...")
                 orchestrator = AgentOrchestrator(
-                    sessionStore = SessionStore(),
+                    sessionStore = sessionStore,
                     decisionEngine = DecisionEngine(
                         contextAnalyzer = ContextAnalyzer(),
                         performanceMonitor = performanceMonitor
@@ -143,23 +148,21 @@ class AgentLauncherImpl : AgentLauncher {
                     mcpToolRegistry = ToolRegistry.EMPTY
                 )
                 
-                // Initialize client with orchestrator
                 client = AgentClient(orchestrator)
-                
-                println("[INIT] Initializing orchestrator with project path: ${config.projectPath ?: "null"}")
+
+                log.info("Initializing orchestrator with project path: {}", config.projectPath ?: "null")
                 orchestrator.initialize(config.projectPath)
-                println("[INIT] Orchestrator initialized")
-                
-                println("[INIT] Initializing client with project path: ${config.projectPath ?: "null"}")
+                log.info("Orchestrator initialized")
+
+                log.info("Initializing client with project path: {}", config.projectPath ?: "null")
                 client.initialize(config.projectPath)
-                println("[INIT] Client initialized")
+                log.info("Client initialized")
             }
-            println("[INIT] ✅ Agent initialized successfully")
-            println("[INIT] ========================================")
+            log.info("Agent initialized successfully")
+            log.info("========================================")
             Result.success(Unit)
         } catch (e: Exception) {
-            println("[INIT] ❌ Initialization failed: ${e.message}")
-            e.printStackTrace()
+            log.error("Initialization failed: {}", e.message, e)
             Result.failure(e)
         }
     }
@@ -169,9 +172,12 @@ class AgentLauncherImpl : AgentLauncher {
     }
 
     override fun shutdown() {
+        log.info("Shutting down launcher...")
         statusUpdateScope.cancel()
         unifiedModelManager.close()
         client.shutdown()
+        DatabaseFactory.close()
+        log.info("Launcher shutdown complete")
     }
 
     override fun getStatusStream(): Flow<AgentStatus> {
@@ -358,9 +364,18 @@ class AgentLauncherImpl : AgentLauncher {
             val currentModelId = modelSwitchControl.getCurrentModelId()
             
             println("🔍 [SWITCH] Current model: $currentModelId")
-            println("🔍 [SWITCH] Found ${runningModels.size} running models:")
-            runningModels.forEach { model ->
-                println("  - ${model.id} (${model.formattedSize})")
+            if (runningModels.isEmpty()) {
+                val isCloud = currentModelId.contains(":cloud", ignoreCase = true) || currentModelId.contains("cloud", ignoreCase = true)
+                if (isCloud) {
+                    println("🔍 [SWITCH] Cloud model in use (not listed in api/ps), keeping current model")
+                } else {
+                    println("🔍 [SWITCH] Found 0 running models:")
+                }
+            } else {
+                println("🔍 [SWITCH] Found ${runningModels.size} running models:")
+                runningModels.forEach { model ->
+                    println("  - ${model.id} (${model.formattedSize})")
+                }
             }
             
             // Use ModelSwitchControl to select and switch to smallest running model
@@ -375,7 +390,11 @@ class AgentLauncherImpl : AgentLauncher {
                 } else if (smallestModel != null) {
                     println("ℹ️ [SWITCH] Already using smallest running model: ${smallestModel.id}")
                 } else {
-                    println("ℹ️ [SWITCH] No running models found, keeping current model: $currentModelId")
+                    if (runningModels.isEmpty()) {
+                        println("ℹ️ [SWITCH] No running models in api/ps, keeping current model: $currentModelId")
+                    } else {
+                        println("ℹ️ [SWITCH] No running models found, keeping current model: $currentModelId")
+                    }
                 }
             }
             
@@ -433,6 +452,11 @@ class AgentLauncherImpl : AgentLauncher {
         return orchestrator.loadProject(projectPath)
     }
 
+    override suspend fun unloadProject(): Result<Unit> {
+        if (!::orchestrator.isInitialized) return Result.success(Unit)
+        return orchestrator.unloadProject()
+    }
+
     /**
      * Get MCP integration status
      */
@@ -454,21 +478,31 @@ class AgentLauncherImpl : AgentLauncher {
         }
         return orchestrator.getAvailableMCPTools()
     }
+
+    override fun getProjectRepository(): ProjectRepository = projectRepository
+
+    override fun getLoadedModelsStore(): LoadedModelsStore = loadedModelsStore
+
+    override fun registerBeforeExit(callback: suspend () -> Unit) {
+        beforeExitHooks.add(callback)
+    }
+
+    override suspend fun runBeforeExitHooks() {
+        beforeExitHooks.forEach { it.invoke() }
+    }
 }
 
 fun main(args: Array<String>) {
-    val projectPath = System.getProperty("user.dir")
     val launcher = AgentLauncherImpl()
-    launcher.initialize(Config(projectPath = projectPath))
+    // No project loaded at startup; projects are added via UI (Projects card) and stored in DB
+    launcher.initialize(Config(projectPath = null))
 
     if (args.contains("--cli")) {
-        println("Starting in CLI mode")
-        println("Project path: $projectPath")
+        println("Starting in CLI mode (no project loaded by default)")
         val cli = CliLauncher(launcher)
         cli.launch()
     } else {
-        println("Starting in GUI mode")
-        println("Project path: $projectPath")
+        println("Starting in GUI mode — add/select projects from the Projects card")
         launch(launcher)
     }
 }

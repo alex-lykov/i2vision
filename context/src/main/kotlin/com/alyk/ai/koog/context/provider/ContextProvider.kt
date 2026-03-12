@@ -65,6 +65,16 @@ class ContextProvider(
      */
     fun getProjectRoot(): String? = hierarchyBuilder.getProjectRoot()
 
+    /**
+     * Clear the loaded project (e.g. when user unselects). Agent will have no project until one is loaded again.
+     */
+    fun clearProject() {
+        hierarchyBuilder.clear()
+        loadedFiles = emptyList()
+        isInitialized = false
+        println("[CONTEXT] Project cleared")
+    }
+
     private fun findRelevantFiles(task: String): List<String> {
         // Simple keyword matching - can be enhanced with embeddings
         val keywords = task.lowercase().split(" ", ".", "_", "-")

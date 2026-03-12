@@ -199,6 +199,37 @@ class MainViewModel(
         }
     }
 
+    /**
+     * Unload current project (clear selection; agent will have no project until one is selected again).
+     */
+    fun unloadProject(onResult: (Boolean, String?) -> Unit) {
+        coroutineScope.launch {
+            val result = agentLauncher.unloadProject()
+            if (result.isSuccess) {
+                addTerminalEvent(
+                    TerminalEventDto(
+                        id = UUID.randomUUID().toString(),
+                        timestamp = Instant.now(),
+                        type = TerminalEventDto.EventType.SYSTEM,
+                        message = "Project unloaded"
+                    )
+                )
+                onResult(true, null)
+            } else {
+                val error = result.exceptionOrNull()?.message
+                addTerminalEvent(
+                    TerminalEventDto(
+                        id = UUID.randomUUID().toString(),
+                        timestamp = Instant.now(),
+                        type = TerminalEventDto.EventType.ERROR,
+                        message = "Failed to unload project: $error"
+                    )
+                )
+                onResult(false, error)
+            }
+        }
+    }
+
     private fun addTerminalEvent(event: TerminalEventDto) {
         _terminalState.value = _terminalState.value.copy(
             events = _terminalState.value.events + event

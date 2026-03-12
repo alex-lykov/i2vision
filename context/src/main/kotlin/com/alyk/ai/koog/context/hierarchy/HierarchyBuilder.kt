@@ -23,6 +23,13 @@ class HierarchyBuilder {
     }
 
     /**
+     * Clear the current project (e.g. when user unselects).
+     */
+    fun clear() {
+        this.projectRoot = null
+    }
+
+    /**
      * Scan and return all source files in the project
      */
     suspend fun scanProjectFiles(): List<String> {

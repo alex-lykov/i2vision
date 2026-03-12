@@ -8,6 +8,7 @@ plugins {
 dependencies {
     implementation(project(":core:config"))
     implementation(project(":core:orchestrator"))
+    implementation(project(":database"))
     implementation(project(":core:session"))
     implementation(project(":models:common"))
     implementation(project(":models:wrappers"))

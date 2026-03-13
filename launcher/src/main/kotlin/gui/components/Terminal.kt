@@ -6,10 +6,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.*
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -26,7 +25,9 @@ fun Terminal(
     modifier: Modifier = Modifier
 ) {
     val state by viewModel.state.collectAsState()
+    val displayOptions by viewModel.displayOptions.collectAsState()
     val listState = rememberLazyListState()
+    var showFilterDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(state.events.size) {
         if (state.events.isNotEmpty()) {
@@ -52,8 +53,10 @@ fun Terminal(
                     modifier = Modifier.fillMaxSize()
                 ) {
                     items(state.events) { event ->
-                        val time = event.timestamp.atZone(ZoneId.systemDefault())
-                            .format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+                        val timeStr = if (displayOptions.showTimestamps)
+                            event.timestamp.atZone(ZoneId.systemDefault())
+                                .format(DateTimeFormatter.ofPattern("HH:mm:ss"))
+                        else null
                         val (color, prefix) = when (event.type) {
                             TerminalEventDto.EventType.STANDARD -> Color.White to ""
                             TerminalEventDto.EventType.SUCCESS -> Color.Green to "✓"
@@ -69,11 +72,17 @@ fun Terminal(
                         } else {
                             event.message
                         }
+                        val lineText = when {
+                            timeStr != null && prefix.isEmpty() -> "[$timeStr] $message"
+                            timeStr != null -> "[$timeStr] $prefix $message"
+                            prefix.isEmpty() -> message
+                            else -> "$prefix $message"
+                        }
                         Text(
-                            text = if (prefix.isEmpty()) "[$time] $message" else "[$time] $prefix $message",
+                            text = lineText,
                             color = color,
                             style = MaterialTheme.typography.body2,
-                            modifier = Modifier.padding(vertical = 1.dp)
+                            modifier = Modifier.padding(vertical = if (displayOptions.compactMode) 0.dp else 1.dp)
                         )
                     }
                 }
@@ -181,14 +190,36 @@ fun Terminal(
                         }
                     }
                     
-                    TextButton(
-                        onClick = { viewModel.clear() },
-                        enabled = !state.isProcessing
-                    ) {
-                        Text("Clear", color = Color.Gray)
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        IconButton(
+                            onClick = {
+                                viewModel.loadFilterSettings()
+                                showFilterDialog = true
+                            },
+                            enabled = !state.isProcessing
+                        ) {
+                            Icon(
+                                Icons.Default.Settings,
+                                contentDescription = "Output filter",
+                                tint = Color(0xFF00FF00)
+                            )
+                        }
+                        TextButton(
+                            onClick = { viewModel.clear() },
+                            enabled = !state.isProcessing
+                        ) {
+                            Text("Clear", color = Color.Gray)
+                        }
                     }
                 }
             }
         }
+    }
+
+    if (showFilterDialog) {
+        TerminalFilterDialog(
+            viewModel = viewModel,
+            onDismiss = { showFilterDialog = false }
+        )
     }
 }

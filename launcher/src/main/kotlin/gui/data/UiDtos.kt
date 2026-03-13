@@ -9,14 +9,17 @@ import java.time.Instant
  */
 
 /**
- * Terminal event DTO for display
+ * Terminal event DTO for display.
+ * [outputSettingKey] links to terminal_settings_definitions (e.g. show_ai_responses, show_command_execution).
+ * Used with [com.alyk.ai.koog.database.settings.TerminalOutputFilter] to respect user display preferences.
  */
 data class TerminalEventDto(
     val id: String,
     val timestamp: Instant,
     val type: EventType,
     val message: String,
-    val progressPercent: Int? = null
+    val progressPercent: Int? = null,
+    val outputSettingKey: String? = null
 ) {
     enum class EventType {
         STANDARD,
@@ -145,6 +148,15 @@ data class TerminalStateDto(
     val inputText: String,
     val isProcessing: Boolean,
     val selectedAgentType: AgentTypeDto = AgentTypeDto.IMPLEMENTATION
+)
+
+/**
+ * Display options for terminal output (from TerminalSettingsState).
+ * Used to align Terminal.kt with db/ui settings (e.g. show_timestamps, compact_mode).
+ */
+data class TerminalDisplayOptionsDto(
+    val showTimestamps: Boolean = false,
+    val compactMode: Boolean = false
 )
 
 /**

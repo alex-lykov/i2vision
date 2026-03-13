@@ -2,10 +2,7 @@ package com.alyk.ai.koog.context.hierarchy
 
 import java.nio.file.Path
 import java.nio.file.Paths
-import kotlin.io.path.exists
-import kotlin.io.path.extension
-import kotlin.io.path.isRegularFile
-import kotlin.io.path.walk
+import kotlin.io.path.*
 
 /**
  * Parse codebase into three hierarchical levels with extracted
@@ -32,6 +29,7 @@ class HierarchyBuilder {
     /**
      * Scan and return all source files in the project
      */
+    @OptIn(ExperimentalPathApi::class)
     suspend fun scanProjectFiles(): List<String> {
         val root = projectRoot ?: return emptyList()
         if (!root.exists()) return emptyList()

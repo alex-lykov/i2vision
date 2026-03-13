@@ -22,9 +22,13 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
     // Use rememberCoroutineScope() which provides the correct Main dispatcher for Compose Desktop
     val coroutineScope = rememberCoroutineScope()
     
-    // Create ViewModels
+    // Create ViewModels (terminal settings from DB filter/format output when available)
     val mainViewModel = remember {
-        MainViewModel(agentLauncher, coroutineScope)
+        MainViewModel(
+            agentLauncher,
+            coroutineScope,
+            terminalSettingsRepository = agentLauncher.getTerminalSettingsRepository()
+        )
     }
     val terminalViewModel = remember {
         TerminalViewModel(mainViewModel)

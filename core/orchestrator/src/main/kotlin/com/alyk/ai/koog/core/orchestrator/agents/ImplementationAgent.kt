@@ -512,54 +512,44 @@ class ImplementationAgent(
      * Looks for JSON tool calls in the response
      */
     private fun extractToolCall(response: String): ToolCall? {
-        println("[IMPLEMENTATION] 🔍 extractToolCall called with response: ${response.take(200)}...")
-        
         // First, try to extract JSON from code blocks
         val codeBlockPattern = """```(?:json)?\s*(\{[\s\S]*?\})\s*```""".toRegex()
         val codeBlockMatch = codeBlockPattern.find(response)
         if (codeBlockMatch != null) {
             var jsonString = codeBlockMatch.groupValues[1]
-            println("[IMPLEMENTATION] 📦 Found JSON in code block: ${jsonString.take(150)}...")
+            // Pre-fix Windows paths in code blocks - use string replacement for literal backslashes
+            // Handle patterns like ".\src" -> "./src" (literal dot-backslash)
+            // Replace .\ with ./ (literal string replacement, not regex)
+            if (jsonString.contains(".\"")) {
+                jsonString = jsonString.replace(".\"", "./")
+            }
+            // Replace remaining backslashes with forward slashes
+            jsonString = jsonString.replace("\\", "/")
             return tryParseToolCall(jsonString, "code block")
         }
         
         // Try to find JSON object with "tool" field
-        // Use a more robust approach to find complete JSON objects
-        val toolIndex = response.indexOf("\"tool\"")
-        if (toolIndex != -1) {
-            // Find the first opening brace in the entire response before "tool"
-            val jsonStart = response.indexOf('{')
-            if (jsonStart != -1 && jsonStart < toolIndex) {
-                // Find the matching closing brace
-                var braceCount = 0
-                var jsonEnd = -1
-                for (i in jsonStart until response.length) {
-                    when (response[i]) {
-                        '{' -> braceCount++
-                        '}' -> {
-                            braceCount--
-                            if (braceCount == 0) {
-                                jsonEnd = i + 1
-                                break
-                            }
-                        }
-                    }
-                }
-                
-                if (jsonEnd > jsonStart) {
-                    var jsonString = response.substring(jsonStart, jsonEnd)
-                    println("[IMPLEMENTATION] 📦 Found JSON object: ${jsonString.take(150)}...")
-                    
-                    // Check if it looks like a tool call
-                    if (jsonString.contains("\"tool\"") || jsonString.contains("'tool'")) {
-                        val toolCall = tryParseToolCall(jsonString, "json object")
-                        if (toolCall != null) return toolCall
-                    }
-                }
+        // Match from { to } including nested braces
+        val jsonObjectPattern = """\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}""".toRegex(RegexOption.DOT_MATCHES_ALL)
+        val matches = jsonObjectPattern.findAll(response)
+        
+        for (match in matches) {
+            var jsonString = match.value
+            // Pre-fix Windows paths before trying to parse
+            // Handle patterns like ".\src" -> "./src" (literal dot-backslash)
+            if (jsonString.contains(".\"")) {
+                jsonString = jsonString.replace(".\"", "./")
+            }
+            // Replace remaining backslashes with forward slashes
+            jsonString = jsonString.replace("\\", "/")
+            
+            // Check if it looks like a tool call
+            if (jsonString.contains("\"tool\"") || jsonString.contains("'tool'")) {
+                val toolCall = tryParseToolCall(jsonString, "json object")
+                if (toolCall != null) return toolCall
             }
         }
         
-        println("[IMPLEMENTATION] ❌ No tool call found in response")
         return null
     }
     
@@ -581,35 +571,12 @@ class ImplementationAgent(
             println("[IMPLEMENTATION] Attempting to fix JSON...")
             
             try {
-                // Fix Windows paths in JSON by properly handling escaping
+                // Fix unescaped backslashes in paths (Windows paths)
+                // Handle patterns like: ".\src\main" -> "./src/main"
                 var fixedJson = jsonString
-                
-                // Fix unescaped backslashes in path values only
-                // Look for "path": "value" patterns and fix backslashes in the value
-                val pathPattern = """("path"\s*:\s*")([^"]*?)(")""".toRegex()
-                fixedJson = pathPattern.replace(fixedJson) { match ->
-                    val prefix = match.groupValues[1]
-                    val pathValue = match.groupValues[2]
-                    val suffix = match.groupValues[3]
-                    
-                    // Fix Windows paths: replace \ with / but keep other escaping intact
-                    val fixedPath = pathValue.replace("\\", "/")
-                    "$prefix$fixedPath$suffix"
-                }
-                
-                // Also fix content field if it contains paths
-                val contentPattern = """("content"\s*:\s*")([^"]*?)(")""".toRegex(RegexOption.DOT_MATCHES_ALL)
-                fixedJson = contentPattern.replace(fixedJson) { match ->
-                    val prefix = match.groupValues[1]
-                    val contentValue = match.groupValues[2]
-                    val suffix = match.groupValues[3]
-                    
-                    // Fix Windows paths in content
-                    val fixedContent = contentValue.replace("\\", "/")
-                    "$prefix$fixedContent$suffix"
-                }
-                
-                println("[IMPLEMENTATION] Fixed JSON: ${fixedJson.take(200)}...")
+                    .replace("""\.\\""", "./")  // Fix .\ paths first
+                    .replace("""\\""", "/")  // Replace remaining backslashes with forward slashes
+                    .replace("""\./""", "./")  // Normalize ./
                 
                 // Try parsing again
                 val toolCall = json.decodeFromString<ToolCall>(fixedJson)
@@ -670,12 +637,19 @@ class ImplementationAgent(
                                 when (toolName) {
                                     "read_file", "readFile", "list_directory", "listDirectory" -> {
                                         if (pathMatch != null) {
-                                            // Extract raw path value and normalize it
+                                            // Extract raw path value (may contain backslashes like .\src, or be truncated like "./)
                                             var path = pathMatch.groupValues[1].trim()
                                             if (path.isEmpty() || path == "." || path == "./") path = "."
-                                            // Normalize Windows paths
-                                            path = path.replace("\\", "/").replace("//", "/")
-                                            // Escape for JSON
+                                            // Normalize Windows paths using string replacement (not regex)
+                                            // Handle .\src -> ./src
+                                            if (path.startsWith(".") && path.length > 1 && path[1] == '\\') {
+                                                path = "./" + path.substring(2)
+                                            }
+                                            // Replace all remaining backslashes with forward slashes
+                                            path = path.replace("\\", "/")
+                                            // Normalize any double slashes
+                                            path = path.replace("//", "/")
+                                            // Now escape for JSON (only quotes need escaping after normalization)
                                             val escapedPath = path.replace("\"", "\\\"")
                                             json.parseToJsonElement("""{"path": "$escapedPath"}""")
                                         } else {
@@ -686,7 +660,12 @@ class ImplementationAgent(
                                         if (pathMatch != null && contentMatch != null) {
                                             // Extract and normalize path
                                             var path = pathMatch.groupValues[1]
-                                            path = path.replace("\\", "/").replace("//", "/")
+                                            // Handle .\src -> ./src
+                                            if (path.startsWith(".") && path.length > 1 && path[1] == '\\') {
+                                                path = "./" + path.substring(2)
+                                            }
+                                            path = path.replace("\\", "/")
+                                            path = path.replace("//", "/")
                                             val escapedPath = path.replace("\"", "\\\"")
                                             
                                             // Extract and escape content
@@ -695,8 +674,6 @@ class ImplementationAgent(
                                             content = content.replace("\\\"", "\"")  // Unescape quotes
                                             content = content.replace("\\\\", "\\")  // Unescape backslashes
                                             content = content.replace("\\n", "\n")  // Unescape newlines
-                                            // Normalize paths in content
-                                            content = content.replace("\\", "/")
                                             // Re-escape for JSON
                                             val escapedContent = content
                                                 .replace("\\", "\\\\")

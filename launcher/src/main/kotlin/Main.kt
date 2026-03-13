@@ -483,6 +483,9 @@ class AgentLauncherImpl : AgentLauncher {
 
     override fun getLoadedModelsStore(): LoadedModelsStore = loadedModelsStore
 
+    override fun getTerminalSettingsRepository(): com.alyk.ai.koog.database.settings.TerminalSettingsRepository? =
+        DatabaseFactory.getProvider()?.terminalSettingsRepository("default", null)
+
     override fun registerBeforeExit(callback: suspend () -> Unit) {
         beforeExitHooks.add(callback)
     }

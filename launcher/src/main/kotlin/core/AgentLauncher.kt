@@ -3,6 +3,7 @@ package core
 import com.alyk.ai.koog.config.Config
 import com.alyk.ai.koog.core.orchestrator.mcp.McpStatus
 import com.alyk.ai.koog.core.session.project.ProjectRepository
+import com.alyk.ai.koog.database.settings.TerminalSettingsRepository
 import com.alyk.ai.koog.database.store.LoadedModelsStore
 import kotlinx.coroutines.flow.Flow
 import java.time.Duration
@@ -56,6 +57,11 @@ interface AgentLauncher {
      * Store for loaded LLM model status (local/cloud). Persist on start/stop; restore running models on boot.
      */
     fun getLoadedModelsStore(): LoadedModelsStore
+
+    /**
+     * Terminal output settings (per-session). Used to filter/format terminal feed. Null if DB not available.
+     */
+    fun getTerminalSettingsRepository(): TerminalSettingsRepository?
 
     /**
      * Register a suspend callback to run before app exit (e.g. stop all models silently).

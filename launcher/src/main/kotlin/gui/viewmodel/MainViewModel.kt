@@ -1,25 +1,46 @@
 package gui.viewmodel
 
+import com.alyk.ai.koog.database.settings.TerminalOutputFilter
+import com.alyk.ai.koog.database.settings.TerminalSettingKey
+import com.alyk.ai.koog.database.settings.TerminalSettingState
+import com.alyk.ai.koog.database.settings.TerminalSettingsRepository
 import core.AgentLauncher
 import core.OutputEvent
 import core.TaskMode
 import gui.data.*
+import gui.output.TerminalOutputMapping
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.util.*
 
 /**
  * ViewModel for MainWindow
- * Manages all UI state and coordinates between components
+ * Manages all UI state and coordinates between components.
+ * When [terminalSettingsRepository] is provided, terminal output is filtered by TerminalSettingsState
+ * via [TerminalOutputFilter] and [TerminalOutputMapping].
  */
 class MainViewModel(
     private val agentLauncher: AgentLauncher,
-    private val coroutineScope: CoroutineScope
+    private val coroutineScope: CoroutineScope,
+    private val terminalSettingsRepository: TerminalSettingsRepository? = null
 ) {
+    /** Current terminal display settings (key -> enabled). Empty = show all. */
+    private val _terminalDisplaySettings = MutableStateFlow<Map<String, Boolean>>(emptyMap())
+
+    /** Display options for terminal (timestamps, compact) from settings. For use by Terminal.kt. */
+    private val _terminalDisplayOptions = MutableStateFlow(TerminalDisplayOptionsDto())
+    val terminalDisplayOptions: StateFlow<TerminalDisplayOptionsDto> = _terminalDisplayOptions.asStateFlow()
+
+    /** Settings for the filter popup (category -> list). Loaded when dialog opens. */
+    private val _filterSettings = MutableStateFlow<Map<TerminalSettingKey.Category, List<TerminalSettingState>>>(emptyMap())
+    val filterSettings: StateFlow<Map<TerminalSettingKey.Category, List<TerminalSettingState>>> = _filterSettings.asStateFlow()
+
     // Terminal state
     private val _terminalState = MutableStateFlow(
         TerminalStateDto(
@@ -90,6 +111,30 @@ class MainViewModel(
                 println("[VIEWMODEL] MCP tools count: ${_availableMcpTools.value.size}")
             }
         }
+
+        // Terminal output settings: load and subscribe so we can filter events
+        terminalSettingsRepository?.let { repo ->
+            fun applyDisplayOptions(settings: Map<String, Boolean>) {
+                _terminalDisplayOptions.value = TerminalDisplayOptionsDto(
+                    showTimestamps = settings["show_timestamps"] ?: false,
+                    compactMode = settings["compact_mode"] ?: false
+                )
+            }
+            coroutineScope.launch {
+                withContext(Dispatchers.IO) {
+                    val keys = TerminalSettingKey.allSettings.map { it.key }
+                    val initial = repo.areEnabled(keys)
+                    _terminalDisplaySettings.value = initial
+                    applyDisplayOptions(initial)
+                }
+                repo.settingsFlow.collect { sessionSettings ->
+                    sessionSettings?.settings?.let { map ->
+                        _terminalDisplaySettings.value = map
+                        applyDisplayOptions(map)
+                    }
+                }
+            }
+        }
         
         println("[VIEWMODEL] MainViewModel initialization complete")
     }
@@ -115,17 +160,18 @@ class MainViewModel(
             )
             println("[VIEWMODEL] Terminal state updated: isProcessing=true")
 
-            // Add user input event with agent info
+            // Add user input event with agent info (respect show_user_prompts)
             addTerminalEvent(
                 TerminalEventDto(
                     id = UUID.randomUUID().toString(),
                     timestamp = Instant.now(),
                     type = TerminalEventDto.EventType.SYSTEM,
-                    message = ">>> [$selectedAgent] $task"
+                    message = ">>> [$selectedAgent] $task",
+                    outputSettingKey = TerminalOutputMapping.KEY_USER_PROMPT
                 )
             )
 
-            // Show MCP tools if available
+            // Show MCP tools if available (respect show_command_execution)
             val tools = _availableMcpTools.value
             if (tools.isNotEmpty()) {
                 addTerminalEvent(
@@ -133,7 +179,8 @@ class MainViewModel(
                         id = UUID.randomUUID().toString(),
                         timestamp = Instant.now(),
                         type = TerminalEventDto.EventType.SYSTEM,
-                        message = "🔧 Using MCP tools: ${tools.joinToString(", ")}"
+                        message = "🔧 Using MCP tools: ${tools.joinToString(", ")}",
+                        outputSettingKey = TerminalOutputMapping.KEY_TOOL_CALL
                     )
                 )
             }
@@ -168,6 +215,36 @@ class MainViewModel(
         _terminalState.value = _terminalState.value.copy(inputText = text)
     }
 
+    /** Load settings for the filter dialog (grouped by category). No-op if no repository. */
+    fun loadFilterSettings() {
+        terminalSettingsRepository ?: return
+        coroutineScope.launch {
+            withContext(Dispatchers.IO) {
+                val all = terminalSettingsRepository.getAllSettingsWithState()
+                _filterSettings.value = all.groupBy { it.definition.category }
+            }
+        }
+    }
+
+    /** Toggle a filter setting by key. No-op if no repository. */
+    fun toggleFilterSetting(key: String) {
+        val repo = terminalSettingsRepository ?: return
+        coroutineScope.launch(Dispatchers.IO) {
+            val current = repo.isEnabled(key)
+            repo.updateSetting(key, !current)
+            loadFilterSettings()
+        }
+    }
+
+    /** Reset all terminal output settings to defaults. No-op if no repository. */
+    fun resetFilterToDefaults() {
+        terminalSettingsRepository ?: return
+        coroutineScope.launch(Dispatchers.IO) {
+            terminalSettingsRepository.resetToDefaults()
+            loadFilterSettings()
+        }
+    }
+
     /**
      * Load a project
      */
@@ -180,7 +257,8 @@ class MainViewModel(
                         id = UUID.randomUUID().toString(),
                         timestamp = Instant.now(),
                         type = TerminalEventDto.EventType.SYSTEM,
-                        message = "Project loaded: $projectPath"
+                        message = "Project loaded: $projectPath",
+                        outputSettingKey = TerminalOutputMapping.KEY_SYSTEM
                     )
                 )
                 onResult(true, null)
@@ -191,7 +269,8 @@ class MainViewModel(
                         id = UUID.randomUUID().toString(),
                         timestamp = Instant.now(),
                         type = TerminalEventDto.EventType.ERROR,
-                        message = "Failed to load project: $error"
+                        message = "Failed to load project: $error",
+                        outputSettingKey = TerminalOutputMapping.KEY_SYSTEM
                     )
                 )
                 onResult(false, error)
@@ -211,7 +290,8 @@ class MainViewModel(
                         id = UUID.randomUUID().toString(),
                         timestamp = Instant.now(),
                         type = TerminalEventDto.EventType.SYSTEM,
-                        message = "Project unloaded"
+                        message = "Project unloaded",
+                        outputSettingKey = TerminalOutputMapping.KEY_SYSTEM
                     )
                 )
                 onResult(true, null)
@@ -222,7 +302,8 @@ class MainViewModel(
                         id = UUID.randomUUID().toString(),
                         timestamp = Instant.now(),
                         type = TerminalEventDto.EventType.ERROR,
-                        message = "Failed to unload project: $error"
+                        message = "Failed to unload project: $error",
+                        outputSettingKey = TerminalOutputMapping.KEY_SYSTEM
                     )
                 )
                 onResult(false, error)
@@ -231,61 +312,72 @@ class MainViewModel(
     }
 
     private fun addTerminalEvent(event: TerminalEventDto) {
+        val settings = _terminalDisplaySettings.value
+        if (!TerminalOutputFilter.shouldShow(event.outputSettingKey, settings)) return
         _terminalState.value = _terminalState.value.copy(
             events = _terminalState.value.events + event
         )
     }
 
     private fun mapOutputEventToDto(event: OutputEvent): TerminalEventDto {
+        val key = TerminalOutputMapping.withSettingKey(event)
         return when (event) {
             is OutputEvent.Standard -> TerminalEventDto(
                 id = UUID.randomUUID().toString(),
                 timestamp = Instant.now(),
                 type = TerminalEventDto.EventType.STANDARD,
-                message = event.text
+                message = event.text,
+                outputSettingKey = key
             )
             is OutputEvent.Success -> TerminalEventDto(
                 id = UUID.randomUUID().toString(),
                 timestamp = Instant.now(),
                 type = TerminalEventDto.EventType.SUCCESS,
-                message = event.text
+                message = event.text,
+                outputSettingKey = key
             )
             is OutputEvent.Warning -> TerminalEventDto(
                 id = UUID.randomUUID().toString(),
                 timestamp = Instant.now(),
                 type = TerminalEventDto.EventType.WARNING,
-                message = event.text
+                message = event.text,
+                outputSettingKey = key
             )
             is OutputEvent.Error -> TerminalEventDto(
                 id = UUID.randomUUID().toString(),
                 timestamp = Instant.now(),
                 type = TerminalEventDto.EventType.ERROR,
-                message = event.text
+                message = event.text,
+                outputSettingKey = key
             )
             is OutputEvent.System -> TerminalEventDto(
                 id = UUID.randomUUID().toString(),
                 timestamp = Instant.now(),
                 type = TerminalEventDto.EventType.SYSTEM,
-                message = event.text
+                message = event.text,
+                outputSettingKey = key
             )
             is OutputEvent.Debug -> TerminalEventDto(
                 id = UUID.randomUUID().toString(),
                 timestamp = Instant.now(),
                 type = TerminalEventDto.EventType.DEBUG,
-                message = event.text
+                message = event.text,
+                outputSettingKey = key
             )
             is OutputEvent.Progress -> TerminalEventDto(
                 id = UUID.randomUUID().toString(),
                 timestamp = Instant.now(),
                 type = TerminalEventDto.EventType.PROGRESS,
                 message = event.message,
-                progressPercent = event.percent
+                progressPercent = event.percent,
+                outputSettingKey = key
             )
             OutputEvent.Complete -> TerminalEventDto(
                 id = UUID.randomUUID().toString(),
                 timestamp = Instant.now(),
                 type = TerminalEventDto.EventType.COMPLETE,
-                message = "Task Complete"
+                message = "Task Complete",
+                outputSettingKey = key
             )
         }
     }

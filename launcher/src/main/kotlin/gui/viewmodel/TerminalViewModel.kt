@@ -3,6 +3,7 @@ package gui.viewmodel
 import com.alyk.ai.koog.database.settings.TerminalSettingKey
 import com.alyk.ai.koog.database.settings.TerminalSettingState
 import core.TaskMode
+import gui.data.AgentStatusDto
 import gui.data.AgentTypeDto
 import gui.data.TerminalDisplayOptionsDto
 import gui.data.TerminalStateDto
@@ -18,6 +19,7 @@ class TerminalViewModel(
 ) {
     val state: StateFlow<TerminalStateDto> = mainViewModel.terminalState
     val displayOptions: StateFlow<TerminalDisplayOptionsDto> = mainViewModel.terminalDisplayOptions
+    val agentStatus: StateFlow<AgentStatusDto?> = mainViewModel.agentStatus
     val filterSettings: StateFlow<Map<TerminalSettingKey.Category, List<TerminalSettingState>>> = mainViewModel.filterSettings
 
     fun submitTask(task: String, mode: TaskMode) {

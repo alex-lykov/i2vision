@@ -16,6 +16,11 @@ object SessionsTable : Table("sessions") {
     val conversationHistory = text("conversation_history") // JSON array of strings
     val activeModel = varchar("active_model", 256).nullable()
     val updatedAt = long("updated_at")
+    val currentPhase = varchar("current_phase", 256).nullable()
+    val currentGoal = text("current_goal").nullable()
+    val workflowPhase = varchar("workflow_phase", 256).nullable()
+    val completedStepsJson = text("completed_steps").nullable() // JSON array of strings
+    val decisionLogJson = text("decision_log").nullable() // JSON array of DecisionLogEntry
     override val primaryKey = PrimaryKey(id)
 }
 

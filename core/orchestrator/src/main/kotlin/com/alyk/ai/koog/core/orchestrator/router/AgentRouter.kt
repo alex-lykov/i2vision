@@ -12,7 +12,7 @@ class AgentRouter(
     private val architectureAgent: ArchitectureAgent,
     private val moduleAgent: ModuleAgent,
     private val testAgent: TestAgent,
-    private val implementationAgent: ImplementationAgent
+    private val implementationAgent: EnhancedImplementationAgent
 ) {
     /**
      * Route a task to the appropriate agent

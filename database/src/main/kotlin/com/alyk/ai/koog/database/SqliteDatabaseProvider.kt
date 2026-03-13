@@ -50,6 +50,7 @@ class SqliteDatabaseProvider(
                     TerminalSettingsProfileSettings,
                     TerminalSettingsAuditLog
                 )
+                SchemaUtils.createMissingTablesAndColumns(SessionsTable)
 
                 // Populate the definitions table from the generated enum if it's empty
                 if (TerminalSettingsDefinitions.selectAll().count() == 0L) {

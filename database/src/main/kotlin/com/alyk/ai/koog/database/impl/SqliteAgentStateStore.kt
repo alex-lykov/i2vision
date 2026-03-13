@@ -27,6 +27,11 @@ class SqliteAgentStateStore(private val db: Database) : AgentStateStore {
                 it[SessionsTable.conversationHistory] = json.encodeToString(ListSerializer(String.serializer()), emptyList())
                 it[SessionsTable.activeModel] = null
                 it[SessionsTable.updatedAt] = System.currentTimeMillis()
+                it[SessionsTable.currentPhase] = null
+                it[SessionsTable.currentGoal] = null
+                it[SessionsTable.workflowPhase] = null
+                it[SessionsTable.completedStepsJson] = json.encodeToString(ListSerializer(String.serializer()), emptyList())
+                it[SessionsTable.decisionLogJson] = null
             }
             id
         }
@@ -47,6 +52,11 @@ class SqliteAgentStateStore(private val db: Database) : AgentStateStore {
                 it[SessionsTable.conversationHistory] = json.encodeToString(ListSerializer(String.serializer()), updated.conversationHistory)
                 it[SessionsTable.activeModel] = updated.activeModel
                 it[SessionsTable.updatedAt] = System.currentTimeMillis()
+                it[SessionsTable.currentPhase] = updated.currentPhase
+                it[SessionsTable.currentGoal] = updated.currentGoal
+                it[SessionsTable.workflowPhase] = updated.workflowPhase
+                it[SessionsTable.completedStepsJson] = json.encodeToString(ListSerializer(String.serializer()), updated.completedSteps)
+                it[SessionsTable.decisionLogJson] = updated.decisionLogJson
             }
         }
     }
@@ -102,12 +112,19 @@ class SqliteAgentStateStore(private val db: Database) : AgentStateStore {
 
     private fun org.jetbrains.exposed.sql.ResultRow.toSession(): PersistedSession {
         val history = json.decodeFromString<List<String>>(this[SessionsTable.conversationHistory])
+        val completedStepsJson = this[SessionsTable.completedStepsJson]
+        val completedSteps = completedStepsJson?.let { json.decodeFromString<List<String>>(it) } ?: emptyList()
         return PersistedSession(
             id = UUID.fromString(this[SessionsTable.id]),
             projectPath = this[SessionsTable.projectPath],
             conversationHistory = history,
             activeModel = this[SessionsTable.activeModel],
-            updatedAtMillis = this[SessionsTable.updatedAt]
+            updatedAtMillis = this[SessionsTable.updatedAt],
+            currentPhase = this[SessionsTable.currentPhase],
+            currentGoal = this[SessionsTable.currentGoal],
+            workflowPhase = this[SessionsTable.workflowPhase],
+            completedSteps = completedSteps,
+            decisionLogJson = this[SessionsTable.decisionLogJson]
         )
     }
 }

@@ -85,22 +85,9 @@ class ImplementationAgent(
             )
         }
         
-        // Check if this is a simple task that doesn't need tools
-        if (isSimpleTask(task)) {
-            println("[IMPLEMENTATION] Detected simple task, using direct response")
-            val simpleResult = handleSimpleTask(task)
-            return AgentResponse(
-                agentType = AgentType.IMPLEMENTATION,
-                result = simpleResult,
-                metadata = mapOf(
-                    "workspace" to workspace.name,
-                    "agent" to "implementation",
-                    "model" to implementationModelWrapper.modelName,
-                    "tools_used" to "false",
-                    "simple_task" to "true"
-                )
-            )
-        }
+        // Use MCP Selection Module for intelligent task analysis
+        // This replaces the legacy isSimpleTask() heuristic with intelligent tool selection
+        println("[IMPLEMENTATION] Using MCP Selection Module for task analysis")
         
         // Use project root from context only (project selected from Projects card / DB)
         val projectRoot = context.projectPath!!
@@ -125,7 +112,7 @@ class ImplementationAgent(
                     "model" to implementationModelWrapper.modelName,
                     "tools_used" to "true",
                     "simple_task" to "true",
-                    "simple_task_type" to "list_project_root"
+                    "simple_task_type" to "run_coroutines"
                 )
             )
         }
@@ -148,36 +135,7 @@ class ImplementationAgent(
         )
     }
     
-    /**
-     * Check if task is simple (math, questions, etc.) that doesn't need file access
-     */
-    private fun isSimpleTask(task: String): Boolean {
-        val trimmed = task.trim()
-        // Simple math expressions (e.g., "2+2", "10*5", "100/4")
-        // Match: number, operator, number (with optional whitespace, no requirement for trailing content)
-        if (trimmed.matches(Regex("""^\d+\s*[+\-*/]\s*\d+\s*$"""))) {
-            return true
-        }
-        // Also match math expressions with trailing content (e.g., "2+2 please", "10*5 now")
-        if (trimmed.matches(Regex("""^\d+\s*[+\-*/]\s*\d+\s+.+"""))) {
-            return true
-        }
-        // Very short questions (less than 50 chars, no file references)
-        if (trimmed.length < 50 && !trimmed.contains("file", ignoreCase = true) 
-            && !trimmed.contains("read", ignoreCase = true)
-            && !trimmed.contains("write", ignoreCase = true)
-            && !trimmed.contains("code", ignoreCase = true)
-            && !trimmed.contains("project", ignoreCase = true)
-            && !trimmed.contains("directory", ignoreCase = true)
-            && !trimmed.contains("list", ignoreCase = true)
-            && !trimmed.contains("show", ignoreCase = true)
-            && !trimmed.contains("output", ignoreCase = true)
-            && !trimmed.contains("app", ignoreCase = true)) {
-            return true
-        }
-        return false
-    }
-
+    
     /**
      * True when the task is "list project root folders" (or similar): we list the UI-selected project root
      * with one list_directory call and no LLM iterations.
@@ -227,37 +185,7 @@ class ImplementationAgent(
         }
     }
     
-    /**
-     * Handle simple tasks directly without tools
-     */
-    private suspend fun handleSimpleTask(task: String): String {
-        return try {
-            // Use a simple prompt for direct answers
-            val simplePrompt = """
-                Answer the following question or solve the problem directly and concisely:
-                $task
-                
-                Provide only the answer, no explanations unless asked.
-            """.trimIndent()
-            
-            val agent = createKoogAgent(
-                modelName = implementationModelWrapper.modelName,
-                contextLength = implementationModelWrapper.maxContextLength.toLong()
-            )
-            
-            println("[IMPLEMENTATION] Handling simple task with timeout (30s)")
-            withTimeout(30000) { // 30 second timeout
-                agent.run(simplePrompt)
-            }
-        } catch (e: TimeoutCancellationException) {
-            println("[IMPLEMENTATION] ⚠️ Simple task timed out after 30s")
-            "The request timed out. Please try again or rephrase your question."
-        } catch (e: Exception) {
-            println("[IMPLEMENTATION] ❌ Error handling simple task: ${e.message}")
-            "Error: ${e.message}"
-        }
-    }
-    
+        
     /**
      * Execute agent with tool execution loop
      * Intercepts tool calls and executes them manually
@@ -767,13 +695,8 @@ class ImplementationAgent(
             return@flow
         }
 
-        // Simple tasks: keep behavior consistent with non-streaming process()
-        if (isSimpleTask(task)) {
-            val simpleResult = handleSimpleTask(task)
-            emit(AgentResponseChunk.Text(simpleResult))
-            emit(AgentResponseChunk.Complete)
-            return@flow
-        }
+        // Use standard processing for all tasks (MCP Selection Module handles task analysis)
+        // This replaces the legacy isSimpleTask() heuristic with intelligent tool selection
 
         // Require a project selected from the Projects card (DB); do not use current working directory
         if (context.projectPath == null) {

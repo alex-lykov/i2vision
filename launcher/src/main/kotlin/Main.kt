@@ -49,6 +49,8 @@ class AgentLauncherImpl : AgentLauncher {
     private var sessionStartTime = Instant.now()
     private lateinit var projectRepository: ProjectRepository
     private lateinit var loadedModelsStore: LoadedModelsStore
+    private lateinit var sessionStore: ISessionStore
+    private var currentSessionId: java.util.UUID? = null
     private val beforeExitHooks = mutableListOf<suspend () -> Unit>()
 
     override fun initialize(config: Config): Result<Unit> {
@@ -61,7 +63,7 @@ class AgentLauncherImpl : AgentLauncher {
             val dbProvider = DatabaseFactory.init()
             log.info("Database provider initialized (project settings, agent state, RAG, memory, prompt cache)")
 
-            val sessionStore: ISessionStore = DatabaseBackedSessionStore(dbProvider.agentState)
+            sessionStore = DatabaseBackedSessionStore(dbProvider.agentState)
             log.info("Session store: database-backed (persistent)")
 
             projectRepository = DatabaseProjectRepository(dbProvider.projects)
@@ -416,9 +418,17 @@ class AgentLauncherImpl : AgentLauncher {
             } catch (e: Exception) {
                 println("Warning: Failed to detect running models: ${e.message}")
             }
+
+            val sessionId = runBlocking {
+                if (currentSessionId == null) {
+                    val projectPath = runCatching { orchestrator.getCurrentProject() }.getOrNull()
+                    currentSessionId = sessionStore.createSession(projectPath)
+                    log.info("Created session: {}", currentSessionId)
+                }
+                currentSessionId!!.toString()
+            }
             
-            // Process the task with the selected agent type
-            client.processTask(task, mode, agentType).collect { event ->
+            client.processTask(task, mode, agentType, sessionId).collect { event ->
                 emit(event)
             }
         }

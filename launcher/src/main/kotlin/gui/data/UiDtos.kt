@@ -34,6 +34,38 @@ data class TerminalEventDto(
 }
 
 /**
+ * MCP tool selection status for UI display
+ */
+data class McpSelectionStatusDto(
+    val selectedTools: List<String>,
+    val toolScores: Map<String, Double>,
+    val matchedKeywords: Map<String, List<String>>,
+    val relevanceThreshold: Double,
+    val totalAvailableTools: Int
+)
+
+/**
+ * MCP execution plan status for UI display
+ */
+data class McpExecutionPlanDto(
+    val executionStrategy: String,
+    val complexity: String,
+    val estimatedDurationMs: Long,
+    val canRunInParallel: Boolean,
+    val stepCount: Int,
+    val selectedServers: List<String>
+)
+
+/**
+ * Combined MCP decision status for UI display
+ */
+data class McpDecisionStatusDto(
+    val selection: McpSelectionStatusDto,
+    val executionPlan: McpExecutionPlanDto,
+    val timestamp: Instant
+)
+
+/**
  * Agent status DTO for UI display
  */
 data class AgentStatusDto(
@@ -156,7 +188,8 @@ data class TerminalStateDto(
  */
 data class TerminalDisplayOptionsDto(
     val showTimestamps: Boolean = false,
-    val compactMode: Boolean = false
+    val compactMode: Boolean = false,
+    val showStatusBar: Boolean = true
 )
 
 /**

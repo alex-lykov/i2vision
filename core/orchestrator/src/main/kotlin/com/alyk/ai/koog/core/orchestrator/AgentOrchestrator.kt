@@ -4,13 +4,16 @@ import ai.koog.agents.core.tools.ToolRegistry
 import com.alyk.ai.koog.context.hierarchy.HierarchyBuilder
 import com.alyk.ai.koog.context.provider.ContextProvider
 import com.alyk.ai.koog.core.orchestrator.agents.*
+import com.alyk.ai.koog.core.orchestrator.mcp.McpDecisionModule
 import com.alyk.ai.koog.core.orchestrator.mcp.McpIntegration
+import com.alyk.ai.koog.core.orchestrator.mcp.McpSelectionModule
 import com.alyk.ai.koog.core.orchestrator.mcp.McpStatus
 import com.alyk.ai.koog.core.orchestrator.mcp.workspace.WorkspaceFactory
 import com.alyk.ai.koog.core.orchestrator.router.AgentResponseChunk
 import com.alyk.ai.koog.core.orchestrator.router.AgentRouter
 import com.alyk.ai.koog.core.orchestrator.router.TaskContext
 import com.alyk.ai.koog.core.session.ISessionStore
+import com.alyk.ai.koog.core.session.SessionManager
 import com.alyk.ai.koog.models.wrappers.ModelWrapper
 import com.alyk.ai.koog.switching.decision.DecisionEngine
 import com.alyk.ai.koog.switching.decision.ModelSwitchControl
@@ -33,6 +36,8 @@ class AgentOrchestrator(
 ) {
     
     private val mcpIntegration = McpIntegration(contextProvider, mcpToolRegistry)
+    private val mcpSelectionModule = McpSelectionModule(mcpIntegration)
+    private val mcpDecisionModule = McpDecisionModule(mcpSelectionModule, mcpIntegration)
     private val workspaceFactory = WorkspaceFactory(contextProvider, emptyList())
     private var agentRouter: AgentRouter? = null
     private val toolUsageTracker = com.alyk.ai.koog.core.orchestrator.tools.ToolUsageTracker()
@@ -100,6 +105,10 @@ class AgentOrchestrator(
         val updatedWorkspaces = updatedWorkspaceFactory.createAllWorkspaces(projectPath)
         Logger.info("ORCHESTRATOR", "Created ${updatedWorkspaces.size} workspaces: ${updatedWorkspaces.keys.joinToString()}")
         
+        // Create SessionManager for Koog-style session management (LLM sessions, dynamic tools, history)
+        val sessionManager = SessionManager(currentModel, combinedToolRegistry)
+        Logger.debug("ORCHESTRATOR", "Created SessionManager for session-based LLM execution")
+        
         // Initialize agent router with all workspaces and ToolRegistry (layered MCP architecture)
         Logger.debug("ORCHESTRATOR", "Initializing agent router with all agents...")
         agentRouter = AgentRouter(
@@ -119,11 +128,15 @@ class AgentOrchestrator(
                 updatedWorkspaces[com.alyk.ai.koog.core.orchestrator.mcp.workspace.WorkspaceType.TEST]!!,
                 combinedToolRegistry
             ),
-            implementationAgent = ImplementationAgent(
-                updatedWorkspaces[com.alyk.ai.koog.core.orchestrator.mcp.workspace.WorkspaceType.IMPLEMENTATION]!!,
-                currentModel,
-                combinedToolRegistry,
-                toolUsageTracker
+            implementationAgent = EnhancedImplementationAgent(
+                workspace = updatedWorkspaces[com.alyk.ai.koog.core.orchestrator.mcp.workspace.WorkspaceType.IMPLEMENTATION]!!,
+                implementationModelWrapper = currentModel,
+                toolRegistry = combinedToolRegistry,
+                toolUsageTracker = toolUsageTracker,
+                selectionModule = mcpSelectionModule,
+                decisionModule = mcpDecisionModule,
+                sessionStore = sessionStore,
+                sessionManager = sessionManager
             )
         )
         
@@ -266,11 +279,24 @@ class AgentOrchestrator(
         val loadedFiles = contextProvider.getLoadedFiles()
         Logger.debug("ORCHESTRATOR", "Project path: ${projectPath ?: "null"}")
         Logger.debug("ORCHESTRATOR", "Loaded files: ${loadedFiles.size}")
-        
+
+        val metadata = kotlin.runCatching {
+            val uuid = java.util.UUID.fromString(sessionId)
+            sessionStore.getSession(uuid)?.let { session ->
+                buildMap<String, Any> {
+                    session.currentPhase?.let { put("phase", it) }
+                    session.currentGoal?.let { put("goal", it) }
+                    session.workflowPhase?.let { put("workflowPhase", it) }
+                    if (session.completedSteps.isNotEmpty()) put("completedSteps", session.completedSteps)
+                }
+            } ?: emptyMap()
+        }.getOrElse { emptyMap<String, Any>() }
+
         val taskContext = TaskContext(
             projectPath = projectPath,
             currentFiles = loadedFiles,
-            sessionId = sessionId
+            sessionId = sessionId,
+            metadata = metadata
         )
         
         Logger.debug("ORCHESTRATOR", "Calling router.routeTask with agent type: $agentType")
@@ -293,10 +319,23 @@ class AgentOrchestrator(
             }
         }
         
+        val metadata = kotlin.runCatching {
+            val uuid = java.util.UUID.fromString(sessionId)
+            sessionStore.getSession(uuid)?.let { session ->
+                buildMap<String, Any> {
+                    session.currentPhase?.let { put("phase", it) }
+                    session.currentGoal?.let { put("goal", it) }
+                    session.workflowPhase?.let { put("workflowPhase", it) }
+                    if (session.completedSteps.isNotEmpty()) put("completedSteps", session.completedSteps)
+                }
+            } ?: emptyMap()
+        }.getOrElse { emptyMap<String, Any>() }
+
         val taskContext = TaskContext(
             projectPath = getCurrentProject(),
             currentFiles = contextProvider.getLoadedFiles(),
-            sessionId = sessionId
+            sessionId = sessionId,
+            metadata = metadata
         )
         
         return router.routeTaskStreaming(task, taskContext, agentType)

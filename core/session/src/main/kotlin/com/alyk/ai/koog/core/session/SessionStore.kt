@@ -49,5 +49,15 @@ data class Session(
     val id: UUID,
     val projectPath: String?,
     val conversationHistory: MutableList<String>,
-    val activeModel: String? = null
+    val activeModel: String? = null,
+    /** Current phase (e.g. "design", "implementation", "testing") */
+    val currentPhase: String? = null,
+    /** Current goal (e.g. "Add auth to feature X") */
+    val currentGoal: String? = null,
+    /** Workflow phase for progress tracking */
+    val workflowPhase: String? = null,
+    /** Completed workflow steps (e.g. ["requirements", "design"]) */
+    val completedSteps: MutableList<String> = mutableListOf(),
+    /** Log of execution decisions with rationale */
+    val decisionLog: MutableList<DecisionLogEntry> = mutableListOf()
 )

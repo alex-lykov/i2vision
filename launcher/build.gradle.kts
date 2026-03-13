@@ -3,6 +3,7 @@ import org.jetbrains.compose.desktop.application.dsl.TargetFormat
 plugins {
     id("org.jetbrains.compose")
     id("org.jetbrains.kotlin.plugin.compose")
+    kotlin("plugin.serialization")
 }
 
 dependencies {

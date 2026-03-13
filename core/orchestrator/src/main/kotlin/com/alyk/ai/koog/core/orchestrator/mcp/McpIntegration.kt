@@ -171,7 +171,7 @@ class McpIntegration(
                         defaultValue = false
                     )
                 ),
-                isRelevant = loadedFiles.any { it.contains("build.gradle") || it.contains("build.gradle.kts") }
+                isRelevant = true // Always relevant for execution tasks
             ),
             
             ProjectMcpTool(
@@ -192,7 +192,7 @@ class McpIntegration(
                         defaultValue = true
                     )
                 ),
-                isRelevant = loadedFiles.any { it.contains("test") }
+                isRelevant = true // Always relevant for execution tasks
             ),
             
             ProjectMcpTool(

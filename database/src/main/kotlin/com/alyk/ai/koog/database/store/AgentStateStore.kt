@@ -50,11 +50,17 @@ interface AgentStateStore {
 
 /**
  * Session data as persisted (e.g. in database).
+ * decisionLogJson is raw JSON; decode in DatabaseBackedSessionStore using core session types.
  */
 data class PersistedSession(
     val id: UUID,
     val projectPath: String?,
     val conversationHistory: List<String>,
     val activeModel: String? = null,
-    val updatedAtMillis: Long = System.currentTimeMillis()
+    val updatedAtMillis: Long = System.currentTimeMillis(),
+    val currentPhase: String? = null,
+    val currentGoal: String? = null,
+    val workflowPhase: String? = null,
+    val completedSteps: List<String> = emptyList(),
+    val decisionLogJson: String? = null
 )

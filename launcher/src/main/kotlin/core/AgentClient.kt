@@ -10,7 +10,8 @@ import kotlinx.coroutines.flow.flow
 class AgentClient(
     private val orchestrator: AgentOrchestrator
 ) {
-    fun processTask(task: String, mode: TaskMode, agentType: AgentTypeDto = AgentTypeDto.IMPLEMENTATION): Flow<OutputEvent> = flow {
+    fun processTask(task: String, mode: TaskMode, agentType: AgentTypeDto = AgentTypeDto.IMPLEMENTATION, sessionId: String): Flow<OutputEvent> = flow {
+        emit(OutputEvent.System(">>> [${agentType.name}] $task"))
         emit(OutputEvent.System("Routing task using ${mode.name} mode with ${agentType.name} agent"))
         emit(OutputEvent.Progress(10, "Analyzing request"))
         
@@ -18,7 +19,7 @@ class AgentClient(
         val domainAgentType = mapAgentTypeDtoToDomain(agentType)
         
         // Use streaming router for real-time updates
-        orchestrator.routeTaskStreaming(task, sessionId = "default", agentType = domainAgentType).collect { chunk ->
+        orchestrator.routeTaskStreaming(task, sessionId = sessionId, agentType = domainAgentType).collect { chunk ->
             when (chunk) {
                 is AgentResponseChunk.Text -> {
                     emit(OutputEvent.Standard(chunk.content))

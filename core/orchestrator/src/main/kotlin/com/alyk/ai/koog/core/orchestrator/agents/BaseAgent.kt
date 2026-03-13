@@ -10,6 +10,7 @@ import com.alyk.ai.koog.core.orchestrator.router.AgentResponse
 import com.alyk.ai.koog.core.orchestrator.router.AgentResponseChunk
 import com.alyk.ai.koog.core.orchestrator.router.AgentType
 import com.alyk.ai.koog.core.orchestrator.router.TaskContext
+import com.alyk.ai.koog.core.session.ISessionStore
 import com.alyk.ai.koog.models.wrappers.ModelWrapper
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -22,7 +23,8 @@ abstract class BaseAgent(
     protected val agentType: AgentType,
     protected val workspace: McpWorkspace,
     protected val toolRegistry: ToolRegistry = ToolRegistry.EMPTY,
-    protected val modelWrapper: ModelWrapper? = null
+    protected val modelWrapper: ModelWrapper? = null,
+    protected val sessionStore: ISessionStore? = null
 ) {
     /**
      * Process a task and return response

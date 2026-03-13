@@ -50,6 +50,8 @@ class KoogToolRegistryBuilder(
             println("[TOOLS] FileAccessTools initialized with projectRoot: '$projectRoot'")
         }
         
+        fun getProjectRoot(): String = projectRoot
+        
         fun listDirectory(path: String): ListDirectoryOutput {
             // Resolve path relative to project root
             val resolvedPath = if (path == "." || path.isEmpty()) {
@@ -279,6 +281,39 @@ class KoogToolRegistryBuilder(
             )
             }
         }
+        
+        fun runCommand(command: String, timeoutMs: Long = 30000): RunCommandOutput {
+            println("[TOOLS] runCommand called: command='$command', timeoutMs=$timeoutMs, projectRoot='$projectRoot'")
+            return try {
+                val process = ProcessBuilder()
+                    .command(if (System.getProperty("os.name").lowercase().contains("windows")) {
+                        command.split(" ")
+                    } else {
+                        listOf("sh", "-c", command)
+                    })
+                    .directory(Paths.get(projectRoot).toFile())
+                    .redirectErrorStream(true)
+                    .start()
+                
+                val output = process.inputStream.bufferedReader().readText()
+                val exitCode = process.waitFor()
+                
+                RunCommandOutput(
+                    success = exitCode == 0,
+                    error = if (exitCode != 0) "Command failed with exit code $exitCode" else null,
+                    output = output,
+                    exitCode = exitCode
+                )
+            } catch (e: Exception) {
+                println("[TOOLS] Command execution failed: ${e.message}")
+                RunCommandOutput(
+                    success = false,
+                    error = "Error executing command: ${e.message}",
+                    output = null,
+                    exitCode = -1
+                )
+            }
+        }
     }
 }
 
@@ -342,4 +377,11 @@ data class WriteFileOutput(
     val error: String?,
     val path: String?,
     val bytesWritten: Int
+)
+
+data class RunCommandOutput(
+    val success: Boolean,
+    val error: String?,
+    val output: String?,
+    val exitCode: Int
 )

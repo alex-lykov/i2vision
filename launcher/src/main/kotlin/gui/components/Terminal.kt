@@ -5,6 +5,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
@@ -12,6 +15,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import core.TaskMode
 import gui.data.TerminalEventDto
@@ -26,6 +31,7 @@ fun Terminal(
 ) {
     val state by viewModel.state.collectAsState()
     val displayOptions by viewModel.displayOptions.collectAsState()
+    val agentStatus by viewModel.agentStatus.collectAsState()
     val listState = rememberLazyListState()
     var showFilterDialog by remember { mutableStateOf(false) }
 
@@ -41,7 +47,30 @@ fun Terminal(
         backgroundColor = Color(0xFF1E1E1E) // Dark terminal background
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Output area (takes all available space)
+            // Session info strip (when show_status_bar enabled)
+            if (displayOptions.showStatusBar && agentStatus != null) {
+                val s = agentStatus!!
+                val contextPct = (s.contextUsage * 100).toInt()
+                val sessionInfo = buildString {
+                    append("LLM: ${s.currentModelId}")
+                    append(" | Tools: ${s.mcpToolsCount}")
+                    append(" | Context: ${contextPct}%")
+                    append(" | Files: ${s.filesLoaded}")
+                    s.projectPath?.let { append(" | Project: $it") }
+                }
+                Text(
+                    text = sessionInfo,
+                    color = Color(0xFF00FF00).copy(alpha = 0.9f),
+                    style = MaterialTheme.typography.caption,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF252526))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                )
+                Divider(color = Color(0xFF404040), thickness = 1.dp)
+            }
+
+            // Output area (selectable, takes all available space)
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -52,7 +81,10 @@ fun Terminal(
                     state = listState,
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    items(state.events) { event ->
+                    items(
+                        items = state.events,
+                        key = { it.id }
+                    ) { event ->
                         val timeStr = if (displayOptions.showTimestamps)
                             event.timestamp.atZone(ZoneId.systemDefault())
                                 .format(DateTimeFormatter.ofPattern("HH:mm:ss"))
@@ -78,12 +110,16 @@ fun Terminal(
                             prefix.isEmpty() -> message
                             else -> "$prefix $message"
                         }
-                        Text(
-                            text = lineText,
-                            color = color,
-                            style = MaterialTheme.typography.body2,
-                            modifier = Modifier.padding(vertical = if (displayOptions.compactMode) 0.dp else 1.dp)
-                        )
+                        SelectionContainer {
+                            Text(
+                                text = lineText,
+                                color = color,
+                                style = MaterialTheme.typography.body2,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = if (displayOptions.compactMode) 0.dp else 1.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -129,11 +165,12 @@ fun Terminal(
                         style = MaterialTheme.typography.body1,
                         modifier = Modifier.padding(end = 8.dp)
                     )
+                    val focusManager = LocalFocusManager.current
                     TextField(
                         value = state.inputText,
                         onValueChange = { viewModel.updateInputText(it) },
                         modifier = Modifier.weight(1f),
-                        placeholder = { Text("Enter task (e.g., 'Add error handling')", color = Color.Gray) },
+                        placeholder = { Text("Enter task and press Enter or click PROCESS", color = Color.Gray) },
                         colors = TextFieldDefaults.textFieldColors(
                             textColor = Color.White,
                             backgroundColor = Color.Transparent,
@@ -142,6 +179,13 @@ fun Terminal(
                             unfocusedIndicatorColor = Color(0xFF404040)
                         ),
                         singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = {
+                            if (state.inputText.isNotBlank() && !state.isProcessing) {
+                                viewModel.submitTask(state.inputText, TaskMode.CURRENT_MODEL)
+                                focusManager.clearFocus()
+                            }
+                        }),
                         enabled = !state.isProcessing
                     )
                 }

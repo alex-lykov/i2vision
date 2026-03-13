@@ -117,7 +117,8 @@ class MainViewModel(
             fun applyDisplayOptions(settings: Map<String, Boolean>) {
                 _terminalDisplayOptions.value = TerminalDisplayOptionsDto(
                     showTimestamps = settings["show_timestamps"] ?: false,
-                    compactMode = settings["compact_mode"] ?: false
+                    compactMode = settings["compact_mode"] ?: false,
+                    showStatusBar = settings["show_status_bar"] ?: true
                 )
             }
             coroutineScope.launch {
@@ -312,10 +313,17 @@ class MainViewModel(
     }
 
     private fun addTerminalEvent(event: TerminalEventDto) {
-        val settings = _terminalDisplaySettings.value
-        if (!TerminalOutputFilter.shouldShow(event.outputSettingKey, settings)) return
+        val (shouldShow, formattedMessage) = TerminalOutputFilter.shouldShowAndFormat(
+            outputSettingKey = event.outputSettingKey,
+            settings = _terminalDisplaySettings.value,
+            message = event.message,
+            timestamp = event.timestamp
+        )
+
+        if (!shouldShow) return
+
         _terminalState.value = _terminalState.value.copy(
-            events = _terminalState.value.events + event
+            events = _terminalState.value.events + event.copy(message = formattedMessage)
         )
     }
 

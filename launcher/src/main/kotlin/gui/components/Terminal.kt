@@ -7,7 +7,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
@@ -19,10 +18,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import core.TaskMode
-import gui.data.TerminalEventDto
 import gui.viewmodel.TerminalViewModel
-import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 @Composable
 fun Terminal(
@@ -85,41 +81,12 @@ fun Terminal(
                         items = state.events,
                         key = { it.id }
                     ) { event ->
-                        val timeStr = if (displayOptions.showTimestamps)
-                            event.timestamp.atZone(ZoneId.systemDefault())
-                                .format(DateTimeFormatter.ofPattern("HH:mm:ss"))
-                        else null
-                        val (color, prefix) = when (event.type) {
-                            TerminalEventDto.EventType.STANDARD -> Color.White to ""
-                            TerminalEventDto.EventType.SUCCESS -> Color.Green to "✓"
-                            TerminalEventDto.EventType.WARNING -> Color(0xFFFFA500) to "⚠"
-                            TerminalEventDto.EventType.ERROR -> Color.Red to "✗"
-                            TerminalEventDto.EventType.SYSTEM -> Color.Cyan to "ℹ"
-                            TerminalEventDto.EventType.DEBUG -> Color.Gray to "🐛"
-                            TerminalEventDto.EventType.PROGRESS -> Color.White to "⏳"
-                            TerminalEventDto.EventType.COMPLETE -> Color.Green to "✓"
-                        }
-                        val message = if (event.type == TerminalEventDto.EventType.PROGRESS && event.progressPercent != null) {
-                            "[${event.progressPercent}%] ${event.message}"
-                        } else {
-                            event.message
-                        }
-                        val lineText = when {
-                            timeStr != null && prefix.isEmpty() -> "[$timeStr] $message"
-                            timeStr != null -> "[$timeStr] $prefix $message"
-                            prefix.isEmpty() -> message
-                            else -> "$prefix $message"
-                        }
-                        SelectionContainer {
-                            Text(
-                                text = lineText,
-                                color = color,
-                                style = MaterialTheme.typography.body2,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = if (displayOptions.compactMode) 0.dp else 1.dp)
-                            )
-                        }
+                        TerminalEventCard(
+                            event = event,
+                            showTimestamp = displayOptions.showTimestamps,
+                            compactMode = displayOptions.compactMode,
+                            displayOptions = displayOptions
+                        )
                     }
                 }
             }

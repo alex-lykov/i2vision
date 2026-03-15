@@ -118,7 +118,9 @@ class MainViewModel(
                 _terminalDisplayOptions.value = TerminalDisplayOptionsDto(
                     showTimestamps = settings["show_timestamps"] ?: false,
                     compactMode = settings["compact_mode"] ?: false,
-                    showStatusBar = settings["show_status_bar"] ?: true
+                    showStatusBar = settings["show_status_bar"] ?: true,
+                    renderRichToolCards = settings["render_rich_tool_cards"] ?: true,
+                    highlightToolParams = settings["highlight_tool_params"] ?: true
                 )
             }
             coroutineScope.launch {
@@ -144,7 +146,10 @@ class MainViewModel(
      * Submit a task for processing
      */
     fun submitTask(task: String, mode: TaskMode) {
-        println("[VIEWMODEL] submitTask called: task='$task', mode=$mode")
+        val verboseMode = _terminalDisplaySettings.value["verbose_mode"] == true
+        val effectiveMode = if (verboseMode) TaskMode.DEBUG else mode
+        
+        println("[VIEWMODEL] submitTask called: task='$task', mode=$mode, verbose=$verboseMode -> effectiveMode=$effectiveMode")
         
         if (task.isBlank()) {
             println("[VIEWMODEL] Task is blank, returning")
@@ -187,7 +192,7 @@ class MainViewModel(
             }
 
             // Process task with selected agent type
-            agentLauncher.processTask(task, mode, selectedAgent).collect { event ->
+            agentLauncher.processTask(task, effectiveMode, selectedAgent).collect { event ->
                 addTerminalEvent(mapOutputEventToDto(event))
             }
 
@@ -320,7 +325,11 @@ class MainViewModel(
             timestamp = event.timestamp
         )
 
-        if (!shouldShow) return
+        if (!shouldShow) {
+            // Log when an event is filtered out
+            println("[VIEWMODEL] 🚫 Event filtered out: type=${event.type}, key=${event.outputSettingKey}, message=${event.message.take(50)}...")
+            return
+        }
 
         _terminalState.value = _terminalState.value.copy(
             events = _terminalState.value.events + event.copy(message = formattedMessage)
@@ -386,6 +395,42 @@ class MainViewModel(
                 type = TerminalEventDto.EventType.COMPLETE,
                 message = "Task Complete",
                 outputSettingKey = key
+            )
+            is OutputEvent.ToolCallDetail -> TerminalEventDto(
+                id = UUID.randomUUID().toString(),
+                timestamp = Instant.now(),
+                type = TerminalEventDto.EventType.TOOL_CALL,
+                message = "Tool: ${event.toolName}",
+                outputSettingKey = key,
+                payload = TerminalEventPayload.ToolCall(
+                    toolName = event.toolName,
+                    params = event.params,
+                    result = event.result,
+                    durationMs = event.durationMs,
+                    success = event.success
+                )
+            )
+            is OutputEvent.FileOp -> TerminalEventDto(
+                id = UUID.randomUUID().toString(),
+                timestamp = Instant.now(),
+                type = TerminalEventDto.EventType.FILE_OP,
+                message = "${event.operation}: ${event.path}",
+                outputSettingKey = key,
+                payload = TerminalEventPayload.FileOp(
+                    operation = event.operation,
+                    path = event.path,
+                    contentPreview = event.contentPreview,
+                    bytesWritten = event.bytesWritten,
+                    success = event.success
+                )
+            )
+            is OutputEvent.Decision -> TerminalEventDto(
+                id = UUID.randomUUID().toString(),
+                timestamp = Instant.now(),
+                type = TerminalEventDto.EventType.DECISION,
+                message = "${event.phase}: ${event.message}",
+                outputSettingKey = key,
+                payload = TerminalEventPayload.Decision(phase = event.phase, message = event.message, details = event.details)
             )
         }
     }

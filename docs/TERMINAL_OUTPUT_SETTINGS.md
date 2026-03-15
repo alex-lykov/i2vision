@@ -14,16 +14,27 @@ Terminal output is aligned with **TerminalSettingsDefinitions** and **TerminalSe
 | Agent output | OutputEvent / source | Terminal setting key |
 |-------------|----------------------|----------------------|
 | AI text response | `Standard`, `Success` | `show_ai_responses` |
-| User prompt line | ">>> [agent] task" | `show_user_prompts` |
-| Tool/MCP call | System "🔧 Calling tool…" / "Using MCP tools" | `show_command_execution` |
+| User prompt line | System ">>> [agent] task" | `show_status_bar` |
+| Tool call (readable) | `ToolCallDetail` | `show_command_execution` |
+| File operations | `FileOp` | `show_file_reads`, `show_file_writes`, `show_file_deletes` |
 | Progress | `Progress` | `show_progress_bar` |
 | Warnings | `Warning` | `show_warnings` |
 | Errors | `Error` | `show_error_details` |
 | Debug | `Debug` | `show_raw_json` |
 | System (routing, load/unload) | System | `show_status_bar` |
+| Decision info | `Decision` | `show_status_symbols` |
 | Complete | `Complete` | (always shown) |
 
-Additional keys from `terminal_settings.properties` (e.g. `show_file_reads`, `show_token_count`, `show_mcp_connections`) can be wired to new event types or metadata as the agent exposes them.
+## TerminalEventCard
+
+A common UI card component (`TerminalEventCard`) renders each event type in a readable format:
+- **ToolCall**: Tool name, params, result, duration (no raw JSON)
+- **FileOp**: Operation, path, content preview, bytes written
+- **FileDiff**: Path, +/- lines, before/after preview
+- **Decision**: Phase, message, details
+- **Simple events**: Text with appropriate icon/color
+
+Filtered by UI settings via `TerminalOutputFilter.shouldShow(outputSettingKey, settings)`.
 
 ## Functional stubs
 

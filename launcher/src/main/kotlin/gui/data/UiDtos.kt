@@ -9,9 +9,43 @@ import java.time.Instant
  */
 
 /**
+ * Structured payload for terminal events. Enables readable rendering (tool name/result, file ops, diffs).
+ */
+sealed class TerminalEventPayload {
+    data class ToolCall(
+        val toolName: String,
+        val params: Map<String, Any>,
+        val result: String? = null,
+        val durationMs: Long? = null,
+        val success: Boolean? = null
+    ) : TerminalEventPayload()
+    data class FileOp(
+        val operation: String, // "read" | "write" | "delete" | "list"
+        val path: String,
+        val contentPreview: String? = null,
+        val bytesWritten: Int? = null,
+        val success: Boolean? = null
+    ) : TerminalEventPayload()
+    data class FileDiff(
+        val path: String,
+        val oldPreview: String? = null,
+        val newPreview: String? = null,
+        val addedLines: Int = 0,
+        val removedLines: Int = 0
+    ) : TerminalEventPayload()
+    data class Decision(
+        val phase: String,
+        val message: String,
+        val details: Map<String, Any>? = null
+    ) : TerminalEventPayload()
+    data class Thinking(val text: String) : TerminalEventPayload()
+}
+
+/**
  * Terminal event DTO for display.
  * [outputSettingKey] links to terminal_settings_definitions (e.g. show_ai_responses, show_command_execution).
- * Used with [com.alyk.ai.koog.database.settings.TerminalOutputFilter] to respect user display preferences.
+ * [payload] optional structured data for readable card rendering.
+ * [renderOptions] specific rendering options for this event (overriding defaults).
  */
 data class TerminalEventDto(
     val id: String,
@@ -19,7 +53,9 @@ data class TerminalEventDto(
     val type: EventType,
     val message: String,
     val progressPercent: Int? = null,
-    val outputSettingKey: String? = null
+    val outputSettingKey: String? = null,
+    val payload: TerminalEventPayload? = null,
+    val renderOptions: Map<String, Any>? = null
 ) {
     enum class EventType {
         STANDARD,
@@ -29,7 +65,12 @@ data class TerminalEventDto(
         SYSTEM,
         DEBUG,
         PROGRESS,
-        COMPLETE
+        COMPLETE,
+        TOOL_CALL,
+        FILE_OP,
+        FILE_DIFF,
+        DECISION,
+        THINKING
     }
 }
 
@@ -189,7 +230,9 @@ data class TerminalStateDto(
 data class TerminalDisplayOptionsDto(
     val showTimestamps: Boolean = false,
     val compactMode: Boolean = false,
-    val showStatusBar: Boolean = true
+    val showStatusBar: Boolean = true,
+    val renderRichToolCards: Boolean = true, // New setting for rich tool cards
+    val highlightToolParams: Boolean = true  // New setting for param highlighting
 )
 
 /**

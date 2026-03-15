@@ -50,6 +50,9 @@ fun OutputConsole(
                         is OutputEvent.Debug -> Color.Gray to "🐛 ${event.text}"
                         is OutputEvent.Progress -> Color.White to "⏳ [${event.percent}%] ${event.message}"
                         OutputEvent.Complete -> Color.Green to "✓ Task Complete"
+                        is OutputEvent.ToolCallDetail -> Color(0xFF4EC9B0) to "🔧 ${event.toolName}: ${event.params.entries.joinToString { "${it.key}=${it.value}" }}"
+                        is OutputEvent.FileOp -> Color(0xFF569CD6) to "📄 ${event.operation}: ${event.path}"
+                        is OutputEvent.Decision -> Color(0xFFDCDCAA) to "📋 ${event.phase}: ${event.message}"
                     }
                     Text(
                         text = "[$time] $text",

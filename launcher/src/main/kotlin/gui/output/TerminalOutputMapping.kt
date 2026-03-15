@@ -17,16 +17,24 @@ import core.OutputEvent
  */
 object TerminalOutputMapping {
 
-    /** Setting key for each OutputEvent variant. null = always show (no toggle). */
+    /** Setting key for each OutputEvent variant. Aligns with terminal_settings.properties. */
     fun outputSettingKeyFor(event: OutputEvent): String? = when (event) {
         is OutputEvent.Standard -> "show_ai_responses"
         is OutputEvent.Success -> "show_ai_responses"
         is OutputEvent.Warning -> "show_warnings"
         is OutputEvent.Error -> "show_error_details"
-        is OutputEvent.System -> null // system messages (routing, MCP) – could use show_mcp_connections for tool lines
-        is OutputEvent.Debug -> "show_raw_json" // or a debug-specific key; show_stack_traces for errors
+        is OutputEvent.System -> "show_status_bar"
+        is OutputEvent.Debug -> "show_raw_json"
         is OutputEvent.Progress -> "show_progress_bar"
-        is OutputEvent.Complete -> null // always show completion
+        is OutputEvent.Complete -> null // always show
+        is OutputEvent.ToolCallDetail -> "show_command_execution"
+        is OutputEvent.FileOp -> when (event.operation.lowercase()) {
+            "read" -> "show_file_reads"
+            "write" -> "show_file_writes"
+            "delete" -> "show_file_deletes"
+            else -> "show_command_output"
+        }
+        is OutputEvent.Decision -> "show_status_symbols"
     }
 
     /** Setting key for user prompt line (>>> [agent] task). */

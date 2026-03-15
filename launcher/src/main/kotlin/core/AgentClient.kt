@@ -28,7 +28,13 @@ class AgentClient(
                     emit(OutputEvent.Progress(chunk.percent, chunk.message))
                 }
                 is AgentResponseChunk.ToolCall -> {
-                    emit(OutputEvent.System("🔧 Calling tool: ${chunk.toolName}"))
+                    emit(OutputEvent.ToolCallDetail(
+                        toolName = chunk.toolName,
+                        params = chunk.parameters,
+                        result = null,
+                        durationMs = null,
+                        success = null
+                    ))
                 }
                 is AgentResponseChunk.Complete -> {
                     emit(OutputEvent.Complete)

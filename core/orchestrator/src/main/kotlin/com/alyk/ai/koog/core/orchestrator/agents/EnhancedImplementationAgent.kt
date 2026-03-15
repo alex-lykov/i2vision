@@ -5,6 +5,7 @@ import com.alyk.ai.koog.core.orchestrator.mcp.McpDecisionModule
 import com.alyk.ai.koog.core.orchestrator.mcp.McpSelectionModule
 import com.alyk.ai.koog.core.orchestrator.mcp.workspace.McpWorkspace
 import com.alyk.ai.koog.core.orchestrator.router.AgentResponse
+import com.alyk.ai.koog.core.orchestrator.router.AgentResponseChunk
 import com.alyk.ai.koog.core.orchestrator.router.AgentType
 import com.alyk.ai.koog.core.orchestrator.router.TaskContext
 import com.alyk.ai.koog.core.orchestrator.tools.KoogToolRegistryBuilder
@@ -14,12 +15,11 @@ import com.alyk.ai.koog.core.session.ISessionStore
 import com.alyk.ai.koog.core.session.SessionManager
 import com.alyk.ai.koog.models.wrappers.ModelWrapper
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonElement
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.*
 import java.util.*
 
 /**
@@ -69,6 +69,19 @@ data class ToolCall(val tool: String, val args: JsonElement)
         """.trimIndent()
     }
     
+    override suspend fun processStreaming(task: String, context: TaskContext): Flow<AgentResponseChunk> = flow {
+        if (context.projectPath == null) {
+            val response = process(task, context)
+            emit(AgentResponseChunk.Text(response.result))
+            emit(AgentResponseChunk.Complete)
+            return@flow
+        }
+        emit(AgentResponseChunk.Progress(5, "Starting implementation"))
+        val response = processWithMcpModules(task, context, emitChunk = { emit(it) })
+        emit(AgentResponseChunk.Text(response.result))
+        emit(AgentResponseChunk.Complete)
+    }
+    
     override suspend fun process(task: String, context: TaskContext): AgentResponse {
         println("[ENHANCED_IMPLEMENTATION] === ENHANCED IMPLEMENTATION AGENT CALLED ===")
         println("[ENHANCED_IMPLEMENTATION] Processing task: '$task'")
@@ -97,9 +110,10 @@ data class ToolCall(val tool: String, val args: JsonElement)
     }
     
     /**
-     * Process task using MCP Selection & Decision modules
+     * Process task using MCP Selection & Decision modules.
+     * When [emitChunk] is provided, ToolCall chunks are emitted as tools execute (for streaming UI).
      */
-    private suspend fun processWithMcpModules(task: String, context: TaskContext): AgentResponse {
+    private suspend fun processWithMcpModules(task: String, context: TaskContext, emitChunk: (suspend (AgentResponseChunk) -> Unit)? = null): AgentResponse {
         println("[ENHANCED_IMPLEMENTATION] Using MCP Selection & Decision modules")
         
         // Initialize MCP integration with the selected project
@@ -128,10 +142,20 @@ data class ToolCall(val tool: String, val args: JsonElement)
                     handleDirectResponse(task, executionPlan)
                 }
                 com.alyk.ai.koog.core.orchestrator.mcp.ExecutionStrategy.SEQUENTIAL -> {
-                    executeSequentialPlan(task, executionPlan, context)
+                    val onToolExecuted = emitChunk?.let { emitter ->
+                        suspend { name: String, params: Map<String, Any>, _r: String, _s: Boolean, _d: Long ->
+                            emitter(AgentResponseChunk.ToolCall(name, params))
+                        }
+                    }
+                    executeSequentialPlan(task, executionPlan, context, onToolExecuted = onToolExecuted)
                 }
                 com.alyk.ai.koog.core.orchestrator.mcp.ExecutionStrategy.PARALLEL -> {
-                    executeParallelPlan(task, executionPlan, context)
+                    val onToolExecuted = emitChunk?.let { emitter ->
+                        suspend { name: String, params: Map<String, Any>, _r: String, _s: Boolean, _d: Long ->
+                            emitter(AgentResponseChunk.ToolCall(name, params))
+                        }
+                    }
+                    executeParallelPlan(task, executionPlan, context, onToolExecuted = onToolExecuted)
                 }
             }
 
@@ -226,12 +250,14 @@ data class ToolCall(val tool: String, val args: JsonElement)
     }
     
     /**
-     * Execute sequential execution plan
+     * Execute sequential execution plan.
+     * When [onToolExecuted] is provided (e.g. for streaming), it is invoked after each tool run.
      */
     private suspend fun executeSequentialPlan(
         task: String, 
         executionPlan: com.alyk.ai.koog.core.orchestrator.mcp.ExecutionPlan,
-        context: TaskContext
+        context: TaskContext,
+        onToolExecuted: (suspend (toolName: String, parameters: Map<String, Any>, result: String, success: Boolean, durationMs: Long) -> Unit)? = null
     ): String {
         println("[ENHANCED_IMPLEMENTATION] Using ImplementationAgent's proven tool execution")
         
@@ -264,21 +290,20 @@ data class ToolCall(val tool: String, val args: JsonElement)
             Execute the tools now and provide the actual results!
         """.trimIndent()
         
-        return executeWithTools(initialPrompt = prompt, tools = tools, context = context, maxIterations = 10, originalTask = task)
+        return executeWithTools(initialPrompt = prompt, tools = tools, context = context, maxIterations = 10, originalTask = task, onToolExecuted = onToolExecuted)
     }
     
     /**
-     * Execute parallel execution plan
+     * Execute parallel execution plan (for now delegates to sequential with same callback).
      */
     private suspend fun executeParallelPlan(
         task: String,
         executionPlan: com.alyk.ai.koog.core.orchestrator.mcp.ExecutionPlan,
-        context: TaskContext
+        context: TaskContext,
+        onToolExecuted: (suspend (toolName: String, parameters: Map<String, Any>, result: String, success: Boolean, durationMs: Long) -> Unit)? = null
     ): String {
         println("[ENHANCED_IMPLEMENTATION] Using ImplementationAgent's proven tool execution for parallel plan")
-        
-        // For now, treat parallel the same as sequential - use ImplementationAgent's approach
-        return executeSequentialPlan(task, executionPlan, context)
+        return executeSequentialPlan(task, executionPlan, context, onToolExecuted = onToolExecuted)
     }
     
     /**
@@ -513,13 +538,15 @@ data class ToolCall(val tool: String, val args: JsonElement)
     
     /**
      * Execute task using tools with synthesis step when max iterations reached without direct answer.
+     * When [onToolExecuted] is provided (e.g. for streaming UI), it is invoked after each tool run.
      */
     private suspend fun executeWithTools(
         initialPrompt: String,
         tools: KoogToolRegistryBuilder.FileAccessTools,
         context: TaskContext,
         maxIterations: Int = 10,
-        originalTask: String = initialPrompt.take(200)
+        originalTask: String = initialPrompt.take(200),
+        onToolExecuted: (suspend (toolName: String, parameters: Map<String, Any>, result: String, success: Boolean, durationMs: Long) -> Unit)? = null
     ): String {
         // Load history from database
         val conversationHistory = try {
@@ -615,6 +642,8 @@ data class ToolCall(val tool: String, val args: JsonElement)
                         
                         val success = toolOutput.trimStart().startsWith("✅")
                         
+                        onToolExecuted?.invoke(toolCall.tool, jsonElementToParams(toolCall.args), toolOutput, success, duration)
+                        
                         if (success) {
                             println("[ENHANCED_IMPLEMENTATION] ✅ Tool executed: ${toolCall.tool} (${duration}ms)")
                             lastSuccessfulToolOutput = toolOutput
@@ -628,6 +657,8 @@ data class ToolCall(val tool: String, val args: JsonElement)
                         conversationHistory.add("Observation: $toolOutput")
                         
                     } catch (e: Exception) {
+                        val duration = System.currentTimeMillis() - startTime
+                        onToolExecuted?.invoke(toolCall.tool, jsonElementToParams(toolCall.args), "Error: ${e.message}", false, duration)
                         println("[ENHANCED_IMPLEMENTATION] ❌ Tool execution error: ${e.message}")
                         observations.add(Triple(toolCall.tool, toolCall.args.toString().take(300), "Error: ${e.message}"))
                         conversationHistory.add("Assistant: $agentResponse")
@@ -679,6 +710,18 @@ data class ToolCall(val tool: String, val args: JsonElement)
         }
         
         return finalResponse.ifEmpty { "No response generated." }
+    }
+    
+    /** Convert JsonElement (e.g. tool args) to Map<String, Any> for streaming chunk parameters. */
+    private fun jsonElementToParams(element: JsonElement): Map<String, Any> {
+        if (element !is JsonObject) return emptyMap()
+        return element.mapValues { (_, v) ->
+            when (v) {
+                is JsonPrimitive -> v.content
+                is JsonObject -> v.toString()
+                else -> v.toString()
+            }
+        }
     }
     
     /**

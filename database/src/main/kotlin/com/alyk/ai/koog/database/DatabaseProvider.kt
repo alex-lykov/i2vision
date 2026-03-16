@@ -29,6 +29,9 @@ interface DatabaseProvider {
     /** Loaded LLM model status (local/cloud) — persist and restore running models across app restarts. */
     val loadedModels: LoadedModelsStore
 
+    /** Agent tabs persistence — save and restore agent tabs across app restarts. */
+    val agentTabs: AgentTabsStore
+
     /** Terminal output settings (definitions + per-session state). Used to filter/format terminal feed. */
     fun terminalSettingsRepository(sessionId: String, userId: String? = null): TerminalSettingsRepository
 

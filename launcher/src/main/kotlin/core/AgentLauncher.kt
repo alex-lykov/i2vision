@@ -3,6 +3,7 @@ package core
 import com.alyk.ai.koog.config.Config
 import com.alyk.ai.koog.core.orchestrator.mcp.McpStatus
 import com.alyk.ai.koog.core.session.project.ProjectRepository
+import com.alyk.ai.koog.database.DatabaseProvider
 import com.alyk.ai.koog.database.settings.TerminalSettingsRepository
 import com.alyk.ai.koog.database.store.LoadedModelsStore
 import kotlinx.coroutines.flow.Flow
@@ -26,6 +27,11 @@ interface AgentLauncher {
      * Get list of available models from registry
      */
     fun getAvailableModels(): List<com.alyk.ai.koog.models.wrappers.ModelInfo>
+    
+    /**
+     * Get the database provider for accessing persistent stores
+     */
+    fun getDatabaseProvider(): DatabaseProvider?
     
     /**
      * Switch to a specific model by ID

@@ -66,6 +66,63 @@ class McpIntegration(
         
         return listOf(
             ProjectMcpTool(
+                name = "read_file",
+                description = "Read the contents of a file",
+                category = McpToolCategory.FILE_ACCESS,
+                parameters = mapOf(
+                    "path" to McpParameter(
+                        type = "string",
+                        description = "Path to the file to read",
+                        required = true
+                    )
+                ),
+                isRelevant = true
+            ),
+            
+            ProjectMcpTool(
+                name = "write_file",
+                description = "Write content to a file (creates or overwrites)",
+                category = McpToolCategory.FILE_ACCESS,
+                parameters = mapOf(
+                    "path" to McpParameter(
+                        type = "string",
+                        description = "Path to the file to write",
+                        required = true
+                    ),
+                    "content" to McpParameter(
+                        type = "string",
+                        description = "Content to write to the file",
+                        required = true
+                    )
+                ),
+                isRelevant = true
+            ),
+            
+            ProjectMcpTool(
+                name = "edit_file",
+                description = "Edit specific parts of a file (find and replace)",
+                category = McpToolCategory.FILE_ACCESS,
+                parameters = mapOf(
+                    "path" to McpParameter(
+                        type = "string",
+                        description = "Path to the file to edit",
+                        required = true
+                    ),
+                    "find_text" to McpParameter(
+                        type = "string",
+                        description = "Text to find in the file",
+                        required = true
+                    ),
+                    "replace_text" to McpParameter(
+                        type = "string",
+                        description = "Text to replace with",
+                        required = true
+                    )
+                ),
+                isRelevant = true
+            ),
+            
+            ProjectMcpTool(
                 name = "project_context",
                 description = "Get comprehensive context about the current project including structure, files, and configuration",
                 category = McpToolCategory.CONTEXT,
@@ -282,5 +339,11 @@ enum class McpToolCategory {
     SEARCH,
     EXECUTION,
     VERSION_CONTROL,
-    NAVIGATION
+    NAVIGATION,
+    FILE_ACCESS,
+    // Advanced categories for intelligent tool selection
+    CODE_GENERATION,
+    DATABASE_INTEGRATION,
+    API_INTERACTION,
+    ADVANCED_ANALYSIS
 }

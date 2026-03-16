@@ -27,7 +27,9 @@ fun MainWindow(agentLauncher: AgentLauncher, onCloseRequest: () -> Unit) {
         MainViewModel(
             agentLauncher,
             coroutineScope,
-            terminalSettingsRepository = agentLauncher.getTerminalSettingsRepository()
+            terminalSettingsRepository = agentLauncher.getTerminalSettingsRepository(),
+            agentStateStore = agentLauncher.getDatabaseProvider()?.agentState,
+            agentTabsStore = agentLauncher.getDatabaseProvider()?.agentTabs
         )
     }
     val terminalViewModel = remember {

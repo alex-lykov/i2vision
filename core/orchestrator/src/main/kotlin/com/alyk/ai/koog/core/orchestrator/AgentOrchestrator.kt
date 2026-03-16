@@ -36,7 +36,7 @@ class AgentOrchestrator(
 ) {
     
     private val mcpIntegration = McpIntegration(contextProvider, mcpToolRegistry)
-    private val mcpSelectionModule = McpSelectionModule(mcpIntegration)
+    private val mcpSelectionModule = McpSelectionModule(mcpIntegration, contextProvider)
     private val mcpDecisionModule = McpDecisionModule(mcpSelectionModule, mcpIntegration)
     private val workspaceFactory = WorkspaceFactory(contextProvider, emptyList())
     private var agentRouter: AgentRouter? = null

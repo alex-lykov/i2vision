@@ -14,6 +14,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
@@ -28,8 +31,18 @@ fun Terminal(
     val state by viewModel.state.collectAsState()
     val displayOptions by viewModel.displayOptions.collectAsState()
     val agentStatus by viewModel.agentStatus.collectAsState()
+    val tabsState by viewModel.tabsState.collectAsState()
     val listState = rememberLazyListState()
     var showFilterDialog by remember { mutableStateOf(false) }
+    var showNewTabDialog by remember { mutableStateOf(false) }
+
+    // Debug logging for tabs state
+    LaunchedEffect(tabsState) {
+        println("[TERMINAL] Tabs state updated: ${tabsState.tabs.size} tabs, active: ${tabsState.activeTabId}")
+        tabsState.tabs.forEach { tab ->
+            println("[TERMINAL] Terminal Tab: ${tab.id} - ${tab.name} (${tab.agentType}) active=${tab.id == tabsState.activeTabId}")
+        }
+    }
 
     LaunchedEffect(state.events.size) {
         if (state.events.isNotEmpty()) {
@@ -43,6 +56,17 @@ fun Terminal(
         backgroundColor = Color(0xFF1E1E1E) // Dark terminal background
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
+            // Agent tabs row
+            AgentTabRow(
+                tabs = tabsState.tabs,
+                activeTabId = tabsState.activeTabId,
+                onTabSelected = { viewModel.switchToTab(it) },
+                onTabClosed = { viewModel.closeTab(it) },
+                onNewTab = { showNewTabDialog = true },
+                modifier = Modifier.fillMaxWidth()
+            )
+            
+            Divider(color = Color(0xFF404040), thickness = 1.dp)
             // Session info strip (when show_status_bar enabled)
             if (displayOptions.showStatusBar && agentStatus != null) {
                 val s = agentStatus!!
@@ -101,24 +125,34 @@ fun Terminal(
                     .background(Color(0xFF252526))
                     .padding(12.dp)
             ) {
-                // Agent selector (simplified - always uses ImplementationAgent)
+                // Agent selector (shows current tab info)
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = "Agent: ${state.selectedAgentType.name}",
-                        color = Color(0xFF00FF00),
-                        style = MaterialTheme.typography.caption
-                    )
-                    // Simplified mode: Always uses ImplementationAgent
-                    // Router defaults to ImplementationAgent, UI can override in future
-                    Text(
-                        text = "⚙️ Implementation (Default)",
-                        color = Color(0xFF00FF00),
-                        style = MaterialTheme.typography.caption
-                    )
+                    val activeTab = tabsState.activeTab
+                    if (activeTab != null) {
+                        Text(
+                            text = "Agent: ${activeTab.name} (${activeTab.agentType.name})",
+                            color = Color(0xFF00FF00),
+                            style = MaterialTheme.typography.caption
+                        )
+                    } else {
+                        Text(
+                            text = "Agent: ${state.selectedAgentType.name}",
+                            color = Color(0xFF00FF00),
+                            style = MaterialTheme.typography.caption
+                        )
+                    }
+                    
+                    if (tabsState.tabs.isNotEmpty()) {
+                        Text(
+                            text = "${tabsState.tabs.size} tab${if (tabsState.tabs.size > 1) "s" else ""} active",
+                            color = Color(0xFF00FF00),
+                            style = MaterialTheme.typography.caption
+                        )
+                    }
                 }
                 
                 // Prompt line
@@ -135,8 +169,24 @@ fun Terminal(
                     val focusManager = LocalFocusManager.current
                     TextField(
                         value = state.inputText,
-                        onValueChange = { viewModel.updateInputText(it) },
-                        modifier = Modifier.weight(1f),
+                        onValueChange = { 
+                            viewModel.updateInputText(it)
+                            // Reset history index when user manually types
+                            viewModel.resetHistoryIndex()
+                        },
+                        modifier = Modifier.weight(1f).onKeyEvent { keyEvent ->
+                            when (keyEvent.key) {
+                                Key.DirectionUp -> {
+                                    viewModel.navigateHistory(TerminalViewModel.HistoryDirection.UP)
+                                    true // Consume the event
+                                }
+                                Key.DirectionDown -> {
+                                    viewModel.navigateHistory(TerminalViewModel.HistoryDirection.DOWN)
+                                    true // Consume the event
+                                }
+                                else -> false
+                            }
+                        },
                         placeholder = { Text("Enter task and press Enter or click PROCESS", color = Color.Gray) },
                         colors = TextFieldDefaults.textFieldColors(
                             textColor = Color.White,
@@ -231,6 +281,15 @@ fun Terminal(
         TerminalFilterDialog(
             viewModel = viewModel,
             onDismiss = { showFilterDialog = false }
+        )
+    }
+    
+    if (showNewTabDialog) {
+        NewAgentTabDialog(
+            onDismiss = { showNewTabDialog = false },
+            onAgentSelected = { agentType, customName ->
+                viewModel.createNewTab(agentType, customName.ifBlank { null })
+            }
         )
     }
 }

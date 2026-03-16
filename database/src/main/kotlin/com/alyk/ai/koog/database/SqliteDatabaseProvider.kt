@@ -43,6 +43,7 @@ class SqliteDatabaseProvider(
                     ProjectsTable,
                     PromptCacheTable,
                     LoadedModelsTable,
+                    AgentTabsTable,
                     // New Terminal Settings Tables
                     TerminalSettingsDefinitions,
                     TerminalSettingsState,
@@ -76,6 +77,7 @@ class SqliteDatabaseProvider(
     override val promptCache = SqlitePromptCacheStore(db)
     override val projects = SqliteProjectsStore(db)
     override val loadedModels = SqliteLoadedModelsStore(db)
+    override val agentTabs = SqliteAgentTabsStore(db)
 
     override fun terminalSettingsRepository(sessionId: String, userId: String?): TerminalSettingsRepository =
         TerminalSettingsRepository(db, sessionId, userId)

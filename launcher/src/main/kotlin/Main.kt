@@ -9,6 +9,7 @@ import com.alyk.ai.koog.core.orchestrator.mcp.McpStatus
 import com.alyk.ai.koog.core.session.ISessionStore
 import com.alyk.ai.koog.core.session.project.ProjectRepository
 import com.alyk.ai.koog.database.DatabaseFactory
+import com.alyk.ai.koog.database.DatabaseProvider
 import com.alyk.ai.koog.database.store.LoadedModelsStore
 import com.alyk.ai.koog.models.wrappers.ModelInfo
 import com.alyk.ai.koog.models.wrappers.ModelRegistry
@@ -492,6 +493,8 @@ class AgentLauncherImpl : AgentLauncher {
     override fun getProjectRepository(): ProjectRepository = projectRepository
 
     override fun getLoadedModelsStore(): LoadedModelsStore = loadedModelsStore
+
+    override fun getDatabaseProvider(): DatabaseProvider? = DatabaseFactory.getProvider()
 
     override fun getTerminalSettingsRepository(): com.alyk.ai.koog.database.settings.TerminalSettingsRepository? =
         DatabaseFactory.getProvider()?.terminalSettingsRepository("default", null)

@@ -2,6 +2,7 @@ package gui.data
 
 import java.time.Duration
 import java.time.Instant
+import java.util.*
 
 /**
  * DTOs (Data Transfer Objects) for UI layer
@@ -220,7 +221,9 @@ data class TerminalStateDto(
     val events: List<TerminalEventDto>,
     val inputText: String,
     val isProcessing: Boolean,
-    val selectedAgentType: AgentTypeDto = AgentTypeDto.IMPLEMENTATION
+    val selectedAgentType: AgentTypeDto = AgentTypeDto.IMPLEMENTATION,
+    val inputHistory: List<String> = emptyList(),
+    val historyIndex: Int = -1 // -1 means no history selection
 )
 
 /**
@@ -244,4 +247,34 @@ enum class AgentTypeDto {
     MODULE,
     TEST,
     IMPLEMENTATION
+}
+
+/**
+ * Represents a single agent tab with its state
+ */
+data class AgentTab(
+    val id: String,
+    val name: String,
+    val agentType: AgentTypeDto,
+    val sessionId: UUID? = null,
+    val isActive: Boolean = false,
+    val createdAt: Instant = Instant.now(),
+    val lastActiveAt: Instant = Instant.now(),
+    val projectPath: String? = null,
+    val unreadCount: Int = 0,
+    val hasReceivedFirstPrompt: Boolean = false
+)
+
+/**
+ * State for managing multiple agent tabs
+ */
+data class AgentTabsState(
+    val tabs: List<AgentTab> = emptyList(),
+    val activeTabId: String? = null
+) {
+    val activeTab: AgentTab?
+        get() = tabs.find { it.id == activeTabId }
+        
+    val hasActiveTab: Boolean
+        get() = activeTabId != null && tabs.any { it.id == activeTabId }
 }

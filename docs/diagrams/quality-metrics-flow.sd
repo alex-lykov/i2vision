@@ -1,0 +1,112 @@
+title Quality Metrics Flow
+
+participant "Client" as Client
+participant "Quality Analyzer" as Analyzer
+participant "Semantic Cache" as Cache
+participant "Cohesion Calculator" as Cohesion
+participant "Coupling Calculator" as Coupling
+participant "Complexity Analyzer" as Complexity
+participant "Code Smell Detector" as Smell
+participant "Report Generator" as Report
+
+note over Client, Report: === Quality Analysis Request ===
+
+Client->Analyzer: Analyze quality metrics for module
+activate Analyzer
+
+Analyzer->Analyzer: Parse parameters (module, depth)
+Analyzer->Analyzer: Identify target cluster
+Analyzer->Analyzer: Load cluster configuration
+
+note over Client, Report: === Data Collection ===
+
+Analyzer->Cache: Query semantic cache
+activate Cache
+Cache->Cache: Load structure artifacts
+Cache->Cache: Load logic artifacts
+Cache->Cache: Load flow artifacts
+Cache->Cache: Load code artifacts
+Cache->Cache: Load cross-module dependencies
+Cache-->Analyzer: Artifacts loaded
+deactivate Cache
+
+note over Client, Report: === Cohesion Calculation ===
+
+Analyzer->Cohesion: Calculate module cohesion
+activate Cohesion
+Cohesion->Cohesion: Extract components from structure
+Cohesion->Cohesion: Analyze internal dependencies
+Cohesion->Cohesion: Calculate relatedness
+Cohesion->Cohesion: Compute cohesion score (0.0 - 1.0)
+note right of Cohesion: High cohesion:\n- Components work together\n- Single responsibility\n- Low coupling to other modules
+Cohesion-->Analyzer: Cohesion score
+deactivate Cohesion
+
+note over Client, Report: === Coupling Calculation ===
+
+Analyzer->Coupling: Calculate module coupling
+activate Coupling
+Coupling->Coupling: Extract import graph
+Coupling->Coupling: Identify external dependencies
+Coupling->Coupling: Count incoming dependencies (afferent)
+Coupling->Coupling: Count outgoing dependencies (efferent)
+Coupling->Coupling: Calculate instability metric
+note right of Coupling: Low coupling:\n- Minimal external dependencies\n- High stability\n- Easier to maintain
+Coupling-->Analyzer: Coupling metrics
+deactivate Coupling
+
+note over Client, Report: === Complexity Analysis ===
+
+Analyzer->Complexity: Analyze code complexity
+activate Complexity
+Complexity->Complexity: Calculate cyclomatic complexity
+Complexity->Complexity: Calculate cognitive complexity
+Complexity->Complexity: Calculate maintainability index
+Complexity->Complexity: Identify complex methods
+Complexity->Complexity: Identify complex classes
+note right of Complexity: Complexity metrics:\n- Cyclomatic: branching complexity\n- Cognitive: mental effort\n- Maintainability: ease of change
+Complexity-->Analyzer: Complexity metrics
+deactivate Complexity
+
+note over Client, Report: === Code Smell Detection ===
+
+Analyzer->Smell: Detect code smells
+activate Smell
+Smell->Smell: Identify god classes
+Smell->Smell: Identify feature envy
+Smell->Smell: Identify long methods
+Smell->Smell: Identify duplicate code
+Smell->Smell: Identify dead code
+Smell->Smell: Identify inappropriate intimacy
+note right of Smell: Code smells:\n- Violate design principles\n- Reduce maintainability\n- Increase technical debt
+Smell-->Analyzer: Code smell list
+deactivate Smell
+
+note over Client, Report: === Cross-Module Analysis ===
+
+Analyzer->Analyzer: Analyze cross-module dependencies
+Analyzer->Analyzer: Identify dependency cycles
+Analyzer->Analyzer: Detect circular dependencies
+Analyzer->Analyzer: Identify architectural violations
+Analyzer->Analyzer: Assess layer adherence
+
+note over Client, Report: === Report Generation ===
+
+Analyzer->Report: Generate quality report
+activate Report
+Report->Report: Compile cohesion metrics
+Report->Report: Compile coupling metrics
+Report->Report: Compile complexity metrics
+Report->Report: Compile code smells
+Report->Report: Calculate overall quality score
+Report->Report: Identify improvement areas
+Report->Report: Generate recommendations
+Report-->Analyzer: Quality report
+deactivate Report
+
+Analyzer-->Client: Quality metrics response
+deactivate Analyzer
+
+note over Client, Report: === Output Example ===
+
+note right of Client: Quality Report:\n- Cohesion: 0.78 (Good)\n- Coupling: Low (Good)\n- Complexity: Medium (Acceptable)\n- Code Smells: 3 detected\n- Overall Score: 7.5/10\n- Recommendations:\n  - Refactor UserService (god class)\n  - Extract method (long method)\n  - Reduce dependencies (feature envy)

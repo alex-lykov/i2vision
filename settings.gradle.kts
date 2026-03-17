@@ -11,31 +11,20 @@ plugins {
     id("org.gradle.toolchains.foojay-resolver-convention") version "0.8.0"
 }
 
-rootProject.name = "koog-coding-agent"
+rootProject.name = "i2vision"
 
-// Core modules (keep split for now - can consolidate later if needed)
-include("core:orchestrator")
-include("core:session")
-include("core:coroutines")
-include("core:config")
+// Public modules - MIT-licensed standalone libraries
+include("architecture-types")
+include("vslfc-core")
+include("i2vision-architecture")
+include("llm-client")
+include("conf-agent-core")
+include("storage-core")
+include("intent-parser")
+include("discovery-api")
 
-// Model modules (keep split - wrappers vs cloud makes sense)
-include("models:common")
-include("models:wrappers")
-include("models:cloud")
-
-// Consolidated modules (flattened from nested structure)
-include("switching")
-include("context")
-include("pipeline")
-include("learning")
-include("server")
-include("database")
-include("ui")
-include("security")
-
-// Kotlin analysis
-include("kotlin:analysis")
-
-// Launcher (contains main)
-include("launcher")
+// Public modules - MIT+Commercial
+include("i2vision-discover")
+include("i2vision-cli")
+include("i2vision-instant")
+include("i2vision-mcp")

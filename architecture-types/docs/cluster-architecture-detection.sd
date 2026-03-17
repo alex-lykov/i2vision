@@ -1,0 +1,74 @@
+title Cluster and Architecture Detection Flow
+
+participant "Client" as Client
+participant "SignatureBuilder" as Builder
+participant "BuildSystemDetector" as BuildDetector
+participant "ModulePatternDetector" as PatternDetector
+participant "FrameworkDetector" as FrameworkDetector
+participant "Cluster Detection" as Cluster
+participant "Confidence Evaluator" as Confidence
+participant "LLM Client" as LLM
+participant "ArchitectureSignature" as Signature
+
+Client->Builder: build()
+activate Builder
+
+Builder->BuildDetector: detect()
+BuildDetector-->Builder: BuildSystemResult
+
+Builder->PatternDetector: detect()
+PatternDetector-->Builder: ModulePatternResult
+
+Builder->Cluster: detectBuildModules()
+Cluster->Cluster: Check settings.gradle.kts
+Cluster->Cluster: Check pom.xml
+Cluster-->Builder: buildModules (if found)
+
+alt Build modules found
+    Builder->Cluster: Use build modules as clusters
+else No build modules
+    Builder->Cluster: Scan directory structure
+    Cluster->Cluster: Detect source directories
+    Cluster->Cluster: Count source files
+    Cluster-->Builder: clusters from directory structure
+end
+
+Builder->Builder: For each cluster:
+    Builder->FrameworkDetector: detect(modulePath)
+    FrameworkDetector-->Builder: FrameworkResult
+    
+    Builder->Builder: Detect design patterns
+    Builder->Builder: Detect language features
+    
+    Builder->Confidence: calculateModuleConfidence()
+    Confidence-->Builder: confidence score
+    
+    alt confidence >= threshold
+        Builder->Builder: Accept heuristic result
+    else confidence < threshold AND useLlmForLowConfidence = true
+        Builder->LLM: detectWithLLM(cluster, heuristic)
+        LLM-->Builder: LLM result
+        Builder->Builder: Merge heuristic + LLM results
+    else confidence < threshold AND LLM disabled
+        Builder->Builder: Mark as low confidence
+        Builder->Builder: Flag for review
+    end
+end
+
+Builder->Builder: detectDeploymentPattern(clusters)
+Builder->Builder: Derive deployment pattern from cluster analysis
+note right of Builder: Deployment pattern derived from:\n- cluster count\n- cluster independence\n- build module structure
+
+Builder->Signature: ArchitectureSignature(
+    buildSystem,
+    moduleFrameworks,
+    modulePatterns,
+    clusters,
+    moduleDesignPatterns,
+    moduleLanguageFeatures,
+    deploymentPattern,
+    confidence
+)
+Signature-->Client: Complete signature
+
+deactivate Builder

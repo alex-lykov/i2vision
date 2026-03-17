@@ -1,0 +1,116 @@
+title Instant Context Flow
+
+participant "MCP Client" as Client
+participant "Context Provider" as Provider
+participant "Task Analyzer" as Task
+participant "File Analyzer" as FileAnalyzer
+participant "Hierarchical Analyzer" as Hierarchical
+participant "Semantic Cache" as Cache
+participant "Strategy Library" as Strategies
+participant "Cache Manager" as CacheMgr
+participant "Proactive Suggester" as Proactive
+
+note over Client, Proactive: === Context Request ===
+
+Client->Provider: get_instant_context(filePath, taskDescription)
+activate Provider
+
+Provider->Task: Analyze task description
+activate Task
+Task->Task: Extract task type (refactoring, debugging, feature add)
+Task->Task: Identify relevant layers (Vision, Structure, Logic, Flow, Code)
+Task->Task: Determine focus areas
+Task-->Provider: Task analysis
+deactivate Task
+
+Provider->FileAnalyzer: Analyze file structure
+activate FileAnalyzer
+FileAnalyzer->FileAnalyzer: Parse AST
+FileAnalyzer->FileAnalyzer: Extract symbols
+FileAnalyzer->FileAnalyzer: Calculate complexity
+FileAnalyzer->FileAnalyzer: Detect patterns
+FileAnalyzer->FileAnalyzer: Identify code smells
+FileAnalyzer-->Provider: File analysis
+deactivate FileAnalyzer
+
+note over Provider: === Context Collection ===
+
+Provider->Cache: Query semantic cache
+activate Cache
+Cache->Cache: Load vision artifacts
+Cache->Cache: Load structure artifacts
+Cache->Cache: Load logic artifacts
+Cache->Cache: Load flow artifacts
+Cache->Cache: Load code artifacts
+Cache-->Provider: Cached artifacts
+deactivate Cache
+
+Provider->Hierarchical: Perform hierarchical analysis
+activate Hierarchical
+
+Hierarchical->Hierarchical: Cluster-level metrics
+Hierarchical->Hierarchical: Cross-module dependencies
+Hierarchical->Hierarchical: Cohesion calculation
+Hierarchical->Hierarchical: Coupling analysis
+Hierarchical->Hierarchical: Aggregate cluster metrics
+Hierarchical-->Provider: Hierarchical metrics
+deactivate Hierarchical
+
+note over Provider: === Task-Aware Optimization ===
+
+Provider->Provider: Apply task type filtering
+note right of Provider: Refactoring task:\n- Focus on structure & logic\n- Highlight coupling\n- Show code smells
+
+Provider->Provider: Prioritize relevant layers
+Provider->Provider: Filter by focus areas
+Provider->Provider: Rank artifacts by relevance
+
+Provider->Strategies: Get strategy suggestions
+activate Strategies
+Strategies->Strategies: Match task to strategies
+Strategies->Strategies: Select optimal strategies
+Strategies-->Provider: Strategy recommendations
+deactivate Strategies
+
+note over Provider: === Proactive Context Suggestions ===
+
+Provider->Proactive: Get related files
+activate Proactive
+Proactive->Cache: Query cross-layer links
+Cache-->Proactive: Link graph
+Proactive->Proactive: Find related components
+Proactive->Proactive: Identify dependent flows
+Proactive->Proactive: Suggest related entities
+Proactive-->Provider: Related files
+deactivate Proactive
+
+Provider->Provider: Compile context package
+Provider->Provider: Format for MCP response
+Provider-->Client: Instant context response
+deactivate Provider
+
+note over Client, Proactive: === Cache Management ===
+
+Client->CacheMgr: Check cache freshness
+activate CacheMgr
+CacheMgr->CacheMgr: Calculate file hashes
+CacheMgr->CacheMgr: Compare with cached hashes
+CacheMgr->CacheMgr: Identify stale artifacts
+
+alt Stale artifacts detected
+    CacheMgr->Provider: Trigger rediscovery
+    activate Provider
+    Provider->Provider: Rediscover stale clusters
+    Provider->Cache: Update cache
+    Cache-->Provider: Success
+    Provider-->CacheMgr: Rediscovery complete
+    deactivate Provider
+end
+
+CacheMgr-->Client: Cache status
+deactivate CacheMgr
+
+note over Client, Proactive: === Context Usage Example ===
+
+note right of Client: Task: "Refactor UserService"
+note right of Provider: Returns:\n- UserService structure\n- Related entities\n- Flows using UserService\n- Code smells\n- Coupling metrics\n- Suggested refactoring strategies\n- Related files to review

@@ -1,137 +1,70 @@
-# Koog Coding Agent Documentation
+# i2vision Documentation
 
-## 📚 **Documentation Overview**
+Welcome to the i2vision documentation, organized using the Diátaxis framework.
 
-This directory contains comprehensive documentation for the Koog Coding Agent project, including user guides, technical specifications, troubleshooting guides, and implementation details.
+## Core Concepts
 
-## 📋 **Table of Contents**
+Understanding the fundamental concepts behind i2vision:
 
-### **🎯 User Guides & Features**
-- **[PULL Module Guide](./PULL_MODULE_GUIDE.md)** - Complete guide to the PULL module functionality
-- **[Progress Status Guide](./PROGRESS_STATUS_GUIDE.md)** - Enhanced progress status tracking features
-- **[Start/Stop Progress Guide](./START_STOP_PROGRESS_GUIDE.md)** - Progress tracking for model operations
+- [VSLFC Layers](concepts/vslfc-layers.md) - Five-layer contract system (Vision, Structure, Logic, Flow, Code)
+- [Documentation Contracts](concepts/contracts.md) - Bidirectional validation between definitions and artifacts
 
-### **🔧 Implementation & Technical**
-- **[Immediate Feedback Implementation](./IMMEDIATE_FEEDBACK_IMPLEMENTED.md)** - Immediate visual feedback for user actions
-- **[Progress Status Summary](./PROGRESS_STATUS_SUMMARY.md)** - Implementation summary and status
-- **[Immediate Feedback Solution](./IMMEDIATE_FEEDBACK_SOLUTION.md)** - Solution design and approach
+## How-To Guides
 
-### **🐛 Troubleshooting & Debugging**
-- **[PULL Troubleshooting Guide](./PULL_TROUBLESHOOTING_GUIDE.md)** - Common issues and solutions for PULL operations
-- **[Stop Model Debug Guide](./STOP_MODEL_DEBUG_GUIDE.md)** - Debugging stop model functionality
+Step-by-step guides for specific tasks:
 
-### **⚡ Performance & Monitoring**
-- **[Performance Monitoring](./performance-monitoring.md)** - Performance monitoring and metrics
-- **[Performance Management Implementation](./performance-management-implementation.md)** - Performance management system
+- [MCP Tools](guides/mcp-tools.md) - Model Context Protocol toolset reference
+- [MCP Integration](guides/mcp-integration.md) - Claude Desktop, Cursor setup
+- [Custom Tools](guides/custom-tools.md) - Creating custom MCP tools
+- [Deployment](guides/deployment.md) - Deployment guide
+- [Presets](guides/presets.md) - Discovery preset configuration
 
-## 🎯 **Key Features Documented**
+## Reference
 
-### **✅ PULL Module Enhancement**
-- **Real-time Progress Tracking**: Visual indicators for download progress
-- **Activity Logging**: Comprehensive logging of all operations
-- **Error Handling**: Professional error messages and troubleshooting
-- **Debug Capabilities**: Built-in diagnostics and connectivity testing
+Technical reference material:
 
-### **✅ Start/Stop Progress Status**
-- **Immediate Feedback**: Instant visual response to user actions
-- **Enhanced UI**: Loading states and progress indicators
-- **Operation Tracking**: Monitor start/stop operations in real-time
-- **Error Management**: Clear error notifications and handling
+- [API Reference](reference/api.md) - HTTP endpoints and interfaces
+- [Strategies](reference/strategies.md) - Discovery strategy definitions
 
-### **✅ Performance Management**
-- **System Monitoring**: Track resource usage and performance
-- **Metrics Collection**: Gather performance data
-- **Optimization**: Performance improvement strategies
+## Diagrams
 
-## 🔍 **Quick Reference**
+Visual documentation:
 
-### **🚀 Getting Started**
-1. **Read PULL Module Guide** - Understand core functionality
-2. **Check Progress Status Guide** - Learn about enhanced features
-3. **Review Troubleshooting Guide** - Prepare for common issues
+- [Architecture Detection Flow](diagrams/architecture-detection-flow.sd) - Build system, cluster, and pattern detection
+- [CLI Flow](diagrams/cli-flow.sd) - Command parsing and execution
+- [Cluster-Based Discovery](diagrams/cluster-based-discovery.sd) - Multi-cluster discovery pipeline
+- [Contract Lifecycle](diagrams/contract-lifecycle.sd) - Contract definition and validation flow
+- [Discovery Flow](diagrams/discovery-flow.sd) - Unified framework discovery pipeline
+- [Full Project Discovery](diagrams/full-project-discovery-flow.sd) - End-to-end discovery with architecture detection
+- [Incremental Sync Flow](diagrams/incremental-sync-flow.sd) - File change detection and targeted rediscovery
+- [Instant Context Flow](diagrams/instant-context-flow.sd) - Task-aware context optimization
+- [MCP Server Flow](diagrams/mcp-server-flow.sd) - MCP tool registration and execution
+- [Parallel Discovery Concurrency](diagrams/parallel-discovery-concurrency.sd) - Concurrent cluster processing techniques
+- [Quality Metrics Flow](diagrams/quality-metrics-flow.sd) - Cohesion, coupling, and complexity analysis
 
-### **🐛 Common Issues**
-- **PULL Problems**: Check [PULL Troubleshooting Guide](./PULL_TROUBLESHOOTING_GUIDE.md)
-- **Stop Model Issues**: Check [Stop Model Debug Guide](./STOP_MODEL_DEBUG_GUIDE.md)
-- **Performance Issues**: Check [Performance Monitoring](./performance-monitoring.md)
+## Module Documentation
 
-### **🔧 Technical Details**
-- **Implementation**: See [Progress Status Summary](./PROGRESS_STATUS_SUMMARY.md)
-- **API Usage**: Check individual guides for API examples
-- **Architecture**: Refer to specific implementation guides
+Individual module documentation:
 
-## 📊 **Documentation Structure**
-
-### **🎯 User-Focused Documentation**
-- **Step-by-step instructions** for common operations
-- **Visual examples** and screenshots
-- **Troubleshooting steps** with solutions
-- **Best practices** and recommendations
-
-### **🔧 Technical Documentation**
-- **API specifications** and examples
-- **Implementation details** and code snippets
-- **Architecture explanations** and diagrams
-- **Performance considerations** and optimizations
-
-### **🐛 Debugging Resources**
-- **Common error patterns** and solutions
-- **Debugging techniques** and tools
-- **Log analysis** and interpretation
-- **Troubleshooting workflows**
-
-## 🎉 **Recent Updates**
-
-### **✅ Latest Enhancements**
-- **Immediate Feedback System**: Instant visual feedback for all user actions
-- **Enhanced Progress Tracking**: Comprehensive progress status for all operations
-- **Improved Error Handling**: Professional error messages and debugging
-- **Performance Monitoring**: Real-time performance metrics and analysis
-
-### **🔄 Documentation Updates**
-- **Comprehensive Guides**: Complete documentation for all features
-- **Troubleshooting Resources**: Detailed debugging and problem-solving guides
-- **Implementation Notes**: Technical details and best practices
-- **User Experience**: Enhanced documentation structure and navigation
-
-## 🚀 **How to Use This Documentation**
-
-### **📖 Reading Order**
-1. **Start with PULL Module Guide** - Understand core functionality
-2. **Progress Status Guide** - Learn about enhanced features
-3. **Troubleshooting Guides** - Prepare for potential issues
-4. **Technical Documentation** - Deep dive into implementation
-
-### **🔍 Finding Information**
-- **Use Table of Contents** - Quick navigation to specific topics
-- **Search within files** - Most editors support file search
-- **Cross-references** - Links between related documentation
-- **Code examples** - Practical implementation examples
-
-### **🛠️ Contributing**
-- **Update documentation** when adding new features
-- **Add troubleshooting steps** for common issues
-- **Include code examples** for new functionality
-- **Maintain consistency** across all documentation
-
-## 📞 **Support & Resources**
-
-### **🐛 Getting Help**
-- **Check troubleshooting guides** first for common issues
-- **Review implementation documentation** for technical details
-- **Use debug information** from application logs
-- **Consult code examples** for implementation patterns
-
-### **📚 Additional Resources**
-- **Project README** - Overview and setup instructions
-- **Code comments** - Inline documentation in source code
-- **API documentation** - Technical API specifications
-- **Community resources** - External help and support
+- [architecture-types](../architecture-types/) - Multi-dimensional architecture detection
+- [vslfc-core](../vslfc-core/) - VSLFC data models and contracts
+- [i2vision-architecture](../i2vision-architecture/) - Architecture detection engine
+- [llm-client](../llm-client/) - Unified LLM client abstraction
+- [conf-agent-core](../conf-agent-core/) - YAML-configurable agent framework
+- [storage-core](../storage-core/) - Storage abstraction layer
+- [intent-parser](../intent-parser/) - Intent resolution engine
+- [discovery-api](../discovery-api/) - Discovery interfaces
+- [i2vision-discover](../i2vision-discover/) - Discovery pipeline implementation
+- [i2vision-cli](../i2vision-cli/) - Command-line interface
+- [i2vision-instant](../i2vision-instant/) - Instant context API
+- [i2vision-mcp](../i2vision-mcp/) - MCP server implementation
 
 ---
 
-**Last Updated**: 2026-03-08  
-**Documentation Version**: 1.0  
-**Project**: Koog Coding Agent  
+## Internal Documentation
 
-For the most up-to-date information, check the individual documentation files and the project repository.
+Developer-facing documentation is located in [`../dev-docs/`](../dev-docs/):
+- Migration plans
+- Test plans
+- Cleanup documentation
+- Refactoring strategies

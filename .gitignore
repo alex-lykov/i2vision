@@ -38,5 +38,42 @@ bin/
 ### VS Code ###
 .vscode/
 
+# Semantic cache (DEPRECATED - now in OS user home: ~/.i2vision/cache/)
+.semantic-cache/
+
+# Regenerable vision-ai caches
+.vision-ai/index/
+.vision-ai/cache/
+
 ### Mac OS ###
 .DS_Store
+
+# Logs
+*.log
+logs/
+
+# Secrets
+secrets.properties
+*.secret
+*.key
+.env
+
+# Temporary files
+*.tmp
+*.swp
+*~
+
+# Local config
+local.properties
+gradle-local.properties
+
+# Test outputs
+test-output/
+reports/
+
+# OS files
+Thumbs.db
+desktop.ini
+
+# Agent configuration (local)
+agents.md

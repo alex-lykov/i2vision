@@ -6,7 +6,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose") version "2.3.0" apply false
 }
 
-group = "com.alyk.ai.koog"
+group = "com.i2vision"
 version = "1.0-SNAPSHOT"
 
 allprojects {

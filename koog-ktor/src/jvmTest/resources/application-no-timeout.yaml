@@ -1,4 +1,0 @@
-koog:
-  openai:
-    apikey: test-openai-api-key
-    baseUrl: https://api.openai.com

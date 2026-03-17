@@ -1,0 +1,165 @@
+title Architecture Detection Flow
+
+participant "Discovery Pipeline" as Pipeline
+participant "Build System Detector" as Build
+participant "Cluster Detector" as Cluster
+participant "Framework Detector" as Framework
+participant "Pattern Detector" as Pattern
+participant "Confidence Evaluator" as Confidence
+participant "LLM Client" as LLM
+participant "Signature Builder" as Signature
+
+note over Pipeline, Signature: === Phase 1: Build System Detection ===
+
+Pipeline->Build: Detect build system
+activate Build
+Build->Build: Scan for build files
+Build->Build: Check settings.gradle.kts
+Build->Build: Check pom.xml
+Build->Build: Check build.gradle
+Build->Build: Check package.json
+Build->Build: Check Cargo.toml
+Build->Build: Check go.mod
+Build->Build: Identify build tool (Gradle, Maven, npm, Cargo, Go)
+Build->Build: Detect build configuration
+Build-->Pipeline: BuildSystemResult
+deactivate Build
+
+note over Pipeline, Signature: === Phase 2: Cluster Detection ===
+
+Pipeline->Cluster: Detect clusters
+activate Cluster
+
+Cluster->Cluster: Try build module detection
+Cluster->Cluster: Parse settings.gradle.kts
+Cluster->Cluster: Extract module declarations
+Cluster->Cluster: Identify module boundaries
+
+alt Build modules found
+    Cluster->Cluster: Use build modules as clusters
+    note right of Cluster: Gradle modules:\n- core:orchestrator\n- core:session\n- launcher\n- etc.
+    Cluster-->Pipeline: Cluster list (from build)
+else No build modules
+    Cluster->Cluster: Fallback to directory structure
+    Cluster->Cluster: Scan source directories
+    Cluster->Cluster: Detect src/main/kotlin, src/main/java
+    Cluster->Cluster: Count source files per directory
+    Cluster->Cluster: Group by package structure
+    Cluster->Cluster: Create clusters from directories
+    note right of Cluster: Directory clusters:\n- com/example/core\n- com/example/api\n- com/example/ui
+    Cluster-->Pipeline: Cluster list (from directories)
+end
+
+deactivate Cluster
+
+note over Pipeline, Signature: === Phase 3: Per-Cluster Architecture Detection ===
+
+loop For each cluster
+    Pipeline->Framework: Detect frameworks
+    activate Framework
+    Framework->Framework: Scan dependencies
+    Framework->Framework: Check for Spring Boot
+    Framework->Framework: Check for Ktor
+    Framework->Framework: Check for React
+    Framework->Framework: Check for Angular
+    Framework->Framework: Identify web frameworks
+    Framework->Framework: Identify data frameworks (JPA, Hibernate)
+    Framework->Framework: Identify testing frameworks (JUnit, TestNG)
+    Framework-->Pipeline: FrameworkResult
+    deactivate Framework
+
+    Pipeline->Pattern: Detect design patterns
+    activate Pattern
+    Pattern->Pattern: Analyze class structure
+    Pattern->Pattern: Check for Agent classes
+    Pattern->Pattern: Check for Orchestrator classes
+    Pattern->Pattern: Check for Repository classes
+    Pattern->Pattern: Check for Service classes
+    Pattern->Pattern: Check for Controller classes
+    Pattern->Pattern: Identify Layered Architecture
+    Pattern->Pattern: Identify Hexagonal Architecture
+    Pattern->Pattern: Identify Agent Architecture
+    Pattern->Pattern: Identify Pipeline Architecture
+    Pattern->Pattern: Identify Microservices Architecture
+    Pattern-->Pipeline: PatternResult
+    deactivate Pattern
+
+    Pipeline->Confidence: Calculate confidence
+    activate Confidence
+    Confidence->Confidence: Evaluate pattern match strength
+    Confidence->Confidence: Check framework detection certainty
+    Confidence->Confidence: Assess dependency clarity
+    Confidence->Confidence: Calculate overall confidence score
+    Confidence-->Pipeline: Confidence score (0.0 - 1.0)
+    deactivate Confidence
+
+    alt Confidence >= threshold (0.7)
+        Pipeline->Pipeline: Accept heuristic result
+        Pipeline->Pipeline: Mark source as "heuristic"
+        note right of Pipeline: High confidence:\n- Use heuristic detection\n- No LLM needed
+    else Confidence < threshold AND useLlmForLowConfidence = true
+        Pipeline->LLM: Request LLM analysis
+        activate LLM
+        LLM->LLM: Analyze cluster structure
+        LLM->LLM: Review dependencies
+        LLM->LLM: Identify architectural patterns
+        LLM->LLM: Generate architecture analysis
+        LLM-->Pipeline: LLM result
+        deactivate LLM
+        Pipeline->Pipeline: Merge heuristic + LLM results
+        Pipeline->Pipeline: Mark source as "heuristic+llm"
+        note right of Pipeline: Low confidence with LLM:\n- Combine heuristic and LLM\n- Enhanced accuracy
+    else Confidence < threshold AND LLM disabled
+        Pipeline->Pipeline: Mark as low confidence
+        Pipeline->Pipeline: Flag for manual review
+        Pipeline->Pipeline: Mark source as "heuristic(low_confidence)"
+        note right of Pipeline: Low confidence no LLM:\n- Flag for review\n- Manual intervention needed
+    end
+end
+
+note over Pipeline, Signature: === Phase 4: Deployment Pattern Detection ===
+
+Pipeline->Signature: Analyze cluster relationships
+activate Signature
+Signature->Signature: Count total clusters
+Signature->Signature: Assess cluster independence
+Signature->Signature: Analyze inter-cluster dependencies
+Signature->Signature: Evaluate build module structure
+
+alt Single cluster
+    Signature->Signature: Monolithic deployment
+    note right of Signature: Single cluster:\n- Monolith pattern
+else Multiple clusters with high independence
+    Signature->Signature: Microservices deployment
+    note right of Signature: Independent clusters:\n- Microservices pattern
+else Multiple clusters with moderate dependencies
+    Signature->Signature: Modular monolith deployment
+    note right of Signature: Dependent clusters:\n- Modular monolith pattern
+else Hierarchical cluster structure
+    Signature->Signature: Layered deployment
+    note right of Signature: Hierarchical:\n- Layered pattern
+end
+
+Signature-->Pipeline: Deployment pattern
+deactivate Signature
+
+note over Pipeline, Signature: === Phase 5: Architecture Signature Generation ===
+
+Pipeline->Signature: Build complete signature
+activate Signature
+Signature->Signature: Compile build system
+Signature->Signature: Compile module frameworks
+Signature->Signature: Compile module patterns
+Signature->Signature: Compile clusters
+Signature->Signature: Compile design patterns
+Signature->Signature: Compile language features
+Signature->Signature: Compile deployment pattern
+Signature->Signature: Compile confidence scores
+
+Signature->Signature: ArchitectureSignature(\n  buildSystem,\n  moduleFrameworks,\n  modulePatterns,\n  clusters,\n  moduleDesignPatterns,\n  deploymentPattern,\n  confidence\n)
+Signature-->Pipeline: Complete signature
+deactivate Signature
+
+Pipeline->Pipeline: Generate architecture-detection.yaml
+Pipeline->Pipeline: Save to semantic cache
+Pipeline-->Pipeline: Architecture detection complete

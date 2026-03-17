@@ -1,0 +1,124 @@
+title Incremental Sync Flow
+
+participant "File Watcher" as Watcher
+participant "Hash Calculator" as Hash
+participant "Change Detector" as Detector
+participant "Discovery Pipeline" as Pipeline
+participant "Semantic Cache" as Cache
+participant "Config Snapshot" as Config
+participant "Stale Detector" as Stale
+
+note over Watcher, Stale: === File Change Detection ===
+
+Watcher->Hash: Calculate file hash
+activate Hash
+Hash->Hash: Read file content
+Hash->Hash: Compute SHA-256
+Hash-->Watcher: File hash
+deactivate Hash
+
+Watcher->Detector: Compare with cached hash
+activate Detector
+Detector->Cache: Query cached hash
+Cache-->Detector: Cached hash
+
+alt Hashes match
+    Detector->Detector: File unchanged
+    Detector-->Watcher: No change detected
+else Hashes differ
+    Detector->Detector: File changed
+    Detector-->Watcher: Change detected
+    note right of Detector: Mark file for rediscovery
+end
+deactivate Detector
+
+note over Watcher, Stale: === Targeted Rediscovery ===
+
+Watcher->Pipeline: Trigger rediscovery for changed files
+activate Pipeline
+
+Pipeline->Pipeline: Identify affected clusters
+Pipeline->Pipeline: Map files to clusters
+Pipeline->Pipeline: Build cluster rediscovery list
+
+note right of Pipeline: Only rediscover clusters\nwith changed files
+
+loop For each affected cluster
+    Pipeline->Pipeline: Load cluster configuration
+    Pipeline->Pipeline: Extract changed files only
+    Pipeline->Pipeline: Build components (incremental)
+    Pipeline->Pipeline: Discover flows (incremental)
+    Pipeline->Pipeline: Discover logic (incremental)
+    Pipeline->Pipeline: Update artifacts
+    
+    Pipeline->Cache: Write updated artifacts (cluster-locked)
+    Cache-->Pipeline: Success
+end
+
+Pipeline->Pipeline: Update cluster-level metadata
+Pipeline->Pipeline: Update links
+Pipeline->Pipeline: Update contract registry
+Pipeline-->Watcher: Rediscovery complete
+deactivate Pipeline
+
+note over Watcher, Stale: === Config Snapshot Handling ===
+
+Watcher->Config: Detect config changes
+activate Config
+Config->Config: Compare .vision-ai config with snapshot
+Config->Config: Check for new contract definitions
+Config->Config: Check for modified contract definitions
+Config->Config: Check for deleted contract definitions
+
+alt Config changed
+    Config->Pipeline: Trigger full rediscovery
+    activate Pipeline
+    Pipeline->Pipeline: Rediscover all clusters
+    Pipeline->Pipeline: Rebuild contract registry
+    Pipeline->Config: Update config snapshot
+    Pipeline-->Config: Full rediscovery complete
+    deactivate Pipeline
+else Config unchanged
+    Config->Config: No config changes
+    Config-->Watcher: No action needed
+end
+deactivate Config
+
+note over Watcher, Stale: === Stale Artifact Detection ===
+
+Watcher->Stale: Check for stale artifacts
+activate Stale
+Stale->Cache: Scan all artifacts
+Cache-->Stale: Artifact list
+
+loop For each artifact
+    Stale->Stale: Check artifact timestamp
+    Stale->Stale: Compare with source file timestamp
+    
+    alt Artifact older than source
+        Stale->Stale: Mark as stale
+        note right of Stale: Artifact needs update
+    else Artifact newer or same age
+        Stale->Stale: Mark as valid
+    end
+end
+
+alt Stale artifacts found
+    Stale->Pipeline: Trigger rediscovery for stale clusters
+    activate Pipeline
+    Pipeline->Pipeline: Rediscover affected clusters
+    Pipeline->Pipeline: Update stale artifacts
+    Pipeline-->Stale: Stale artifacts updated
+    deactivate Pipeline
+else No stale artifacts
+    Stale->Stale: All artifacts valid
+end
+
+Stale-->Watcher: Stale detection complete
+deactivate Stale
+
+note over Watcher, Stale: === Performance Benefits ===
+
+note right of Pipeline: Incremental sync benefits:\n- Only rediscover changed clusters\n- Reduce discovery time by 80%+\n- Preserve cache for unchanged clusters\n- Minimize LLM API calls
+
+note right of Cache: Cache efficiency:\n- File hash tracking\n- Cluster-level granularity\n- Config snapshot comparison\n- Stale detection

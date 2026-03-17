@@ -1,67 +1,31 @@
 package com.alyk.ai.koog.core.orchestrator.mcp
 
-import com.alyk.ai.koog.context.provider.ContextProvider
-import com.alyk.ai.koog.core.orchestrator.mcp.learning.AdaptiveLearningSystem
-import com.alyk.ai.koog.core.orchestrator.mcp.learning.FeedbackEntry
-import com.alyk.ai.koog.core.orchestrator.mcp.ml.ToolSelectionML
-import com.alyk.ai.koog.core.orchestrator.mcp.nlp.AdvancedParameterExtractor
-
 /**
- * Advanced MCP Selection Module with ML and NLP capabilities
- * Implements intelligent tool selection with learning and adaptation
+ * Enhanced MCP Selection Module with ML-based intelligence
+ * Replaces hardcoded keyword matching with adaptive learning system
  */
 class McpSelectionModule(
     private val mcpIntegration: McpIntegration,
-    private val contextProvider: ContextProvider,
-    private val relevanceThreshold: Double = 0.2,
-    private val enableML: Boolean = true
+    private val parameterExtractor: IntelligentParameterExtractor,
+    private val thresholdManager: DynamicThresholdManager,
+    private val mlSelector: MLToolSelector,
+    private val debugger: ExecutionPlanDebugger,
+    private val analyticsSystem: PerformanceAnalyticsSystem
 ) {
     
-    // Advanced components
-    private val mlModel = ToolSelectionML()
-    private val parameterExtractor = AdvancedParameterExtractor()
-    private val learningSystem = AdaptiveLearningSystem()
-    
-    // Enhanced tool categories with advanced capabilities
-    private val advancedToolCategories = mapOf(
-        McpToolCategory.CODE_GENERATION to listOf(
-            "generate_code", "create_class", "create_function", "create_test", "create_api"
-        ),
-        McpToolCategory.DATABASE_INTEGRATION to listOf(
-            "query_database", "migrate_database", "backup_database", "restore_database"
-        ),
-        McpToolCategory.API_INTERACTION to listOf(
-            "call_api", "test_api", "document_api", "mock_api"
-        ),
-        McpToolCategory.ADVANCED_ANALYSIS to listOf(
-            "security_scan", "performance_analysis", "code_review", "dependency_analysis"
-        )
+    // Fallback basic keyword mappings for edge cases
+    private val basicKeywordMappings = mapOf(
+        McpToolCategory.CONTEXT to listOf("project", "context", "structure", "overview", "summary", "files", "directory"),
+        McpToolCategory.ANALYSIS to listOf("analyze", "analysis", "quality", "complexity", "security", "review", "check"),
+        McpToolCategory.SEARCH to listOf("search", "find", "locate", "look for", "where", "pattern", "regex"),
+        McpToolCategory.EXECUTION to listOf("run", "execute", "build", "test", "compile", "start", "launch"),
+        McpToolCategory.VERSION_CONTROL to listOf("git", "commit", "status", "diff", "log", "blame", "version", "history"),
+        McpToolCategory.NAVIGATION to listOf("navigate", "go to", "open", "show", "display", "list", "browse"),
+        McpToolCategory.FILE_ACCESS to listOf("read", "write", "edit", "modify", "change", "file", "code", "add", "update", "create")
     )
-    
-    // Keyword mappings for tool categories
-    private val keywordMappings = mapOf(
-        McpToolCategory.CONTEXT to listOf(
-            "project", "context", "structure", "overview", "summary", "files", "directory"
-        ),
-        McpToolCategory.ANALYSIS to listOf(
-            "analyze", "analysis", "quality", "complexity", "security", "review", "check"
-        ),
-        McpToolCategory.SEARCH to listOf(
-            "search", "find", "locate", "look for", "where", "pattern", "regex"
-        ),
-        McpToolCategory.EXECUTION to listOf(
-            "run", "execute", "build", "test", "compile", "start", "launch"
-        ),
-        McpToolCategory.VERSION_CONTROL to listOf(
-            "git", "commit", "status", "diff", "log", "blame", "version", "history"
-        ),
-        McpToolCategory.NAVIGATION to listOf(
-            "navigate", "go to", "open", "show", "display", "list", "browse"
-        ),
-        McpToolCategory.FILE_ACCESS to listOf(
-            "read", "write", "edit", "modify", "change", "file", "code", "add", "update", "create"
-        )
-    )
+
+    // Backwards-compatible alias for older scoring code paths.
+    private val keywordMappings = basicKeywordMappings
     
     // Weighted tool-specific keywords for better matching
     private val toolKeywords = mapOf(
@@ -97,353 +61,113 @@ class McpSelectionModule(
             "write" to 1.0, "file" to 1.0, "create" to 0.9, "save" to 0.8, "content" to 0.7
         ),
         "edit_file" to mapOf(
-            "edit" to 1.0, "modify" to 1.0, "change" to 0.9, "update" to 0.8, "file" to 1.0
+            "edit" to 1.0, "modify" to 1.0, "change" to 0.9, "update" to 0.8, "file" to 1.0,
+            "remove" to 1.0, "delete" to 1.0, "coroutine" to 0.9, "function" to 0.8, 
+            "method" to 0.8, "line" to 0.7, "block" to 0.7
         )
     )
     
     /**
-     * Advanced tool selection with ML and NLP
+     * Analyze prompt and select relevant MCP tools using ML intelligence
      */
     suspend fun selectRelevantTools(prompt: String): List<SelectedMcpTool> {
         println("[SELECTION] Analyzing prompt: '$prompt'")
-        val toolsList = getAvailableTools()
-        println("[SELECTION] Available tools count: ${toolsList.size}")
         
-        val promptLower = prompt.lowercase()
-        val words = promptLower.split(Regex("\\s+"))
-        println("[SELECTION] Prompt words: $words")
+        // Get available tools
+        val availableTools = getAvailableTools()
+        println("[SELECTION] Available tools count: ${availableTools.size}")
         
-        // Generate dynamic keywords from project context
-        val projectKeywords = generateProjectKeywords(prompt)
-        println("[SELECTION] Generated project keywords: ${projectKeywords.keys.joinToString(", ")}")
+        // Create selection context
+        val context = SelectionContext(
+            complexity = estimateComplexity(prompt, emptyList()),
+            projectPath = null, // Would be set from actual context
+            sessionId = "current-session"
+        )
         
-        // Calculate dynamic threshold based on learning
-        val dynamicThreshold = if (enableML) {
-            mlModel.calculateDynamicThreshold(prompt, toolsList.map { tool -> tool.name })
-        } else {
-            relevanceThreshold
-        }
-        println("[SELECTION] Using dynamic threshold: $dynamicThreshold")
+        // Use ML-based selection
+        val mlSelectedTools = mlSelector.selectTools(prompt, availableTools, context)
         
-        val selectedTools = toolsList.map { tool ->
-            val score = if (enableML) {
-                // ML-based scoring
-                val features = mlModel.extractFeatures(prompt, projectKeywords, tool.name)
-                val mlScore = mlModel.predictScore(features, tool.name)
-                val performanceScore = learningSystem.getPerformanceScore(tool.name)
-                
-                // Combine ML score with performance score
-                (mlScore * 0.7) + (performanceScore * 0.3)
-            } else {
-                // Fallback to traditional scoring
-                calculateProjectAwareRelevanceScore(tool, promptLower, words, projectKeywords)
-            }
-            
-            println("[SELECTION] Tool ${tool.name} score: $score")
+        // Convert to SelectedMcpTool format for compatibility
+        val selectedTools = mlSelectedTools.map { mlTool ->
             SelectedMcpTool(
-                tool = tool,
-                relevanceScore = score,
-                matchedKeywords = getMatchedKeywords(tool, promptLower, projectKeywords)
+                tool = mlTool.tool,
+                relevanceScore = mlTool.mlScore,
+                matchedKeywords = extractMatchedKeywords(prompt, mlTool.tool)
             )
         }
-        .filter { it.relevanceScore >= dynamicThreshold }
-        .sortedByDescending { it.relevanceScore }
         
-        println("[SELECTION] Selected ${selectedTools.size} tools above dynamic threshold $dynamicThreshold")
+        // Record for analytics
+        selectedTools.forEach { selectedTool ->
+            analyticsSystem.recordToolExecution(
+                sessionId = context.sessionId,
+                toolName = selectedTool.tool.name,
+                category = selectedTool.tool.category,
+                executionTime = 0, // Selection time, not execution
+                success = true,
+                parameters = emptyMap(),
+                resultQuality = selectedTool.relevanceScore
+            )
+        }
+        
+        println("[SELECTION] ML selected ${selectedTools.size} tools")
         selectedTools.forEach { tool ->
-            println("[SELECTION] Final selection: ${tool.tool.name} (score: ${tool.relevanceScore})")
+            println("[SELECTION] Selected: ${tool.tool.name} (score: ${tool.relevanceScore})")
         }
         
         return selectedTools
     }
     
     /**
-     * Generate dynamic keywords by analyzing actual file content
+     * Calculate relevance score for a tool based on prompt analysis
      */
-    private suspend fun generateProjectKeywords(prompt: String): Map<String, Double> {
-        val keywords = mutableMapOf<String, Double>()
-        
-        if (!contextProvider.isProjectLoaded()) {
-            println("[SELECTION] No project loaded, using static keywords only")
-            return keywords
-        }
-        
-        val projectFiles = contextProvider.getLoadedFiles()
-        println("[SELECTION] Analyzing content of ${projectFiles.size} files for dynamic keywords")
-        
-        // Analyze actual file content, not just filenames
-        projectFiles.forEach { filePath ->
-            try {
-                val content = analyzeFileContent(filePath)
-                content.forEach { (keyword, weight) ->
-                    keywords[keyword] = maxOf(keywords.getOrDefault(keyword, 0.0), weight)
-                }
-            } catch (e: Exception) {
-                println("[SELECTION] Could not analyze file $filePath: ${e.message}")
-            }
-        }
-        
-        println("[SELECTION] Generated ${keywords.size} dynamic keywords from content analysis")
-        return keywords
-    }
-    
-    /**
-     * Analyze actual file content to extract relevant keywords and patterns
-     */
-    private suspend fun analyzeFileContent(filePath: String): Map<String, Double> {
-        val keywords = mutableMapOf<String, Double>()
-        
-        // Read file content
-        val content = try {
-            java.io.File(filePath).readText()
-        } catch (e: Exception) {
-            println("[SELECTION] Failed to read file $filePath: ${e.message}")
-            return keywords
-        }
-        
-        val lines = content.lines()
-        
-        // Analyze for programming patterns with semantic understanding
-        lines.forEach { line ->
-            val trimmedLine = line.trim()
-            
-            // Kotlin/Java coroutine patterns - semantic detection
-            detectCoroutinePatterns(trimmedLine, keywords)
-            
-            // Function/method patterns - semantic detection
-            detectFunctionPatterns(trimmedLine, keywords)
-            
-            // Class patterns - semantic detection
-            detectClassPatterns(trimmedLine, keywords)
-            
-            // Test patterns - semantic detection
-            detectTestPatterns(trimmedLine, keywords)
-            
-            // Build patterns - semantic detection
-            detectBuildPatterns(trimmedLine, keywords)
-            
-            // Import patterns - detect libraries/frameworks
-            detectImportPatterns(trimmedLine, keywords)
-        }
-        
-        // Language detection from file extension
-        detectLanguage(filePath, keywords)
-        
-        return keywords
-    }
-    
-    private fun detectCoroutinePatterns(line: String, keywords: MutableMap<String, Double>) {
-        when {
-            // Suspend functions
-            line.matches(Regex(".*\\bsuspend\\s+fun\\s+\\w+.*")) -> {
-                keywords["suspend"] = 1.0
-                keywords["coroutine"] = 0.9
-                keywords["async"] = 0.8
-            }
-            // Async calls
-            line.contains("async") && (line.contains("{") || line.contains("launch")) -> {
-                keywords["async"] = 1.0
-                keywords["await"] = 0.9
-                keywords["coroutine"] = 0.8
-            }
-            // Await calls
-            line.matches(Regex(".*\\.await\\(.*")) || line.contains("await") -> {
-                keywords["await"] = 1.0
-                keywords["async"] = 0.9
-                keywords["coroutine"] = 0.8
-            }
-            // Launch calls
-            line.matches(Regex(".*\\blaunch\\s*\\{.*")) || line.contains("launch") -> {
-                keywords["launch"] = 1.0
-                keywords["coroutine"] = 0.9
-                keywords["start"] = 0.7
-            }
-            // Run blocking
-            line.contains("runBlocking") -> {
-                keywords["runblocking"] = 1.0
-                keywords["coroutine"] = 0.9
-            }
-            // Coroutine scope
-            line.contains("CoroutineScope") || line.contains("GlobalScope") -> {
-                keywords["coroutine"] = 0.8
-                keywords["scope"] = 0.7
-            }
-        }
-    }
-    
-    private fun detectFunctionPatterns(line: String, keywords: MutableMap<String, Double>) {
-        when {
-            // Function definitions across languages
-            line.matches(Regex(".*\\b(fun|function|def|func)\\s+\\w+\\s*\\(.*")) -> {
-                keywords["function"] = 0.8
-                keywords["method"] = 0.7
-            }
-            // Method calls
-            line.matches(Regex(".*\\w+\\s*\\(.*\\).*")) && !line.contains("if") && !line.contains("when") -> {
-                keywords["call"] = 0.5
-                keywords["invoke"] = 0.4
-            }
-        }
-    }
-    
-    private fun detectClassPatterns(line: String, keywords: MutableMap<String, Double>) {
-        when {
-            // Class/interface definitions
-            line.matches(Regex(".*\\b(class|interface)\\s+\\w+.*")) -> {
-                keywords["class"] = 0.8
-                keywords["interface"] = 0.7
-                keywords["type"] = 0.6
-            }
-            // Object declarations
-            line.matches(Regex(".*\\bobject\\s+\\w+.*")) -> {
-                keywords["object"] = 0.8
-                keywords["singleton"] = 0.6
-            }
-        }
-    }
-    
-    private fun detectTestPatterns(line: String, keywords: MutableMap<String, Double>) {
-        when {
-            // Test annotations
-            line.contains("@Test") || line.contains("@Testify") || line.contains("@TestCase") -> {
-                keywords["test"] = 1.0
-                keywords["testing"] = 0.9
-                keywords["unit"] = 0.7
-            }
-            // Test functions
-            line.matches(Regex(".*\\b(test|should|when)\\s+\\w+.*")) -> {
-                keywords["test"] = 0.8
-                keywords["testing"] = 0.7
-            }
-            // Assertion calls
-            line.contains("assert") || line.contains("assertEquals") || line.contains("shouldBe") -> {
-                keywords["assert"] = 0.8
-                keywords["verify"] = 0.7
-            }
-        }
-    }
-    
-    private fun detectBuildPatterns(line: String, keywords: MutableMap<String, Double>) {
-        when {
-            // Gradle build files
-            line.contains("build.gradle") || line.contains("settings.gradle") -> {
-                keywords["build"] = 1.0
-                keywords["gradle"] = 0.9
-            }
-            // Dependencies
-            line.contains("implementation") || line.contains("api") || line.contains("compile") -> {
-                keywords["dependency"] = 0.9
-                keywords["build"] = 0.7
-            }
-            // Plugins
-            line.contains("plugins") || line.contains("apply plugin") -> {
-                keywords["plugin"] = 0.8
-                keywords["build"] = 0.6
-            }
-        }
-    }
-    
-    private fun detectImportPatterns(line: String, keywords: MutableMap<String, Double>) {
-        when {
-            // Kotlin/Java imports
-            line.matches(Regex("import\\s+.*")) -> {
-                when {
-                    line.contains("kotlinx.coroutines") -> {
-                        keywords["coroutine"] = 0.9
-                        keywords["kotlinx"] = 0.7
-                    }
-                    line.contains("junit") -> {
-                        keywords["test"] = 0.8
-                        keywords["junit"] = 0.7
-                    }
-                    line.contains("spring") -> {
-                        keywords["spring"] = 0.9
-                        keywords["framework"] = 0.7
-                    }
-                    line.contains("react") -> {
-                        keywords["react"] = 0.9
-                        keywords["frontend"] = 0.7
-                    }
-                }
-            }
-        }
-    }
-    
-    private fun detectLanguage(filePath: String, keywords: MutableMap<String, Double>) {
-        when {
-            filePath.endsWith(".kt") || filePath.endsWith(".kts") -> {
-                keywords["kotlin"] = 1.0
-            }
-            filePath.endsWith(".java") -> {
-                keywords["java"] = 1.0
-            }
-            filePath.endsWith(".js") || filePath.endsWith(".ts") -> {
-                keywords["javascript"] = 0.9
-                keywords["typescript"] = 0.9
-            }
-            filePath.endsWith(".py") -> {
-                keywords["python"] = 1.0
-            }
-            filePath.endsWith(".go") -> {
-                keywords["golang"] = 1.0
-            }
-            filePath.endsWith(".rs") -> {
-                keywords["rust"] = 1.0
-            }
-        }
-    }
-    
-    /**
-     * Calculate project-aware relevance score for a tool based on prompt analysis and project context
-     */
-    private suspend fun calculateProjectAwareRelevanceScore(
+    private fun calculateRelevanceScore(
         tool: ProjectMcpTool, 
         promptLower: String, 
-        words: List<String>,
-        projectKeywords: Map<String, Double>
+        words: List<String>
     ): Double {
         var score = 0.0
         
-        // Category-level keyword matching (weight: 0.2)
+        // Category-level keyword matching (weight: 0.3)
         val categoryKeywords = keywordMappings[tool.category] ?: emptyList()
         val categoryMatches = categoryKeywords.count { keyword -> 
             promptLower.contains(keyword) 
         }
-        score += (categoryMatches.toDouble() / categoryKeywords.size) * 0.2
+        score += (if (categoryKeywords.isNotEmpty()) categoryMatches.toDouble() / categoryKeywords.size else 0.0) * 0.3
         
-        // Tool-specific keyword matching (weight: 0.3)
+        // Tool-specific keyword matching (weight: 0.5) - using weighted keywords
         val toolKeywordMap = toolKeywords[tool.name] ?: emptyMap()
         if (toolKeywordMap.isNotEmpty()) {
             val totalWeight = toolKeywordMap.values.sum()
             val matchedWeight = toolKeywordMap.entries.sumOf { (keyword, weight) ->
                 if (promptLower.contains(keyword)) weight else 0.0
             }
-            score += (matchedWeight / totalWeight) * 0.3
+            score += (matchedWeight / totalWeight) * 0.5
         }
         
-        // Project context keyword matching (weight: 0.4) - NEW
-        if (projectKeywords.isNotEmpty()) {
-            val totalProjectWeight = projectKeywords.values.sum()
-            val matchedProjectWeight = projectKeywords.entries.sumOf { (keyword, weight) ->
-                if (promptLower.contains(keyword)) weight else 0.0
-            }
-            score += (matchedProjectWeight / totalProjectWeight) * 0.4
-        }
-        
-        // Name matching (weight: 0.1)
+        // Name matching (weight: 0.2)
         val nameWords = tool.name.split("_")
         val nameMatches = nameWords.count { nameWord ->
             words.any { it.contains(nameWord) }
         }
-        score += (nameMatches.toDouble() / nameWords.size) * 0.1
+        score += (nameMatches.toDouble() / nameWords.size) * 0.2
+        
+        // Bonus for early keyword appearances
+        val allKeywords = mutableListOf<String>()
+        allKeywords.addAll(categoryKeywords)
+        allKeywords.addAll(toolKeywordMap.keys)
+        val firstKeywordIndex = findFirstKeywordIndex(promptLower, allKeywords)
+        if (firstKeywordIndex != -1) {
+            val positionBonus = 1.0 - (firstKeywordIndex.toDouble() / words.size)
+            score += positionBonus * 0.1
+        }
         
         return score.coerceAtMost(1.0)
     }
     
     /**
-     * Get keywords that matched for a tool (updated for project context)
+     * Get keywords that matched for a tool
      */
-    private fun getMatchedKeywords(tool: ProjectMcpTool, promptLower: String, projectKeywords: Map<String, Double>): List<String> {
+    private fun getMatchedKeywords(tool: ProjectMcpTool, promptLower: String): List<String> {
         val matchedKeywords = mutableListOf<String>()
         
         // Category keywords
@@ -457,13 +181,6 @@ class McpSelectionModule(
         toolKeywords[tool.name]?.forEach { (keyword, weight) ->
             if (promptLower.contains(keyword)) {
                 matchedKeywords.add("$keyword(${weight})")
-            }
-        }
-        
-        // Project context keywords
-        projectKeywords.forEach { (keyword, weight) ->
-            if (promptLower.contains(keyword)) {
-                matchedKeywords.add("$keyword(proj:$weight)")
             }
         }
         
@@ -481,95 +198,11 @@ class McpSelectionModule(
     }
     
     /**
-     * Advanced parameter extraction with NLP
+     * Extract parameters using intelligent system
      */
     fun extractParameters(prompt: String, selectedTools: List<SelectedMcpTool>): Map<String, Map<String, Any>> {
-        val parameters = mutableMapOf<String, Map<String, Any>>()
-        val projectContext = getProjectContext()
-        
-        selectedTools.forEach { selectedTool ->
-            val toolParams = mutableMapOf<String, Any>()
-            val tool = selectedTool.tool
-            
-            // Use advanced NLP parameter extraction
-            val extractedParams = parameterExtractor.extractParameters(prompt, tool.name, projectContext)
-            
-            extractedParams.forEach { param ->
-                toolParams[param.name] = when (param.type) {
-                    com.alyk.ai.koog.core.orchestrator.mcp.nlp.ParameterType.NUMBER -> {
-                        param.value.toDoubleOrNull() ?: param.value
-                    }
-                    com.alyk.ai.koog.core.orchestrator.mcp.nlp.ParameterType.BOOLEAN -> {
-                        param.value.toBooleanStrictOrNull() ?: param.value
-                    }
-                    else -> param.value
-                }
-            }
-            
-            // Fallback to basic extraction for missing parameters
-            if (toolParams.isEmpty()) {
-                val fallbackParams = extractBasicParameters(prompt, tool)
-                toolParams.putAll(fallbackParams)
-            }
-            
-            parameters[tool.name] = toolParams
-        }
-        
-        return parameters
-    }
-    
-    /**
-     * Record tool execution for learning
-     */
-    fun recordExecution(toolName: String, prompt: String, wasSuccessful: Boolean, executionTime: Long) {
-        learningSystem.recordUsage(toolName, wasSuccessful, executionTime)
-        
-        // Train ML model
-        if (enableML) {
-            val features = mlModel.extractFeatures(prompt, emptyMap(), toolName)
-            val trainingExample = com.alyk.ai.koog.core.orchestrator.mcp.ml.TrainingExample(
-                prompt = prompt,
-                selectedTool = toolName,
-                wasSuccessful = wasSuccessful,
-                executionTime = executionTime,
-                features = features
-            )
-            mlModel.trainModel(trainingExample)
-        }
-        
-        println("[SELECTION] Recorded execution: $toolName, success=$wasSuccessful, time=${executionTime}ms")
-    }
-    
-    /**
-     * Record user feedback for learning
-     */
-    fun recordFeedback(toolName: String, prompt: String, rating: Int, comments: String? = null) {
-        val feedback = FeedbackEntry(
-            toolName = toolName,
-            prompt = prompt,
-            userRating = rating,
-            wasSuccessful = rating >= 3, // Assume 3+ is successful
-            executionTime = 0, // Not available at feedback time
-            timestamp = System.currentTimeMillis(),
-            userComments = comments
-        )
-        
-        learningSystem.recordFeedback(feedback)
-        println("[SELECTION] Recorded feedback: $toolName, rating=$rating")
-    }
-    
-    /**
-     * Get learning analytics
-     */
-    fun getAnalytics(): Map<String, Any> {
-        return learningSystem.getAnalytics()
-    }
-    
-    /**
-     * Get recommendations for tool improvement
-     */
-    fun getRecommendations(toolName: String): List<String> {
-        return learningSystem.getRecommendations(toolName)
+        println("[SELECTION] Extracting parameters with intelligent system")
+        return parameterExtractor.extractParameters(prompt, selectedTools)
     }
     
     /**
@@ -583,62 +216,8 @@ class McpSelectionModule(
         }
     }
     
-    private fun getProjectContext(): Map<String, String> {
-        val context = mutableMapOf<String, String>()
-        
-        if (contextProvider.isProjectLoaded()) {
-            context["projectRoot"] = contextProvider.getProjectRoot() ?: ""
-            context["loadedFiles"] = contextProvider.getLoadedFiles().joinToString(",")
-        }
-        
-        return context
-    }
-    
-    private fun extractBasicParameters(prompt: String, tool: ProjectMcpTool): Map<String, Any> {
-        val params = mutableMapOf<String, Any>()
-        val promptLower = prompt.lowercase()
-        
-        when (tool.name) {
-            "project_context" -> {
-                val pathPattern = """(?:path|directory|folder)[\s:]+([^\s,]+)""".toRegex(RegexOption.IGNORE_CASE)
-                val pathMatch = pathPattern.find(promptLower)
-                params["path"] = pathMatch?.groupValues?.get(1)?.trim() ?: "."
-            }
-            "file_analyzer" -> {
-                val filePattern = """(?:analyze|check)[\s]+(?:file\s+)?([^\s,]+)""".toRegex(RegexOption.IGNORE_CASE)
-                val fileMatch = filePattern.find(promptLower)
-                params["file"] = fileMatch?.groupValues?.get(1)?.trim() ?: "src/main/kotlin"
-            }
-            "code_search" -> {
-                val searchPattern = """(?:search|find)[\s]+(?:for\s+)?([^\s]+)(?:\s+in\s+([^\s]+))?""".toRegex(RegexOption.IGNORE_CASE)
-                val searchMatch = searchPattern.find(promptLower)
-                params["pattern"] = searchMatch?.groupValues?.get(1)?.trim() ?: ""
-                params["directory"] = searchMatch?.groupValues?.get(2)?.trim() ?: "src/main/kotlin"
-            }
-            "build_runner" -> {
-                val buildPattern = """(?:build|run|compile|test)[\s]+([^\s]+)?""".toRegex(RegexOption.IGNORE_CASE)
-                val buildMatch = buildPattern.find(promptLower)
-                params["task"] = buildMatch?.groupValues?.get(1)?.trim() ?: "build"
-            }
-            "git_operations" -> {
-                val gitPattern = """(?:git)[\s]+([^\s]+)(?:\s+([^\s]+))?""".toRegex(RegexOption.IGNORE_CASE)
-                val gitMatch = gitPattern.find(promptLower)
-                params["operation"] = gitMatch?.groupValues?.get(1)?.trim() ?: "status"
-                params["target"] = gitMatch?.groupValues?.get(2)?.trim() ?: ""
-            }
-            "test_executor" -> {
-                val testPattern = """(?:test)[\s]+([^\s]+)(?:\s+for\s+([^\s]+))?""".toRegex(RegexOption.IGNORE_CASE)
-                val testMatch = testPattern.find(promptLower)
-                params["type"] = testMatch?.groupValues?.get(1)?.trim() ?: "unit"
-                params["target"] = testMatch?.groupValues?.get(2)?.trim() ?: "src/test/kotlin"
-            }
-        }
-        
-        return params
-    }
-    
     /**
-     * Get execution strategy based on selected tools
+     * Get execution strategy using intelligent analysis
      */
     fun determineExecutionStrategy(selectedTools: List<SelectedMcpTool>): ExecutionStrategy {
         return when {
@@ -661,20 +240,46 @@ class McpSelectionModule(
     }
     
     /**
-     * Estimate task complexity based on prompt and selected tools
+     * Estimate task complexity using intelligent analysis
      */
     fun estimateComplexity(prompt: String, selectedTools: List<SelectedMcpTool>): TaskComplexity {
+        // Use dynamic threshold recommendation for complexity assessment
+        val recommendation = thresholdManager.getThresholdRecommendation(
+            promptComplexity = TaskComplexity.MODERATE, // Will be recalculated
+            toolCount = selectedTools.size,
+            hasHighConfidenceTools = selectedTools.any { it.relevanceScore > 0.7 }
+        )
+        
         val promptLength = prompt.length
         val toolCount = selectedTools.size
         val hasExecutionTools = selectedTools.any { 
             it.tool.category == McpToolCategory.EXECUTION 
         }
         
+        // Enhanced complexity calculation with ML insights
         return when {
             promptLength < 50 && toolCount <= 1 && !hasExecutionTools -> TaskComplexity.SIMPLE
-            promptLength < 200 && toolCount <= 3 -> TaskComplexity.MODERATE
-            else -> TaskComplexity.COMPLEX
+            promptLength < 200 && toolCount <= 3 && recommendation.confidence > 0.7 -> TaskComplexity.MODERATE
+            promptLength > 300 || toolCount > 5 || hasExecutionTools -> TaskComplexity.COMPLEX
+            else -> TaskComplexity.MODERATE
         }
+    }
+    
+    /**
+     * Extract matched keywords for compatibility
+     */
+    private fun extractMatchedKeywords(prompt: String, tool: ProjectMcpTool): List<String> {
+        val promptLower = prompt.lowercase()
+        val keywords = mutableListOf<String>()
+        
+        // Check basic category keywords
+        basicKeywordMappings[tool.category]?.forEach { keyword ->
+            if (promptLower.contains(keyword)) {
+                keywords.add(keyword)
+            }
+        }
+        
+        return keywords.distinct()
     }
 }
 

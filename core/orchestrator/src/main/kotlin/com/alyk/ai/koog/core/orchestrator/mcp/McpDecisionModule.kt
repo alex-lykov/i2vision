@@ -192,10 +192,6 @@ class McpDecisionModule(
                 McpToolCategory.EXECUTION -> 4
                 McpToolCategory.VERSION_CONTROL -> 5
                 McpToolCategory.NAVIGATION -> 6
-                McpToolCategory.CODE_GENERATION -> 7
-                McpToolCategory.DATABASE_INTEGRATION -> 8
-                McpToolCategory.API_INTERACTION -> 9
-                McpToolCategory.ADVANCED_ANALYSIS -> 10
             }
         })
     }
@@ -455,10 +451,6 @@ class McpDecisionModule(
             McpToolCategory.EXECUTION -> 4000L
             McpToolCategory.VERSION_CONTROL -> 2000L
             McpToolCategory.NAVIGATION -> 1000L
-            McpToolCategory.CODE_GENERATION -> 6000L
-            McpToolCategory.DATABASE_INTEGRATION -> 4000L
-            McpToolCategory.API_INTERACTION -> 3000L
-            McpToolCategory.ADVANCED_ANALYSIS -> 8000L
         }
         
         // Adjust duration based on parameter complexity

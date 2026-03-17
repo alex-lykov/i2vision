@@ -4,10 +4,7 @@ import ai.koog.agents.core.tools.ToolRegistry
 import com.alyk.ai.koog.context.hierarchy.HierarchyBuilder
 import com.alyk.ai.koog.context.provider.ContextProvider
 import com.alyk.ai.koog.core.orchestrator.agents.*
-import com.alyk.ai.koog.core.orchestrator.mcp.McpDecisionModule
-import com.alyk.ai.koog.core.orchestrator.mcp.McpIntegration
-import com.alyk.ai.koog.core.orchestrator.mcp.McpSelectionModule
-import com.alyk.ai.koog.core.orchestrator.mcp.McpStatus
+import com.alyk.ai.koog.core.orchestrator.mcp.*
 import com.alyk.ai.koog.core.orchestrator.mcp.workspace.WorkspaceFactory
 import com.alyk.ai.koog.core.orchestrator.router.AgentResponseChunk
 import com.alyk.ai.koog.core.orchestrator.router.AgentRouter
@@ -36,7 +33,9 @@ class AgentOrchestrator(
 ) {
     
     private val mcpIntegration = McpIntegration(contextProvider, mcpToolRegistry)
-    private val mcpSelectionModule = McpSelectionModule(mcpIntegration, contextProvider)
+    private val enhancedSelectionSystem = EnhancedMcpSelectionFactory()
+        .createEnhancedSelectionSystem(mcpIntegration)
+    private val mcpSelectionModule: McpSelectionModule = enhancedSelectionSystem.selectionModule
     private val mcpDecisionModule = McpDecisionModule(mcpSelectionModule, mcpIntegration)
     private val workspaceFactory = WorkspaceFactory(contextProvider, emptyList())
     private var agentRouter: AgentRouter? = null

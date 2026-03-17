@@ -340,10 +340,5 @@ enum class McpToolCategory {
     EXECUTION,
     VERSION_CONTROL,
     NAVIGATION,
-    FILE_ACCESS,
-    // Advanced categories for intelligent tool selection
-    CODE_GENERATION,
-    DATABASE_INTEGRATION,
-    API_INTERACTION,
-    ADVANCED_ANALYSIS
+    FILE_ACCESS
 }

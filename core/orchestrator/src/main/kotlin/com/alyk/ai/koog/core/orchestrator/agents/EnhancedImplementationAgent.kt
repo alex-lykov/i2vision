@@ -598,6 +598,10 @@ data class ToolCall(val tool: String, val args: JsonElement)
         var finalResponse = ""
         var toolCallCount = 0
         var exitedWithDirectAnswer = false
+        val requiresModification = isModificationTask(originalTask)
+        var didMutateFiles = false
+        var invalidNonToolOutputs = 0
+        var didKickstartTools = false
         
         // Observations for synthesis when max iterations reached without direct answer
         val observations = mutableListOf<Triple<String, String, String>>() // (tool, params, result)
@@ -606,6 +610,62 @@ data class ToolCall(val tool: String, val args: JsonElement)
         var lastSuccessfulToolOutput: String? = null
         var consecutiveToolCalls = 0
         val maxConsecutiveToolCalls = 3 // Prevent infinite loops
+
+        // Common, non-hardcoded discovery strategy for modification requests:
+        // - derive search terms from the prompt
+        // - search UI surfaces (launcher) using structural signals + derived terms
+        // - if not found, search CLI surfaces using structural signals + derived terms
+        // - read top candidates to prove relevance
+        // - otherwise return an explicit "not found / need more info" report with evidence
+        if (requiresModification) {
+            // Emit a structured "analysis" event for the UI before doing any tool work.
+            // This is intentionally high-level (not chain-of-thought), but useful for users to follow.
+            runCatching {
+                emitChunk?.invoke(
+                    AgentResponseChunk.Decision(
+                        phase = "analysis",
+                        message = "Locate where prompt input is captured (UI vs CLI), prove relevance by reading candidates, then implement change or report what’s missing.",
+                        details = mapOf(
+                            "task" to originalTask.take(200),
+                            "strategy" to listOf(
+                                "derive search terms from prompt",
+                                "search UI surfaces for input/key handling + terms",
+                                "read top candidates to prove relevance",
+                                "fallback to CLI input loop search",
+                                "if not found: return need-more-info with evidence"
+                            ),
+                            "success_criteria" to listOf(
+                                "find the actual input handler",
+                                "perform write/edit for modification tasks OR return explicit 'not found/need more info' with evidence"
+                            )
+                        )
+                    )
+                )
+            }
+
+            val discovery = discoverInputSurface(originalTask, context, tools)
+            if (discovery.success) {
+                discovery.observations.forEach { (tool, params, result) ->
+                    observations.add(Triple(tool, params, result))
+                    lastSuccessfulToolOutput = result
+                    conversationHistory.add("Observation: $result")
+                    // Best-effort streaming: emit as ToolCall cards so the user sees the evidence trail.
+                    runCatching {
+                        emitChunk?.invoke(
+                            AgentResponseChunk.ToolCall(
+                                toolName = tool,
+                                parameters = jsonElementToParams(json.parseToJsonElement(params) as JsonObject),
+                                result = result,
+                                success = result.trimStart().startsWith("✅"),
+                                durationMs = null
+                            )
+                        )
+                    }
+                }
+            } else if (discovery.explanation.isNotBlank()) {
+                return discovery.explanation
+            }
+        }
         
         for (iteration in 0 until maxIterations) {
             println("[ENHANCED_IMPLEMENTATION] ===== Iteration ${iteration + 1}/$maxIterations =====")
@@ -644,7 +704,7 @@ data class ToolCall(val tool: String, val args: JsonElement)
                 
                 // Check if response looks like a final answer
                 // More lenient criteria: accept shorter responses if they seem complete
-                val looksLikeFinalAnswer = toolCall == null &&
+                val looksLikeFinalAnswer = !requiresModification && toolCall == null &&
                     agentResponse.length > 20 &&
                     // Don't treat JSON tool-call shapes as final answers
                     !agentResponse.trimStart().startsWith("```json") &&
@@ -681,6 +741,9 @@ data class ToolCall(val tool: String, val args: JsonElement)
                         observations.add(Triple(toolCall.tool, paramsStr, toolOutput))
                         
                         val success = toolOutput.trimStart().startsWith("✅")
+                        if (success && (toolCall.tool == "write_file" || toolCall.tool == "writeFile" || toolCall.tool == "edit_file" || toolCall.tool == "editFile")) {
+                            didMutateFiles = true
+                        }
                         
                         emitChunk?.invoke(
                             AgentResponseChunk.ToolCall(
@@ -735,22 +798,53 @@ data class ToolCall(val tool: String, val args: JsonElement)
                     
                 } else {
                     consecutiveToolCalls = 0 // Reset when no tool call
-                    exitedWithDirectAnswer = true
                     if (looksLikeFinalAnswer) {
                         println("[ENHANCED_IMPLEMENTATION] ✅ Final answer detected")
+                        exitedWithDirectAnswer = true
                         finalResponse = agentResponse
                         break
                     } else {
-                        println("[ENHANCED_IMPLEMENTATION] ⚠️ No tool call or final answer detected")
-                        if (agentResponse.length > 10) {
-                            println("[ENHANCED_IMPLEMENTATION] 🔄 Treating short response as potential final answer")
-                            finalResponse = agentResponse
-                            break
-                        } else {
-                            println("[ENHANCED_IMPLEMENTATION] 🔄 Response too short, continuing...")
-                            finalResponse = agentResponse
-                            break
+                        if (requiresModification) {
+                            // Do not accept prose for modification requests; force the model back into tool-call-only mode.
+                            println("[ENHANCED_IMPLEMENTATION] ⚠️ No tool call detected for modification task; retrying with tool-call-only constraint")
+                            conversationHistory.add("Assistant: $agentResponse")
+                            conversationHistory.add(
+                                "Observation: INVALID_OUTPUT. Return exactly ONE JSON tool call only (no prose). " +
+                                    "For modifications, read the relevant file(s) then finish with writeFile/editFile."
+                            )
+                            invalidNonToolOutputs++
+
+                            // If the model keeps ignoring the tool-call-only contract, kickstart the loop by
+                            // performing a high-signal read/search ourselves and feeding it back as an observation.
+                            if (!didKickstartTools && invalidNonToolOutputs >= 2) {
+                                didKickstartTools = true
+                                try {
+                                    val kickstart = kickstartModificationTools(originalTask, context, tools)
+                                    if (kickstart != null) {
+                                        val (toolName, params, toolOutput) = kickstart
+                                        observations.add(Triple(toolName, params, toolOutput))
+                                        emitChunk?.invoke(
+                                            AgentResponseChunk.ToolCall(
+                                                toolName = toolName,
+                                                parameters = jsonElementToParams(json.parseToJsonElement(params) as JsonObject),
+                                                result = toolOutput,
+                                                success = toolOutput.trimStart().startsWith("✅"),
+                                                durationMs = null
+                                            )
+                                        )
+                                        conversationHistory.add("Observation: $toolOutput")
+                                    }
+                                } catch (e: Exception) {
+                                    println("[ENHANCED_IMPLEMENTATION] ⚠️ Kickstart failed: ${e.message}")
+                                }
+                            }
+                            continue
                         }
+
+                        println("[ENHANCED_IMPLEMENTATION] ⚠️ No tool call or final answer detected")
+                        exitedWithDirectAnswer = true
+                        finalResponse = agentResponse
+                        break
                     }
                 }
                 
@@ -763,9 +857,16 @@ data class ToolCall(val tool: String, val args: JsonElement)
         }
         
         // Synthesis step: when max iterations reached without direct answer, synthesize from observations
-        if (!exitedWithDirectAnswer && observations.isNotEmpty()) {
+        // Only for non-modification tasks. For modifications we require a successful write/edit tool call.
+        if (!exitedWithDirectAnswer && observations.isNotEmpty() && !requiresModification) {
             println("[ENHANCED_IMPLEMENTATION] 📝 Max iterations reached without direct answer - synthesizing from ${observations.size} observations")
             finalResponse = synthesizeAnswer(originalTask, observations)
+        }
+
+        if (!exitedWithDirectAnswer && requiresModification && !didMutateFiles) {
+            val last = lastSuccessfulToolOutput?.take(500)
+            return "❌ Modification not completed: the model did not produce a valid write/edit tool call within $maxIterations iterations.\n" +
+                (if (last != null) "Last successful tool output:\n$last" else "No successful tool output was produced.")
         }
         
         // Save history to database
@@ -778,6 +879,175 @@ data class ToolCall(val tool: String, val args: JsonElement)
         }
         
         return finalResponse.ifEmpty { "No response generated." }
+    }
+
+    /**
+     * When the model refuses to emit tool calls for a modification request, we "kickstart" progress by running
+     * one high-signal read/search ourselves and feeding the result back into the loop as an Observation.
+     *
+     * Returns Triple(toolName, paramsJsonString, toolOutput) or null if no reasonable kickstart found.
+     */
+    private suspend fun kickstartModificationTools(
+        originalTask: String,
+        context: TaskContext,
+        tools: KoogToolRegistryBuilder.FileAccessTools
+    ): Triple<String, String, String>? {
+        // Generic kickstart: keep discovery scoped to launcher UI code (no hardcoded file).
+        val args = buildJsonObject {
+            put("pattern", JsonPrimitive("(Alt|ALT).*Enter|Ctrl\\+Enter|Shift\\+Enter|onPreviewKeyEvent|onKeyEvent|KeyEvent|Key\\.Enter|ImeAction|TextField\\("))
+            put("directory", JsonPrimitive("launcher/src/main/kotlin"))
+            put("filePattern", JsonPrimitive("*.kt"))
+        }
+        val out = executeTool(ToolCall("regexSearch", args), tools, originalTask = originalTask)
+        return Triple("regexSearch", args.toString(), out)
+    }
+
+    private data class DiscoveryResult(
+        val success: Boolean,
+        val observations: List<Triple<String, String, String>> = emptyList(),
+        val explanation: String = ""
+    )
+
+    /**
+     * Discover where the user-facing input logic lives (UI or CLI) using evidence (search + read).
+     * This is a common strategy (no task-specific hardcoded keywords):
+     * - derive search terms from the prompt
+     * - combine with generic structural signals (UI widgets / key handling, CLI input loops)
+     * - prove relevance by reading candidate files
+     * If we can't find a plausible place, returns an explicit explanation of what was searched and what is missing.
+     */
+    private suspend fun discoverInputSurface(
+        originalTask: String,
+        context: TaskContext,
+        tools: KoogToolRegistryBuilder.FileAccessTools
+    ): DiscoveryResult {
+        val obs = mutableListOf<Triple<String, String, String>>()
+        val terms = extractSearchTerms(originalTask).take(8)
+        val termRegex = if (terms.isEmpty()) "" else terms.joinToString("|") { Regex.escape(it) }
+
+        // UI-first: launcher sources, structural signals for input widgets + key handling, plus prompt-derived terms.
+        val uiSignals = listOf(
+            "TextField\\(",
+            "BasicTextField\\(",
+            "onKeyEvent",
+            "onPreviewKeyEvent",
+            "KeyEvent",
+            "ImeAction",
+            "KeyboardActions",
+            "keyboardOptions"
+        ).joinToString("|")
+        val uiPattern = listOf(uiSignals, termRegex).filter { it.isNotBlank() }.joinToString("|")
+        val uiSearchArgs = buildJsonObject {
+            put("pattern", JsonPrimitive(uiPattern))
+            put("directory", JsonPrimitive("launcher/src/main/kotlin"))
+            put("filePattern", JsonPrimitive("*.kt"))
+        }
+        val uiSearchOut = executeTool(ToolCall("regexSearch", uiSearchArgs), tools, originalTask = originalTask)
+        obs.add(Triple("regexSearch", uiSearchArgs.toString(), uiSearchOut))
+        val uiCandidates = extractCandidateFilesFromRegexSearch(uiSearchOut).take(6)
+        if (readAndProveInputHandler(uiCandidates, context, tools, originalTask, obs)) {
+            return DiscoveryResult(success = true, observations = obs)
+        }
+
+        // CLI fallback: whole repo, structural signals for interactive input loops, plus prompt-derived terms.
+        val cliSignals = listOf(
+            "readLine\\(",
+            "System\\.in",
+            "stdin",
+            "JLine",
+            "Lanterna"
+        ).joinToString("|")
+        val cliPattern = listOf(cliSignals, termRegex).filter { it.isNotBlank() }.joinToString("|")
+        val cliSearchArgs = buildJsonObject {
+            put("pattern", JsonPrimitive(cliPattern))
+            put("directory", JsonPrimitive(".")) // project root
+            put("filePattern", JsonPrimitive("*.kt"))
+        }
+        val cliSearchOut = executeTool(ToolCall("regexSearch", cliSearchArgs), tools, originalTask = originalTask)
+        obs.add(Triple("regexSearch", cliSearchArgs.toString(), cliSearchOut))
+        val cliCandidates = extractCandidateFilesFromRegexSearch(cliSearchOut).take(6)
+        if (readAndProveCliInput(cliCandidates, context, tools, originalTask, obs)) {
+            return DiscoveryResult(success = true, observations = obs)
+        }
+
+        val msg = buildString {
+            append("❌ Could not locate the user prompt input implementation (UI or CLI) with enough evidence to safely edit.\n")
+            if (terms.isNotEmpty()) append("Prompt-derived search terms: ${terms.joinToString(", ")}\n")
+            append("Searched:\n- UI signals in `launcher/src/main/kotlin` (TextField/key events/IME)\n- CLI signals in repo (readLine/System.in/JLine)\n")
+            append("Need more info:\n- File/class where the prompt text is entered (input widget or CLI loop), or a hint to that file.\n")
+        }
+        return DiscoveryResult(success = false, observations = obs, explanation = msg)
+    }
+
+    private fun extractSearchTerms(prompt: String): List<String> {
+        val stop = setOf(
+            "add", "remove", "change", "update", "fix", "implement", "refactor",
+            "the", "a", "an", "to", "of", "in", "on", "for", "and", "or", "with",
+            "my", "your", "our", "so", "can", "i", "we", "it", "is", "are", "be",
+            "line", "next", "new"
+        )
+        return prompt
+            .lowercase()
+            .replace(Regex("""[^a-z0-9_\- ]+"""), " ")
+            .split(Regex("""\s+"""))
+            .map { it.trim() }
+            .filter { it.length >= 4 && it !in stop }
+            .distinct()
+    }
+
+    private fun extractCandidateFilesFromRegexSearch(regexSearchOut: String): List<String> {
+        if (!regexSearchOut.trimStart().startsWith("✅")) return emptyList()
+        return regexSearchOut
+            .lineSequence()
+            .mapNotNull { line ->
+                val idx = line.indexOf(':')
+                if (idx <= 0) return@mapNotNull null
+                val path = line.substring(0, idx).trim()
+                if (path.endsWith(".kt", ignoreCase = true)) path else null
+            }
+            .distinct()
+            .toList()
+    }
+
+    private suspend fun readAndProveInputHandler(
+        candidates: List<String>,
+        context: TaskContext,
+        tools: KoogToolRegistryBuilder.FileAccessTools,
+        originalTask: String,
+        obs: MutableList<Triple<String, String, String>>
+    ): Boolean {
+        for (rel in candidates) {
+            val abs = context.currentFiles.firstOrNull { it.endsWith(rel.replace('/', '\\'), ignoreCase = true) } ?: rel
+            val readArgs = buildJsonObject { put("path", JsonPrimitive(abs)) }
+            val readOut = executeTool(ToolCall("readFile", readArgs), tools, originalTask = originalTask)
+            obs.add(Triple("readFile", readArgs.toString(), readOut))
+            val content = readOut.removePrefix("✅ File read successfully:").lowercase()
+            val hasWidget = content.contains("textfield(") || content.contains("basictextfield(")
+            val hasKey = content.contains("onkeyevent") || content.contains("onpreviewkeyevent")
+            val hasIme = content.contains("imeaction") || content.contains("keyboardactions") || content.contains("keyboardoptions")
+            if (hasWidget && (hasKey || hasIme)) return true
+        }
+        return false
+    }
+
+    private suspend fun readAndProveCliInput(
+        candidates: List<String>,
+        context: TaskContext,
+        tools: KoogToolRegistryBuilder.FileAccessTools,
+        originalTask: String,
+        obs: MutableList<Triple<String, String, String>>
+    ): Boolean {
+        for (rel in candidates) {
+            val abs = context.currentFiles.firstOrNull { it.endsWith(rel.replace('/', '\\'), ignoreCase = true) } ?: rel
+            val readArgs = buildJsonObject { put("path", JsonPrimitive(abs)) }
+            val readOut = executeTool(ToolCall("readFile", readArgs), tools, originalTask = originalTask)
+            obs.add(Triple("readFile", readArgs.toString(), readOut))
+            val content = readOut.removePrefix("✅ File read successfully:").lowercase()
+            val hasReadLine = content.contains("readline(") || content.contains("system.`in`") || content.contains("system.in")
+            val hasLoop = content.contains("while") || content.contains("for (") || content.contains("do {")
+            if (hasReadLine && hasLoop) return true
+        }
+        return false
     }
     
     /** Convert JsonElement (e.g. tool args) to Map<String, Any> for streaming chunk parameters. */
@@ -990,7 +1260,7 @@ data class ToolCall(val tool: String, val args: JsonElement)
                         "❌ Error listing directory: ${output.error}"
                     }
                 }
-                "regex_search", "search" -> {
+                "regex_search", "regexSearch", "search" -> {
                     val args = json.decodeFromJsonElement(RegexSearchArgs.serializer(), toolCall.args)
                     val output = tools.regexSearch(args.pattern, args.directory, args.filePattern)
                     if (output.success) {
@@ -1035,5 +1305,26 @@ data class ToolCall(val tool: String, val args: JsonElement)
         val modify = listOf("edit", "modify", "update", "change", "fix", "set ", "replace", "remove", "delete", "add", "write")
         if (modify.any { t.contains(it) }) return false
         return t.contains("file") || t.contains("files") || t.contains("directory") || t.contains("folders") || t.contains("project")
+    }
+
+    private fun isModificationTask(task: String): Boolean {
+        val t = task.trim().lowercase()
+        // Heuristic: these intents imply we must complete with writeFile/editFile.
+        return listOf(
+            "edit",
+            "modify",
+            "update",
+            "change",
+            "fix",
+            "set ",
+            "replace",
+            "remove",
+            "delete",
+            "add ",
+            "implement",
+            "refactor",
+            "rename",
+            "insert"
+        ).any { t.contains(it) }
     }
 }

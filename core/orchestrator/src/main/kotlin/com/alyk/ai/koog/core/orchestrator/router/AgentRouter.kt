@@ -87,6 +87,11 @@ data class AgentResponse(
 sealed class AgentResponseChunk {
     data class Text(val content: String) : AgentResponseChunk()
     data class Progress(val percent: Int, val message: String) : AgentResponseChunk()
+    data class Decision(
+        val phase: String,
+        val message: String,
+        val details: Map<String, Any>? = null
+    ) : AgentResponseChunk()
     data class ToolCall(
         val toolName: String,
         val parameters: Map<String, Any>,

@@ -27,6 +27,15 @@ class AgentClient(
                 is AgentResponseChunk.Progress -> {
                     emit(OutputEvent.Progress(chunk.percent, chunk.message))
                 }
+                is AgentResponseChunk.Decision -> {
+                    emit(
+                        OutputEvent.Decision(
+                            phase = chunk.phase,
+                            message = chunk.message,
+                            details = chunk.details
+                        )
+                    )
+                }
                 is AgentResponseChunk.ToolCall -> {
                     emit(OutputEvent.ToolCallDetail(
                         toolName = chunk.toolName,

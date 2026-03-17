@@ -281,7 +281,7 @@ class ImplementationAgent(
                     }
                     
                     try {
-                        val toolOutput = executeTool(toolCall, tools)
+                        val toolOutput = executeTool(toolCall, tools, originalTask = initialPrompt)
                         val duration = System.currentTimeMillis() - startTime
                         
                         // Our tool outputs are prefixed with ✅ / ❌
@@ -635,8 +635,12 @@ class ImplementationAgent(
     /**
      * Execute a tool call
      */
-    private fun executeTool(toolCall: ToolCall, tools: KoogToolRegistryBuilder.FileAccessTools): String {
+    private fun executeTool(toolCall: ToolCall, tools: KoogToolRegistryBuilder.FileAccessTools, originalTask: String): String {
         return try {
+            // Safety: for "list/show files" tasks, do not allow mutating operations.
+            if (isPureListingTask(originalTask) && (toolCall.tool == "write_file" || toolCall.tool == "writeFile")) {
+                return "❌ Blocked write_file: task is a listing request ('${originalTask.take(80)}...'). Use list_directory/regex_search/read_file only."
+            }
             when (toolCall.tool) {
                 "read_file", "readFile" -> {
                     val args = json.decodeFromJsonElement(ReadFileArgs.serializer(), toolCall.args)
@@ -658,6 +662,25 @@ class ImplementationAgent(
                 }
                 "list_directory", "listDirectory" -> {
                     val args = json.decodeFromJsonElement(ListDirectoryArgs.serializer(), toolCall.args)
+
+                    // Modern agent behavior: if we are listing ".", but the user likely wants a specific file,
+                    // do a targeted search first to avoid repeated root listings.
+                    if (args.path == "." || args.path.isBlank()) {
+                        val candidate = extractLikelyFileNameFromText(text = originalTask)
+                        if (candidate != null) {
+                            val search = tools.regexSearch(
+                                pattern = Regex.escape(candidate),
+                                directory = "src",
+                                filePattern = "*.kt"
+                            )
+                            if (search.success && search.matches.isNotEmpty()) {
+                                val files = search.matches.map { it.file }.distinct().take(10)
+                                    .joinToString("\n") { "📄 $it" }
+                                return "✅ Found candidate source files for '$candidate' (via regex_search, avoiding root listing):\n$files\nNext: call read_file on the correct one."
+                            }
+                        }
+                    }
+
                     val output = tools.listDirectory(args.path)
                     if (output.success) {
                         "✅ Directory listing:\n${output.entries.joinToString("\n") { "${if (it.isDirectory) "📁" else "📄"} ${it.path}" }}"
@@ -681,6 +704,21 @@ class ImplementationAgent(
         } catch (e: Exception) {
             "❌ Error executing tool ${toolCall.tool}: ${e.message}"
         }
+    }
+
+    private fun extractLikelyFileNameFromText(text: String?): String? {
+        if (text.isNullOrBlank()) return null
+        val m = """([A-Za-z0-9_\-]+\.(kt|java|py|js|ts|go|rs|cs|scala))""".toRegex(RegexOption.IGNORE_CASE)
+            .find(text)
+        return m?.groupValues?.getOrNull(1)
+    }
+
+    private fun isPureListingTask(task: String): Boolean {
+        val t = task.trim().lowercase()
+        if (!t.contains("list") && !t.contains("show")) return false
+        val modify = listOf("edit", "modify", "update", "change", "fix", "set ", "replace", "remove", "delete", "add", "write")
+        if (modify.any { t.contains(it) }) return false
+        return t.contains("file") || t.contains("files") || t.contains("directory") || t.contains("folders") || t.contains("project")
     }
     
     override suspend fun processStreaming(task: String, context: TaskContext): Flow<AgentResponseChunk> = flow {

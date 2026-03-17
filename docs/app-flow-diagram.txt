@@ -1,358 +1,73 @@
-title Koog Coding Agent - Application Flow Diagram
+title Koog Coding Agent - Application Flow Diagram (current)
 
 // Participants
 actor "User" as User
 participant "Main (launcher)" as Main
 participant "AgentLauncherImpl" as Launcher
-participant "ConfigLoader" as Config
-participant "UnifiedModelManager" as ModelManager
-participant "ModelRegistry" as LocalRegistry
-participant "CloudModelRegistry" as CloudRegistry
+participant "SqliteDatabaseProvider" as DbProvider
 participant "AgentOrchestrator" as Orchestrator
-participant "AgentRouter" as Router
-participant "ImplementationAgent" as ImplAgent
-participant "ContextProvider" as Context
-participant "HierarchyBuilder" as Hierarchy
-participant "DecisionEngine" as Decision
-participant "ModelSwitchControl" as SwitchControl
-participant "PerformanceMonitor" as PerfMonitor
-participant "AgentClient" as Client
 participant "McpIntegration" as MCP
 participant "WorkspaceFactory" as WorkspaceFactory
-participant "ToolRegistry" as ToolRegistry
-participant "ToolUsageTracker" as ToolTracker
-participant "KoogToolRegistryBuilder" as KoogTools
-database "Local Models" as LocalDB
-database "Cloud APIs" as CloudAPIs
-participant "GUI Components" as GUI
+participant "AgentRouter" as Router
+participant "EnhancedImplementationAgent" as EnhancedImpl
+participant "ImplementationAgent" as ImplAgent
+participant "McpSelectionModule" as McpSelection
+participant "McpDecisionModule" as McpDecision
+participant "ContextProvider" as Context
+participant "KoogToolRegistryBuilder.FileAccessTools" as Tools
+participant "AgentClient" as Client
+participant "MainViewModel" as VM
+participant "TerminalOutputFilter" as TermFilter
+participant "TerminalEventCard" as Card
 
-== Application Startup ==
+== Startup ==
 
-User -> Main: launch application
-Main -> Main: parse args (--cli or GUI)
-Main -> Launcher: create AgentLauncherImpl()
-note right of Launcher: During construction:\n- ConfigLoader.load() called (internal config)\n- UnifiedModelManager created\n- ModelRegistry created\n- CloudModelRegistry created\n- PerformanceMonitor created\n- ContextProvider created\n- HierarchyBuilder created
-Launcher -> Config: load configuration (internal)
-Config --> Launcher: return Config
-Launcher -> ModelManager: create UnifiedModelManager
-Launcher -> LocalRegistry: create ModelRegistry
-Launcher -> CloudRegistry: create CloudModelRegistry (if configured)
-Launcher -> PerfMonitor: create PerformanceMonitor
-Launcher -> Context: create ContextProvider
-Launcher -> Hierarchy: create HierarchyBuilder
+User -> Main: launch GUI
+Main -> Launcher: create + initialize AgentLauncherImpl
+Launcher -> DbProvider: init ~/.koog/koog.db\n(create/migrate tables)
+Launcher -> Orchestrator: initialize(projectPath=null)\n(boot without project)
+Orchestrator -> Router: create AgentRouter\n(create agents + workspaces)
+Launcher -> VM: create MainViewModel(launcher,\nTerminalSettingsRepository,\nAgentTabsStore,\nAgentStateStore)
 
-Main -> Main: create Config(projectPath)
-Main -> Launcher: initialize(config)
-Launcher -> ModelManager: scanAllModels()
-ModelManager -> LocalRegistry: scanModels()
-LocalRegistry --> ModelManager: local models
-ModelManager -> CloudRegistry: scanModels() (if configured)
-CloudRegistry --> ModelManager: cloud models
-ModelManager --> Launcher: all available models
+note right of VM: Tabs + terminal state are restored from DB:\n- tabs list + active tab\n- session.conversation_history (events)\n- session.input_history (prompt history)\n- terminal output settings (filter + formatting)
 
-Launcher -> Launcher: select smallest local model
-Launcher -> ModelManager: createModelWrapper(smallestModel)
-ModelManager --> Launcher: ModelWrapper
-Launcher -> SwitchControl: create ModelSwitchControl(initialModel)
-Launcher -> Decision: create DecisionEngine
-Launcher -> Orchestrator: create AgentOrchestrator(...)
-Launcher -> Client: create AgentClient(orchestrator)
+== Project selection / restore ==
 
-Launcher -> Orchestrator: initialize(projectPath)
-Orchestrator -> Context: loadProject(projectPath)
-Context -> Hierarchy: initialize(projectPath)
-Hierarchy -> Hierarchy: scanProjectFiles()
-Hierarchy --> Context: loaded files
-Context --> Orchestrator: project loaded
+VM -> Orchestrator: loadProject(projectPath)
+Orchestrator -> Context: loadProject(projectPath)\n(scan files -> currentFiles)
+Orchestrator -> MCP: initializeForProject(projectPath)\n(collect MCP tool definitions)
+Orchestrator -> Router: activate MCP structure\n(refresh workspaces + tools)
 
-Orchestrator -> MCP: initializeForProject(projectPath)
-MCP -> MCP: setup MCP tools
-MCP --> Orchestrator: MCP tools ready
+== Task processing (GUI) ==
 
-Orchestrator -> WorkspaceFactory: create workspaces
-WorkspaceFactory -> WorkspaceFactory: create Implementation workspace
-WorkspaceFactory --> Orchestrator: workspaces
+User -> VM: submitTask(text, mode)
+VM -> VM: addToInputHistory(text)\n(persist to session.input_history)
+VM -> Client: processTask(task, mode, agentType, sessionId)
 
-Orchestrator -> KoogTools: build ToolRegistry
-KoogTools -> KoogTools: register file access tools
-KoogTools --> Orchestrator: combined ToolRegistry
-
-Orchestrator -> Router: create AgentRouter(workspaces, toolRegistry)
-Router -> Router: initialize agents with ToolRegistry
-Router --> Orchestrator: router ready
-Orchestrator --> Launcher: initialization complete
-
-alt GUI Mode
-    Launcher -> GUI: launch(launcher)
-    GUI -> Launcher: getStatusStream()
-    Launcher --> GUI: status flow
-else CLI Mode
-    Launcher -> CLI: launch()
-end
-
-== Task Processing Flow ==
-
-User -> GUI: submit task
-GUI -> Launcher: processTask(task, mode, agentType)
-
-Launcher -> Launcher: detectAndSwitchToRunningModel()
-Launcher -> ModelManager: getRunningModels()
-ModelManager -> LocalRegistry: getRunningModels()
-LocalRegistry --> ModelManager: running models
-ModelManager --> Launcher: running models list
-
-alt running model found and different from current
-    Launcher -> SwitchControl: switchToModel(modelId)
-    SwitchControl -> ModelManager: createModelWrapper(modelId)
-    ModelManager --> SwitchControl: ModelWrapper
-    SwitchControl --> Launcher: switch complete
-end
-
-Launcher -> Client: processTask(task, mode, agentType)
 Client -> Orchestrator: routeTaskStreaming(task, sessionId, agentType)
+Orchestrator -> Context: getContextForTask(task)\n(provides TaskContext.currentFiles)
+Orchestrator -> Router: routeTaskStreaming(task, TaskContext)
+Router -> EnhancedImpl: processStreaming(task, TaskContext)\n(default implementation path)
 
-Orchestrator -> Context: getContextForTask(task)
-Context -> Context: findRelevantFiles(task)
-Context --> Orchestrator: context string
+== EnhancedImplementationAgent (MCP plan + tool loop) ==
 
-Orchestrator -> Router: routeTaskStreaming(task, context, agentType)
-Router -> Router: select agent (default: ImplementationAgent)
-Router -> ImplAgent: process(task, context)
+EnhancedImpl -> McpSelection: selectRelevantTools(task)\n+ extractParameters(...)
+EnhancedImpl -> McpDecision: analyzeAndCreatePlan(...)
+EnhancedImpl --> Client: AgentResponseChunk.Thinking("Plan: ...")\n(setting key: show_thinking_process)
 
-== ImplementationAgent Processing ==
-
-ImplAgent -> ImplAgent: isSimpleTask(task)?
-
-alt Simple Task (math, short question)
-    ImplAgent -> ImplAgent: handleSimpleTask(task)
-    ImplAgent -> ImplAgent: createKoogAgent()
-    ImplAgent -> ImplAgent: agent.run(simplePrompt) [30s timeout]
-    ImplAgent --> Router: direct response
-else Complex Task (requires tools)
-    ImplAgent -> ImplAgent: executeWithTools(prompt, tools, maxIterations=10)
-    
-    loop Tool Execution Loop (max 10 iterations)
-        ImplAgent -> ImplAgent: createKoogAgent() [new instance]
-        ImplAgent -> ImplAgent: buildPromptWithContext(conversationHistory)
-        ImplAgent -> ImplAgent: agent.run(prompt) [60s timeout per iteration]
-        ImplAgent --> ImplAgent: agent response
-        
-        ImplAgent -> ImplAgent: extractToolCall(response)
-        
-        alt Tool call detected
-            ImplAgent -> ImplAgent: tryParseToolCall(jsonString)
-            
-            alt JSON parsing successful
-                ImplAgent -> ToolTracker: recordToolUsage(tool, startTime)
-                ImplAgent -> KoogTools: executeTool(toolCall)
-                
-                alt Tool: read_file
-                    KoogTools -> KoogTools: readFile(path)
-                    KoogTools --> ImplAgent: file content
-                else Tool: write_file
-                    KoogTools -> KoogTools: writeFile(path, content)
-                    KoogTools --> ImplAgent: write result
-                else Tool: list_directory
-                    KoogTools -> KoogTools: listDirectory(path)
-                    KoogTools --> ImplAgent: directory listing
-                else Tool: regex_search
-                    KoogTools -> KoogTools: regexSearch(pattern, directory)
-                    KoogTools --> ImplAgent: search results
-                end
-                
-                ImplAgent -> ToolTracker: recordToolUsage(tool, success, duration)
-                ImplAgent -> ImplAgent: add tool output to conversation history
-                ImplAgent -> ImplAgent: continue to next iteration
-            else JSON parsing failed
-                ImplAgent -> ImplAgent: manual extraction fallback
-                alt Manual extraction successful
-                    ImplAgent -> KoogTools: executeTool(toolCall)
-                    KoogTools --> ImplAgent: tool result
-                    ImplAgent -> ImplAgent: continue
-                else Manual extraction failed
-                    ImplAgent -> ImplAgent: treat as final response
-                    ImplAgent -> ImplAgent: break loop
-                end
-            end
-        else No tool call detected
-            ImplAgent -> ImplAgent: final response received
-            ImplAgent -> ImplAgent: break loop
-        end
-        
-        alt Error occurred
-            alt Tool execution error
-                ImplAgent -> ImplAgent: add error to conversation history
-                ImplAgent -> ImplAgent: continue (allow recovery)
-            else Timeout error
-                alt Last iteration
-                    ImplAgent -> ImplAgent: return timeout error
-                else Not last iteration
-                    ImplAgent -> ImplAgent: add timeout note to history
-                    ImplAgent -> ImplAgent: continue
-                end
-            else Critical error
-                ImplAgent -> ImplAgent: return error immediately
-            end
-        end
-    end
-    
-    ImplAgent --> Router: AgentResponse with result
+loop tool execution
+  EnhancedImpl -> Tools: readFile / listDirectory / regexSearch / writeFile / runCommand
+  Tools --> EnhancedImpl: tool result
+  EnhancedImpl --> Client: AgentResponseChunk.ToolCall(toolName, params,\nresult, success, durationMs)
+  alt tool == writeFile AND success
+    EnhancedImpl --> Client: AgentResponseChunk.FileDiff(path,\noldPreview, newPreview, +/-, ...)\n(setting key: show_code_diffs)
+    EnhancedImpl -> EnhancedImpl: stop loop (avoid read/write oscillation)
+  end
 end
 
-Router --> Orchestrator: AgentResponse
-Orchestrator --> Client: response
-Client --> GUI: OutputEvent flow
-GUI --> User: display response
+== UI mapping / rendering ==
 
-== Tool Call Extraction Strategy ==
-
-ImplAgent -> ImplAgent: extractToolCall(response)
-
-alt Code block found
-    ImplAgent -> ImplAgent: extract JSON from ```json {...} ```
-    ImplAgent -> ImplAgent: tryParseToolCall(jsonString, "code block")
-else JSON object found
-    ImplAgent -> ImplAgent: find JSON with "tool" field
-    ImplAgent -> ImplAgent: tryParseToolCall(jsonString, "json object")
-end
-
-ImplAgent -> ImplAgent: tryParseToolCall(jsonString, source)
-
-alt Direct JSON parsing
-    ImplAgent -> ImplAgent: json.decodeFromString<ToolCall>()
-    ImplAgent --> ImplAgent: tool call extracted
-else Parsing failed - fix common issues
-    ImplAgent -> ImplAgent: fix backslashes, paths
-    ImplAgent -> ImplAgent: try parsing again
-    alt Fixed parsing successful
-        ImplAgent --> ImplAgent: tool call extracted
-    else Still failed - manual extraction
-        ImplAgent -> ImplAgent: extract tool name with regex
-        ImplAgent -> ImplAgent: extract args with brace matching
-        ImplAgent -> ImplAgent: create minimal JSON
-        ImplAgent --> ImplAgent: tool call extracted
-    end
-end
-
-== Model Decision & Switching ==
-
-Orchestrator -> Decision: getPerformanceStats()
-Decision -> PerfMonitor: getStats()
-PerfMonitor --> Decision: PerformanceStats
-Decision --> Orchestrator: stats
-
-Orchestrator -> Decision: getPerformanceWarnings()
-Decision -> PerfMonitor: detectWarningSignals()
-PerfMonitor --> Decision: warnings
-Decision --> Orchestrator: warnings
-
-Orchestrator -> Decision: getPerformanceAlerts()
-Decision -> PerfMonitor: checkThresholds()
-PerfMonitor --> Decision: alerts
-Decision --> Orchestrator: alerts
-
-alt performance issues detected
-    Decision -> Decision: shouldUseCloudModel()
-    Decision -> Decision: selectBestCloudModel()
-    Decision --> Orchestrator: cloud model recommendation
-else
-    Decision -> Decision: selectBestLocalModel()
-    Decision --> Orchestrator: local model recommendation
-end
-
-== GUI Model Management ==
-
-User -> GUI: interact with OllamaMonitorAndControl
-GUI -> ModelManager: getLocalModels()
-ModelManager -> LocalRegistry: scanModels()
-LocalRegistry --> ModelManager: local models
-ModelManager --> GUI: models list
-
-GUI -> ModelManager: getCloudModels()
-ModelManager -> CloudRegistry: scanModels()
-CloudRegistry --> ModelManager: cloud models
-ModelManager --> GUI: cloud models
-
-User -> GUI: pull model request
-GUI -> LocalRegistry: pullModel(modelName)
-LocalRegistry -> LocalDB: download model
-LocalDB --> LocalRegistry: model files
-LocalRegistry --> GUI: progress updates
-GUI --> User: show progress
-
-User -> GUI: start/stop model
-GUI -> LocalRegistry: startModel(modelName)
-LocalRegistry -> LocalDB: load model
-LocalDB --> LocalRegistry: model running
-LocalRegistry --> GUI: status update
-GUI --> User: updated model status
-
-== Performance Monitoring ==
-
-ModelWrapper -> PerfMonitor: recordResponse(time, tokens)
-PerfMonitor -> PerfMonitor: updateStats()
-PerfMonitor -> PerfMonitor: detectWarningSignals()
-PerfMonitor -> PerfMonitor: checkThresholds()
-
-PerfMonitor --> Decision: performance data
-Decision --> SwitchControl: switching recommendations
-SwitchControl --> Launcher: model switch events
-Launcher --> GUI: status updates
-
-KoogTools -> ToolTracker: recordToolUsage(tool, success, duration)
-ToolTracker -> ToolTracker: update statistics
-ToolTracker --> Orchestrator: tool usage stats
-Orchestrator --> Launcher: tool metrics
-Launcher --> GUI: tool usage display
-
-== Error Handling & Fallback ==
-
-alt ModelWrapper fails
-    ModelWrapper -> Orchestrator: error
-    Orchestrator -> Orchestrator: handleFallback(sessionId, error)
-    Orchestrator --> Client: fallback response
-else ContextProvider fails
-    Context -> Orchestrator: error
-    Orchestrator -> Context: retry with reduced context
-    Context --> Orchestrator: minimal context
-else Tool execution fails
-    KoogTools -> ImplAgent: tool error
-    ImplAgent -> ImplAgent: add error to conversation history
-    ImplAgent -> ImplAgent: continue to next iteration (recovery)
-else Agent timeout
-    ImplAgent -> ImplAgent: timeout exception
-    alt Simple task timeout
-        ImplAgent --> Router: timeout error message
-    else Complex task timeout
-        alt Last iteration
-            ImplAgent --> Router: timeout error message
-        else Not last iteration
-            ImplAgent -> ImplAgent: add timeout note, continue
-        end
-    end
-end
-
-== Status Monitoring ==
-
-GUI -> Launcher: getStatus()
-Launcher -> Orchestrator: getPerformanceStats()
-Launcher -> Orchestrator: getToolUsageStats()
-Launcher -> Orchestrator: getFileAccessStats()
-Launcher -> SwitchControl: getCurrentModelId()
-Launcher -> Context: getLoadedFiles()
-Launcher -> MCP: getMcpStatus()
-Launcher -> Launcher: calculate context usage
-Launcher --> GUI: AgentStatus (with tool metrics)
-GUI --> User: display status
-
-== Shutdown ==
-
-User -> GUI: close application
-GUI -> Launcher: shutdown()
-Launcher -> ModelManager: close()
-ModelManager -> LocalRegistry: close()
-ModelManager -> CloudRegistry: close()
-Launcher -> Client: shutdown()
-Launcher -> Launcher: cancel status scope
-Launcher --> GUI: shutdown complete
-GUI --> User: application closed
+Client --> VM: OutputEvent stream\n(Standard/Progress/ToolCallDetail/FileDiff/Thinking/...)
+VM -> TermFilter: shouldShowAndFormat(key, settings, message)
+VM --> Card: TerminalEventCard(event)\n(ToolCall/FileOp/FileDiff/Decision/Thinking)
+Card --> User: rendered terminal feed

@@ -125,11 +125,14 @@ class MainViewModel(
     
     // Get terminal state for specific tab
     private fun getTerminalStateForTab(tabId: String): TerminalStateDto {
+        val currentHistory = _terminalState.value.inputHistory
         return _tabTerminalStates.value[tabId] ?: TerminalStateDto(
             events = emptyList(),
             inputText = "",
             isProcessing = false,
-            selectedAgentType = AgentTypeDto.IMPLEMENTATION
+            selectedAgentType = AgentTypeDto.IMPLEMENTATION,
+            inputHistory = currentHistory,
+            historyIndex = -1
         )
     }
     
@@ -157,7 +160,9 @@ class MainViewModel(
                         events = terminalEvents,
                         inputText = "",
                         isProcessing = false,
-                        selectedAgentType = convertDatabaseAgentTypeToGui(dbTab.agentType)
+                        selectedAgentType = convertDatabaseAgentTypeToGui(dbTab.agentType),
+                        inputHistory = it.inputHistory,
+                        historyIndex = -1
                     )
                     
                     val updatedStates = _tabTerminalStates.value.toMutableMap()
@@ -405,6 +410,19 @@ class MainViewModel(
             inputHistory = history,
             historyIndex = -1 // Reset index when adding new input
         )
+
+        // Persist prompt history to the active tab's session so it survives restarts.
+        val activeTabId = _guiAgentTabsState.value.activeTabId
+        val sessionId = _agentTabsState.value.tabs.find { it.id == activeTabId }?.sessionId
+        if (sessionId != null) {
+            coroutineScope.launch(Dispatchers.IO) {
+                try {
+                    agentStateStore?.updateSession(sessionId) { s -> s.copy(inputHistory = history) }
+                } catch (e: Exception) {
+                    println("[VIEWMODEL] Failed to persist input history: ${e.message}")
+                }
+            }
+        }
     }
     
     fun navigateInputHistory(direction: TerminalViewModel.HistoryDirection) {
@@ -668,6 +686,20 @@ class MainViewModel(
                     success = event.success
                 )
             )
+            is OutputEvent.FileDiff -> TerminalEventDto(
+                id = UUID.randomUUID().toString(),
+                timestamp = Instant.now(),
+                type = TerminalEventDto.EventType.FILE_DIFF,
+                message = "Diff: ${event.path}",
+                outputSettingKey = key,
+                payload = TerminalEventPayload.FileDiff(
+                    path = event.path,
+                    oldPreview = event.oldPreview,
+                    newPreview = event.newPreview,
+                    addedLines = event.addedLines,
+                    removedLines = event.removedLines
+                )
+            )
             is OutputEvent.Decision -> TerminalEventDto(
                 id = UUID.randomUUID().toString(),
                 timestamp = Instant.now(),
@@ -675,6 +707,14 @@ class MainViewModel(
                 message = "${event.phase}: ${event.message}",
                 outputSettingKey = key,
                 payload = TerminalEventPayload.Decision(phase = event.phase, message = event.message, details = event.details)
+            )
+            is OutputEvent.Thinking -> TerminalEventDto(
+                id = UUID.randomUUID().toString(),
+                timestamp = Instant.now(),
+                type = TerminalEventDto.EventType.THINKING,
+                message = event.text,
+                outputSettingKey = key,
+                payload = TerminalEventPayload.Thinking(event.text)
             )
         }
     }

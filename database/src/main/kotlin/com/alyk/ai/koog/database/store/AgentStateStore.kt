@@ -56,6 +56,7 @@ data class PersistedSession(
     val id: UUID,
     val projectPath: String?,
     val conversationHistory: List<String>,
+    val inputHistory: List<String> = emptyList(),
     val activeModel: String? = null,
     val updatedAtMillis: Long = System.currentTimeMillis(),
     val currentPhase: String? = null,

@@ -38,6 +38,7 @@ class EnhancedImplementationAgent(
 ) : BaseAgent(AgentType.IMPLEMENTATION, workspace, toolRegistry, implementationModelWrapper, sessionStore) {
     
     private val json = Json { ignoreUnknownKeys = true }
+    private var pendingFileDiff: AgentResponseChunk.FileDiff? = null
     
 /**
  * Tool call arguments data classes
@@ -77,6 +78,9 @@ data class ToolCall(val tool: String, val args: JsonElement)
             return@flow
         }
         emit(AgentResponseChunk.Progress(5, "Starting implementation"))
+        // Emit a Thinking chunk early so the UI always has a visible "Thinking" event,
+        // even when plan generation results in 0 steps or fails fast.
+        emit(AgentResponseChunk.Thinking("Planning…"))
         val response = processWithMcpModules(task, context, emitChunk = { emit(it) })
         emit(AgentResponseChunk.Text(response.result))
         emit(AgentResponseChunk.Complete)
@@ -135,6 +139,24 @@ data class ToolCall(val tool: String, val args: JsonElement)
             println("[ENHANCED_IMPLEMENTATION] Step 3: Creating execution plan...")
             val executionPlan = decisionModule.analyzeAndCreatePlan(task, selectedTools, extractedParams)
             println("[ENHANCED_IMPLEMENTATION] Execution plan created with ${executionPlan.steps.size} steps")
+
+            emitChunk?.invoke(
+                AgentResponseChunk.Thinking(
+                    buildString {
+                        append("Plan: ")
+                        val steps = executionPlan.steps
+                            .take(6)
+                            .mapNotNull { s -> s.tool?.name ?: s.type.name.lowercase() }
+                            .filter { it.isNotBlank() }
+                        if (steps.isEmpty()) {
+                            append("(no planned steps)")
+                        } else {
+                            append(steps.joinToString(" → "))
+                        }
+                        if (executionPlan.steps.size > 6) append(" → …")
+                    }
+                )
+            )
             
             // Execute the plan
             val result = when (executionPlan.executionStrategy) {
@@ -142,20 +164,10 @@ data class ToolCall(val tool: String, val args: JsonElement)
                     handleDirectResponse(task, executionPlan)
                 }
                 com.alyk.ai.koog.core.orchestrator.mcp.ExecutionStrategy.SEQUENTIAL -> {
-                    val onToolExecuted = emitChunk?.let { emitter ->
-                        suspend { name: String, params: Map<String, Any>, _r: String, _s: Boolean, _d: Long ->
-                            emitter(AgentResponseChunk.ToolCall(name, params))
-                        }
-                    }
-                    executeSequentialPlan(task, executionPlan, context, onToolExecuted = onToolExecuted)
+                    executeSequentialPlan(task, executionPlan, context, emitChunk = emitChunk)
                 }
                 com.alyk.ai.koog.core.orchestrator.mcp.ExecutionStrategy.PARALLEL -> {
-                    val onToolExecuted = emitChunk?.let { emitter ->
-                        suspend { name: String, params: Map<String, Any>, _r: String, _s: Boolean, _d: Long ->
-                            emitter(AgentResponseChunk.ToolCall(name, params))
-                        }
-                    }
-                    executeParallelPlan(task, executionPlan, context, onToolExecuted = onToolExecuted)
+                    executeParallelPlan(task, executionPlan, context, emitChunk = emitChunk)
                 }
             }
 
@@ -257,17 +269,28 @@ data class ToolCall(val tool: String, val args: JsonElement)
         task: String, 
         executionPlan: com.alyk.ai.koog.core.orchestrator.mcp.ExecutionPlan,
         context: TaskContext,
-        onToolExecuted: (suspend (toolName: String, parameters: Map<String, Any>, result: String, success: Boolean, durationMs: Long) -> Unit)? = null
+        emitChunk: (suspend (AgentResponseChunk) -> Unit)? = null
     ): String {
         println("[ENHANCED_IMPLEMENTATION] Using ImplementationAgent's proven tool execution")
         
         // Use the same approach as regular ImplementationAgent
         val projectRoot = context.projectPath!!
         val tools = KoogToolRegistryBuilder.FileAccessTools(projectRoot)
+
+        // If the user references a concrete file name (e.g. main.kt), we already have a reliable source-of-truth:
+        // context.currentFiles (from ContextProvider scan). Use it to avoid build/ directory rabbit holes.
+        val taskFileHint = extractLikelyFileNameFromTask(task)
+        val knownMatch = taskFileHint?.let { hint ->
+            context.currentFiles.firstOrNull { it.endsWith("\\$hint", ignoreCase = true) || it.endsWith("/$hint", ignoreCase = true) }
+        }
+        val knownFilesPreview = context.currentFiles.take(20).joinToString("\n") { "- $it" }
         
         // Create a more explicit prompt that forces tool execution
         val prompt = """
             TASK: $task
+            
+            KNOWN PROJECT FILES (from project scan; prefer these paths over exploring build artifacts):
+            ${if (knownFilesPreview.isBlank()) "- (none)" else knownFilesPreview}
             
             AVAILABLE TOOLS:
             - readFile: Read file contents (path: String)
@@ -284,13 +307,25 @@ data class ToolCall(val tool: String, val args: JsonElement)
                 b. In the NEXT turn, call `writeFile` with the COMPLETE, MODIFIED content of the file.
             4.  Never output code snippets. The only way to produce code is inside the `content` argument of a `writeFile` tool call. Any other code output is a system failure.
             5.  EXECUTE A TOOL NOW.
+            6.  If TASK mentions a specific file (e.g. "$taskFileHint") and it exists in KNOWN PROJECT FILES, you MUST call readFile on that exact path first.
             
             PROJECT ROOT: $projectRoot
             
             Execute the tools now and provide the actual results!
         """.trimIndent()
         
-        return executeWithTools(initialPrompt = prompt, tools = tools, context = context, maxIterations = 10, originalTask = task, onToolExecuted = onToolExecuted)
+        // If we already know the exact file path, prime the loop with a successful read output so the model doesn't wander.
+        // This is the "modern agent" behavior: resolve target deterministically, then operate.
+        val primedPrompt = if (knownMatch != null) {
+            val read = tools.readFile(knownMatch)
+            if (read.success && read.content != null) {
+                prompt + "\n\nTOOL OUTPUT (prefetched): ✅ File read successfully:\n${read.content}"
+            } else {
+                prompt
+            }
+        } else prompt
+
+        return executeWithTools(initialPrompt = primedPrompt, tools = tools, context = context, maxIterations = 10, originalTask = task, emitChunk = emitChunk)
     }
     
     /**
@@ -300,10 +335,10 @@ data class ToolCall(val tool: String, val args: JsonElement)
         task: String,
         executionPlan: com.alyk.ai.koog.core.orchestrator.mcp.ExecutionPlan,
         context: TaskContext,
-        onToolExecuted: (suspend (toolName: String, parameters: Map<String, Any>, result: String, success: Boolean, durationMs: Long) -> Unit)? = null
+        emitChunk: (suspend (AgentResponseChunk) -> Unit)? = null
     ): String {
         println("[ENHANCED_IMPLEMENTATION] Using ImplementationAgent's proven tool execution for parallel plan")
-        return executeSequentialPlan(task, executionPlan, context, onToolExecuted = onToolExecuted)
+        return executeSequentialPlan(task, executionPlan, context, emitChunk = emitChunk)
     }
     
     /**
@@ -546,7 +581,7 @@ data class ToolCall(val tool: String, val args: JsonElement)
         context: TaskContext,
         maxIterations: Int = 10,
         originalTask: String = initialPrompt.take(200),
-        onToolExecuted: (suspend (toolName: String, parameters: Map<String, Any>, result: String, success: Boolean, durationMs: Long) -> Unit)? = null
+        emitChunk: (suspend (AgentResponseChunk) -> Unit)? = null
     ): String {
         // Load history from database
         val conversationHistory = try {
@@ -609,7 +644,12 @@ data class ToolCall(val tool: String, val args: JsonElement)
                 
                 // Check if response looks like a final answer
                 // More lenient criteria: accept shorter responses if they seem complete
-                val looksLikeFinalAnswer = toolCall == null && agentResponse.length > 20 && (
+                val looksLikeFinalAnswer = toolCall == null &&
+                    agentResponse.length > 20 &&
+                    // Don't treat JSON tool-call shapes as final answers
+                    !agentResponse.trimStart().startsWith("```json") &&
+                    !agentResponse.trimStart().startsWith("{") &&
+                    (
                     agentResponse.contains("✅") || 
                     agentResponse.contains("files:") || 
                     agentResponse.contains("directory:") ||
@@ -635,15 +675,35 @@ data class ToolCall(val tool: String, val args: JsonElement)
                     val startTime = System.currentTimeMillis()
                     
                     try {
-                        val toolOutput = executeTool(toolCall, tools)
+                        val toolOutput = executeTool(toolCall, tools, originalTask = originalTask)
                         val duration = System.currentTimeMillis() - startTime
                         val paramsStr = toolCall.args.toString().take(300)
                         observations.add(Triple(toolCall.tool, paramsStr, toolOutput))
                         
                         val success = toolOutput.trimStart().startsWith("✅")
                         
-                        onToolExecuted?.invoke(toolCall.tool, jsonElementToParams(toolCall.args), toolOutput, success, duration)
+                        emitChunk?.invoke(
+                            AgentResponseChunk.ToolCall(
+                                toolName = toolCall.tool,
+                                parameters = jsonElementToParams(toolCall.args),
+                                result = toolOutput,
+                                success = success,
+                                durationMs = duration
+                            )
+                        )
+                        pendingFileDiff?.let { diff ->
+                            emitChunk?.invoke(diff)
+                            pendingFileDiff = null
+                        }
                         
+                        // Stop the tool loop after a successful write: for modification tasks, the work is done.
+                        // Without this, some models oscillate read/write and never produce a final answer.
+                        if (success && (toolCall.tool == "write_file" || toolCall.tool == "writeFile")) {
+                            exitedWithDirectAnswer = true
+                            finalResponse = "✅ Updated ${try { json.decodeFromJsonElement(WriteFileArgs.serializer(), toolCall.args).path } catch (_: Exception) { "file" }}."
+                            break
+                        }
+
                         if (success) {
                             println("[ENHANCED_IMPLEMENTATION] ✅ Tool executed: ${toolCall.tool} (${duration}ms)")
                             lastSuccessfulToolOutput = toolOutput
@@ -658,7 +718,15 @@ data class ToolCall(val tool: String, val args: JsonElement)
                         
                     } catch (e: Exception) {
                         val duration = System.currentTimeMillis() - startTime
-                        onToolExecuted?.invoke(toolCall.tool, jsonElementToParams(toolCall.args), "Error: ${e.message}", false, duration)
+                        emitChunk?.invoke(
+                            AgentResponseChunk.ToolCall(
+                                toolName = toolCall.tool,
+                                parameters = jsonElementToParams(toolCall.args),
+                                result = "Error: ${e.message}",
+                                success = false,
+                                durationMs = duration
+                            )
+                        )
                         println("[ENHANCED_IMPLEMENTATION] ❌ Tool execution error: ${e.message}")
                         observations.add(Triple(toolCall.tool, toolCall.args.toString().take(300), "Error: ${e.message}"))
                         conversationHistory.add("Assistant: $agentResponse")
@@ -757,7 +825,16 @@ data class ToolCall(val tool: String, val args: JsonElement)
     
     private fun normalizeFlatToolCall(jsonStr: String): ToolCall? {
         val obj = json.decodeFromString<JsonObject>(jsonStr)
-        val tool = obj["tool"]?.toString()?.trim('"') ?: return null
+        val explicitTool = obj["tool"]?.toString()?.trim('"')
+        if (explicitTool == null) {
+            // Some models emit {"readFile": {...}} or {"listDirectory": {...}} instead of {"tool":"readFile","args":{...}}
+            val known = setOf("readFile", "writeFile", "listDirectory", "regexSearch", "runCommand", "read_file", "write_file", "list_directory", "regex_search", "run_command", "search")
+            val key = obj.keys.firstOrNull { it in known } ?: return null
+            val argsEl = obj[key]
+            if (argsEl is JsonObject) return ToolCall(key, argsEl)
+            return null
+        }
+        val tool = explicitTool
         val argsEl = obj["args"] ?: obj["arguments"]
         if (argsEl != null) {
             return ToolCall(tool, argsEl)
@@ -846,8 +923,12 @@ data class ToolCall(val tool: String, val args: JsonElement)
     /**
      * Execute a tool call (copied from ImplementationAgent)
      */
-    private suspend fun executeTool(toolCall: ToolCall, tools: KoogToolRegistryBuilder.FileAccessTools): String {
+    private suspend fun executeTool(toolCall: ToolCall, tools: KoogToolRegistryBuilder.FileAccessTools, originalTask: String): String {
         return try {
+            // Safety: for "list/show files" tasks, do not allow mutating operations.
+            if (isPureListingTask(originalTask) && (toolCall.tool == "write_file" || toolCall.tool == "writeFile")) {
+                return "❌ Blocked writeFile: task is a listing request ('${originalTask.take(80)}...'). Use listDirectory/regexSearch/readFile only."
+            }
             when (toolCall.tool) {
                 "read_file", "readFile" -> {
                     val args = json.decodeFromJsonElement(ReadFileArgs.serializer(), toolCall.args)
@@ -860,8 +941,21 @@ data class ToolCall(val tool: String, val args: JsonElement)
                 }
                 "write_file", "writeFile" -> {
                     val args = json.decodeFromJsonElement(WriteFileArgs.serializer(), toolCall.args)
+                    val before = tools.readFile(args.path).let { if (it.success) it.content else null }
                     val output = tools.writeFile(args.path, args.content)
                     if (output.success) {
+                        val after = args.content
+                        val oldLines = before?.lines()?.size ?: 0
+                        val newLines = after.lines().size
+                        val oldPreview = before?.lineSequence()?.take(8)?.joinToString("\n")
+                        val newPreview = after.lineSequence().take(8).joinToString("\n")
+                        pendingFileDiff = AgentResponseChunk.FileDiff(
+                            path = args.path,
+                            oldPreview = oldPreview,
+                            newPreview = newPreview,
+                            addedLines = (newLines - oldLines).coerceAtLeast(0),
+                            removedLines = (oldLines - newLines).coerceAtLeast(0)
+                        )
                         "✅ File written successfully: ${args.path}"
                     } else {
                         "❌ Error writing file: ${output.error}"
@@ -869,6 +963,23 @@ data class ToolCall(val tool: String, val args: JsonElement)
                 }
                 "list_directory", "listDirectory" -> {
                     val args = json.decodeFromJsonElement(ListDirectoryArgs.serializer(), toolCall.args)
+                    // Modern agent behavior: avoid "list root again" loops when we actually need a file.
+                    // If the model tries to list ".", prefer a targeted filename search first.
+                    if (args.path == "." || args.path.isBlank()) {
+                        val candidate = extractLikelyFileNameFromTask(originalTask = originalTask)
+                        if (candidate != null) {
+                            val search = tools.regexSearch(
+                                pattern = Regex.escape(candidate),
+                                directory = "src",
+                                filePattern = "*.kt"
+                            )
+                            if (search.success && search.matches.isNotEmpty()) {
+                                val files = search.matches.map { it.file }.distinct().take(10).joinToString("\n") { "📄 $it" }
+                                return "✅ Found candidate source files for '$candidate' (via regex_search, avoiding root listing):\n$files\nNext: call read_file on the correct one."
+                            }
+                        }
+                    }
+
                     val output = tools.listDirectory(args.path)
                     if (output.success) {
                         val entries = output.entries.take(20).joinToString("\n") { 
@@ -907,5 +1018,22 @@ data class ToolCall(val tool: String, val args: JsonElement)
         } catch (e: Exception) {
             "❌ Error executing tool ${toolCall.tool}: ${e.message}"
         }
+    }
+
+    // (no diff helper; diff is stored in pendingFileDiff and emitted in executeWithTools)
+
+    private fun extractLikelyFileNameFromTask(originalTask: String?): String? {
+        if (originalTask.isNullOrBlank()) return null
+        val m = """([A-Za-z0-9_\-]+\.(kt|java|py|js|ts|go|rs|cs|scala))""".toRegex(RegexOption.IGNORE_CASE).find(originalTask)
+        return m?.groupValues?.getOrNull(1)
+    }
+
+    private fun isPureListingTask(task: String): Boolean {
+        val t = task.trim().lowercase()
+        if (!t.contains("list") && !t.contains("show")) return false
+        // If it also contains obvious modification verbs, it's not "pure listing".
+        val modify = listOf("edit", "modify", "update", "change", "fix", "set ", "replace", "remove", "delete", "add", "write")
+        if (modify.any { t.contains(it) }) return false
+        return t.contains("file") || t.contains("files") || t.contains("directory") || t.contains("folders") || t.contains("project")
     }
 }

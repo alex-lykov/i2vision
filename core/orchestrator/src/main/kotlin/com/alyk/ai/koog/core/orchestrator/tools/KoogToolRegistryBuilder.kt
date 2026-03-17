@@ -2,6 +2,7 @@ package com.alyk.ai.koog.core.orchestrator.tools
 
 import ai.koog.agents.core.tools.ToolRegistry
 import com.alyk.ai.koog.context.provider.ContextProvider
+import java.nio.file.FileSystems
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
@@ -187,12 +188,23 @@ class KoogToolRegistryBuilder(
             }
             
             val regex = pattern.toRegex()
-            val fileRegex = filePattern?.toRegex()
+            val fileNameMatches: ((String) -> Boolean)? = filePattern?.let { fp ->
+                // Accept either a regex or a glob (modern agents commonly send "*.kt").
+                // If it looks like a glob, use PathMatcher; otherwise treat as regex.
+                val looksLikeGlob = fp.contains("*") || fp.contains("?") || fp.contains("[") || fp.contains("]")
+                if (looksLikeGlob) {
+                    val matcher = FileSystems.getDefault().getPathMatcher("glob:$fp")
+                    return@let { fileName: String -> matcher.matches(Paths.get(fileName)) }
+                } else {
+                    val r = fp.toRegex()
+                    return@let { fileName: String -> r.matches(fileName) }
+                }
+            }
             val matches = mutableListOf<RegexMatch>()
             
             Files.walk(searchDir).use { stream ->
                 stream.filter { path ->
-                    Files.isRegularFile(path) && (fileRegex == null || fileRegex.matches(path.fileName.toString()))
+                    Files.isRegularFile(path) && (fileNameMatches == null || fileNameMatches(path.fileName.toString()))
                 }.forEach { filePath ->
                     try {
                         val content = filePath.readText()

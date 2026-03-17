@@ -43,6 +43,8 @@ class DatabaseBackedSessionStore(
                 id = updated.id,
                 projectPath = updated.projectPath,
                 conversationHistory = updated.conversationHistory,
+                // Keep terminal prompt history stable unless explicitly managed elsewhere.
+                inputHistory = current.inputHistory,
                 activeModel = updated.activeModel,
                 updatedAtMillis = System.currentTimeMillis(),
                 currentPhase = updated.currentPhase,

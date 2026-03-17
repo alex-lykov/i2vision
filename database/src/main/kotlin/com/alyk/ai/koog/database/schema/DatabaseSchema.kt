@@ -14,6 +14,7 @@ object SessionsTable : Table("sessions") {
     val id = varchar("id", 36)
     val projectPath = varchar("project_path", 2048).nullable()
     val conversationHistory = text("conversation_history") // JSON array of strings
+    val inputHistory = text("input_history").nullable() // JSON array of strings (terminal prompt history)
     val activeModel = varchar("active_model", 256).nullable()
     val updatedAt = long("updated_at")
     val currentPhase = varchar("current_phase", 256).nullable()

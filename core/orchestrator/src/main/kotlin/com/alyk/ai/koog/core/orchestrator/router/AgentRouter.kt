@@ -87,7 +87,21 @@ data class AgentResponse(
 sealed class AgentResponseChunk {
     data class Text(val content: String) : AgentResponseChunk()
     data class Progress(val percent: Int, val message: String) : AgentResponseChunk()
-    data class ToolCall(val toolName: String, val parameters: Map<String, Any>) : AgentResponseChunk()
+    data class ToolCall(
+        val toolName: String,
+        val parameters: Map<String, Any>,
+        val result: String? = null,
+        val success: Boolean? = null,
+        val durationMs: Long? = null
+    ) : AgentResponseChunk()
+    data class FileDiff(
+        val path: String,
+        val oldPreview: String? = null,
+        val newPreview: String? = null,
+        val addedLines: Int = 0,
+        val removedLines: Int = 0
+    ) : AgentResponseChunk()
+    data class Thinking(val text: String) : AgentResponseChunk()
     object Complete : AgentResponseChunk()
     data class Error(val message: String) : AgentResponseChunk()
 }

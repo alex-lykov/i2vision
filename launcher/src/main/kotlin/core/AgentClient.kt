@@ -11,8 +11,8 @@ class AgentClient(
     private val orchestrator: AgentOrchestrator
 ) {
     fun processTask(task: String, mode: TaskMode, agentType: AgentTypeDto = AgentTypeDto.IMPLEMENTATION, sessionId: String): Flow<OutputEvent> = flow {
-        emit(OutputEvent.System(">>> [${agentType.name}] $task"))
-        emit(OutputEvent.System("Routing task using ${mode.name} mode with ${agentType.name} agent"))
+        // MainViewModel is responsible for emitting the user prompt/system prelude into the terminal.
+        // Keeping that logic in one place avoids duplicated ">>> ..." lines and conflicting filtering keys.
         emit(OutputEvent.Progress(10, "Analyzing request"))
         
         // Map UI DTO to domain AgentType
@@ -31,10 +31,24 @@ class AgentClient(
                     emit(OutputEvent.ToolCallDetail(
                         toolName = chunk.toolName,
                         params = chunk.parameters,
-                        result = null,
-                        durationMs = null,
-                        success = null
+                        result = chunk.result,
+                        durationMs = chunk.durationMs,
+                        success = chunk.success
                     ))
+                }
+                is AgentResponseChunk.FileDiff -> {
+                    emit(
+                        OutputEvent.FileDiff(
+                            path = chunk.path,
+                            oldPreview = chunk.oldPreview,
+                            newPreview = chunk.newPreview,
+                            addedLines = chunk.addedLines,
+                            removedLines = chunk.removedLines
+                        )
+                    )
+                }
+                is AgentResponseChunk.Thinking -> {
+                    emit(OutputEvent.Thinking(chunk.text))
                 }
                 is AgentResponseChunk.Complete -> {
                     emit(OutputEvent.Complete)

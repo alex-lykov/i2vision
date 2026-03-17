@@ -139,7 +139,9 @@ sealed class OutputEvent {
     object Complete : OutputEvent()
     data class ToolCallDetail(val toolName: String, val params: Map<String, Any>, val result: String? = null, val durationMs: Long? = null, val success: Boolean? = null) : OutputEvent()
     data class FileOp(val operation: String, val path: String, val contentPreview: String? = null, val bytesWritten: Int? = null, val success: Boolean? = null) : OutputEvent()
+    data class FileDiff(val path: String, val oldPreview: String? = null, val newPreview: String? = null, val addedLines: Int = 0, val removedLines: Int = 0) : OutputEvent()
     data class Decision(val phase: String, val message: String, val details: Map<String, Any>? = null) : OutputEvent()
+    data class Thinking(val text: String) : OutputEvent()
 }
 
 // ModelType enum for different model sources

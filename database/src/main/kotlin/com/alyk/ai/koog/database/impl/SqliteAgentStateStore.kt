@@ -25,6 +25,7 @@ class SqliteAgentStateStore(private val db: Database) : AgentStateStore {
                 it[SessionsTable.id] = id.toString()
                 it[SessionsTable.projectPath] = projectPath
                 it[SessionsTable.conversationHistory] = json.encodeToString(ListSerializer(String.serializer()), emptyList())
+                it[SessionsTable.inputHistory] = json.encodeToString(ListSerializer(String.serializer()), emptyList())
                 it[SessionsTable.activeModel] = null
                 it[SessionsTable.updatedAt] = System.currentTimeMillis()
                 it[SessionsTable.currentPhase] = null
@@ -50,6 +51,7 @@ class SqliteAgentStateStore(private val db: Database) : AgentStateStore {
             SessionsTable.update({ SessionsTable.id eq sessionId.toString() }) {
                 it[SessionsTable.projectPath] = updated.projectPath
                 it[SessionsTable.conversationHistory] = json.encodeToString(ListSerializer(String.serializer()), updated.conversationHistory)
+                it[SessionsTable.inputHistory] = json.encodeToString(ListSerializer(String.serializer()), updated.inputHistory)
                 it[SessionsTable.activeModel] = updated.activeModel
                 it[SessionsTable.updatedAt] = System.currentTimeMillis()
                 it[SessionsTable.currentPhase] = updated.currentPhase
@@ -112,12 +114,15 @@ class SqliteAgentStateStore(private val db: Database) : AgentStateStore {
 
     private fun org.jetbrains.exposed.sql.ResultRow.toSession(): PersistedSession {
         val history = json.decodeFromString<List<String>>(this[SessionsTable.conversationHistory])
+        val inputHistoryJson = this[SessionsTable.inputHistory]
+        val inputHistory = inputHistoryJson?.let { json.decodeFromString<List<String>>(it) } ?: emptyList()
         val completedStepsJson = this[SessionsTable.completedStepsJson]
         val completedSteps = completedStepsJson?.let { json.decodeFromString<List<String>>(it) } ?: emptyList()
         return PersistedSession(
             id = UUID.fromString(this[SessionsTable.id]),
             projectPath = this[SessionsTable.projectPath],
             conversationHistory = history,
+            inputHistory = inputHistory,
             activeModel = this[SessionsTable.activeModel],
             updatedAtMillis = this[SessionsTable.updatedAt],
             currentPhase = this[SessionsTable.currentPhase],

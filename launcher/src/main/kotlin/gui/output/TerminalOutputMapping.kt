@@ -34,7 +34,9 @@ object TerminalOutputMapping {
             "delete" -> "show_file_deletes"
             else -> "show_command_output"
         }
+        is OutputEvent.FileDiff -> "show_code_diffs"
         is OutputEvent.Decision -> "show_status_symbols"
+        is OutputEvent.Thinking -> "show_thinking_process"
     }
 
     /** Setting key for user prompt line (>>> [agent] task). */

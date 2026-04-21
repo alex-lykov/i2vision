@@ -116,13 +116,17 @@ Code       ← How it is built (implementation, unit tests, actual code)
 
 ### Cache Location
 
-**Semantic Cache:** `~/.i2vision/cache/projects/<project-hash>/.semantic-cache/`
+**Semantic Cache:** OS-specific user directory
 
-All VSLFC artifacts are stored in the OS user home directory for portability across projects.
+- **Windows:** `%LOCALAPPDATA%\i2vision\cache\projects\<project-hash>\.semantic-cache\`
+- **macOS:** `~/Library/Application Support/i2vision/cache/projects/<project-hash>/.semantic-cache/`
+- **Linux:** `~/.i2vision/cache/projects/<project-hash>/.semantic-cache/`
+
+All VSLFC artifacts are stored in the OS user directory for portability across projects.
 
 ### Per-Cluster Structure
 ```
-~/.i2vision/cache/projects/<project-hash>/.semantic-cache/
+{cache-directory}/.semantic-cache/
 ├── {cluster-1}/
 │   ├── vision/
 │   ├── structure/
@@ -192,7 +196,7 @@ Coverage varies based on module maturity and documentation.
 ### In Discovery Pipeline
 - Layers are discovered in order
 - Each layer builds on previous
-- Results stored in `~/.i2vision/cache/projects/<hash>/.semantic-cache/`
+- Results stored in OS-specific semantic cache directory
 
 ### In Strategy Execution
 - Strategy determines which layers to focus on

@@ -257,10 +257,12 @@ netstat -an | grep :3001
 #### Low Context Confidence
 ```bash
 # Run discovery to improve context quality
-.\scripts\tools\test-module-discovery.ps1
+./gradlew :i2vision-cli:run --args="discover /path/to/project"
 
-# Check semantic cache
-ls .semantic-cache/
+# Check semantic cache location
+# On Windows: %LOCALAPPDATA%\i2vision\cache\projects\<hash>\.semantic-cache
+# On macOS: ~/Library/Application Support/i2vision/cache/projects/<hash>/.semantic-cache
+# On Linux: ~/.i2vision/cache/projects/<hash>/.semantic-cache
 ```
 
 #### Performance Issues

@@ -8,6 +8,7 @@ import com.i2vision.discover.api.models.DiscoveryDepth
 import com.i2vision.discover.pipeline.DiscoveryPipelineImpl
 import com.i2vision.storage.api.CacheStore
 import com.i2vision.storage.impl.FileCacheStore
+import com.i2vision.storage.I2VisionPaths
 import com.i2vision.discover.intent.IntentResolverImpl
 import com.i2vision.cli.output.ConsoleOutput
 import kotlinx.coroutines.runBlocking
@@ -57,7 +58,8 @@ class DiscoverCommand : CliktCommand(
         
         // Create IntentResolver and DiscoveryPipeline
         val intentResolver = IntentResolverImpl()
-        val cacheStore = FileCacheStore(File(projectPath))
+        val projectCacheDir = I2VisionPaths.getProjectCacheDir(projectPath)
+        val cacheStore = FileCacheStore(projectCacheDir)
         val pipeline = DiscoveryPipelineImpl(projectPath, intentResolver, cacheStore)
         
         echo("")
@@ -101,7 +103,7 @@ class DiscoverCommand : CliktCommand(
                 echo("    Confidence: ${"%.2f".format(artifact.confidence * 100)}%")
             }
             
-            val outputDir = output ?: ".semantic-cache"
+            val outputDir = output ?: I2VisionPaths.getProjectCacheDir(projectPath).absolutePath
             echo("")
             echo("Artifacts written to: $outputDir")
         }

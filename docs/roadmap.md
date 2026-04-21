@@ -8,14 +8,14 @@
 
 | Feature | Description | Test Command |
 |---------|-------------|--------------|
-| Core Discovery Engine | Code → Vision analysis (38 clusters validated) | `./gradlew :i2vision-cli:run --args="discover --intent=full_discovery"` |
+| Core Discovery Engine | Code → Vision analysis (38 clusters validated) | `./gradlew :i2vision-cli:run --args="discover /path/to/project"` |
 | Parallel Processing | Concurrent cluster analysis (4.5 min) | Observe logs during discovery |
-| Architecture Detection | Multi-dimensional signatures per module | Check `.semantic-cache/{cluster}/structure/` |
+| Architecture Detection | Multi-dimensional signatures per module | Check cache directory structure |
 | Quality Metrics | Cohesion, coupling, complexity | Check `components.yaml` |
 | Incremental Sync | Changed-file only updates | Modify file, re-run discovery |
 | CLI Tool | Full command interface | `./gradlew :i2vision-cli:run --args="--help"` |
 
-**Quick Test:** `./gradlew :i2vision-cli:run --args="discover --intent=full_discovery"`
+**Quick Test:** `./gradlew :i2vision-cli:run --args="discover /path/to/project"`
 
 ---
 

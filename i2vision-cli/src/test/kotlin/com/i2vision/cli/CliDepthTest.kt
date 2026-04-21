@@ -1,9 +1,13 @@
 package com.i2vision.cli
 
 import com.i2vision.discover.api.models.DiscoveryDepth
+import com.i2vision.storage.I2VisionPaths
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
+import java.io.File
 
 /**
  * Tests for CLI Depth Parameter.
@@ -96,5 +100,49 @@ class CliDepthTest {
         
         // Then
         assertEquals(DiscoveryDepth.STANDARD, depth)
+    }
+    
+    @Test
+    fun `should use I2VisionPaths for cache location`() {
+        // Given: A project path
+        val projectPath = "/path/to/project"
+        
+        // When: Getting project cache directory
+        val projectCacheDir = I2VisionPaths.getProjectCacheDir(projectPath)
+        
+        // Then: Cache directory should not be in project root
+        assertFalse(projectCacheDir.absolutePath.contains(projectPath), 
+            "Cache should not be in project root")
+        
+        // Then: Cache directory should be in OS-specific user directory
+        val userHome = System.getProperty("user.home")
+        assertTrue(projectCacheDir.absolutePath.contains(userHome) || 
+                   projectCacheDir.absolutePath.contains("AppData") ||
+                   projectCacheDir.absolutePath.contains("Library"),
+            "Cache should be in user directory")
+    }
+    
+    @Test
+    fun `should not create semantic cache in project root`() {
+        // Given: A temporary project directory
+        val tempDir = java.nio.file.Files.createTempDirectory("cli-cache-test").toFile()
+        try {
+            // When: Getting project cache directory
+            val projectCacheDir = I2VisionPaths.getProjectCacheDir(tempDir.absolutePath)
+            
+            // Then: .semantic-cache should not be in project root
+            val projectRootCache = File(tempDir, ".semantic-cache")
+            assertFalse(projectCacheDir.absolutePath.contains(tempDir.absolutePath), 
+                "Cache path should not contain project path")
+            
+            // Then: Cache should be in user directory
+            val userHome = System.getProperty("user.home")
+            assertTrue(projectCacheDir.absolutePath.contains(userHome) || 
+                       projectCacheDir.absolutePath.contains("AppData") ||
+                       projectCacheDir.absolutePath.contains("Library"),
+                "Cache should be in user directory")
+        } finally {
+            tempDir.deleteRecursively()
+        }
     }
 }

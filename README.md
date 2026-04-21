@@ -194,7 +194,7 @@ git clone https://github.com/i2vision/i2vision.git && cd i2vision
 ./gradlew :i2vision-cli:run --args="discover /path/to/your/project"
 ```
 
-**What happens:** i²-Vision analyzes your entire codebase, extracting architecture, flows, business rules, and components into `.semantic-cache/`.
+**What happens:** i²-Vision analyzes your entire codebase, extracting architecture, flows, business rules, and components into the OS-specific semantic cache directory.
 
 **Available options:**
 - `--depth` - Discovery depth (BROWSE, STANDARD, DEEP)

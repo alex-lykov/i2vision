@@ -1,6 +1,7 @@
 plugins {
     kotlin("jvm")
     `maven-publish`
+    id("com.github.johnrengelman.shadow") version "8.1.1"
 }
 
 group = "com.i2vision"
@@ -49,6 +50,13 @@ dependencies {
 
 kotlin {
     jvmToolchain(21)
+}
+
+tasks.shadowJar {
+    manifest {
+        attributes["Main-Class"] = "com.i2vision.mcp.transport.StdioTransportKt"
+    }
+    archiveClassifier.set("all")
 }
 
 publishing {

@@ -32,3 +32,6 @@ include("i2vision-instant")
 include("i2vision-mcp")
 include("index-provider")
 include("link-service")
+
+// Build tests
+include("build-tests")

@@ -66,45 +66,6 @@ i²-Vision is under **active development**.
 
 ---
 
-## 🚀 Quick Start
-
-### MCP Integration (Claude Desktop / Cursor) - Recommended
-
-```json
-{
-  "mcpServers": {
-    "i2vision": {
-      "command": "java",
-      "args": ["-jar", "i2vision-mcp/build/libs/i2vision-mcp.jar", "--stdio"]
-    }
-  }
-}
-```
-
-**What you get:** Instant context for any file, proactive related-file suggestions, quality metrics, and architectural insights—all directly in your LLM workflow.
-
-**Available MCP Tools:**
-- `discover_project` - Full VSLFC discovery
-- `get_instant_context` - Context for any file/directory
-- `get_quality_metrics` - Cohesion, coupling, complexity
-- `validate_contract` - Validate layer contracts
-- `suggest_refactoring` - Get architectural improvements
-
-### CLI Usage
-
-```bash
-# Full project discovery
-./gradlew :i2vision-cli:run --args="discover --intent=full_discovery"
-
-# Module analysis
-./gradlew :i2vision-cli:run --args="discover --intent=refactoring_analysis --module=i2vision-discover"
-
-# Quality metrics
-./gradlew :i2vision-cli:run --args="quality --module=i2vision-discover"
-```
-
----
-
 ## 🎯 Core Concepts
 
 ### VSLFC: Five-Layer Contract System
@@ -217,6 +178,83 @@ Top-Down (Greenfield):       Vision → Structure → Logic → Flow → Code
 | `i2vision-cli` | CLI entry point | MIT |
 | `i2vision-instant` | Instant context provider | MIT |
 | `i2vision-mcp` | MCP server and tools | MIT |
+
+---
+
+## 🚀 Quick Start: Discover + Instant Context
+
+### 1. Run Discovery (2 minutes)
+
+```bash
+# Clone and build
+git clone https://github.com/i2vision/i2vision.git && cd i2vision
+./gradlew build
+
+# Analyze your project
+./gradlew :i2vision-cli:run --args="discover /path/to/your/project"
+```
+
+**What happens:** i²-Vision analyzes your entire codebase, extracting architecture, flows, business rules, and components into `.semantic-cache/`.
+
+**Available options:**
+- `--depth` - Discovery depth (BROWSE, STANDARD, DEEP)
+- `--cluster` - Cluster ID for focused discovery
+- `-o, --output` - Output directory for artifacts
+- `--json` - Output results as JSON
+- `--yaml` - Output results as YAML
+
+---
+
+### 2. Get Instant Context (Beta)
+
+The instant context API is currently in beta. For now, use the CLI to analyze files:
+
+```bash
+# Analyze a specific module
+./gradlew :i2vision-cli:run --args="discover --cluster=your-module-name /path/to/your/project"
+```
+
+**What you get:** Context for the specified cluster including symbols, related files, flows, and business rules.
+
+---
+
+### 3. Test with MCP (Beta)
+
+The MCP integration is currently in beta. Build the MCP server first:
+
+```bash
+./gradlew :i2vision-mcp:shadowJar
+```
+
+Then configure Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "i2vision": {
+      "command": "java",
+      "args": ["-jar", "/path/to/i2vision/i2vision-mcp/build/libs/i2vision-mcp-1.0.0-all.jar", "--stdio"]
+    }
+  }
+}
+```
+
+Then ask Claude: *"Show me the architecture of UserService"* — it gets full context instantly.
+
+---
+
+### 📊 What You Get
+
+| After Discovery | With Instant Context |
+|-----------------|---------------------|
+| Full project analysis (38 clusters, 1,585 flows validated) | File-specific context in <100ms |
+| Architecture patterns detected per module | Related files and dependencies |
+| Cohesion, coupling, complexity metrics | Business rules and call sequences |
+| Contract validation between layers | Ready for LLM prompt injection |
+
+---
+
+**Next:** [Full Documentation](docs/README.md) | [CLI Reference](docs/reference/cli.md) | [MCP Tools](docs/guides/mcp-tools.md)
 
 ---
 

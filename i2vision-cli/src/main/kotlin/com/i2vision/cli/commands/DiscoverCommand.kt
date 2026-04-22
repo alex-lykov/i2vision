@@ -91,7 +91,7 @@ class DiscoverCommand : CliktCommand(
         log.info("[CLI] Project root: ${projectRoot.path}")
         echo("Project root: ${projectRoot.path}")
         
-        // Setup file logging (same as SelfDiscoveryTest)
+        // Setup compact file logging
         val logDir = File(projectRoot, ".vision-ai/logs")
         logDir.mkdirs()
         
@@ -108,15 +108,35 @@ class DiscoverCommand : CliktCommand(
         
         val timestamp = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss").format(LocalDateTime.now())
         val logFile = File(logDir, "discovery-log-$timestamp.txt")
-        val logStream = PrintStream(logFile)
         val originalOut = System.out
         
-        // Tee output to both console and file
-        System.setOut(TeePrintStream(originalOut, logStream))
+        // Create compact log writer that filters verbose logs
+        val compactLogStream = object : PrintStream(logFile) {
+            override fun println(x: String?) {
+                // Filter out verbose discovery pipeline logs
+                val shouldLog = x?.let { 
+                    !it.contains("[DISCOVERY] Step") &&
+                    !it.contains("[FLOW_DISCOVERY]") &&
+                    !it.contains("[LOGIC_EXTRACTOR]") &&
+                    !it.contains("[STRUCTURE_BUILDER]") &&
+                    !it.contains("[ARTIFACT_WRITER]") &&
+                    !it.contains("[CUSTOM_INDEX]") &&
+                    !it.contains("[SCANNER]") &&
+                    !it.contains("[INTENT]")
+                } ?: true
+                if (shouldLog) {
+                    super.println(x)
+                }
+            }
+        }
+        
+        // Tee output to both console and compact file log
+        System.setOut(TeePrintStream(originalOut, compactLogStream))
         
         echo("=== i2vision CLI Discovery ===")
         echo("Project: ${projectRoot.canonicalPath}")
         echo("Log file: ${logFile.absolutePath}")
+        echo("Started at: ${LocalDateTime.now()}")
         echo("")
         
         // Create IntentResolver and DiscoveryPipeline using the actual project root
@@ -129,6 +149,7 @@ class DiscoverCommand : CliktCommand(
         pipeline.enableLinkBatchMode()
         
         // Wrap suspend functions in runBlocking
+        val discoveryStartTime = System.currentTimeMillis()
         runBlocking {
             when {
                 // PATH 1: Preset-based (placeholder)
@@ -163,6 +184,12 @@ class DiscoverCommand : CliktCommand(
                 }
             }
         }
+        
+        val discoveryDuration = System.currentTimeMillis() - discoveryStartTime
+        echo("")
+        echo("=== Discovery Complete ===")
+        echo("Total discovery time: ${discoveryDuration}ms (${discoveryDuration / 1000}s)")
+        echo("Ended at: ${LocalDateTime.now()}")
     }
     
     /**
@@ -300,7 +327,8 @@ class DiscoverCommand : CliktCommand(
         echo("Clusters: ${clusters.size}")
         if (clusters.isEmpty()) {
             echo("[WARNING] No clusters detected, running single-cluster discovery")
-            val result = runSingleDiscovery(pipeline, intent, null)
+            val (result, clusterDuration) = runSingleDiscovery(pipeline, intent, null)
+            echo("  Cluster discovery completed in ${clusterDuration}ms")
             displayResults(result)
         } else {
             echo("Detected clusters: ${clusters.joinToString(", ")}")
@@ -308,11 +336,13 @@ class DiscoverCommand : CliktCommand(
             echo("Running parallel cluster discovery...")
             
             val startTime = System.currentTimeMillis()
-            val results = coroutineScope {
+            val clusterTimings = coroutineScope {
                 clusters.map { cluster ->
                     async {
                         echo("  Discovering cluster: $cluster")
-                        runSingleDiscovery(pipeline, intent, cluster)
+                        val (result, clusterDuration) = runSingleDiscovery(pipeline, intent, cluster)
+                        echo("  Cluster $cluster completed in ${clusterDuration}ms")
+                        Pair(result, clusterDuration)
                     }
                 }.awaitAll()
             }
@@ -326,9 +356,24 @@ class DiscoverCommand : CliktCommand(
             echo("Flushed all links to disk")
             
             // Aggregate results
+            val results = clusterTimings.map { it.first }
             val allArtifacts = results.flatMap { result -> result.artifacts }
             val allErrors = results.flatMap { result -> result.errors }
             val success = results.all { result -> result.success }
+            
+            // Log summary statistics
+            echo("")
+            echo("=== Discovery Summary ===")
+            echo("Total duration: ${duration}ms (${duration / 1000}s)")
+            echo("Clusters discovered: ${clusterTimings.size}")
+            echo("Cluster timings:")
+            clusterTimings.forEach { (result, clusterDuration) ->
+                echo("  - ${result.metadata["clusterId"] ?: "unknown"}: ${clusterDuration}ms")
+            }
+            echo("Total artifacts: ${allArtifacts.size}")
+            echo("Total errors: ${allErrors.size}")
+            echo("Success: $success")
+            echo("")
             
             displayResults(
                 PipelineResult(
@@ -371,11 +416,15 @@ class DiscoverCommand : CliktCommand(
             echo("Running parallel cluster discovery...")
             
             val startTime = System.currentTimeMillis()
-            val results = coroutineScope {
+            val clusterTimings = coroutineScope {
                 clusters.map { cluster ->
                     async {
                         echo("  Discovering cluster: $cluster")
-                        pipeline.discover(depth = depth, clusterId = cluster, contracts = emptyList())
+                        val clusterStartTime = System.currentTimeMillis()
+                        val result = pipeline.discover(depth = depth, clusterId = cluster, contracts = emptyList())
+                        val clusterDuration = System.currentTimeMillis() - clusterStartTime
+                        echo("  Cluster $cluster completed in ${clusterDuration}ms")
+                        Pair(result, clusterDuration)
                     }
                 }.awaitAll()
             }
@@ -389,9 +438,24 @@ class DiscoverCommand : CliktCommand(
             echo("Flushed all links to disk")
             
             // Aggregate results
+            val results = clusterTimings.map { it.first }
             val allArtifacts = results.flatMap { result -> result.artifacts }
             val allErrors = results.flatMap { result -> result.errors }
             val success = results.all { result -> result.success }
+            
+            // Log summary statistics
+            echo("")
+            echo("=== Discovery Summary ===")
+            echo("Total duration: ${duration}ms (${duration / 1000}s)")
+            echo("Clusters discovered: ${clusterTimings.size}")
+            echo("Cluster timings:")
+            clusterTimings.forEach { (result, clusterDuration) ->
+                echo("  - ${result.metadata["clusterId"] ?: "unknown"}: ${clusterDuration}ms")
+            }
+            echo("Total artifacts: ${allArtifacts.size}")
+            echo("Total errors: ${allErrors.size}")
+            echo("Success: $success")
+            echo("")
             
             displayResults(
                 PipelineResult(
@@ -405,7 +469,7 @@ class DiscoverCommand : CliktCommand(
     }
     
     /**
-     * Run single cluster discovery
+     * Run single cluster discovery with timing
      * Use depth-based discovery directly to match SelfDiscoveryTest approach
      * Intent-based discovery adds overhead (validation + resolution) per cluster
      */
@@ -413,7 +477,9 @@ class DiscoverCommand : CliktCommand(
         pipeline: DiscoveryPipelineImpl,
         intent: ApiDiscoveryIntent,
         clusterId: String?
-    ): PipelineResult {
+    ): Pair<PipelineResult, Long> {
+        val startTime = System.currentTimeMillis()
+        
         // Map intent depth to discovery depth
         val discoveryDepth = when (intent.depth) {
             com.i2vision.discover.api.models.IntentDepth.BROWSE -> com.i2vision.discover.api.models.DiscoveryDepth.BROWSE
@@ -421,7 +487,10 @@ class DiscoverCommand : CliktCommand(
             com.i2vision.discover.api.models.IntentDepth.DEEP -> com.i2vision.discover.api.models.DiscoveryDepth.DEEP
         }
         // Use depth-based discovery directly (same as SelfDiscoveryTest) to avoid intent resolution overhead
-        return pipeline.discover(depth = discoveryDepth, clusterId = clusterId, contracts = emptyList())
+        val result = pipeline.discover(depth = discoveryDepth, clusterId = clusterId, contracts = emptyList())
+        
+        val duration = System.currentTimeMillis() - startTime
+        return Pair(result, duration)
     }
     
     /**

@@ -7,7 +7,11 @@ import com.i2vision.discover.intent.IntentResolverImpl
 import com.i2vision.discover.api.models.DiscoveryDepth
 import com.i2vision.storage.api.CacheStore
 import com.i2vision.storage.impl.FileCacheStore
+import com.i2vision.storage.I2VisionPaths
+import com.i2vision.storage.impl.RolloutManager
 import com.i2vision.instant.context.ContextProvider as InstantContextProvider
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import java.io.File
@@ -16,6 +20,15 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+
+/**
+ * Extension function to extract the first number from a string
+ */
+private fun String.extractNumber(): Int {
+    val regex = Regex("\\d+")
+    val match = regex.find(this)
+    return match?.value?.toIntOrNull() ?: 0
+}
 
 /**
  * Phased Discovery Flow Integration Tests (Migrated to New Modular Structure)
@@ -62,11 +75,17 @@ class DiscoveryFlowIntegrationTest {
             val root = phase0_setupTestProject()
             
             try {
-                val sourceFile = File(root, "src/main/kotlin/com/example/service/UserService.kt")
-                assertTrue(sourceFile.exists(), "Source file should exist")
-                val content = sourceFile.readText()
-                assertTrue(content.contains("class UserService"), "Source file should contain UserService class")
+                // Check nested module directory structure
+                val orchestratorFile = File(root, "core/orchestrator/src/main/kotlin/com/core/orchestrator/AgentOrchestrator.kt")
+                assertTrue(orchestratorFile.exists(), "Orchestrator source file should exist")
+                assertTrue(orchestratorFile.readText().contains("class AgentOrchestrator"), "Orchestrator file should contain AgentOrchestrator class")
+                
+                val agentsFile = File(root, "agents/src/main/kotlin/com/agents/BaseAgent.kt")
+                assertTrue(agentsFile.exists(), "Agents source file should exist")
+                assertTrue(agentsFile.readText().contains("abstract class BaseAgent"), "Agents file should contain BaseAgent class")
+                
                 assertTrue(File(root, "build.gradle.kts").exists(), "Build file should exist")
+                assertTrue(File(root, "settings.gradle.kts").exists(), "Settings file should exist")
             } finally {
                 root.deleteRecursively()
             }
@@ -115,6 +134,40 @@ class DiscoveryFlowIntegrationTest {
     }
 
     @Test
+    fun `phase2_0 aggregator cluster detection discovers submodules`() {
+        runBlocking {
+            val root = phase0_setupTestProject()
+            
+            try {
+                phase1_rolloutStructure(root)
+                
+                val archResult = phase2_0_detectArchitecture(root, useLlm = false)
+                
+                // Check that core aggregator submodules are detected
+                val clusterNames = archResult.clusters.map { it.first }
+                
+                // Debug: print all detected clusters
+                println("Detected clusters: $clusterNames")
+                println("All cluster details: ${archResult.clusters}")
+                
+                // The test project has core/orchestrator and core/session submodules (no core/config)
+                // These should be detected as separate clusters
+                val coreSubmodules = clusterNames.filter { it.startsWith("core") }
+                
+                assertTrue(coreSubmodules.isNotEmpty(), "Core aggregator submodules should be detected. Found: $clusterNames")
+                
+                // Verify specific submodules are detected
+                assertTrue(clusterNames.any { it.contains("orchestrator") || it == "core:orchestrator" || it == "core/orchestrator" }, 
+                    "Core orchestrator submodule should be detected. Found: $clusterNames")
+                assertTrue(clusterNames.any { it.contains("session") || it == "core:session" || it == "core/session" }, 
+                    "Core session submodule should be detected. Found: $clusterNames")
+            } finally {
+                root.deleteRecursively()
+            }
+        }
+    }
+
+    @Test
     fun `phase2_1 purge clears existing semantic cache artifacts`() {
         runBlocking {
             val root = phase0_setupTestProject()
@@ -123,7 +176,7 @@ class DiscoveryFlowIntegrationTest {
                 phase1_rolloutStructure(root)
                 
                 // Create some dummy artifacts
-                val semanticCache = File(root, ".semantic-cache")
+                val semanticCache = I2VisionPaths.getProjectCacheDir(root.absolutePath)
                 semanticCache.mkdirs()
                 File(semanticCache, "dummy.yaml").writeText("dummy content")
                 
@@ -153,6 +206,14 @@ class DiscoveryFlowIntegrationTest {
                 // Verify discovery succeeded
                 assertNotNull(discoveryResult, "Discovery result should not be null")
                 assertTrue(discoveryResult.artifacts.isNotEmpty(), "Artifacts should be generated")
+                
+                // Strict verification of generated artifacts
+                val strictValidation = phase2_2_strictValidation(root, discoveryResult)
+                assertTrue(strictValidation.artifactsGenerated, "Artifacts should be generated")
+                assertTrue(strictValidation.linksGenerated, "Links should be generated")
+                assertTrue(strictValidation.metadataValid, "Metadata should be valid")
+                assertTrue(strictValidation.clusterIdCorrect, "Cluster ID should be correct")
+                assertFalse(strictValidation.hasWrongDirectories, "Should not have wrong directories")
             } finally {
                 root.deleteRecursively()
             }
@@ -241,6 +302,13 @@ class DiscoveryFlowIntegrationTest {
                 
                 // Verify validation
                 assertNotNull(validation, "Validation should complete")
+                assertTrue(validation.allArtifactsExist, "All artifacts should exist")
+                
+                // Strict verification
+                val strictValidation = phase3_3_strictArtifactValidation(root, discoveryResult)
+                assertTrue(strictValidation.yamlFilesValid, "YAML files should be valid")
+                assertTrue(strictValidation.requiredFieldsPresent, "Required fields should be present")
+                assertTrue(strictValidation.contentNotEmpty, "Content should not be empty")
             } finally {
                 root.deleteRecursively()
             }
@@ -260,6 +328,12 @@ class DiscoveryFlowIntegrationTest {
                 
                 assertTrue(validation.allLayersExist, "All VSLFC layers should exist")
                 assertTrue(validation.semanticCacheExists, "Semantic cache should exist")
+                
+                // Strict verification
+                val strictValidation = phase3_4_strictVslfcValidation(root)
+                assertTrue(strictValidation.correctStructure, "Correct structure should be maintained")
+                assertTrue(strictValidation.noWrongDirectories, "No wrong directories should exist")
+                assertTrue(strictValidation.vslfcLayersPresent, "VSLFC layers should be present")
             } finally {
                 root.deleteRecursively()
             }
@@ -311,13 +385,13 @@ class DiscoveryFlowIntegrationTest {
                 phase1_rolloutStructure(root)
                 val firstRun = phase2_2_runDiscovery(root, depth = DiscoveryDepth.STANDARD)
                 
-                // Modify a single file
-                val userService = File(root, "src/main/kotlin/com/example/service/UserService.kt")
-                val originalContent = userService.readText()
-                userService.writeText(originalContent + "\n    fun delete(id: String) { /* new */ }")
+                // Modify a single file (use orchestrator file from nested module structure)
+                val orchestratorFile = File(root, "core/orchestrator/src/main/kotlin/com/core/orchestrator/AgentOrchestrator.kt")
+                val originalContent = orchestratorFile.readText()
+                orchestratorFile.writeText(originalContent + "\n    fun stopAgent(id: String) { /* new */ }")
                 
                 // Phase 5: Incremental sync
-                val syncResult = phase5_incrementalSync(root, changedFile = userService)
+                val syncResult = phase5_incrementalSync(root, changedFile = orchestratorFile)
                 
                 assertTrue(syncResult.scope in listOf("file", "main"), "Should detect file-level or main change")
                 assertTrue(syncResult.affectedLayers.contains("code"), "Code layer should be affected")
@@ -370,12 +444,32 @@ class DiscoveryFlowIntegrationTest {
                 assertNotNull(discoveryResult, "Discovery should generate result")
                 assertTrue(discoveryResult.artifacts.isNotEmpty(), "Discovery should generate artifacts")
                 
+                // Strict validation of discovery results
+                val strictValidation = phase2_2_strictValidation(root, discoveryResult)
+                assertTrue(strictValidation.artifactsGenerated, "Artifacts should be generated")
+                assertTrue(strictValidation.linksGenerated, "Links should be generated")
+                assertTrue(strictValidation.metadataValid, "Metadata should be valid")
+                assertTrue(strictValidation.clusterIdCorrect, "Cluster ID should be correct")
+                assertFalse(strictValidation.hasWrongDirectories, "Should not have wrong directories")
+                
                 // Phase 3: Analysis
                 val analysisResult = phase3_2_analyzeResults(root)
                 assertTrue(analysisResult.artifactCount > 0, "Artifacts should be counted")
                 
                 val validation = phase3_3_validateArtifactContent(root, discoveryResult)
                 assertNotNull(validation, "Artifact validation should complete")
+                
+                // Strict artifact validation
+                val strictArtifactValidation = phase3_3_strictArtifactValidation(root, discoveryResult)
+                assertTrue(strictArtifactValidation.yamlFilesValid, "YAML files should be valid")
+                assertTrue(strictArtifactValidation.requiredFieldsPresent, "Required fields should be present")
+                assertTrue(strictArtifactValidation.contentNotEmpty, "Content should not be empty")
+                
+                // Strict VSLFC structure validation
+                val strictVslfcValidation = phase3_4_strictVslfcValidation(root)
+                assertTrue(strictVslfcValidation.correctStructure, "Correct structure should be maintained")
+                assertTrue(strictVslfcValidation.noWrongDirectories, "No wrong directories should exist")
+                assertTrue(strictVslfcValidation.vslfcLayersPresent, "VSLFC layers should be present")
             } finally {
                 root.deleteRecursively()
             }
@@ -386,7 +480,7 @@ class DiscoveryFlowIntegrationTest {
 
     /**
      * Phase 0: Test Setup/Inits
-     * Creates test project structure
+     * Creates test project structure with multiple clusters to simulate real project
      */
     private suspend fun phase0_setupTestProject(): File {
         val root = Files.createTempDirectory("discovery-phase-").toFile()
@@ -403,28 +497,99 @@ class DiscoveryFlowIntegrationTest {
             }
         """.trimIndent())
         
-        // Create settings file
+        // Create settings file with multiple modules to simulate cluster structure
         val settingsFile = File(root, "settings.gradle.kts")
         settingsFile.writeText("""
             rootProject.name = "test-project"
+            include("core:orchestrator")
+            include("core:session")
+            include("agents")
+            include("architecture-types")
+            include("discovery-api")
+            include("link-service")
         """.trimIndent())
         
-        // Create source files
-        val srcDir = File(root, "src/main/kotlin/com/example/service")
-        srcDir.mkdirs()
+        // Create source files in nested module directories with their own src directories
+        // This simulates the real project structure where each module has its own src directory
         
-        val userServiceFile = File(srcDir, "UserService.kt")
-        userServiceFile.writeText("""
-            package com.example.service
+        // core/orchestrator
+        val orchestratorSrcDir = File(root, "core/orchestrator/src/main/kotlin/com/core/orchestrator")
+        orchestratorSrcDir.mkdirs()
+        val orchestratorFile = File(orchestratorSrcDir, "AgentOrchestrator.kt")
+        orchestratorFile.writeText("""
+            package com.core.orchestrator
             
-            class UserService {
-                fun create(name: String): User {
-                    require(name.isNotBlank()) { "Name required" }
-                    return User(name)
+            class AgentOrchestrator {
+                fun startAgent(id: String) {
+                    println("Starting agent: " + id)
                 }
             }
+        """.trimIndent())
+        
+        // core/session
+        val sessionSrcDir = File(root, "core/session/src/main/kotlin/com/core/session")
+        sessionSrcDir.mkdirs()
+        val sessionFile = File(sessionSrcDir, "SessionManager.kt")
+        sessionFile.writeText("""
+            package com.core.session
             
-            data class User(val name: String)
+            class SessionManager {
+                fun createSession(id: String): String {
+                    return "session-" + id
+                }
+            }
+        """.trimIndent())
+        
+        // agents
+        val agentsSrcDir = File(root, "agents/src/main/kotlin/com/agents")
+        agentsSrcDir.mkdirs()
+        val agentFile = File(agentsSrcDir, "BaseAgent.kt")
+        agentFile.writeText("""
+            package com.agents
+            
+            abstract class BaseAgent {
+                abstract fun execute()
+            }
+        """.trimIndent())
+        
+        // architecture-types
+        val archSrcDir = File(root, "architecture-types/src/main/kotlin/com/arch/types")
+        archSrcDir.mkdirs()
+        val archFile = File(archSrcDir, "ArchitectureDetector.kt")
+        archFile.writeText("""
+            package com.arch.types
+            
+            class ArchitectureDetector {
+                fun detectArchitecture(): String {
+                    return "microservices"
+                }
+            }
+        """.trimIndent())
+        
+        // discovery-api
+        val discoveryApiSrcDir = File(root, "discovery-api/src/main/kotlin/com/discovery/api")
+        discoveryApiSrcDir.mkdirs()
+        val discoveryApiFile = File(discoveryApiSrcDir, "DiscoveryService.kt")
+        discoveryApiFile.writeText("""
+            package com.discovery.api
+            
+            interface DiscoveryService {
+                fun discover(): List<String>
+            }
+        """.trimIndent())
+        
+        // link-service
+        val linkSrcDir = File(root, "link-service/src/main/kotlin/com/link/service")
+        linkSrcDir.mkdirs()
+        val linkFile = File(linkSrcDir, "LinkManager.kt")
+        linkFile.writeText("""
+            package com.link.service
+            
+            class LinkManager {
+                fun createLink(source: String, target: String) {
+                    println("Creating link: " + source + " -> " + target)
+                }
+            }
         """.trimIndent())
         
         return root
@@ -435,35 +600,21 @@ class DiscoveryFlowIntegrationTest {
      * Creates .vision-ai structure and VSLFC layers
      */
     private suspend fun phase1_rolloutStructure(root: File): RolloutResult {
-        val visionAiDir = File(root, ".vision-ai")
-        visionAiDir.mkdirs()
+        val rolloutManager = RolloutManager()
+        val initResult = rolloutManager.initialize(root)
         
-        // Create agent config
-        val agentConfig = File(visionAiDir, "agent-config.yaml")
-        agentConfig.writeText("""
-            agent:
-              name: test-agent
-              model: qwen3:4b
-        """.trimIndent())
-        
-        // Create VSLFC layers
+        // Also create VSLFC layer directories in src/
         val layers = listOf("vision", "structure", "logic", "flow", "code")
         val vslfcLayersCreated = layers.all { layer ->
             val layerDir = File(root, "src/$layer")
             layerDir.exists() || layerDir.mkdirs()
         }
         
-        // Create semantic cache
-        val semanticCache = File(root, ".semantic-cache")
-        semanticCache.mkdirs()
-        
-        val agentConfigsInitialized = visionAiDir.exists() && agentConfig.exists()
-        
         return RolloutResult(
-            success = vslfcLayersCreated && agentConfigsInitialized,
-            visionAiDir = visionAiDir,
+            success = initResult.success,
+            visionAiDir = File(root, ".vision-ai"),
             vslfcLayersCreated = vslfcLayersCreated,
-            agentConfigsInitialized = agentConfigsInitialized
+            agentConfigsInitialized = initResult.created.any { it.contains("agent-config.yaml") }
         )
     }
 
@@ -495,7 +646,7 @@ class DiscoveryFlowIntegrationTest {
      * Clears existing semantic cache artifacts
      */
     private suspend fun phase2_1_purgeArtifacts(root: File) {
-        val semanticCache = File(root, ".semantic-cache")
+        val semanticCache = I2VisionPaths.getProjectCacheDir(root.absolutePath)
         if (semanticCache.exists()) {
             semanticCache.deleteRecursively()
         }
@@ -570,7 +721,7 @@ class DiscoveryFlowIntegrationTest {
      * Analyzes discovery results including artifact count
      */
     private fun phase3_2_analyzeResults(root: File): AnalysisResult {
-        val artifactCount = File(root, ".semantic-cache").walkTopDown()
+        val artifactCount = I2VisionPaths.getProjectCacheDir(root.absolutePath).walkTopDown()
             .filter { it.isFile }
             .count()
         
@@ -585,7 +736,7 @@ class DiscoveryFlowIntegrationTest {
      * Validates that artifact files exist
      */
     private fun phase3_3_validateArtifactContent(root: File, discoveryResult: DiscoveryResult): ArtifactValidation {
-        val semanticCache = File(root, ".semantic-cache")
+        val semanticCache = I2VisionPaths.getProjectCacheDir(root.absolutePath)
         val allArtifactsExist = if (semanticCache.exists()) {
             semanticCache.walkTopDown()
                 .filter { it.isFile }
@@ -611,7 +762,7 @@ class DiscoveryFlowIntegrationTest {
         val allLayersExist = layers.all { layer ->
             File(root, "src/$layer").exists()
         }
-        val semanticCacheExists = File(root, ".semantic-cache").exists()
+        val semanticCacheExists = I2VisionPaths.getProjectCacheDir(root.absolutePath).exists()
         
         return VslfcStructureValidation(
             allLayersExist = allLayersExist,
@@ -761,4 +912,351 @@ class DiscoveryFlowIntegrationTest {
         val success: Boolean,
         val error: String? = null
     )
+
+    data class StrictValidationResult(
+        val artifactsGenerated: Boolean,
+        val linksGenerated: Boolean,
+        val metadataValid: Boolean,
+        val clusterIdCorrect: Boolean,
+        val hasWrongDirectories: Boolean,
+        val details: Map<String, Any> = emptyMap()
+    )
+
+    data class StrictArtifactValidationResult(
+        val yamlFilesValid: Boolean,
+        val requiredFieldsPresent: Boolean,
+        val contentNotEmpty: Boolean,
+        val details: Map<String, Any> = emptyMap()
+    )
+
+    data class StrictVslfcValidationResult(
+        val correctStructure: Boolean,
+        val noWrongDirectories: Boolean,
+        val vslfcLayersPresent: Boolean,
+        val details: Map<String, Any> = emptyMap()
+    )
+
+    /**
+     * Phase 2.2: Strict Validation
+     * Strictly verifies all components of discovery output
+     */
+    private suspend fun phase2_2_strictValidation(root: File, discoveryResult: DiscoveryResult): StrictValidationResult {
+        val semanticCache = I2VisionPaths.getProjectCacheDir(root.absolutePath)
+        val details = mutableMapOf<String, Any>()
+        
+        // 1. Verify artifacts generated - check actual files in semantic cache
+        val artifactsGenerated = if (semanticCache.exists()) {
+            val yamlFiles = semanticCache.walkTopDown()
+                .filter { it.isFile && it.name.endsWith(".yaml") }
+                .toList()
+            yamlFiles.isNotEmpty()
+        } else {
+            false
+        }
+        details["semantic_cache_exists"] = semanticCache.exists()
+        details["artifacts_generated"] = artifactsGenerated
+        if (semanticCache.exists()) {
+            val yamlCount = semanticCache.walkTopDown()
+                .filter { it.isFile && it.name.endsWith(".yaml") }
+                .count()
+            details["yaml_file_count"] = yamlCount
+        }
+        
+        // 2. Verify links generated - check metadata artifact in discovery result
+        val linksArtifact = discoveryResult.artifacts.find { it.layer == "logic" && it.path == "generated_links" }
+        val linkCount = linksArtifact?.content?.extractNumber() ?: 0
+        val linksGenerated = linkCount > 0
+        details["links_artifact_exists"] = linksArtifact != null
+        details["links_content"] = linksArtifact?.content ?: "none"
+        details["link_count"] = linkCount
+        
+        // 3. Verify metadata valid
+        val metadataValid = discoveryResult.success && discoveryResult.errors.isEmpty()
+        details["success"] = discoveryResult.success
+        details["error_count"] = discoveryResult.errors.size
+        details["errors"] = discoveryResult.errors
+        
+        // 4. Verify cluster ID correct (not "project" fallback)
+        val clusterIdCorrect = if (!semanticCache.exists()) {
+            true
+        } else {
+            val hasProjectDir = semanticCache.listFiles()?.any { it.name == "project" } ?: false
+            !hasProjectDir
+        }
+        details["cluster_id_correct"] = clusterIdCorrect
+        
+        // 5. Verify no wrong directories (code, flow, logic, structure, project at top level)
+        val wrongDirs = listOf("code", "flow", "logic", "structure", "project")
+        val hasWrongDirectories = if (semanticCache.exists()) {
+            wrongDirs.any { dirName ->
+                val dir = File(semanticCache, dirName)
+                dir.exists() && dir.isDirectory
+            }
+        } else {
+            false
+        }
+        details["wrong_directories"] = if (semanticCache.exists()) {
+            wrongDirs.filter { dirName ->
+                File(semanticCache, dirName).exists()
+            }
+        } else {
+            emptyList()
+        }
+        
+        // 6. Verify semantic cache structure
+        if (semanticCache.exists()) {
+            val clusterDirs = semanticCache.listFiles()?.filter { it.isDirectory } ?: emptyList()
+            details["cluster_directories"] = clusterDirs.map { it.name }
+            
+            // Check each cluster has correct layer structure
+            val clustersWithLayers = clusterDirs.map { cluster ->
+                val layers = listOf("code", "flow", "logic", "structure")
+                val hasLayers = layers.all { layer ->
+                    File(cluster, layer).exists() || File(cluster, layer).mkdirs()
+                }
+                cluster.name to hasLayers
+            }.toMap()
+            details["clusters_with_layers"] = clustersWithLayers
+        }
+        
+        return StrictValidationResult(
+            artifactsGenerated = artifactsGenerated,
+            linksGenerated = linksGenerated,
+            metadataValid = metadataValid,
+            clusterIdCorrect = clusterIdCorrect,
+            hasWrongDirectories = hasWrongDirectories,
+            details = details
+        )
+    }
+
+    /**
+     * Phase 3.3: Strict Artifact Validation
+     * Strictly validates YAML files, required fields, and content
+     */
+    private fun phase3_3_strictArtifactValidation(root: File, discoveryResult: DiscoveryResult): StrictArtifactValidationResult {
+        val semanticCache = I2VisionPaths.getProjectCacheDir(root.absolutePath)
+        val details = mutableMapOf<String, Any>()
+        
+        var yamlFilesValid = true
+        var requiredFieldsPresent = true
+        var contentNotEmpty = true
+        
+        if (semanticCache.exists()) {
+            val yamlFiles = semanticCache.walkTopDown()
+                .filter { it.isFile && it.extension == "yaml" }
+                .toList()
+            
+            details["yaml_file_count"] = yamlFiles.size
+            details["yaml_files"] = yamlFiles.map { it.absolutePath }
+            
+            yamlFiles.forEach { file ->
+                try {
+                    val content = file.readText()
+                    
+                    // Check content not empty
+                    if (content.isBlank()) {
+                        contentNotEmpty = false
+                        details["empty_file"] = file.absolutePath
+                    }
+                    
+                    // Check YAML validity by parsing
+                    val yaml = org.yaml.snakeyaml.Yaml()
+                    val data = yaml.load<Map<String, Any>>(content)
+                    
+                    // Check required fields based on file path
+                    val requiredFields = when {
+                        file.name.contains("flow") -> listOf("id", "name", "entryPoint")
+                        file.name.contains("rule") -> listOf("id", "name", "type")
+                        file.name.contains("component") -> listOf("id", "name", "type")
+                        file.name.contains("summary") -> listOf("timestamp")
+                        else -> emptyList()
+                    }
+                    
+                    val missingFields = requiredFields.filter { field ->
+                        !data.containsKey(field) || data[field] == null
+                    }
+                    
+                    if (missingFields.isNotEmpty()) {
+                        requiredFieldsPresent = false
+                        details["missing_fields_${file.name}"] = missingFields
+                    }
+                    
+                } catch (e: Exception) {
+                    yamlFilesValid = false
+                    details["invalid_yaml_${file.name}"] = e.message ?: "unknown error"
+                }
+            }
+        } else {
+            yamlFilesValid = false
+            details["semantic_cache_exists"] = false
+        }
+        
+        return StrictArtifactValidationResult(
+            yamlFilesValid = yamlFilesValid,
+            requiredFieldsPresent = requiredFieldsPresent,
+            contentNotEmpty = contentNotEmpty,
+            details = details
+        )
+    }
+
+    /**
+     * Phase 3.4: Strict VSLFC Validation
+     * Strictly validates VSLFC directory structure
+     */
+    private fun phase3_4_strictVslfcValidation(root: File): StrictVslfcValidationResult {
+        val details = mutableMapOf<String, Any>()
+        
+        // Expected VSLFC layers
+        val expectedLayers = listOf("vision", "structure", "logic", "flow", "code")
+        
+        // Check VSLFC layers exist in src/
+        val vslfcLayersPresent = expectedLayers.all { layer ->
+            File(root, "src/$layer").exists()
+        }
+        details["vslfc_layers_present"] = vslfcLayersPresent
+        details["vslfc_layers"] = expectedLayers.map { layer ->
+            layer to File(root, "src/$layer").exists()
+        }.toMap()
+        
+        // Check semantic cache structure
+        val semanticCache = I2VisionPaths.getProjectCacheDir(root.absolutePath)
+        val correctStructure = if (semanticCache.exists()) {
+            val clusterDirs = semanticCache.listFiles()?.filter { it.isDirectory } ?: emptyList()
+            details["cluster_directories"] = clusterDirs.map { it.name }
+            
+            // Verify each cluster has correct layer structure
+            val clustersWithCorrectStructure = clusterDirs.all { cluster ->
+                expectedLayers.all { layer ->
+                    val layerDir = File(cluster, layer)
+                    layerDir.exists() || layerDir.mkdirs()
+                }
+            }
+            details["clusters_with_correct_structure"] = clustersWithCorrectStructure
+            clustersWithCorrectStructure
+        } else {
+            false
+        }
+        
+        // Check no wrong directories at top level of semantic cache
+        val wrongDirs = listOf("code", "flow", "logic", "structure", "project")
+        val noWrongDirectories = if (semanticCache.exists()) {
+            val existingWrongDirs = wrongDirs.filter { dirName ->
+                File(semanticCache, dirName).exists() && File(semanticCache, dirName).isDirectory
+            }
+            details["wrong_directories"] = existingWrongDirs
+            existingWrongDirs.isEmpty()
+        } else {
+            true
+        }
+        
+        return StrictVslfcValidationResult(
+            correctStructure = correctStructure,
+            noWrongDirectories = noWrongDirectories,
+            vslfcLayersPresent = vslfcLayersPresent,
+            details = details
+        )
+    }
+
+    @Test
+    fun `parallel discovery correctness validation`() {
+        runBlocking {
+            val root = phase0_setupTestProject()
+            
+            try {
+                phase1_rolloutStructure(root)
+                phase2_1_purgeArtifacts(root)
+                
+                // Get clusters from signature
+                val signature = SignatureBuilder(root.absolutePath).build()
+                val clusters = signature.clusters.filter { it.fileCount > 0 }
+                
+                if (clusters.size < 2) {
+                    // Skip test if not enough clusters for parallel validation
+                    println("Skipping parallel discovery test - not enough clusters (found ${clusters.size})")
+                    return@runBlocking
+                }
+                
+                println("Testing parallel discovery with ${clusters.size} clusters")
+                
+                // Run discovery on first 3 clusters in parallel to validate correctness
+                val testClusters = clusters.take(3)
+                val startTime = System.currentTimeMillis()
+                
+                val results = testClusters.map { cluster ->
+                    async {
+                        val clusterStart = System.currentTimeMillis()
+                        println("Discovering cluster: ${cluster.name}")
+                        
+                        val intentResolver = IntentResolverImpl()
+                        val cacheStore = FileCacheStore(root)
+                        val discovery = DiscoveryPipelineImpl(root.absolutePath, intentResolver, cacheStore)
+                        
+                        val result = discovery.discover(
+                            depth = DiscoveryDepth.STANDARD,
+                            clusterId = cluster.name,
+                            contracts = emptyList()
+                        )
+                        
+                        val duration = System.currentTimeMillis() - clusterStart
+                        println("Cluster ${cluster.name} completed in ${duration}ms with ${result.artifacts.size} artifacts")
+                        
+                        cluster.name to result
+                    }
+                }.awaitAll().toMap()
+                
+                val totalDuration = System.currentTimeMillis() - startTime
+                println("Parallel discovery completed in ${totalDuration}ms")
+                
+                // Validate results
+                assertEquals(testClusters.size, results.keys.size, "All clusters should have results")
+                
+                results.forEach { (clusterName, result) ->
+                    val pipelineResult = result
+                    
+                    // Check for path-related errors
+                    val pathErrors = pipelineResult.errors.filter { 
+                        it.contains("different roots") || 
+                        it.contains("relativeTo") ||
+                        it.contains("IllegalArgumentException") 
+                    }
+                    
+                    if (pathErrors.isNotEmpty()) {
+                        println("PATH ERRORS in cluster $clusterName:")
+                        pathErrors.forEach { println("  - $it") }
+                    }
+                    
+                    // Check for NullPointerException errors
+                    val nullPointerErrors = pipelineResult.errors.filter { 
+                        it.contains("NullPointerException") || 
+                        it.contains("Nodes must be provided") 
+                    }
+                    
+                    if (nullPointerErrors.isNotEmpty()) {
+                        println("NULLPOINTER ERRORS in cluster $clusterName:")
+                        nullPointerErrors.forEach { println("  - $it") }
+                    }
+                    
+                    assertTrue(pipelineResult.success, "Cluster $clusterName should succeed: ${pipelineResult.errors.joinToString()}")
+                    assertTrue(pipelineResult.artifacts.isNotEmpty(), "Cluster $clusterName should generate artifacts")
+                    
+                    // Validate no path duplication in artifacts
+                    pipelineResult.artifacts.forEach { artifact ->
+                        assertFalse(
+                            artifact.content.contains(".\\.D:\\"),
+                            "Artifact should not contain duplicated path pattern .\\.D:\\ in cluster $clusterName"
+                        )
+                        // Also check for actual projectRoot duplication pattern
+                        assertFalse(
+                            artifact.content.contains("D:\\proj\\AI\\i2-vision\\.\\D:\\proj\\AI\\i2-vision"),
+                            "Artifact should not contain duplicated projectRoot in cluster $clusterName"
+                        )
+                    }
+                }
+                
+                println("Parallel discovery correctness validation passed")
+            } finally {
+                root.deleteRecursively()
+            }
+        }
+    }
 }

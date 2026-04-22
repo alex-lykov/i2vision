@@ -21,16 +21,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 fun main(args: Array<String>) {
-    // Find project root by looking for settings.gradle.kts
-    var projectRoot = File(".").absoluteFile
-    while (projectRoot.parentFile != null && !File(projectRoot, "settings.gradle.kts").exists()) {
-        projectRoot = projectRoot.parentFile
-    }
-    if (!File(projectRoot, "settings.gradle.kts").exists()) {
-        // Fallback to current directory if no settings.gradle.kts found
-        projectRoot = File(".").absoluteFile
-    }
-
+    val projectRoot = File(".").absoluteFile
     val purge = args.contains("--purge")
     val deep = args.contains("--deep")
     val exportDocs = args.contains("--export-docs")
@@ -109,8 +100,7 @@ fun main(args: Array<String>) {
     // Step 4: Discovery Pipeline
     println("--- Discovery Pipeline Execution (Depth: $depth) ---")
     val intentResolver = IntentResolverImpl()
-    val cacheDir = I2VisionPaths.getProjectCacheDir(projectRoot.absolutePath)
-    val cacheStore = FileCacheStore(cacheDir)
+    val cacheStore = FileCacheStore(projectRoot)
     val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
     
     // Enable batch mode for LinkService to collect links in memory and write once at end
@@ -320,28 +310,28 @@ fun analyzeArtifactQuality(root: File, results: List<ClusterDiscoveryResult>) {
         val flowDir = File(clusterCache, "flow")
         var flowCount = 0
         if (flowDir.exists()) {
-            flowCount = flowDir.walkTopDown().filter { it.isFile && it.name.endsWith(".yaml") }.count()
+            flowCount = flowDir.listFiles()?.count { it.isFile && it.name.endsWith(".yaml") } ?: 0
         }
         
         // Check logic layer - count individual YAML files
         val logicDir = File(clusterCache, "logic")
         var ruleCount = 0
         if (logicDir.exists()) {
-            ruleCount = logicDir.walkTopDown().filter { it.isFile && it.name.endsWith(".yaml") }.count()
+            ruleCount = logicDir.listFiles()?.count { it.isFile && it.name.endsWith(".yaml") } ?: 0
         }
         
         // Check structure layer - count individual YAML files
         val structureDir = File(clusterCache, "structure")
         var componentCount = 0
         if (structureDir.exists()) {
-            componentCount = structureDir.walkTopDown().filter { it.isFile && it.name.endsWith(".yaml") }.count()
+            componentCount = structureDir.listFiles()?.count { it.isFile && it.name.endsWith(".yaml") } ?: 0
         }
         
         // Check docs - count individual YAML files
         val docsDir = File(clusterCache, "docs")
         var docCount = 0
         if (docsDir.exists()) {
-            docCount = docsDir.walkTopDown().filter { it.isFile && it.name.endsWith(".yaml") }.count()
+            docCount = docsDir.listFiles()?.count { it.isFile && it.name.endsWith(".yaml") } ?: 0
         }
         
         qualities.add(

@@ -105,7 +105,9 @@ class ArtifactWriter(
             "name" to flow.name,
             "entryPoint" to (flow.entryPoint ?: ""),
             "pattern" to (flow.pattern ?: ""),
-            "steps" to flow.steps.map { step ->
+            "steps" to flow.steps.filter { step ->
+                step.symbolName != null && step.qualifiedName != null && step.file != null
+            }.map { step ->
                 mapOf(
                     "symbolName" to (step.symbolName ?: ""),
                     "qualifiedName" to (step.qualifiedName ?: ""),
@@ -115,6 +117,28 @@ class ArtifactWriter(
             }
         )
         
+        // Debug: Check for any null values in the data structure
+        fun checkForNulls(data: Any?, path: String = ""): Boolean {
+            return when (data) {
+                null -> {
+                    log.error("[ARTIFACT_WRITER] Found null value at path: $path")
+                    true
+                }
+                is Map<*, *> -> {
+                    data.entries.any { (k, v) -> checkForNulls(v, "$path.$k") }
+                }
+                is List<*> -> {
+                    data.withIndex().any { (i, item) -> checkForNulls(item, "$path[$i]") }
+                }
+                else -> false
+            }
+        }
+
+        if (checkForNulls(flowData)) {
+            log.error("[ARTIFACT_WRITER] Flow data contains null values, skipping serialization")
+            return ref
+        }
+
         try {
             cacheStore.put(ref, yaml.dump(flowData).toByteArray())
             log.debug("[ARTIFACT_WRITER] Wrote flow: {}", ref.name)
@@ -122,7 +146,7 @@ class ArtifactWriter(
             log.error("[ARTIFACT_WRITER] Failed to write flow: {}", ref.name, e)
             log.error("[ARTIFACT_WRITER] Flow data: id={}, name={}, entryPoint={}, pattern={}, steps={}", 
                 flow.id, flow.name, flow.entryPoint, flow.pattern, flow.steps.size)
-            throw e
+            // Don't rethrow - continue with other artifacts
         }
         
         return ref

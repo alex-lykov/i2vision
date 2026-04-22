@@ -406,13 +406,22 @@ class DiscoverCommand : CliktCommand(
     
     /**
      * Run single cluster discovery
+     * Use depth-based discovery directly to match SelfDiscoveryTest approach
+     * Intent-based discovery adds overhead (validation + resolution) per cluster
      */
     private suspend fun runSingleDiscovery(
         pipeline: DiscoveryPipelineImpl,
         intent: ApiDiscoveryIntent,
         clusterId: String?
     ): PipelineResult {
-        return pipeline.discover(intent = intent, clusterId = clusterId, contracts = emptyList())
+        // Map intent depth to discovery depth
+        val discoveryDepth = when (intent.depth) {
+            com.i2vision.discover.api.models.IntentDepth.BROWSE -> com.i2vision.discover.api.models.DiscoveryDepth.BROWSE
+            com.i2vision.discover.api.models.IntentDepth.STANDARD -> com.i2vision.discover.api.models.DiscoveryDepth.STANDARD
+            com.i2vision.discover.api.models.IntentDepth.DEEP -> com.i2vision.discover.api.models.DiscoveryDepth.DEEP
+        }
+        // Use depth-based discovery directly (same as SelfDiscoveryTest) to avoid intent resolution overhead
+        return pipeline.discover(depth = discoveryDepth, clusterId = clusterId, contracts = emptyList())
     }
     
     /**

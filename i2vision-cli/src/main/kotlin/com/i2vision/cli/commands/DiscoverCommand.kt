@@ -113,7 +113,7 @@ class DiscoverCommand : CliktCommand(
         // Create compact log writer that filters verbose logs
         val compactLogStream = object : PrintStream(logFile) {
             override fun println(x: String?) {
-                // Filter out verbose discovery pipeline logs
+                // Filter out verbose discovery pipeline logs and artifact listings
                 val shouldLog = x?.let { 
                     !it.contains("[DISCOVERY] Step") &&
                     !it.contains("[FLOW_DISCOVERY]") &&
@@ -122,7 +122,9 @@ class DiscoverCommand : CliktCommand(
                     !it.contains("[ARTIFACT_WRITER]") &&
                     !it.contains("[CUSTOM_INDEX]") &&
                     !it.contains("[SCANNER]") &&
-                    !it.contains("[INTENT]")
+                    !it.contains("[INTENT]") &&
+                    !it.contains("  - Layer:") &&
+                    !it.contains("Artifacts written to:")
                 } ?: true
                 if (shouldLog) {
                     super.println(x)

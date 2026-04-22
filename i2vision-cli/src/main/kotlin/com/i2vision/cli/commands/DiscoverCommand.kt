@@ -93,6 +93,9 @@ class DiscoverCommand : CliktCommand(
         val cacheStore = FileCacheStore(projectCacheDir)
         val pipeline = DiscoveryPipelineImpl(projectRoot.path, intentResolver, cacheStore)
         
+        // Enable batch mode for LinkService to collect links in memory and write once at end (same as SelfDiscoveryTest)
+        pipeline.enableLinkBatchMode()
+        
         // Wrap suspend functions in runBlocking
         runBlocking {
             when {
@@ -286,6 +289,10 @@ class DiscoverCommand : CliktCommand(
             echo("")
             echo("Parallel discovery completed in ${duration}ms")
             
+            // Flush all buffered links to disk in a single operation (same as SelfDiscoveryTest)
+            pipeline.flushLinkBatch()
+            echo("Flushed all links to disk")
+            
             // Aggregate results
             val allArtifacts = results.flatMap { result -> result.artifacts }
             val allErrors = results.flatMap { result -> result.errors }
@@ -344,6 +351,10 @@ class DiscoverCommand : CliktCommand(
             
             echo("")
             echo("Parallel discovery completed in ${duration}ms")
+            
+            // Flush all buffered links to disk in a single operation (same as SelfDiscoveryTest)
+            pipeline.flushLinkBatch()
+            echo("Flushed all links to disk")
             
             // Aggregate results
             val allArtifacts = results.flatMap { result -> result.artifacts }

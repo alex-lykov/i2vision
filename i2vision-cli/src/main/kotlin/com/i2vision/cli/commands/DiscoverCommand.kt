@@ -18,6 +18,10 @@ import com.i2vision.discover.intent.IntentResolverImpl
 import com.i2vision.cli.output.ConsoleOutput
 import com.i2vision.intent.IntentParser
 import com.i2vision.intent.DiscoveryIntent as ParserDiscoveryIntent
+import java.io.OutputStream
+import java.io.PrintStream
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import com.i2vision.intent.IntentGoal
 import com.i2vision.intent.IntentDepth as ParserIntentDepth
 import com.i2vision.intent.QualityFocus
@@ -86,6 +90,34 @@ class DiscoverCommand : CliktCommand(
         
         log.info("[CLI] Project root: ${projectRoot.path}")
         echo("Project root: ${projectRoot.path}")
+        
+        // Setup file logging (same as SelfDiscoveryTest)
+        val logDir = File(projectRoot, ".vision-ai/logs")
+        logDir.mkdirs()
+        
+        // Log rotation: keep only last 10 logs
+        val maxLogs = 10
+        val existingLogs = logDir.listFiles()
+            ?.filter { it.name.startsWith("discovery-log-") && it.name.endsWith(".txt") }
+            ?.sortedByDescending { it.lastModified() }
+            ?: emptyList()
+        
+        if (existingLogs.size >= maxLogs) {
+            existingLogs.drop(maxLogs - 1).forEach { it.delete() }
+        }
+        
+        val timestamp = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss").format(LocalDateTime.now())
+        val logFile = File(logDir, "discovery-log-$timestamp.txt")
+        val logStream = PrintStream(logFile)
+        val originalOut = System.out
+        
+        // Tee output to both console and file
+        System.setOut(TeePrintStream(originalOut, logStream))
+        
+        echo("=== i2vision CLI Discovery ===")
+        echo("Project: ${projectRoot.canonicalPath}")
+        echo("Log file: ${logFile.absolutePath}")
+        echo("")
         
         // Create IntentResolver and DiscoveryPipeline using the actual project root
         val intentResolver = IntentResolverImpl()
@@ -445,7 +477,6 @@ class DiscoverCommand : CliktCommand(
             result.artifacts.forEach { artifact ->
                 echo("  - Layer: ${artifact.layer}")
                 echo("    Path: ${artifact.path}")
-                echo("    Confidence: ${"%.2f".format(artifact.confidence * 100)}%")
             }
             
             val outputDir = output ?: I2VisionPaths.getProjectCacheDir(projectPath).absolutePath
@@ -460,6 +491,28 @@ class DiscoverCommand : CliktCommand(
         } else if (yaml) {
             echo("")
             echo(consoleOutput.formatDiscoveryResult(result, "yaml"))
+        }
+    }
+}
+
+/**
+ * PrintStream that writes to multiple output streams.
+ * Used to tee output to both console and file.
+ */
+class TeePrintStream(vararg streams: PrintStream) : PrintStream(TeeOutputStream(*streams)) {
+    private class TeeOutputStream(vararg streams: PrintStream) : OutputStream() {
+        private val streams = streams.toList()
+        
+        override fun write(b: Int) {
+            streams.forEach { it.write(b) }
+        }
+        
+        override fun write(b: ByteArray, off: Int, len: Int) {
+            streams.forEach { it.write(b, off, len) }
+        }
+        
+        override fun flush() {
+            streams.forEach { it.flush() }
         }
     }
 }

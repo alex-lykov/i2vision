@@ -1,0 +1,9 @@
+name: circular-nested
+description: Nested circular dependency sketch (A→B→C→B creates 2 cycles)
+
+expected:
+  architecture: CYCLIC
+  cycles: 2
+  violations: 2
+  components: 3
+  flows: 0

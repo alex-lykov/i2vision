@@ -1,0 +1,13 @@
+name: "fat-service"
+description: "Fat service with 25 dependencies and high coupling"
+
+expected:
+  architecture: "FAT_SERVICE"
+  cycles: 0
+  violations: 1
+  components: 26
+  flows: 1
+
+test_phases:
+  - architecture_detection
+  - coupling_analysis

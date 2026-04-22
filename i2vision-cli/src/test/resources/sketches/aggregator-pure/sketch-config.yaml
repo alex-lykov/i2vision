@@ -1,0 +1,13 @@
+name: "aggregator-pure"
+description: "Pure aggregator with no source, only submodules"
+
+expected:
+  architecture: "AGGREGATOR"
+  cycles: 0
+  violations: 0
+  components: 3
+  flows: 1
+
+test_phases:
+  - architecture_detection
+  - aggregator_analysis

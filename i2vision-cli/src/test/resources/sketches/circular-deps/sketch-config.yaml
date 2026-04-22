@@ -1,0 +1,9 @@
+name: circular-deps
+description: Simple circular dependency sketch (original 2-module)
+
+expected:
+  architecture: CYCLIC
+  cycles: 1
+  violations: 1
+  components: 2
+  flows: 0

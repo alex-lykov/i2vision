@@ -1,0 +1,14 @@
+name: "god-class"
+description: "God class with 50+ methods and low cohesion"
+
+expected:
+  architecture: "GOD_CLASS"
+  cycles: 0
+  violations: 2
+  components: 1
+  flows: 1
+
+test_phases:
+  - architecture_detection
+  - complexity_analysis
+  - cohesion_analysis

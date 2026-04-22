@@ -1,0 +1,14 @@
+name: "circular-two-module"
+description: "Simple 2-module circular dependency (A→B, B→A)"
+
+expected:
+  architecture: "CYCLIC"
+  cycles: 1
+  violations: 1
+  components: 2
+  flows: 0
+
+test_phases:
+  - architecture_detection
+  - circular_dependency_analysis
+  - contract_remediation

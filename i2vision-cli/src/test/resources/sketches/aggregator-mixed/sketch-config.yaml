@@ -1,0 +1,13 @@
+name: "aggregator-mixed"
+description: "Mixed aggregator with root source AND submodules - flags inconsistency"
+
+expected:
+  architecture: "MIXED_AGGREGATOR"
+  cycles: 0
+  violations: 1
+  components: 3
+  flows: 1
+
+test_phases:
+  - architecture_detection
+  - aggregator_analysis

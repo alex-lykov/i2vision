@@ -1,0 +1,9 @@
+name: kotlin-multi-module
+description: Kotlin multi-module project sketch with nested modules
+
+expected:
+  architecture: MODULAR_MONOLITH
+  cycles: 3
+  violations: 0
+  components: 20
+  flows: 5

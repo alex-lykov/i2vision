@@ -1,0 +1,14 @@
+name: "circular-three-module"
+description: "3-module circular dependency (A→B→C→A) requires dependency inversion"
+
+expected:
+  architecture: "CYCLIC"
+  cycles: 1
+  violations: 1
+  components: 3
+  flows: 0
+
+test_phases:
+  - architecture_detection
+  - circular_dependency_analysis
+  - contract_remediation

@@ -1,0 +1,67 @@
+package com.example
+
+/**
+ * GOD CLASS - Does everything
+ * Complexity: 0.78
+ * Cohesion: 0.25
+ */
+class GodClass {
+    // 50+ methods doing unrelated things
+    fun method1() = "method1"
+    fun method2() = "method2"
+    fun method3() = "method3"
+    fun method4() = "method4"
+    fun method5() = "method5"
+    fun method6() = "method6"
+    fun method7() = "method7"
+    fun method8() = "method8"
+    fun method9() = "method9"
+    fun method10() = "method10"
+    fun method11() = "method11"
+    fun method12() = "method12"
+    fun method13() = "method13"
+    fun method14() = "method14"
+    fun method15() = "method15"
+    fun method16() = "method16"
+    fun method17() = "method17"
+    fun method18() = "method18"
+    fun method19() = "method19"
+    fun method20() = "method20"
+    fun method21() = "method21"
+    fun method22() = "method22"
+    fun method23() = "method23"
+    fun method24() = "method24"
+    fun method25() = "method25"
+    fun method26() = "method26"
+    fun method27() = "method27"
+    fun method28() = "method28"
+    fun method29() = "method29"
+    fun method30() = "method30"
+    fun method31() = "method31"
+    fun method32() = "method32"
+    fun method33() = "method33"
+    fun method34() = "method34"
+    fun method35() = "method35"
+    fun method36() = "method36"
+    fun method37() = "method37"
+    fun method38() = "method38"
+    fun method39() = "method39"
+    fun method40() = "method40"
+    fun method41() = "method41"
+    fun method42() = "method42"
+    fun method43() = "method43"
+    fun method44() = "method44"
+    fun method45() = "method45"
+    fun method46() = "method46"
+    fun method47() = "method47"
+    fun method48() = "method48"
+    fun method49() = "method49"
+    fun method50() = "method50"
+    
+    // Mixed responsibilities
+    fun doDatabaseWork() = "database"
+    fun doUiWork() = "ui"
+    fun doBusinessLogic() = "logic"
+    fun doValidation() = "validation"
+    fun doLogging() = "logging"
+}

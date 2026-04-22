@@ -1,0 +1,9 @@
+name: spring-boot
+description: Spring Boot application sketch with layered architecture
+
+expected:
+  architecture: LAYERED
+  cycles: 0
+  violations: 0
+  components: 8
+  flows: 3

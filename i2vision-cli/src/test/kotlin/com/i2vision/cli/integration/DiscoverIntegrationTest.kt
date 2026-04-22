@@ -70,4 +70,20 @@ class DiscoverIntegrationTest {
         assertEquals(hash2, hash3, "Hash should be consistent with canonical path")
         assertEquals(hash3, hash4, "Hash should be case-insensitive")
     }
+    
+    @Test
+    fun `should use sketch from test resources`() {
+        // Given: Sketch directory from test resources
+        val sketchDir = File("src/test/resources/sketches/aggregator-pure")
+        if (!sketchDir.exists()) {
+            return // Skip test if sketch not available
+        }
+        
+        // When: Getting cache directory for sketch
+        val cacheDir = I2VisionPaths.getProjectCacheDir(sketchDir.absolutePath)
+        
+        // Then: Cache directory should be outside project root
+        assertFalse(cacheDir.absolutePath.contains(sketchDir.absolutePath),
+            "Cache should not be in sketch directory")
+    }
 }

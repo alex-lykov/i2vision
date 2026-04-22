@@ -1,7 +1,6 @@
 package com.i2vision.storage.impl
 
 import com.i2vision.storage.api.*
-import com.i2vision.storage.impl.internal.StorageLayout
 import com.i2vision.storage.model.*
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -16,18 +15,14 @@ import kotlin.time.Duration.Companion.milliseconds
  * INTERNAL - knows the physical storage layout.
  */
 class FileCacheStore(
-    private val projectRoot: File
+    private val cacheDir: File
 ) : CacheStore {
     
     private val json = Json { ignoreUnknownKeys = true }
     
     override suspend fun put(ref: ArtifactRef, content: ByteArray): PutResult {
-        val relativePath = StorageLayout.artifactPath(
-            module = ref.module,
-            layer = ref.layer.name.lowercase(),
-            name = ref.name
-        )
-        val file = if (File(relativePath).isAbsolute) File(relativePath) else File(projectRoot, relativePath)
+        val relativePath = "${ref.module}/${ref.layer.name.lowercase()}/${ref.name}"
+        val file = File(cacheDir, relativePath)
         file.parentFile?.mkdirs()
         file.writeBytes(content)
         
@@ -39,8 +34,7 @@ class FileCacheStore(
         )
         
         // Store metadata
-        val metaPath = StorageLayout.metadataPath(relativePath)
-        val metaFile = if (File(metaPath).isAbsolute) File(metaPath) else File(projectRoot, metaPath)
+        val metaFile = File(cacheDir, "$relativePath.meta")
         metaFile.writeText(
             json.encodeToString(metadata)
         )
@@ -49,17 +43,12 @@ class FileCacheStore(
     }
     
     override suspend fun get(ref: ArtifactRef): Artifact? {
-        val relativePath = StorageLayout.artifactPath(
-            module = ref.module,
-            layer = ref.layer.name.lowercase(),
-            name = ref.name
-        )
-        val file = if (File(relativePath).isAbsolute) File(relativePath) else File(projectRoot, relativePath)
+        val relativePath = "${ref.module}/${ref.layer.name.lowercase()}/${ref.name}"
+        val file = File(cacheDir, relativePath)
         if (!file.exists()) return null
         
         val content = file.readBytes()
-        val metaPath = StorageLayout.metadataPath(relativePath)
-        val metadataFile = if (File(metaPath).isAbsolute) File(metaPath) else File(projectRoot, metaPath)
+        val metadataFile = File(cacheDir, "$relativePath.meta")
         val metadata = if (metadataFile.exists()) {
             json.decodeFromString<ArtifactMetadata>(metadataFile.readText())
         } else {
@@ -74,8 +63,7 @@ class FileCacheStore(
     }
     
     override suspend fun list(module: String, layer: Layer): List<ArtifactRef> {
-        val layerDirPath = StorageLayout.layerDir(module, layer.name.lowercase())
-        val layerDir = if (File(layerDirPath).isAbsolute) File(layerDirPath) else File(projectRoot, layerDirPath)
+        val layerDir = File(cacheDir, "${module}/${layer.name.lowercase()}")
         if (!layerDir.exists()) return emptyList()
         
         return layerDir.listFiles()
@@ -92,9 +80,8 @@ class FileCacheStore(
     
     override suspend fun getAffected(changedFiles: List<String>): List<ArtifactRef> {
         val affected = mutableListOf<ArtifactRef>()
-        val cacheRoot = if (File(StorageLayout.SEMANTIC_CACHE).isAbsolute) File(StorageLayout.SEMANTIC_CACHE) else File(projectRoot, StorageLayout.SEMANTIC_CACHE)
         
-        cacheRoot.walkTopDown()
+        cacheDir.walkTopDown()
             .filter { it.isFile && it.name.endsWith(".meta") }
             .forEach { metaFile ->
                 try {
@@ -115,8 +102,7 @@ class FileCacheStore(
     }
     
     override suspend fun clear(module: String): Int {
-        val moduleDirPath = StorageLayout.moduleCacheDir(module)
-        val moduleDir = if (File(moduleDirPath).isAbsolute) File(moduleDirPath) else File(projectRoot, moduleDirPath)
+        val moduleDir = File(cacheDir, module)
         if (!moduleDir.exists()) return 0
         
         var count = 0
@@ -126,11 +112,10 @@ class FileCacheStore(
     }
     
     private fun pathToRef(path: String): ArtifactRef? {
-        // Handle absolute paths from user home directory
         val relativePath = if (File(path).isAbsolute) {
-            path.removePrefix("${StorageLayout.SEMANTIC_CACHE}/")
+            path.removePrefix("${cacheDir.absolutePath}/")
         } else {
-            path.removePrefix("${projectRoot.absolutePath}/").removePrefix("${StorageLayout.SEMANTIC_CACHE}/")
+            path
         }
         val parts = relativePath.split('/')
         if (parts.size < 3) return null

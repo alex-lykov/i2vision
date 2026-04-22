@@ -13,13 +13,9 @@ import java.io.File
 internal object StorageLayout {
     
     // Semantic cache paths - now in user home directory
-    // Returns absolute path since it's outside project root
-    private val semanticCacheRoot: File by lazy {
-        I2VisionPaths.getProjectCacheDir(File(".").absolutePath)
-    }
-    
-    // Return absolute path for SEMANTIC_CACHE since it's in user home
-    val SEMANTIC_CACHE: String get() = semanticCacheRoot.absolutePath
+    // Note: SEMANTIC_CACHE is deprecated - use I2VisionPaths.getProjectCacheDir(projectPath) instead
+    @Deprecated("Use I2VisionPaths.getProjectCacheDir(projectPath) instead")
+    val SEMANTIC_CACHE: String = ".semantic-cache"
     private val TOOLS_DIR: String get() = "$SEMANTIC_CACHE/.tools"
     
     // Vision AI paths (contract definitions)

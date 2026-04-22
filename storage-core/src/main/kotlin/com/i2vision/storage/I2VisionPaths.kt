@@ -1,6 +1,8 @@
 package com.i2vision.storage
 
 import java.io.File
+import java.security.MessageDigest
+import org.slf4j.LoggerFactory
 
 /**
  * OS-agnostic path resolution for i2vision user data.
@@ -12,6 +14,7 @@ import java.io.File
  */
 object I2VisionPaths {
     
+    private val log = LoggerFactory.getLogger(I2VisionPaths::class.java)
     private val userHome: String = System.getProperty("user.home")
     private val osName: String = System.getProperty("os.name").lowercase()
     
@@ -40,7 +43,17 @@ object I2VisionPaths {
      * Uses project path hash to create unique directory.
      */
     fun getProjectCacheDir(projectPath: String): File {
-        val projectHash = projectPath.hashCode().toString(16)
+        val canonicalPath = File(projectPath).canonicalPath
+        val normalizedPath = canonicalPath
+            .trim()
+            .trimEnd(File.separatorChar)
+            .lowercase()
+            .replace("\\", "/")
+            .replace("//", "/")
+        val md = MessageDigest.getInstance("MD5")
+        val digest = md.digest(normalizedPath.toByteArray(Charsets.UTF_8))
+        val projectHash = digest.joinToString("") { "%02x".format(it) }.takeLast(8)
+        // log.debug("Project path: '$projectPath' -> Canonical: '$canonicalPath' -> Normalized: '$normalizedPath' -> Hash: '$projectHash'")
         return File(cacheDir, "projects/$projectHash/.semantic-cache").apply { mkdirs() }
     }
     

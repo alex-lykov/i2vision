@@ -1,9 +1,9 @@
 // Root build configuration for multi-module project
 plugins {
-    kotlin("jvm") version "2.3.0" apply false
     kotlin("plugin.serialization") version "2.3.0" apply false
     id("org.jetbrains.compose") version "1.6.11" apply false
     id("org.jetbrains.kotlin.plugin.compose") version "2.3.0" apply false
+    kotlin("jvm") version "2.3.20"
 }
 
 group = "com.i2vision"
@@ -37,4 +37,13 @@ subprojects {
         
         add("testImplementation", "org.jetbrains.kotlin:kotlin-test")
     }
+}
+dependencies {
+    implementation(kotlin("stdlib-jdk8"))
+}
+repositories {
+    mavenCentral()
+}
+kotlin {
+    jvmToolchain(8)
 }

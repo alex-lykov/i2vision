@@ -159,7 +159,7 @@ class DiscoveryPipelineImpl(
             
             // Step 6: Architecture detection using ArchitectureDetector
             // Skip per-cluster architecture detection for performance - run only for full project discovery
-            if (depth == DiscoveryDepth.STANDARD || depth == DiscoveryDepth.DEEP && clusterId == null) {
+            if ((depth == DiscoveryDepth.STANDARD || depth == DiscoveryDepth.DEEP) && clusterId == null) {
                 log.info("[DISCOVERY] Step 6: Running architecture detection (only for full project discovery)")
                 try {
                     val techStack = architectureDetector.detectStack()

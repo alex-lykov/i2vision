@@ -190,18 +190,47 @@ Top-Down (Greenfield):       Vision → Structure → Logic → Flow → Code
 git clone https://github.com/i2vision/i2vision.git && cd i2vision
 ./gradlew build
 
-# Analyze your project
-./gradlew :i2vision-cli:run --args="discover /path/to/your/project"
+# Analyze your project with intent-driven discovery
+./gradlew :i2vision-cli:run --args="discover --intent=full_discovery /path/to/your/project"
 ```
 
-**What happens:** i²-Vision analyzes your entire codebase, extracting architecture, flows, business rules, and components into the OS-specific semantic cache directory.
+**What happens:** i²-Vision analyzes your entire codebase, extracting architecture, flows, business rules, and components into the OS-specific semantic cache directory using intent-driven discovery.
 
 **Available options:**
-- `--depth` - Discovery depth (BROWSE, STANDARD, DEEP)
+- `--intent` - Discovery intent (recommended):
+  - `full_discovery` - Complete analysis of all layers
+  - `refactoring_analysis` - Focus on refactoring opportunities
+  - `quick_overview` - Fast scan for exploration
+  - `architecture_audit` - Audit architecture and dependencies
+  - `flow_mapping` - Map flows and interactions
+  - `documentation_generation` - Generate documentation
+- `--preset` - Preset name (future: kotlin-agent, spring-boot, conservative, permissive)
 - `--cluster` - Cluster ID for focused discovery
+- `--depth` - [DEPRECATED] Use --intent instead (BROWSE, STANDARD, DEEP)
 - `-o, --output` - Output directory for artifacts
 - `--json` - Output results as JSON
 - `--yaml` - Output results as YAML
+
+**Examples:**
+```bash
+# Full discovery (default)
+./gradlew :i2vision-cli:run --args="discover /path/to/project"
+
+# Refactoring analysis
+./gradlew :i2vision-cli:run --args="discover --intent=refactoring_analysis /path/to/project"
+
+# Quick overview
+./gradlew :i2vision-cli:run --args="discover --intent=quick_overview /path/to/project"
+
+# Focus on specific module
+./gradlew :i2vision-cli:run --args="discover --intent=full_discovery --cluster=core-module /path/to/project"
+```
+
+**How it works:**
+1. Intent is parsed and resolved to discovery parameters
+2. Clusters are auto-detected from build files or directory structure
+3. Discovery runs in parallel across all clusters
+4. Artifacts are written to semantic cache for instant context
 
 ---
 

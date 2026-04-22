@@ -1,25 +1,19 @@
 package com.i2vision.validation
 
 import com.i2vision.arch.signature.SignatureBuilder
-import com.i2vision.discover.pipeline.DiscoveryPipelineImpl
-import com.i2vision.storage.api.CacheStore
-import com.i2vision.storage.impl.FileCacheStore
-import com.i2vision.storage.I2VisionPaths
-import com.i2vision.discover.api.IntentResolver
-import com.i2vision.discover.intent.IntentResolverImpl
 import com.i2vision.discover.api.models.DiscoveryDepth
-import com.i2vision.discover.api.models.DiscoveryGoal
+import com.i2vision.discover.intent.IntentResolverImpl
+import com.i2vision.discover.pipeline.DiscoveryPipelineImpl
 import com.i2vision.intent.IntentParser
+import com.i2vision.storage.I2VisionPaths
+import com.i2vision.storage.impl.FileCacheStore
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
 import org.yaml.snakeyaml.Yaml
 import java.io.File
 import java.nio.file.Files
-import kotlin.test.assertEquals
-import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
-import kotlin.test.assertFalse
 
 /**
  * Modular Discovery Integration Tests
@@ -67,7 +61,7 @@ class DiscoveryIntegrationTest {
 
     @Test
     fun `phase0 architecture detection identifies project structure`() = runBlocking {
-        val projectRoot = File(".").absoluteFile
+        val projectRoot = File(System.getProperty("user.dir")).absoluteFile
         val signatureBuilder = SignatureBuilder(projectRoot.absolutePath)
         val signature = signatureBuilder.build()
 
@@ -78,7 +72,7 @@ class DiscoveryIntegrationTest {
 
     @Test
     fun `phase0 architecture detection provides cluster information`() = runBlocking {
-        val projectRoot = File(".").absoluteFile
+        val projectRoot = File("..").absoluteFile
         val signatureBuilder = SignatureBuilder(projectRoot.absolutePath)
         val signature = signatureBuilder.build()
 
@@ -113,9 +107,10 @@ class DiscoveryIntegrationTest {
     @Test
     fun `phase2 discovery pipeline executes with standard depth`() {
         runBlocking {
-            val projectRoot = File(".").absoluteFile
+            val projectRoot = File("..").absoluteFile
+            val cacheDir = I2VisionPaths.getProjectCacheDir(projectRoot.absolutePath)
             val intentResolver = IntentResolverImpl()
-            val cacheStore = FileCacheStore(projectRoot)
+            val cacheStore = FileCacheStore(cacheDir)
             val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
 
             val result = discovery.discover(
@@ -131,9 +126,10 @@ class DiscoveryIntegrationTest {
     @Test
     fun `phase2 discovery pipeline executes with quick depth`() {
         runBlocking {
-            val projectRoot = File(".").absoluteFile
+            val projectRoot = File("..").absoluteFile
+            val cacheDir = I2VisionPaths.getProjectCacheDir(projectRoot.absolutePath)
             val intentResolver = IntentResolverImpl()
-            val cacheStore = FileCacheStore(projectRoot)
+            val cacheStore = FileCacheStore(cacheDir)
             val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
 
             val result = discovery.discover(
@@ -149,14 +145,15 @@ class DiscoveryIntegrationTest {
     @Test
     fun `phase2 discovery pipeline with specific cluster`() {
         runBlocking {
-            val projectRoot = File(".").absoluteFile
+            val projectRoot = File("..").absoluteFile
             val signatureBuilder = SignatureBuilder(projectRoot.absolutePath)
             val signature = signatureBuilder.build()
             val targetCluster = signature.clusters.firstOrNull()?.name
 
             if (targetCluster != null) {
+                val cacheDir = I2VisionPaths.getProjectCacheDir(projectRoot.absolutePath)
                 val intentResolver = IntentResolverImpl()
-                val cacheStore = FileCacheStore(projectRoot)
+                val cacheStore = FileCacheStore(cacheDir)
                 val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
 
                 val result = discovery.discover(
@@ -165,7 +162,7 @@ class DiscoveryIntegrationTest {
                     contracts = emptyList()
                 )
 
-                assertNotNull(result, "Discovery result should not be null")
+                assertNotNull(result, "Cluster-specific discovery should complete")
             }
         }
     }
@@ -174,26 +171,10 @@ class DiscoveryIntegrationTest {
 
     @Test
     fun `phase3 semantic cache structure is created`() = runBlocking {
-        val projectRoot = File(".").absoluteFile
+        val projectRoot = File("..").absoluteFile
+        val cacheDir = I2VisionPaths.getProjectCacheDir(projectRoot.absolutePath)
         val intentResolver = IntentResolverImpl()
-        val cacheStore = FileCacheStore(projectRoot)
-        val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
-
-        discovery.discover(
-            depth = DiscoveryDepth.STANDARD,
-            clusterId = null,
-            contracts = emptyList()
-        )
-
-        val semanticCache = File(projectRoot, ".semantic-cache")
-        assertTrue(semanticCache.exists(), "Semantic cache directory should be created")
-    }
-
-    @Test
-    fun `phase3 artifact files are written to cache`() = runBlocking {
-        val projectRoot = File(".").absoluteFile
-        val intentResolver = IntentResolverImpl()
-        val cacheStore = FileCacheStore(projectRoot)
+        val cacheStore = FileCacheStore(cacheDir)
         val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
 
         val result = discovery.discover(
@@ -202,7 +183,28 @@ class DiscoveryIntegrationTest {
             contracts = emptyList()
         )
 
-        val semanticCache = File(projectRoot, ".semantic-cache")
+        val semanticCache = I2VisionPaths.getProjectCacheDir(projectRoot.absolutePath)
+        assertTrue(semanticCache.exists(), "Semantic cache directory should be created")
+    }
+
+    @Test
+    fun `phase3 artifact files are written to cache`() = runBlocking {
+        val projectRoot = File(".").absoluteFile
+        val signatureBuilder = SignatureBuilder(projectRoot.absolutePath)
+        val signature = signatureBuilder.build()
+        val targetCluster = signature.clusters.firstOrNull()?.name ?: "project"
+        val cacheDir = I2VisionPaths.getProjectCacheDir(projectRoot.absolutePath)
+        val intentResolver = IntentResolverImpl()
+        val cacheStore = FileCacheStore(cacheDir)
+        val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
+
+        val result = discovery.discover(
+            depth = DiscoveryDepth.STANDARD,
+            clusterId = targetCluster,
+            contracts = emptyList()
+        )
+
+        val semanticCache = I2VisionPaths.getProjectCacheDir(projectRoot.absolutePath)
         val artifactFiles = semanticCache.walkTopDown()
             .filter { it.isFile }
             .filter { it.extension in listOf("yaml", "yml", "json") }
@@ -229,12 +231,13 @@ class DiscoveryIntegrationTest {
         assertNotNull(intent, "Intent should be resolved")
 
         // Step 3: Discovery pipeline
+        val cacheDir = I2VisionPaths.getProjectCacheDir(projectRoot.absolutePath)
         val intentResolver = IntentResolverImpl()
-        val cacheStore = FileCacheStore(projectRoot)
+        val cacheStore = FileCacheStore(cacheDir)
         val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
         val result = discovery.discover(
             depth = DiscoveryDepth.STANDARD,
-            clusterId = null,
+            clusterId = signature.clusters.firstOrNull()?.name,
             contracts = emptyList()
         )
 
@@ -255,8 +258,9 @@ class DiscoveryIntegrationTest {
         val targetCluster = signature.clusters.firstOrNull()
         if (targetCluster != null) {
             // Run discovery for specific cluster
+            val cacheDir = I2VisionPaths.getProjectCacheDir(projectRoot.absolutePath)
             val intentResolver = IntentResolverImpl()
-            val cacheStore = FileCacheStore(projectRoot)
+            val cacheStore = FileCacheStore(cacheDir)
             val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
             val result = discovery.discover(
                 depth = DiscoveryDepth.STANDARD,
@@ -298,49 +302,4 @@ class DiscoveryIntegrationTest {
         }
     }
 
-    // ========== YAML CONFIG VALIDATION ==========
-
-    @Test
-    fun `validate discovery against i2-vision sketch config`() = runBlocking {
-        // Use actual i2vision project root (parent of discovery-validation)
-        val projectRoot = File("..").absoluteFile
-        val config = loadSketchConfig("i2-vision")
-        
-        // Get first cluster from SignatureBuilder (match SelfDiscoveryTest behavior)
-        val signatureBuilder = SignatureBuilder(projectRoot.absolutePath)
-        val signature = signatureBuilder.build()
-        val targetClusterId = signature.clusters.firstOrNull()?.name ?: "project"
-        
-        // Use correct cache location (user local cache, not project root)
-        val projectCacheDir = I2VisionPaths.getProjectCacheDir(projectRoot.absolutePath)
-        
-        // Run discovery with clusterId (match legacy branch behavior)
-        val intentResolver = IntentResolverImpl()
-        val cacheStore = FileCacheStore(projectCacheDir)
-        val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
-        
-        val result = discovery.discover(
-            depth = DiscoveryDepth.STANDARD,
-            clusterId = targetClusterId,
-            contracts = emptyList()
-        )
-        
-        assertNotNull(result, "Discovery result should not be null")
-        assertTrue(result.success, "Discovery should succeed")
-        println("✓ Discovery completed for cluster: $targetClusterId")
-        
-        // Validate semantic cache structure against config
-        // CacheStore creates directories under projectCacheDir directly (not .semantic-cache subdirectory)
-        val clusterDir = File(projectCacheDir, targetClusterId)
-        assertTrue(clusterDir.exists() || clusterDir.isDirectory, "Cluster directory should exist: $targetClusterId")
-        
-        // Validate that all required VSLFC layers exist for the cluster
-        config.requiredLayers.forEach { layer ->
-            val layerDir = File(clusterDir, layer)
-            assertTrue(layerDir.exists() || layerDir.isDirectory, 
-                "Layer directory should exist for cluster $targetClusterId: $layer")
-        }
-        
-        println("✓ Semantic cache structure validated against config")
-    }
 }

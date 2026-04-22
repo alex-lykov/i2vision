@@ -27,7 +27,12 @@ import java.io.File
  * Enhanced with extracted orchestrator components:
  * - index-provider: Code intelligence (symbol resolution, call hierarchy)
  * - link-service: Semantic link management
- * - task-executor: Task-based discovery
+ * - flow-discovery: Flow extraction from call graphs
+ * - logic-extractor: Business rule extraction
+ * - structure-builder: Component detection from package structure
+ * - artifact-writer: Semantic cache persistence
+ * - architecture-detector: Technology stack detection
+ * - contract-validator: Contract validation
  */
 class DiscoveryPipelineImpl(
     private val projectRoot: String,
@@ -80,6 +85,9 @@ class DiscoveryPipelineImpl(
         val artifacts = mutableListOf<DiscoveryArtifact>()
         val errors = mutableListOf<String>()
         
+        // Auto-detect cluster ID if not provided (will be set in Step 4)
+        var detectedClusterId: String? = null
+        
         try {
             // Step 1: File scanning using index-provider
             log.info("[DISCOVERY] Step 1: Scanning source files")
@@ -129,32 +137,40 @@ class DiscoveryPipelineImpl(
             // Step 4: Cluster suggestions using index-provider
             log.info("[DISCOVERY] Step 4: Generating cluster suggestions")
             val clusters = indexProvider.findClusters()
+            
+            // Auto-detect cluster ID if not provided
+            detectedClusterId = if (clusterId == null && clusters.isNotEmpty()) {
+                log.info("[DISCOVERY] Auto-detected cluster ID from first suggestion: {}", clusters.first().name)
+                clusters.first().name
+            } else {
+                clusterId
+            }
+            
             artifacts.add(DiscoveryArtifact(
                 layer = "structure",
                 path = "clusters",
-                content = "Generated ${clusters.size} cluster suggestions"
+                content = "Generated ${clusters.size} cluster suggestions${if (detectedClusterId != null) " (selected: $detectedClusterId)" else ""}"
             ))
             log.info("[DISCOVERY] Generated {} cluster suggestions", clusters.size)
             
             // Step 5: Load existing links using link-service
             log.info("[DISCOVERY] Step 5: Loading semantic links")
-            // Use lazy loading: only load links relevant to this cluster if clusterId is provided
-            val existingLinks = if (clusterId != null) {
-                linkService.getLinksForCluster(clusterId)
+            // Use lazy loading: only load links relevant to this cluster if detectedClusterId is provided
+            val existingLinks = if (detectedClusterId != null) {
+                linkService.getLinksForCluster(detectedClusterId)
             } else {
                 linkService.allLinks()
             }
             artifacts.add(DiscoveryArtifact(
                 layer = "logic",
                 path = "existing_links",
-                content = "Loaded ${existingLinks.size} existing links ${if (clusterId != null) "(cluster: $clusterId)" else "(all)"}"
+                content = "Loaded ${existingLinks.size} existing links ${if (detectedClusterId != null) "(cluster: $detectedClusterId)" else "(all)"}"
             ))
-            log.info("[DISCOVERY] Loaded {} existing links {}", existingLinks.size, if (clusterId != null) "(cluster: $clusterId)" else "(all)")
+            log.info("[DISCOVERY] Loaded {} existing links {}", existingLinks.size, if (detectedClusterId != null) "(cluster: $detectedClusterId)" else "(all)")
             
             // Step 6: Architecture detection using ArchitectureDetector
-            // Skip per-cluster architecture detection - it's already done once at start in SelfDiscoveryTest
-            // Running it per cluster is wasteful and causes significant performance degradation
-            if (depth == DiscoveryDepth.STANDARD || depth == DiscoveryDepth.DEEP && clusterId == null) {
+            // Skip per-cluster architecture detection for performance - run only for full project discovery
+            if (depth == DiscoveryDepth.STANDARD || depth == DiscoveryDepth.DEEP && detectedClusterId == null) {
                 log.info("[DISCOVERY] Step 6: Running architecture detection (only for full project discovery)")
                 try {
                     val techStack = architectureDetector.detectStack()
@@ -178,7 +194,7 @@ class DiscoveryPipelineImpl(
             // Step 7: Flow discovery using FlowDiscovery
             if (depth == DiscoveryDepth.STANDARD || depth == DiscoveryDepth.DEEP) {
                 log.info("[DISCOVERY] Step 7: Discovering flows using call graph")
-                val flows = flowDiscovery.discoverFlows(symbols, clusterId)
+                val flows = flowDiscovery.discoverFlows(symbols, detectedClusterId)
                 artifacts.add(DiscoveryArtifact(
                     layer = "flow",
                     path = "flows",
@@ -236,7 +252,7 @@ class DiscoveryPipelineImpl(
                 // Step 7.7: Write artifacts to semantic cache using ArtifactWriter
                 if (depth == DiscoveryDepth.STANDARD || depth == DiscoveryDepth.DEEP) {
                     log.info("[DISCOVERY] Step 7.7: Writing artifacts to semantic cache")
-                    val flows = flowDiscovery.discoverFlows(symbols, clusterId)
+                    val flows = flowDiscovery.discoverFlows(symbols, detectedClusterId)
                     val normalizedProjectRoot = projectRoot.replace("\\", "/")
                     val sourceFileList = sourceFiles.map { 
                         val file = File(it.path)
@@ -250,7 +266,7 @@ class DiscoveryPipelineImpl(
                     }
                     val businessRules = logicExtractor.extractBusinessRules(sourceFileList)
                     kotlinx.coroutines.runBlocking {
-                        val writtenArtifacts = artifactWriter.writeArtifacts(clusterId, flows, businessRules, components)
+                        val writtenArtifacts = artifactWriter.writeArtifacts(detectedClusterId, flows, businessRules, components)
                         artifacts.add(DiscoveryArtifact(
                             layer = "code",
                             path = "artifact_files",
@@ -259,8 +275,8 @@ class DiscoveryPipelineImpl(
                         log.info("[DISCOVERY] Wrote {} artifact files", writtenArtifacts.size)
                         
                         // Generate and write links between artifacts
-                        val generatedLinksCount = if (clusterId != null) {
-                            generateLinks(clusterId, flows, businessRules, components)
+                        val generatedLinksCount = if (detectedClusterId != null) {
+                            generateLinks(detectedClusterId, flows, businessRules, components)
                         } else {
                             0
                         }
@@ -302,7 +318,7 @@ class DiscoveryPipelineImpl(
                 errors = errors,
                 metadata = mapOf(
                     "depth" to depth.name,
-                    "clusterId" to (clusterId ?: "unknown"),
+                    "clusterId" to (detectedClusterId ?: "unknown"),
                     "contracts" to contracts.size.toString(),
                     "duration_ms" to duration.toString(),
                     "source_files" to sourceFiles.size.toString(),
@@ -326,7 +342,7 @@ class DiscoveryPipelineImpl(
                 errors = errors + "Discovery failed: ${e.message}",
                 metadata = mapOf(
                     "depth" to depth.name,
-                    "clusterId" to (clusterId ?: "unknown"),
+                    "clusterId" to (detectedClusterId ?: "unknown"),
                     "error" to (e.message ?: "Unknown error")
                 )
             )

@@ -32,6 +32,7 @@ dependencies {
     implementation(project(":storage-core"))
     implementation(project(":contracts"))
     implementation(project(":intent-parser"))
+    implementation(project(":architecture-types"))
     
     // YAML for output
     implementation("org.yaml:snakeyaml:2.2")

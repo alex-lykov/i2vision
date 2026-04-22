@@ -21,6 +21,7 @@ import com.i2vision.intent.DiscoveryIntent as ParserDiscoveryIntent
 import com.i2vision.intent.IntentGoal
 import com.i2vision.intent.IntentDepth as ParserIntentDepth
 import com.i2vision.intent.QualityFocus
+import com.i2vision.arch.signature.SignatureBuilder
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -73,11 +74,24 @@ class DiscoverCommand : CliktCommand(
             throw IllegalArgumentException("Project path does not exist: $projectPath")
         }
         
-        // Create IntentResolver and DiscoveryPipeline
+        // Find project root by walking up to find settings.gradle.kts (same as self-discovery test)
+        var projectRoot = File(projectPath).absoluteFile
+        while (projectRoot.parentFile != null && !File(projectRoot, "settings.gradle.kts").exists()) {
+            projectRoot = projectRoot.parentFile
+        }
+        if (!File(projectRoot, "settings.gradle.kts").exists()) {
+            log.warn("[CLI] No settings.gradle.kts found in parent directories, using current directory")
+            projectRoot = File(projectPath).absoluteFile
+        }
+        
+        log.info("[CLI] Project root: ${projectRoot.path}")
+        echo("Project root: ${projectRoot.path}")
+        
+        // Create IntentResolver and DiscoveryPipeline using the actual project root
         val intentResolver = IntentResolverImpl()
-        val projectCacheDir = I2VisionPaths.getProjectCacheDir(projectPath)
+        val projectCacheDir = I2VisionPaths.getProjectCacheDir(projectRoot.path)
         val cacheStore = FileCacheStore(projectCacheDir)
-        val pipeline = DiscoveryPipelineImpl(projectPath, intentResolver, cacheStore)
+        val pipeline = DiscoveryPipelineImpl(projectRoot.path, intentResolver, cacheStore)
         
         // Wrap suspend functions in runBlocking
         runBlocking {
@@ -89,28 +103,28 @@ class DiscoverCommand : CliktCommand(
                     // TODO: Implement PresetManager when available
                     // For now, treat preset as intent
                     val discoveryIntent = convertPresetToIntent(preset!!)
-                    runWithIntent(pipeline, discoveryIntent, cluster)
+                    runWithIntent(pipeline, discoveryIntent, cluster, projectRoot.path)
                 }
                 
                 // PATH 2: Intent-based (PRIMARY)
                 intent != null -> {
                     echo("Intent: $intent")
                     val discoveryIntent = parseIntent(intent!!)
-                    runWithIntent(pipeline, discoveryIntent, cluster)
+                    runWithIntent(pipeline, discoveryIntent, cluster, projectRoot.path)
                 }
                 
                 // PATH 3: Legacy depth-based
                 depth != null -> {
                     echo("[WARNING] --depth is deprecated. Use --intent instead.")
                     val discoveryDepth = parseDepth(depth!!)
-                    runWithDepth(pipeline, discoveryDepth, cluster)
+                    runWithDepth(pipeline, discoveryDepth, cluster, projectRoot.path)
                 }
                 
                 // DEFAULT: Full discovery intent
                 else -> {
                     echo("Defaulting to --intent=full_discovery")
                     val discoveryIntent = createDefaultIntent()
-                    runWithIntent(pipeline, discoveryIntent, cluster)
+                    runWithIntent(pipeline, discoveryIntent, cluster, projectRoot.path)
                 }
             }
         }
@@ -232,7 +246,8 @@ class DiscoverCommand : CliktCommand(
     private suspend fun runWithIntent(
         pipeline: DiscoveryPipelineImpl,
         intent: ApiDiscoveryIntent,
-        clusterId: String?
+        clusterId: String?,
+        projectRoot: String
     ) {
         echo("Goal: ${intent.goal}")
         echo("Depth: ${intent.depth}")
@@ -243,7 +258,7 @@ class DiscoverCommand : CliktCommand(
         val clusters = if (clusterId != null) {
             listOf(clusterId)
         } else {
-            detectClusters(projectPath)
+            detectClusters(projectRoot)
         }
         
         echo("")
@@ -293,7 +308,8 @@ class DiscoverCommand : CliktCommand(
     private suspend fun runWithDepth(
         pipeline: DiscoveryPipelineImpl,
         depth: DiscoveryDepth,
-        clusterId: String?
+        clusterId: String?,
+        projectRoot: String
     ) {
         echo("Depth: $depth")
         
@@ -301,7 +317,7 @@ class DiscoverCommand : CliktCommand(
         val clusters = if (clusterId != null) {
             listOf(clusterId)
         } else {
-            detectClusters(projectPath)
+            detectClusters(projectRoot)
         }
         
         echo("")
@@ -357,43 +373,31 @@ class DiscoverCommand : CliktCommand(
     }
     
     /**
-     * Detect clusters using directory structure and build files
-     * Simplified version that doesn't require architecture-types module
+     * Detect clusters using SignatureBuilder (same approach as self-discovery test)
      */
-    private fun detectClusters(projectPath: String): List<String> {
+    private fun detectClusters(projectRoot: String): List<String> {
         return try {
-            val root = File(projectPath)
-            val clusters = mutableListOf<String>()
+            log.info("[CLI] Detecting clusters for project root: $projectRoot")
             
-            // Check for Gradle multi-module project
-            val settingsFile = File(root, "settings.gradle.kts").takeIf { it.exists() }
-                ?: File(root, "settings.gradle").takeIf { it.exists() }
+            val signatureBuilder = SignatureBuilder(
+                projectRoot = projectRoot,
+                confidenceThreshold = 0.7,
+                useLlmForLowConfidence = false,
+                llmClient = null
+            )
+            val signature = signatureBuilder.build()
             
-            if (settingsFile != null) {
-                val content = settingsFile.readText()
-                // Extract module names from settings.gradle.kts
-                val modulePattern = Regex("""include\("([^"]+)"\)""")
-                modulePattern.findAll(content).forEach { match ->
-                    val moduleName = match.groupValues[1].removePrefix(":")
-                    // Convert Gradle module path (with colons) to directory path (with slashes)
-                    val directoryPath = moduleName.replace(":", "/")
-                    clusters.add(directoryPath)
-                }
-            } else {
-                // Fallback: detect top-level directories with source files
-                root.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.forEach { dir ->
-                    val hasSourceFiles = dir.walkTopDown()
-                        .any { it.isFile && it.extension in setOf("kt", "java", "scala", "groovy", "py", "js", "ts", "go", "rs") }
-                    if (hasSourceFiles) {
-                        clusters.add(dir.name)
-                    }
-                }
+            // Filter out empty clusters (with 0 files)
+            val validClusters = signature.clusters.filter { it.fileCount > 0 }
+            
+            log.info("[CLI] Detected ${validClusters.size} clusters from SignatureBuilder")
+            validClusters.forEach { cluster ->
+                log.info("[CLI]   - ${cluster.name} (${cluster.fileCount} files)")
             }
             
-            log.info("[CLI] Detected ${clusters.size} clusters: ${clusters.joinToString(", ")}")
-            clusters
+            validClusters.map { it.name }
         } catch (e: Exception) {
-            log.warn("[CLI] Failed to detect clusters: ${e.message}")
+            log.warn("[CLI] Failed to detect clusters with SignatureBuilder: ${e.message}")
             emptyList()
         }
     }

@@ -16,11 +16,14 @@ import java.io.File
  * - when expressions
  */
 class LogicExtractor(
-    private val projectRoot: String,
+    projectRoot: String,
     private val indexProvider: IndexProvider
 ) {
     
     private val log = LoggerFactory.getLogger(LogicExtractor::class.java)
+    
+    // Normalize projectRoot to absolute path to avoid path normalization issues
+    private val projectRoot = File(projectRoot).absolutePath
     
     /**
      * Extract business rules from source files.

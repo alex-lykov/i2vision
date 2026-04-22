@@ -13,11 +13,14 @@ import java.util.concurrent.ConcurrentHashMap
  * and symbol relationships.
  */
 class StructureBuilder(
-    private val projectRoot: String,
+    projectRoot: String,
     private val indexProvider: IndexProvider
 ) {
     
     private val log = LoggerFactory.getLogger(StructureBuilder::class.java)
+    
+    // Normalize projectRoot to absolute path to avoid path normalization issues
+    private val projectRoot = File(projectRoot).absolutePath
     
     // Configuration for adaptive dependency detection
     private data class DetectionConfig(

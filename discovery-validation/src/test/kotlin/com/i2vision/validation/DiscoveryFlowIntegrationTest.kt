@@ -1,15 +1,19 @@
 package com.i2vision.validation
 
 import com.i2vision.arch.signature.SignatureBuilder
-import com.i2vision.discover.api.models.DiscoveryDepth
-import com.i2vision.discover.intent.IntentResolverImpl
 import com.i2vision.discover.pipeline.DiscoveryPipelineImpl
-import com.i2vision.storage.I2VisionPaths
+import com.i2vision.discover.api.IntentResolver
+import com.i2vision.discover.intent.IntentResolverImpl
+import com.i2vision.discover.api.models.DiscoveryDepth
+import com.i2vision.storage.api.CacheStore
 import com.i2vision.storage.impl.FileCacheStore
+import com.i2vision.storage.I2VisionPaths
 import com.i2vision.storage.impl.RolloutManager
+import com.i2vision.instant.context.ContextProvider as InstantContextProvider
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
+import org.junit.AfterClass
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
@@ -17,7 +21,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
-import com.i2vision.instant.context.ContextProvider as InstantContextProvider
 
 /**
  * Extension function to extract the first number from a string
@@ -51,6 +54,69 @@ private fun String.extractNumber(): Int {
  */
 class DiscoveryFlowIntegrationTest {
 
+    companion object {
+        private val tempDirs = mutableListOf<File>()
+        private val cacheDirs = mutableListOf<File>()
+
+        @AfterClass
+        @JvmStatic
+        fun cleanup() {
+            println("[Cleanup] Starting cleanup of ${tempDirs.size} registered temp directories and ${cacheDirs.size} cache directories")
+            
+            // Clean up all temp directories created during tests
+            tempDirs.forEach { root ->
+                try {
+                    println("[Cleanup] Attempting to delete temp directory: ${root.absolutePath}")
+                    if (root.exists()) {
+                        root.deleteRecursively()
+                        println("[Cleanup] Deleted temp directory: ${root.name}")
+                    } else {
+                        println("[Cleanup] Directory does not exist: ${root.name}")
+                    }
+                } catch (e: Exception) {
+                    println("[Cleanup] Failed to delete temp directory ${root.name}: ${e.message}")
+                }
+            }
+            tempDirs.clear()
+
+            // Clean up cache directories created during tests
+            cacheDirs.forEach { cacheDir ->
+                try {
+                    println("[Cleanup] Attempting to delete cache directory: ${cacheDir.absolutePath}")
+                    if (cacheDir.exists()) {
+                        // Delete the parent projects/<hash> directory, not just .semantic-cache
+                        val projectCacheDir = cacheDir.parentFile?.parentFile
+                        if (projectCacheDir != null && projectCacheDir.exists()) {
+                            projectCacheDir.deleteRecursively()
+                            println("[Cleanup] Deleted cache directory: ${projectCacheDir.name}")
+                        } else {
+                            cacheDir.deleteRecursively()
+                            println("[Cleanup] Deleted cache directory: ${cacheDir.name}")
+                        }
+                    } else {
+                        println("[Cleanup] Cache directory does not exist: ${cacheDir.name}")
+                    }
+                } catch (e: Exception) {
+                    println("[Cleanup] Failed to delete cache directory ${cacheDir.name}: ${e.message}")
+                }
+            }
+            cacheDirs.clear()
+
+            // Also clean up any leftover discovery-phase-* directories in temp
+            val tempDir = System.getProperty("java.io.tmpdir")
+            println("[Cleanup] System temp directory: $tempDir")
+            File(tempDir).listFiles()?.filter { it.name.startsWith("discovery-phase-") }?.forEach { dir ->
+                try {
+                    println("[Cleanup] Found leftover temp directory: ${dir.absolutePath}")
+                    dir.deleteRecursively()
+                    println("[Cleanup] Deleted leftover temp directory: ${dir.name}")
+                } catch (e: Exception) {
+                    println("[Cleanup] Failed to delete leftover temp directory ${dir.name}: ${e.message}")
+                }
+            }
+        }
+    }
+
     // ========== PHASE 0: Test Setup/Inits ==========
 
     @Test
@@ -73,16 +139,19 @@ class DiscoveryFlowIntegrationTest {
             val root = phase0_setupTestProject()
             
             try {
-                // Check nested module directory structure
-                val orchestratorFile = File(root, "core/orchestrator/src/main/kotlin/com/core/orchestrator/AgentOrchestrator.kt")
-                assertTrue(orchestratorFile.exists(), "Orchestrator source file should exist")
-                assertTrue(orchestratorFile.readText().contains("class AgentOrchestrator"), "Orchestrator file should contain AgentOrchestrator class")
+                // Check sketch folder structure (aggregator-pure has module-a, module-b, module-c)
+                val moduleAFile = File(root, "module-a/src/Main.kt")
+                assertTrue(moduleAFile.exists(), "Module-a source file should exist")
+                assertTrue(moduleAFile.readText().contains("class Main"), "Module-a file should contain Main class")
                 
-                val agentsFile = File(root, "agents/src/main/kotlin/com/agents/BaseAgent.kt")
-                assertTrue(agentsFile.exists(), "Agents source file should exist")
-                assertTrue(agentsFile.readText().contains("abstract class BaseAgent"), "Agents file should contain BaseAgent class")
+                val moduleBFile = File(root, "module-b/src/Main.kt")
+                assertTrue(moduleBFile.exists(), "Module-b source file should exist")
+                assertTrue(moduleBFile.readText().contains("class Main"), "Module-b file should contain Main class")
                 
-                assertTrue(File(root, "build.gradle.kts").exists(), "Build file should exist")
+                val moduleCFile = File(root, "module-c/src/Main.kt")
+                assertTrue(moduleCFile.exists(), "Module-c source file should exist")
+                assertTrue(moduleCFile.readText().contains("class Main"), "Module-c file should contain Main class")
+                
                 assertTrue(File(root, "settings.gradle.kts").exists(), "Settings file should exist")
             } finally {
                 root.deleteRecursively()
@@ -141,24 +210,26 @@ class DiscoveryFlowIntegrationTest {
                 
                 val archResult = phase2_0_detectArchitecture(root, useLlm = false)
                 
-                // Check that core aggregator submodules are detected
+                // Check that aggregator submodules are detected
                 val clusterNames = archResult.clusters.map { it.first }
                 
                 // Debug: print all detected clusters
                 println("Detected clusters: $clusterNames")
                 println("All cluster details: ${archResult.clusters}")
                 
-                // The test project has core/orchestrator and core/session submodules (no core/config)
+                // The aggregator-pure sketch has module-a, module-b, module-c submodules
                 // These should be detected as separate clusters
-                val coreSubmodules = clusterNames.filter { it.startsWith("core") }
+                val moduleSubmodules = clusterNames.filter { it.startsWith("module") }
                 
-                assertTrue(coreSubmodules.isNotEmpty(), "Core aggregator submodules should be detected. Found: $clusterNames")
+                assertTrue(moduleSubmodules.isNotEmpty(), "Module submodules should be detected. Found: $clusterNames")
                 
                 // Verify specific submodules are detected
-                assertTrue(clusterNames.any { it.contains("orchestrator") || it == "core:orchestrator" || it == "core/orchestrator" }, 
-                    "Core orchestrator submodule should be detected. Found: $clusterNames")
-                assertTrue(clusterNames.any { it.contains("session") || it == "core:session" || it == "core/session" }, 
-                    "Core session submodule should be detected. Found: $clusterNames")
+                assertTrue(clusterNames.any { it.contains("module-a") || it == "module-a" }, 
+                    "Module-a submodule should be detected. Found: $clusterNames")
+                assertTrue(clusterNames.any { it.contains("module-b") || it == "module-b" }, 
+                    "Module-b submodule should be detected. Found: $clusterNames")
+                assertTrue(clusterNames.any { it.contains("module-c") || it == "module-c" }, 
+                    "Module-c submodule should be detected. Found: $clusterNames")
             } finally {
                 root.deleteRecursively()
             }
@@ -383,13 +454,13 @@ class DiscoveryFlowIntegrationTest {
                 phase1_rolloutStructure(root)
                 val firstRun = phase2_2_runDiscovery(root, depth = DiscoveryDepth.STANDARD)
                 
-                // Modify a single file (use orchestrator file from nested module structure)
-                val orchestratorFile = File(root, "core/orchestrator/src/main/kotlin/com/core/orchestrator/AgentOrchestrator.kt")
-                val originalContent = orchestratorFile.readText()
-                orchestratorFile.writeText(originalContent + "\n    fun stopAgent(id: String) { /* new */ }")
+                // Modify a single file (use module-a file from sketch folder)
+                val moduleAFile = File(root, "module-a/src/Main.kt")
+                val originalContent = moduleAFile.readText()
+                moduleAFile.writeText(originalContent + "\n    fun stopAgent(id: String) { /* new */ }")
                 
                 // Phase 5: Incremental sync
-                val syncResult = phase5_incrementalSync(root, changedFile = orchestratorFile)
+                val syncResult = phase5_incrementalSync(root, changedFile = moduleAFile)
                 
                 assertTrue(syncResult.scope in listOf("file", "main"), "Should detect file-level or main change")
                 assertTrue(syncResult.affectedLayers.contains("code"), "Code layer should be affected")
@@ -558,119 +629,50 @@ class DiscoveryFlowIntegrationTest {
 
     /**
      * Phase 0: Test Setup/Inits
-     * Creates test project structure with multiple clusters to simulate real project
+     * Copies real sketch folder to temporary directory for testing
      */
     private suspend fun phase0_setupTestProject(): File {
         val root = Files.createTempDirectory("discovery-phase-").toFile()
+        tempDirs.add(root) // Register for cleanup
+        println("[Setup] Created temp directory: ${root.absolutePath}")
         
-        // Create build file
-        val buildFile = File(root, "build.gradle.kts")
-        buildFile.writeText("""
-            plugins {
-                kotlin("jvm") version "1.9.0"
-            }
-            
-            repositories {
-                mavenCentral()
-            }
-        """.trimIndent())
+        // Register cache directory for cleanup
+        val cacheDir = I2VisionPaths.getProjectCacheDir(root.absolutePath)
+        cacheDirs.add(cacheDir)
+        println("[Setup] Registered cache directory for cleanup: ${cacheDir.absolutePath}")
         
-        // Create settings file with multiple modules to simulate cluster structure
-        val settingsFile = File(root, "settings.gradle.kts")
-        settingsFile.writeText("""
-            rootProject.name = "test-project"
-            include("core:orchestrator")
-            include("core:session")
-            include("agents")
-            include("architecture-types")
-            include("discovery-api")
-            include("link-service")
-        """.trimIndent())
+        // Copy aggregator-pure sketch folder to temp directory
+        // Find project root by looking for settings.gradle.kts
+        var projectRoot = File(".").absoluteFile
+        while (projectRoot.parentFile != null && !File(projectRoot, "settings.gradle.kts").exists()) {
+            projectRoot = projectRoot.parentFile
+        }
+        val sketchDir = File(projectRoot, "discovery-validation/src/test/resources/sketches/aggregator-pure")
+        if (!sketchDir.exists()) {
+            throw IllegalStateException("Sketch directory not found: ${sketchDir.absolutePath}")
+        }
         
-        // Create source files in nested module directories with their own src directories
-        // This simulates the real project structure where each module has its own src directory
-        
-        // core/orchestrator
-        val orchestratorSrcDir = File(root, "core/orchestrator/src/main/kotlin/com/core/orchestrator")
-        orchestratorSrcDir.mkdirs()
-        val orchestratorFile = File(orchestratorSrcDir, "AgentOrchestrator.kt")
-        orchestratorFile.writeText("""
-            package com.core.orchestrator
-            
-            class AgentOrchestrator {
-                fun startAgent(id: String) {
-                    println("Starting agent: " + id)
-                }
-            }
-        """.trimIndent())
-        
-        // core/session
-        val sessionSrcDir = File(root, "core/session/src/main/kotlin/com/core/session")
-        sessionSrcDir.mkdirs()
-        val sessionFile = File(sessionSrcDir, "SessionManager.kt")
-        sessionFile.writeText("""
-            package com.core.session
-            
-            class SessionManager {
-                fun createSession(id: String): String {
-                    return "session-" + id
-                }
-            }
-        """.trimIndent())
-        
-        // agents
-        val agentsSrcDir = File(root, "agents/src/main/kotlin/com/agents")
-        agentsSrcDir.mkdirs()
-        val agentFile = File(agentsSrcDir, "BaseAgent.kt")
-        agentFile.writeText("""
-            package com.agents
-            
-            abstract class BaseAgent {
-                abstract fun execute()
-            }
-        """.trimIndent())
-        
-        // architecture-types
-        val archSrcDir = File(root, "architecture-types/src/main/kotlin/com/arch/types")
-        archSrcDir.mkdirs()
-        val archFile = File(archSrcDir, "ArchitectureDetector.kt")
-        archFile.writeText("""
-            package com.arch.types
-            
-            class ArchitectureDetector {
-                fun detectArchitecture(): String {
-                    return "microservices"
-                }
-            }
-        """.trimIndent())
-        
-        // discovery-api
-        val discoveryApiSrcDir = File(root, "discovery-api/src/main/kotlin/com/discovery/api")
-        discoveryApiSrcDir.mkdirs()
-        val discoveryApiFile = File(discoveryApiSrcDir, "DiscoveryService.kt")
-        discoveryApiFile.writeText("""
-            package com.discovery.api
-            
-            interface DiscoveryService {
-                fun discover(): List<String>
-            }
-        """.trimIndent())
-        
-        // link-service
-        val linkSrcDir = File(root, "link-service/src/main/kotlin/com/link/service")
-        linkSrcDir.mkdirs()
-        val linkFile = File(linkSrcDir, "LinkManager.kt")
-        linkFile.writeText("""
-            package com.link.service
-            
-            class LinkManager {
-                fun createLink(source: String, target: String) {
-                    println("Creating link: " + source + " -> " + target)
-                }
-            }
-        """.trimIndent())
+        // Copy sketch contents to temp directory
+        copyDirectory(sketchDir, root)
         
         return root
+    }
+    
+    /**
+     * Helper function to copy directory recursively
+     */
+    private fun copyDirectory(source: File, destination: File) {
+        source.walk().forEach { file ->
+            val relativePath = source.toPath().relativize(file.toPath()).toString()
+            val destFile = File(destination, relativePath)
+            
+            if (file.isDirectory) {
+                destFile.mkdirs()
+            } else {
+                destFile.parentFile?.mkdirs()
+                file.copyTo(destFile, overwrite = true)
+            }
+        }
     }
 
     /**
@@ -1228,9 +1230,8 @@ class DiscoveryFlowIntegrationTest {
 
         // Check cluster ID correctness (should match expected cluster structure)
         val clusterIdCorrect = discoveryResult.artifacts.any { artifact ->
-            artifact.content.contains("core") || artifact.content.contains("agents") ||
-            artifact.content.contains("architecture-types") || artifact.content.contains("discovery-api") ||
-            artifact.content.contains("link-service")
+            artifact.content.contains("module-a") || artifact.content.contains("module-b") ||
+            artifact.content.contains("module-c")
         }
 
         // Check for wrong directories (should not have unexpected paths)

@@ -4,6 +4,7 @@ import com.i2vision.arch.signature.SignatureBuilder
 import com.i2vision.discover.pipeline.DiscoveryPipelineImpl
 import com.i2vision.storage.api.CacheStore
 import com.i2vision.storage.impl.FileCacheStore
+import com.i2vision.storage.I2VisionPaths
 import com.i2vision.discover.api.IntentResolver
 import com.i2vision.discover.intent.IntentResolverImpl
 import com.i2vision.discover.api.models.DiscoveryDepth
@@ -11,9 +12,11 @@ import com.i2vision.discover.api.models.DiscoveryGoal
 import com.i2vision.intent.IntentParser
 import kotlinx.coroutines.runBlocking
 import org.junit.Test
+import org.yaml.snakeyaml.Yaml
 import java.io.File
 import java.nio.file.Files
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import kotlin.test.assertFalse
@@ -31,6 +34,34 @@ import kotlin.test.assertFalse
  * Phase 3: Artifact validation
  */
 class DiscoveryIntegrationTest {
+
+    // YAML config loader
+    private val yaml = Yaml()
+    
+    /**
+     * Load sketch configuration from YAML file
+     */
+    private fun loadSketchConfig(configName: String): SketchConfig {
+        val configPath = javaClass.classLoader.getResource("sketch-configs/$configName.yaml")
+            ?: throw IllegalArgumentException("Config not found: $configName.yaml")
+        val config = yaml.load(configPath.openStream()) as Map<String, Any>
+        return SketchConfig(
+            sketch = config["sketch"] as String,
+            description = config["description"] as String,
+            expectedClusters = (config["expected_clusters"] as List<*>).map { it as String },
+            expectedLayersPerCluster = (config["expected_layers_per_cluster"] as List<*>).map { it as String },
+            requiredLayers = (config["required_layers"] as List<*>).map { it as String }
+        )
+    }
+    
+    // Data classes for config
+    data class SketchConfig(
+        val sketch: String,
+        val description: String,
+        val expectedClusters: List<String>,
+        val expectedLayersPerCluster: List<String>,
+        val requiredLayers: List<String>
+    )
 
     // ========== PHASE 0: Architecture Detection ==========
 
@@ -265,5 +296,51 @@ class DiscoveryIntegrationTest {
         } finally {
             tempDir.deleteRecursively()
         }
+    }
+
+    // ========== YAML CONFIG VALIDATION ==========
+
+    @Test
+    fun `validate discovery against i2-vision sketch config`() = runBlocking {
+        // Use actual i2vision project root (parent of discovery-validation)
+        val projectRoot = File("..").absoluteFile
+        val config = loadSketchConfig("i2-vision")
+        
+        // Get first cluster from SignatureBuilder (match SelfDiscoveryTest behavior)
+        val signatureBuilder = SignatureBuilder(projectRoot.absolutePath)
+        val signature = signatureBuilder.build()
+        val targetClusterId = signature.clusters.firstOrNull()?.name ?: "project"
+        
+        // Use correct cache location (user local cache, not project root)
+        val projectCacheDir = I2VisionPaths.getProjectCacheDir(projectRoot.absolutePath)
+        
+        // Run discovery with clusterId (match legacy branch behavior)
+        val intentResolver = IntentResolverImpl()
+        val cacheStore = FileCacheStore(projectCacheDir)
+        val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
+        
+        val result = discovery.discover(
+            depth = DiscoveryDepth.STANDARD,
+            clusterId = targetClusterId,
+            contracts = emptyList()
+        )
+        
+        assertNotNull(result, "Discovery result should not be null")
+        assertTrue(result.success, "Discovery should succeed")
+        println("✓ Discovery completed for cluster: $targetClusterId")
+        
+        // Validate semantic cache structure against config
+        // CacheStore creates directories under projectCacheDir directly (not .semantic-cache subdirectory)
+        val clusterDir = File(projectCacheDir, targetClusterId)
+        assertTrue(clusterDir.exists() || clusterDir.isDirectory, "Cluster directory should exist: $targetClusterId")
+        
+        // Validate that all required VSLFC layers exist for the cluster
+        config.requiredLayers.forEach { layer ->
+            val layerDir = File(clusterDir, layer)
+            assertTrue(layerDir.exists() || layerDir.isDirectory, 
+                "Layer directory should exist for cluster $targetClusterId: $layer")
+        }
+        
+        println("✓ Semantic cache structure validated against config")
     }
 }

@@ -2,6 +2,7 @@ import java.time.Duration
 
 plugins {
     kotlin("jvm")
+    application
 }
 
 dependencies {
@@ -26,9 +27,22 @@ dependencies {
     // Test frameworks - JUnit 4 for compatibility with existing tests
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")
+    
+    // YAML config parsing
+    testImplementation("org.yaml:snakeyaml:2.2")
 }
 
 tasks.test {
     // Long-running tests
     timeout.set(Duration.ofMinutes(30))
+}
+
+// Add task to run SelfDiscoveryTest
+tasks.register<JavaExec>("runSelfDiscoveryTest") {
+    group = "verification"
+    description = "Run SelfDiscoveryTest standalone"
+    classpath = sourceSets.test.get().runtimeClasspath
+    mainClass.set("com.i2vision.validation.SelfDiscoveryTestKt")
+    standardOutput = System.out
+    errorOutput = System.err
 }

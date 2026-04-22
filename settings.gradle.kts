@@ -35,3 +35,6 @@ include("link-service")
 
 // Build tests
 include("build-tests")
+
+// Internal validation module (not published)
+include("discovery-validation")

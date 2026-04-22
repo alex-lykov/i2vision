@@ -1,0 +1,269 @@
+package com.i2vision.validation
+
+import com.i2vision.arch.signature.SignatureBuilder
+import com.i2vision.discover.pipeline.DiscoveryPipelineImpl
+import com.i2vision.storage.api.CacheStore
+import com.i2vision.storage.impl.FileCacheStore
+import com.i2vision.discover.api.IntentResolver
+import com.i2vision.discover.intent.IntentResolverImpl
+import com.i2vision.discover.api.models.DiscoveryDepth
+import com.i2vision.discover.api.models.DiscoveryGoal
+import com.i2vision.intent.IntentParser
+import kotlinx.coroutines.runBlocking
+import org.junit.Test
+import java.io.File
+import java.nio.file.Files
+import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
+import kotlin.test.assertFalse
+
+/**
+ * Modular Discovery Integration Tests
+ *
+ * Tests the new modular discovery structure (i2vision-discover, i2vision-instant, i2vision-mcp)
+ * Adapted from the legacy orchestrator integration tests to work with the new module ecosystem.
+ *
+ * Test Phases:
+ * Phase 0: Architecture detection
+ * Phase 1: Intent resolution
+ * Phase 2: Discovery pipeline execution
+ * Phase 3: Artifact validation
+ */
+class DiscoveryIntegrationTest {
+
+    // ========== PHASE 0: Architecture Detection ==========
+
+    @Test
+    fun `phase0 architecture detection identifies project structure`() = runBlocking {
+        val projectRoot = File(".").absoluteFile
+        val signatureBuilder = SignatureBuilder(projectRoot.absolutePath)
+        val signature = signatureBuilder.build()
+
+        assertTrue(signature.buildSystem != null, "Build system should be detected")
+        assertTrue(signature.clusters.isNotEmpty(), "Clusters should be detected")
+        assertTrue(signature.confidence.values.average() > 0, "Confidence should be positive")
+    }
+
+    @Test
+    fun `phase0 architecture detection provides cluster information`() = runBlocking {
+        val projectRoot = File(".").absoluteFile
+        val signatureBuilder = SignatureBuilder(projectRoot.absolutePath)
+        val signature = signatureBuilder.build()
+
+        signature.clusters.forEach { cluster ->
+            assertTrue(cluster.name.isNotBlank(), "Cluster name should not be blank")
+            assertTrue(cluster.fileCount >= 0, "File count should be non-negative")
+        }
+    }
+
+    // ========== PHASE 1: Intent Resolution ==========
+
+    @Test
+    fun `phase1 intent resolution parses full discovery intent`() {
+        val intentParser = IntentParser
+        val intent = intentParser.parse(mapOf("intent" to "full_discovery"))
+
+        assertNotNull(intent, "Intent should be parsed")
+        assertNotNull(intent.goal, "Intent goal should be set")
+    }
+
+    @Test
+    fun `phase1 intent resolution parses refactoring intent`() {
+        val intentParser = IntentParser
+        val intent = intentParser.parse(mapOf("intent" to "refactoring_analysis"))
+
+        assertNotNull(intent, "Intent should be parsed")
+        assertNotNull(intent.goal, "Intent goal should be set")
+    }
+
+    // ========== PHASE 2: Discovery Pipeline ==========
+
+    @Test
+    fun `phase2 discovery pipeline executes with standard depth`() {
+        runBlocking {
+            val projectRoot = File(".").absoluteFile
+            val intentResolver = IntentResolverImpl()
+            val cacheStore = FileCacheStore(projectRoot)
+            val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
+
+            val result = discovery.discover(
+                depth = DiscoveryDepth.STANDARD,
+                clusterId = null,
+                contracts = emptyList()
+            )
+
+            assertNotNull(result, "Discovery result should not be null")
+        }
+    }
+
+    @Test
+    fun `phase2 discovery pipeline executes with quick depth`() {
+        runBlocking {
+            val projectRoot = File(".").absoluteFile
+            val intentResolver = IntentResolverImpl()
+            val cacheStore = FileCacheStore(projectRoot)
+            val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
+
+            val result = discovery.discover(
+                depth = DiscoveryDepth.BROWSE,
+                clusterId = null,
+                contracts = emptyList()
+            )
+
+            assertNotNull(result, "Discovery result should not be null")
+        }
+    }
+
+    @Test
+    fun `phase2 discovery pipeline with specific cluster`() {
+        runBlocking {
+            val projectRoot = File(".").absoluteFile
+            val signatureBuilder = SignatureBuilder(projectRoot.absolutePath)
+            val signature = signatureBuilder.build()
+            val targetCluster = signature.clusters.firstOrNull()?.name
+
+            if (targetCluster != null) {
+                val intentResolver = IntentResolverImpl()
+                val cacheStore = FileCacheStore(projectRoot)
+                val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
+
+                val result = discovery.discover(
+                    depth = DiscoveryDepth.STANDARD,
+                    clusterId = targetCluster,
+                    contracts = emptyList()
+                )
+
+                assertNotNull(result, "Discovery result should not be null")
+            }
+        }
+    }
+
+    // ========== PHASE 3: Artifact Validation ==========
+
+    @Test
+    fun `phase3 semantic cache structure is created`() = runBlocking {
+        val projectRoot = File(".").absoluteFile
+        val intentResolver = IntentResolverImpl()
+        val cacheStore = FileCacheStore(projectRoot)
+        val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
+
+        discovery.discover(
+            depth = DiscoveryDepth.STANDARD,
+            clusterId = null,
+            contracts = emptyList()
+        )
+
+        val semanticCache = File(projectRoot, ".semantic-cache")
+        assertTrue(semanticCache.exists(), "Semantic cache directory should be created")
+    }
+
+    @Test
+    fun `phase3 artifact files are written to cache`() = runBlocking {
+        val projectRoot = File(".").absoluteFile
+        val intentResolver = IntentResolverImpl()
+        val cacheStore = FileCacheStore(projectRoot)
+        val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
+
+        val result = discovery.discover(
+            depth = DiscoveryDepth.STANDARD,
+            clusterId = null,
+            contracts = emptyList()
+        )
+
+        val semanticCache = File(projectRoot, ".semantic-cache")
+        val artifactFiles = semanticCache.walkTopDown()
+            .filter { it.isFile }
+            .filter { it.extension in listOf("yaml", "yml", "json") }
+            .toList()
+
+        assertTrue(artifactFiles.isNotEmpty(), "Artifact files should be written")
+    }
+
+    // ========== INTEGRATION: End-to-End Flow ==========
+
+    @Test
+    fun `end to end discovery flow from architecture to artifacts`() {
+        runBlocking {
+        val projectRoot = File(".").absoluteFile
+
+        // Step 1: Architecture detection
+        val signatureBuilder = SignatureBuilder(projectRoot.absolutePath)
+        val signature = signatureBuilder.build()
+        assertTrue(signature.clusters.isNotEmpty(), "Architecture should be detected")
+
+        // Step 2: Intent resolution
+        val intentParser = IntentParser
+        val intent = intentParser.parse(mapOf("intent" to "full_discovery"))
+        assertNotNull(intent, "Intent should be resolved")
+
+        // Step 3: Discovery pipeline
+        val intentResolver = IntentResolverImpl()
+        val cacheStore = FileCacheStore(projectRoot)
+        val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
+        val result = discovery.discover(
+            depth = DiscoveryDepth.STANDARD,
+            clusterId = null,
+            contracts = emptyList()
+        )
+
+        // Step 4: Verify results
+        assertNotNull(result, "Discovery should complete")
+        }
+    }
+
+    @Test
+    fun `end to end discovery with cluster specific target`() {
+        runBlocking {
+        val projectRoot = File(".").absoluteFile
+
+        // Detect architecture
+        val signatureBuilder = SignatureBuilder(projectRoot.absolutePath)
+        val signature = signatureBuilder.build()
+
+        val targetCluster = signature.clusters.firstOrNull()
+        if (targetCluster != null) {
+            // Run discovery for specific cluster
+            val intentResolver = IntentResolverImpl()
+            val cacheStore = FileCacheStore(projectRoot)
+            val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
+            val result = discovery.discover(
+                depth = DiscoveryDepth.STANDARD,
+                clusterId = targetCluster.name,
+                contracts = emptyList()
+            )
+
+            assertNotNull(result, "Cluster-specific discovery should complete")
+        }
+        }
+    }
+
+    // ========== TEMPORARY PROJECT STRUCTURE TESTS ==========
+
+    @Test
+    fun `temporary test project structure creation`() {
+        val tempDir = Files.createTempDirectory("test-project-").toFile()
+
+        try {
+            // Create basic project structure
+            val srcDir = File(tempDir, "src/main/kotlin/com/example")
+            srcDir.mkdirs()
+
+            val serviceFile = File(srcDir, "UserService.kt")
+            serviceFile.writeText("""
+                package com.example
+                
+                class UserService {
+                    fun findUser(id: String): User? {
+                        return null
+                    }
+                }
+            """.trimIndent())
+
+            assertTrue(srcDir.exists(), "Source directory should exist")
+            assertTrue(serviceFile.exists(), "Service file should exist")
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+}

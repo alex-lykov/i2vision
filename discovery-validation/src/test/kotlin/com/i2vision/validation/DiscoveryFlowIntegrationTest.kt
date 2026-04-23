@@ -525,6 +525,7 @@ class DiscoveryFlowIntegrationTest {
                     }
 
                     val config = yaml.load<Map<String, Any>>(configFile.readText())
+                    @Suppress("UNCHECKED_CAST")
                     val expected = config["expected"] as? Map<String, Any> ?: emptyMap()
 
                     // Run architecture detection

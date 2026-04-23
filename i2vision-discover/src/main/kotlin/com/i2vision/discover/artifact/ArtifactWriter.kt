@@ -102,15 +102,13 @@ class ArtifactWriter(
         val flowData = mapOf(
             "id" to flow.id,
             "name" to flow.name,
-            "entryPoint" to (flow.entryPoint ?: ""),
+            "entryPoint" to flow.entryPoint,
             "pattern" to (flow.pattern ?: ""),
-            "steps" to flow.steps.filter { step ->
-                step.symbolName != null && step.qualifiedName != null && step.file != null
-            }.map { step ->
+            "steps" to flow.steps.map { step ->
                 mapOf(
-                    "symbolName" to (step.symbolName ?: ""),
-                    "qualifiedName" to (step.qualifiedName ?: ""),
-                    "file" to (step.file ?: ""),
+                    "symbolName" to step.symbolName,
+                    "qualifiedName" to step.qualifiedName,
+                    "file" to step.file,
                     "line" to step.line
                 )
             }
@@ -201,14 +199,14 @@ class ArtifactWriter(
         )
         
         val componentData = mutableMapOf<String, Any>()
-        componentData["id"] = (component.id ?: "")
-        componentData["name"] = (component.name ?: "")
-        componentData["type"] = (component.type ?: "")
-        componentData["packageName"] = (component.packageName ?: "")
-        componentData["files"] = (component.files ?: emptyList<String>())
-        componentData["classes"] = (component.classes ?: emptyList<String>())
-        componentData["functions"] = (component.functions ?: emptyList<String>())
-        componentData["dependencies"] = (component.dependencies ?: emptyList<String>())
+        componentData["id"] = component.id
+        componentData["name"] = component.name
+        componentData["type"] = component.type
+        componentData["packageName"] = component.packageName
+        componentData["files"] = component.files
+        componentData["classes"] = component.classes
+        componentData["functions"] = component.functions
+        componentData["dependencies"] = component.dependencies
         
         try {
             cacheStore.put(ref, yaml.dump(componentData).toByteArray())
@@ -217,7 +215,7 @@ class ArtifactWriter(
             log.error("[ARTIFACT_WRITER] Failed to write component: {}", ref.name, e)
             log.error("[ARTIFACT_WRITER] Component data: id={}, name={}, type={}, packageName={}, files={}, classes={}, functions={}, dependencies={}",
                 component.id, component.name, component.type, component.packageName,
-                component.files?.size, component.classes?.size, component.functions?.size, component.dependencies?.size)
+                component.files.size, component.classes.size, component.functions.size, component.dependencies.size)
             throw e
         }
         

@@ -2,7 +2,6 @@ import java.time.Duration
 
 plugins {
     kotlin("jvm")
-    application
 }
 
 dependencies {
@@ -45,4 +44,11 @@ tasks.register<JavaExec>("runSelfDiscoveryTest") {
     mainClass.set("com.i2vision.validation.SelfDiscoveryTestKt")
     standardOutput = System.out
     errorOutput = System.err
+}
+
+// Alias for convenience
+tasks.register("run") {
+    group = "verification"
+    description = "Alias for runSelfDiscoveryTest"
+    dependsOn("runSelfDiscoveryTest")
 }

@@ -214,7 +214,7 @@ class ContextProvider(
                     when (value) {
                         is List<*> -> value.isNotEmpty()
                         is Map<*, *> -> value.isNotEmpty()
-                        else -> value != null
+                        else -> true
                     }
                 }
             }
@@ -342,6 +342,7 @@ class ContextProvider(
     /**
      * Load flows from discovery cache.
      */
+    @Suppress("UNCHECKED_CAST")
     private fun loadFlows(modulePath: String, filePath: String): List<FlowInfo> {
         val flowsFile = File(projectRoot, "${StorageConstants.SEMANTIC_CACHE_DIR}/$modulePath/flow/sequences.yaml")
         if (!flowsFile.exists()) return emptyList()
@@ -377,6 +378,7 @@ class ContextProvider(
     /**
      * Load business rules from discovery cache.
      */
+    @Suppress("UNCHECKED_CAST")
     private fun loadBusinessRules(modulePath: String, filePath: String): List<BusinessRuleInfo> {
         val rulesFile = File(projectRoot, "${StorageConstants.SEMANTIC_CACHE_DIR}/$modulePath/logic/business-rules.yaml")
         if (!rulesFile.exists()) return emptyList()
@@ -405,6 +407,7 @@ class ContextProvider(
     /**
      * Load component information from discovery cache.
      */
+    @Suppress("UNCHECKED_CAST")
     private fun loadComponent(modulePath: String, filePath: String): ComponentInfo? {
         val componentsFile = File(projectRoot, "${StorageConstants.SEMANTIC_CACHE_DIR}/$modulePath/structure/components.yaml")
         if (!componentsFile.exists()) return null
@@ -433,6 +436,7 @@ class ContextProvider(
     /**
      * Load related components from discovery cache.
      */
+    @Suppress("UNCHECKED_CAST")
     private fun loadRelatedComponents(modulePath: String, componentName: String?): List<ComponentDependency> {
         if (componentName == null) return emptyList()
         

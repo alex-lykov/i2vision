@@ -398,6 +398,15 @@ class DiscoveryPipelineImpl(
                         ))
                         log.info("[DISCOVERY] Wrote {} artifact files", writtenArtifacts.size)
                         
+                        // Write discovery summary to CODE layer
+                        val summaryRef = artifactWriter.writeSummary(clusterId ?: "unknown", flows, businessRules, components)
+                        artifacts.add(DiscoveryArtifact(
+                            layer = "code",
+                            path = "discovery_summary",
+                            content = "Wrote discovery summary: ${summaryRef.module}/${summaryRef.layer}/${summaryRef.name}"
+                        ))
+                        log.info("[DISCOVERY] Wrote discovery summary to CODE layer")
+                        
                         // Generate and write links between artifacts
                         val generatedLinksCount = if (clusterId != null) {
                             generateLinks(clusterId, flows, businessRules, components)

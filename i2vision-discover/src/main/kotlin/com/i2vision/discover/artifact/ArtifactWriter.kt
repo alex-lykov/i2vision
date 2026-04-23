@@ -234,7 +234,7 @@ class ArtifactWriter(
      * @param components List of components
      * @return Artifact reference
      */
-    private suspend fun writeSummary(
+    suspend fun writeSummary(
         moduleName: String,
         flows: List<Flow>,
         businessRules: List<BusinessRule>,

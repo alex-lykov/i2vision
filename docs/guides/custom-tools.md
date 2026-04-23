@@ -2,7 +2,8 @@
 
 ## Overview
 
-i2vision-mcp supports custom tool registration through the ToolRegistry system. This guide explains how to create and register custom tools for the MCP server.
+i2vision-mcp supports custom tool registration through the ToolRegistry system. This guide explains how to create and
+register custom tools for the MCP server.
 
 ## Tool Handler Interface
 
@@ -153,12 +154,14 @@ fun listCustomTools(): List<ToolDescription> {
 ## Best Practices
 
 ### Error Handling
+
 - Always validate required parameters
 - Return meaningful error messages
 - Use try-catch blocks for external operations
 - Log errors for debugging
 
 ### Parameter Validation
+
 ```kotlin
 suspend fun executeTool(params: Map<String, Any>): ToolResult {
     val requiredParams = listOf("filePath", "pattern")
@@ -177,6 +180,7 @@ suspend fun executeTool(params: Map<String, Any>): ToolResult {
 ```
 
 ### Async Operations
+
 - Use `suspend` functions for I/O operations
 - Leverage Kotlin coroutines for parallel processing
 - Implement timeouts for long-running operations
@@ -199,6 +203,7 @@ suspend fun executeTool(params: Map<String, Any>): ToolResult {
 ```
 
 ### Resource Management
+
 - Close file handles and connections
 - Clean up temporary files
 - Release acquired locks
@@ -220,20 +225,25 @@ suspend fun executeTool(params: Map<String, Any>): ToolResult {
 ## Tool Categories
 
 ### Discovery Tools
+
 Tools that analyze project structure and discover artifacts.
 
 ### Context Tools
+
 Tools that provide context and information about code.
 
 ### Analysis Tools
+
 Tools that perform code analysis and metrics calculation.
 
 ### Intelligence Tools
+
 Tools that provide AI-powered insights and suggestions.
 
 ## Testing Custom Tools
 
 ### Unit Testing
+
 ```kotlin
 import kotlinx.coroutines.test.runTest
 import kotlin.test.assertEquals
@@ -269,6 +279,7 @@ class CustomAnalysisToolTest {
 ```
 
 ### Integration Testing
+
 Test tools through the MCP server:
 
 ```kotlin
@@ -302,6 +313,7 @@ class McpServerIntegrationTest {
 ## Advanced Topics
 
 ### Tool Composition
+
 Combine multiple tools for complex operations:
 
 ```kotlin
@@ -320,6 +332,7 @@ suspend fun comprehensiveAnalysis(params: Map<String, Any>): ToolResult {
 ```
 
 ### Tool Chaining
+
 Create workflows by chaining tool outputs:
 
 ```kotlin
@@ -340,6 +353,7 @@ suspend fun analysisWorkflow(params: Map<String, Any>): ToolResult {
 ```
 
 ### Tool Permissions
+
 Implement permission checks for sensitive operations:
 
 ```kotlin
@@ -361,6 +375,7 @@ private fun isSensitiveOperation(operation: String): Boolean {
 ## Examples
 
 See existing tools for reference:
+
 - `tools/discovery/DiscoveryTools.kt` - Discovery tool implementation
 - `tools/context/ContextTools.kt` - Context tool implementation
 - `tools/intelligence/IntelligenceTools.kt` - Intelligence tool implementation

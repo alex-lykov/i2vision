@@ -13,12 +13,12 @@ package com.i2vision.vslfc
  * - What directory structure is expected
  */
 object VslfcStructure {
-    
+
     /**
      * The five VSLFC layers in order
      */
     val LAYERS = listOf("vision", "structure", "logic", "flow", "code")
-    
+
     // Contract templates (must be defined before CONTRACT_TEMPLATES)
     private val visionRequirementTemplate = """
 id: REQ-{number}
@@ -201,7 +201,7 @@ validation:
      * Requirement template for human-written requirements
      */
     val REQUIREMENT_TEMPLATE = visionRequirementTemplate
-    
+
     /**
      * Default agent config template
      * This template is used when creating agent-config.yaml for each layer
@@ -219,22 +219,22 @@ validation:
             - Follow VSLFC contract specifications
             - Generate clear, maintainable artifacts
     """.trimIndent()
-    
+
     /**
      * Current structure version
      */
     fun getCurrentVersion(): String = "2.0"
-    
+
     /**
      * Get the directory name for a layer (e.g., "vision" -> ".vision")
      */
     fun layerDirName(layer: String): String = ".$layer"
-    
+
     /**
      * Get the agent config filename for a layer
      */
     fun agentConfigFileName(layer: String): String = "agent-config.yaml"
-    
+
     /**
      * Get the contracts directory name
      */

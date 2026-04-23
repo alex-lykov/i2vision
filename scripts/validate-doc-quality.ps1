@@ -7,10 +7,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-function Parse-YamlArtifact {
+function Parse-YamlArtifact
+{
     param([string]$FilePath)
 
-    if (!(Test-Path $FilePath)) {
+    if (!(Test-Path $FilePath))
+    {
         return $null
     }
 
@@ -25,20 +27,24 @@ function Parse-YamlArtifact {
     }
 
     # Extract metadata
-    if ($content -match 'generated:\s*(.+)') {
+    if ($content -match 'generated:\s*(.+)')
+    {
         $result.Generated = $matches[1].Trim()
     }
-    if ($content -match 'source:\s*(.+)') {
+    if ($content -match 'source:\s*(.+)')
+    {
         $result.Source = $matches[1].Trim()
     }
-    if ($content -match 'total_imported:\s*(\d+)') {
+    if ($content -match 'total_imported:\s*(\d+)')
+    {
         $result.TotalImported = [int]$matches[1]
     }
 
     # Extract items (simple parsing - look for title/confidence pairs)
     $itemMatches = [regex]::Matches($content, '- title:\s*"([^"]+)"\s+.*?confidence:\s*([\d.]+)', [System.Text.RegularExpressions.RegexOptions]::Singleline)
 
-    foreach ($match in $itemMatches) {
+    foreach ($match in $itemMatches)
+    {
         $result.Items += @{
             Title = $match.Groups[1].Value
             Confidence = [double]$match.Groups[2].Value
@@ -48,34 +54,53 @@ function Parse-YamlArtifact {
     return $result
 }
 
-function Count-CodeEvidence {
+function Count-CodeEvidence
+{
     param([string]$Component, [string]$ProjectRoot)
 
     # Search for the component in source files
     $searchPath = Join-Path $ProjectRoot "core\orchestrator\src\main\kotlin"
 
-    if (!(Test-Path $searchPath)) {
+    if (!(Test-Path $searchPath))
+    {
         return 0
     }
 
     $count = 0
     $files = Get-ChildItem -Path $searchPath -Filter "*.kt" -Recurse
 
-    foreach ($file in $files) {
+    foreach ($file in $files)
+    {
         $content = Get-Content -Path $file.FullName -Raw
 
         # Count occurrences
-        if ($content -match "class\s+$Component") { $count++ }
-        if ($content -match "object\s+$Component") { $count++ }
-        if ($content -match "interface\s+$Component") { $count++ }
-        if ($content -match "fun\s+$Component") { $count++ }
-        if ($content -match "val\s+$Component") { $count++ }
+        if ($content -match "class\s+$Component")
+        {
+            $count++
+        }
+        if ($content -match "object\s+$Component")
+        {
+            $count++
+        }
+        if ($content -match "interface\s+$Component")
+        {
+            $count++
+        }
+        if ($content -match "fun\s+$Component")
+        {
+            $count++
+        }
+        if ($content -match "val\s+$Component")
+        {
+            $count++
+        }
     }
 
     return $count
 }
 
-function Validate-Confidence {
+function Validate-Confidence
+{
     param(
         [string]$Component,
         [double]$ActualConfidence,
@@ -92,11 +117,19 @@ function Validate-Confidence {
         Actual = $ActualConfidence
         Difference = $diff
         Valid = $isValid
-        Status = if ($isValid) { "✅ PASS" } else { "❌ FAIL" }
+        Status = if ($isValid)
+        {
+            "✅ PASS"
+        }
+        else
+        {
+            "❌ FAIL"
+        }
     }
 }
 
-function Generate-DetailedReport {
+function Generate-DetailedReport
+{
     param([hashtable]$Results)
 
     $report = @"
@@ -110,11 +143,15 @@ function Generate-DetailedReport {
     # Artifact Import Status
     $report += "`n│  ARTIFACT IMPORT STATUS`n│`n"
 
-    foreach ($layer in $Results.Layers.Keys) {
+    foreach ($layer in $Results.Layers.Keys)
+    {
         $layerResult = $Results.Layers[$layer]
-        if ($layerResult.Imported) {
-            $report += "│  ✅ $layer`: $($layerResult.ItemCount) items imported`n"
-        } else {
+        if ($layerResult.Imported)
+        {
+            $report += "│  ✅ $layer`: $( $layerResult.ItemCount ) items imported`n"
+        }
+        else
+        {
             $report += "│  ⚠️  $layer`: No artifacts found`n"
         }
     }
@@ -122,25 +159,27 @@ function Generate-DetailedReport {
     # Confidence Validation
     $report += "`n│`n│  CONFIDENCE VALIDATION`n│`n"
 
-    foreach ($check in $Results.ConfidenceChecks) {
-        $report += "│  $($check.Status) $($check.Component)`n"
-        $report += "│     Expected: $($check.Expected), Actual: $($check.Actual), Diff: $([Math]::Round($check.Difference, 2))`n"
+    foreach ($check in $Results.ConfidenceChecks)
+    {
+        $report += "│  $( $check.Status ) $( $check.Component )`n"
+        $report += "│     Expected: $( $check.Expected ), Actual: $( $check.Actual ), Diff: $([Math]::Round($check.Difference, 2) )`n"
     }
 
     # Evidence Analysis
     $report += "`n│`n│  CODE EVIDENCE ANALYSIS`n│`n"
 
-    foreach ($evidence in $Results.Evidence) {
-        $report += "│  $($evidence.Component): $($evidence.Count) match(es)`n"
+    foreach ($evidence in $Results.Evidence)
+    {
+        $report += "│  $( $evidence.Component ): $( $evidence.Count ) match(es)`n"
     }
 
     # Overall Metrics
     $report += "`n│`n│  QUALITY METRICS`n│`n"
-    $report += "│  Average Confidence: $([Math]::Round($Results.Metrics.AvgConfidence, 2))`n"
-    $report += "│  Total Validations: $($Results.Metrics.TotalChecks)`n"
-    $report += "│  Passed: $($Results.Metrics.Passed)`n"
-    $report += "│  Failed: $($Results.Metrics.Failed)`n"
-    $report += "│  Success Rate: $([Math]::Round($Results.Metrics.SuccessRate * 100, 1))%`n"
+    $report += "│  Average Confidence: $([Math]::Round($Results.Metrics.AvgConfidence, 2) )`n"
+    $report += "│  Total Validations: $( $Results.Metrics.TotalChecks )`n"
+    $report += "│  Passed: $( $Results.Metrics.Passed )`n"
+    $report += "│  Failed: $( $Results.Metrics.Failed )`n"
+    $report += "│  Success Rate: $([Math]::Round($Results.Metrics.SuccessRate * 100, 1) )%`n"
 
     $report += "`n└─────────────────────────────────────────────────────────────────┘`n"
 
@@ -148,7 +187,8 @@ function Generate-DetailedReport {
 }
 
 # Main validation logic
-try {
+try
+{
     Write-Host ""
     Write-Host "═══════════════════════════════════════════════════════════════" -ForegroundColor Cyan
     Write-Host "   DOCUMENTATION QUALITY VALIDATION" -ForegroundColor Cyan
@@ -156,7 +196,7 @@ try {
     Write-Host ""
 
     $results = @{
-        Layers = @{}
+        Layers = @{ }
         ConfidenceChecks = @()
         Evidence = @()
         Metrics = @{
@@ -185,19 +225,23 @@ try {
         LOGIC = "src/logic"
     }
 
-    foreach ($layer in $layerPaths.Keys) {
+    foreach ($layer in $layerPaths.Keys)
+    {
         $layerPath = Join-Path $ProjectRoot $layerPaths[$layer]
-        $importedFile = Join-Path $layerPath "imported-$($layer.ToLower()).yaml"
+        $importedFile = Join-Path $layerPath "imported-$($layer.ToLower() ).yaml"
 
-        if (Test-Path $importedFile) {
+        if (Test-Path $importedFile)
+        {
             $artifact = Parse-YamlArtifact -FilePath $importedFile
             $results.Layers[$layer] = @{
                 Imported = $true
                 ItemCount = $artifact.Items.Count
                 Artifact = $artifact
             }
-            Write-Host "  ✅ $layer`: Found $($artifact.Items.Count) items" -ForegroundColor Green
-        } else {
+            Write-Host "  ✅ $layer`: Found $( $artifact.Items.Count ) items" -ForegroundColor Green
+        }
+        else
+        {
             $results.Layers[$layer] = @{
                 Imported = $false
                 ItemCount = 0
@@ -212,13 +256,16 @@ try {
     $confidences = @()
 
     # Check STRUCTURE layer (has our test components)
-    if ($results.Layers.STRUCTURE.Imported) {
+    if ($results.Layers.STRUCTURE.Imported)
+    {
         $structureArtifact = $results.Layers.STRUCTURE.Artifact
 
-        foreach ($component in $expectedResults.Keys) {
+        foreach ($component in $expectedResults.Keys)
+        {
             $item = $structureArtifact.Items | Where-Object { $_.Title -eq $component } | Select-Object -First 1
 
-            if ($item) {
+            if ($item)
+            {
                 $validation = Validate-Confidence -Component $component `
                     -ActualConfidence $item.Confidence `
                     -ExpectedConfidence $expectedResults[$component].confidence
@@ -226,11 +273,21 @@ try {
                 $results.ConfidenceChecks += $validation
                 $confidences += $item.Confidence
 
-                Write-Host "  $($validation.Status) $component (Expected: $($validation.Expected), Actual: $($validation.Actual))" -ForegroundColor $(if ($validation.Valid) { "Green" } else { "Red" })
+                Write-Host "  $( $validation.Status ) $component (Expected: $( $validation.Expected ), Actual: $( $validation.Actual ))" -ForegroundColor $( if ($validation.Valid)
+                {
+                    "Green"
+                }
+                else
+                {
+                    "Red"
+                } )
 
-                if ($validation.Valid) {
+                if ($validation.Valid)
+                {
                     $results.Metrics.Passed++
-                } else {
+                }
+                else
+                {
                     $results.Metrics.Failed++
                 }
                 $results.Metrics.TotalChecks++
@@ -241,23 +298,40 @@ try {
     # Count code evidence
     Write-Host "`n→ Analyzing code evidence..." -ForegroundColor Yellow
 
-    foreach ($component in $expectedResults.Keys) {
+    foreach ($component in $expectedResults.Keys)
+    {
         $evidenceCount = Count-CodeEvidence -Component $component -ProjectRoot $ProjectRoot
         $results.Evidence += @{
             Component = $component
             Count = $evidenceCount
             Expected = $expectedResults[$component].minEvidence
-            Status = if ($evidenceCount -ge $expectedResults[$component].minEvidence) { "✅" } else { "⚠️" }
+            Status = if ($evidenceCount -ge $expectedResults[$component].minEvidence)
+            {
+                "✅"
+            }
+            else
+            {
+                "⚠️"
+            }
         }
 
-        Write-Host "  $($results.Evidence[-1].Status) $component`: $evidenceCount match(es)" -ForegroundColor $(if ($evidenceCount -ge $expectedResults[$component].minEvidence) { "Green" } else { "Yellow" })
+        Write-Host "  $( $results.Evidence[-1].Status ) $component`: $evidenceCount match(es)" -ForegroundColor $( if ($evidenceCount -ge $expectedResults[$component].minEvidence)
+        {
+            "Green"
+        }
+        else
+        {
+            "Yellow"
+        } )
     }
 
     # Calculate metrics
-    if ($confidences.Count -gt 0) {
+    if ($confidences.Count -gt 0)
+    {
         $results.Metrics.AvgConfidence = ($confidences | Measure-Object -Average).Average
     }
-    if ($results.Metrics.TotalChecks -gt 0) {
+    if ($results.Metrics.TotalChecks -gt 0)
+    {
         $results.Metrics.SuccessRate = $results.Metrics.Passed / $results.Metrics.TotalChecks
     }
 
@@ -267,24 +341,32 @@ try {
 
     # Summary
     Write-Host ""
-    if ($results.Metrics.SuccessRate -ge 0.8) {
+    if ($results.Metrics.SuccessRate -ge 0.8)
+    {
         Write-Host "✅ VALIDATION PASSED" -ForegroundColor Green
         Write-Host "Documentation quality meets expectations!" -ForegroundColor Green
-    } elseif ($results.Metrics.SuccessRate -ge 0.6) {
+    }
+    elseif ($results.Metrics.SuccessRate -ge 0.6)
+    {
         Write-Host "⚠️  VALIDATION PASSED WITH WARNINGS" -ForegroundColor Yellow
         Write-Host "Some quality issues detected, review recommended." -ForegroundColor Yellow
-    } else {
+    }
+    else
+    {
         Write-Host "❌ VALIDATION FAILED" -ForegroundColor Red
         Write-Host "Significant quality issues detected!" -ForegroundColor Red
     }
     Write-Host ""
 
     # Exit code based on success rate
-    if ($results.Metrics.SuccessRate -lt 0.6) {
+    if ($results.Metrics.SuccessRate -lt 0.6)
+    {
         exit 1
     }
 
-} catch {
+}
+catch
+{
     Write-Host ""
     Write-Host "❌ Validation failed with error: $_" -ForegroundColor Red
     Write-Host $_.ScriptStackTrace -ForegroundColor Red

@@ -11,6 +11,7 @@ interface ProjectsStore {
     fun remove(id: String): Boolean
     fun setActive(id: String): Boolean
     fun getActive(): StoredProject?
+
     /** Clear active selection (no project selected). */
     fun clearActive(): Boolean
 }

@@ -42,7 +42,7 @@ class ContractValidationEngine(
     private val projectRoot: File
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
-    
+
     private val evidenceFinder = CodeEvidenceFinder(projectRoot)
 
     /**
@@ -53,12 +53,12 @@ class ContractValidationEngine(
         artifacts: DocLayerImporter.ImportResult
     ): ValidationReport {
         log.info("[VALIDATOR] Validating ${contract.layer.name} layer")
-        
+
         val startTime = Instant.now()
         val issues = mutableListOf<ValidationIssue>()
         var totalChecks = 0
         var passed = 0
-        
+
         // Apply each validation rule from contract
         contract.validationRules.forEach { rule ->
             val ruleIssues = applyValidationRule(rule, contract, artifacts)
@@ -66,19 +66,19 @@ class ContractValidationEngine(
             totalChecks++
             if (ruleIssues.isEmpty()) passed++
         }
-        
+
         // Always check code evidence (even if not in contract)
         val evidenceIssues = checkCodeEvidence(artifacts)
         issues.addAll(evidenceIssues)
         totalChecks++
         if (evidenceIssues.isEmpty()) passed++
-        
+
         // Always check freshness
         val freshnessIssues = checkFreshness(contract, artifacts)
         issues.addAll(freshnessIssues)
         totalChecks++
         if (freshnessIssues.isEmpty()) passed++
-        
+
         // Check LLM requirements if present
         val llmReqs = contract.llmRequirements
         if (llmReqs != null) {
@@ -87,7 +87,7 @@ class ContractValidationEngine(
             totalChecks++
             if (llmIssues.isEmpty()) passed++
         }
-        
+
         // Check description removal gates if present
         if (contract.descriptionRemovalGates.isNotEmpty()) {
             val gateIssues = checkRemovalGates(contract.descriptionRemovalGates, artifacts)
@@ -95,12 +95,12 @@ class ContractValidationEngine(
             totalChecks++
             if (gateIssues.isEmpty()) passed++
         }
-        
+
         val duration = Duration.between(startTime, Instant.now())
-        
+
         val failed = totalChecks - passed
         log.info("[VALIDATOR] Validation complete: $passed/$totalChecks passed, ${issues.size} issue(s)")
-        
+
         return ValidationReport(
             layer = contract.layer,
             contractId = contract.contractId,
@@ -121,7 +121,7 @@ class ContractValidationEngine(
         artifacts: DocLayerImporter.ImportResult
     ): List<ValidationIssue> {
         log.debug("[VALIDATOR] Applying rule: ${rule.rule}")
-        
+
         return when {
             rule.rule.contains("code_evidence") -> checkCodeEvidence(artifacts)
             rule.rule.contains("doc_reference") -> checkDocReferences(artifacts)
@@ -137,7 +137,7 @@ class ContractValidationEngine(
      */
     private fun checkCodeEvidence(artifacts: DocLayerImporter.ImportResult): List<ValidationIssue> {
         val issues = mutableListOf<ValidationIssue>()
-        
+
         artifacts.artifacts.forEach { (field, items) ->
             items.forEach { item ->
                 if (item.codeEvidence.isEmpty()) {
@@ -155,7 +155,12 @@ class ContractValidationEngine(
                         ValidationIssue(
                             rule = "code_evidence",
                             severity = DocLayerContract.Severity.INFO,
-                            message = "Low confidence (${String.format("%.2f", item.finalConfidence)}) for '${item.title}'",
+                            message = "Low confidence (${
+                                String.format(
+                                    "%.2f",
+                                    item.finalConfidence
+                                )
+                            }) for '${item.title}'",
                             location = "$field/${item.title}",
                             suggestion = "Review implementation or documentation accuracy"
                         )
@@ -163,7 +168,7 @@ class ContractValidationEngine(
                 }
             }
         }
-        
+
         return issues
     }
 
@@ -172,7 +177,7 @@ class ContractValidationEngine(
      */
     private fun checkDocReferences(artifacts: DocLayerImporter.ImportResult): List<ValidationIssue> {
         val issues = mutableListOf<ValidationIssue>()
-        
+
         // For now, all items came from docs, so they have references
         // This would be more useful when we also have code-discovered items
         artifacts.artifacts.forEach { (field, items) ->
@@ -190,7 +195,7 @@ class ContractValidationEngine(
                 }
             }
         }
-        
+
         return issues
     }
 
@@ -199,7 +204,7 @@ class ContractValidationEngine(
      */
     private fun checkContradictions(artifacts: DocLayerImporter.ImportResult): List<ValidationIssue> {
         val issues = mutableListOf<ValidationIssue>()
-        
+
         // Check if documented items have conflicting evidence
         artifacts.artifacts.forEach { (field, items) ->
             items.forEach { item ->
@@ -217,7 +222,7 @@ class ContractValidationEngine(
                 }
             }
         }
-        
+
         return issues
     }
 
@@ -230,28 +235,33 @@ class ContractValidationEngine(
         artifacts: DocLayerImporter.ImportResult
     ): List<ValidationIssue> {
         val issues = mutableListOf<ValidationIssue>()
-        
+
         // Get the decay formula and threshold from rule
         val formula = rule.formula ?: "confidence * (0.95 ^ months_since_update)"
         val threshold = rule.threshold ?: 0.7
-        
+
         // Check primary doc age
         val primaryDoc = File(projectRoot, contract.primaryDoc)
         if (primaryDoc.exists()) {
             val lastModified = Instant.ofEpochMilli(primaryDoc.lastModified())
             val monthsOld = Duration.between(lastModified, Instant.now()).toDays() / 30.0
-            
+
             if (monthsOld > 1) {
                 // Calculate decayed confidence based on formula
                 val decayRate = extractDecayRate(formula)
                 val decayedConfidence = Math.pow(decayRate, monthsOld)
-                
+
                 if (decayedConfidence < threshold) {
                     issues.add(
                         ValidationIssue(
                             rule = "confidence_decay",
                             severity = DocLayerContract.Severity.WARNING,
-                            message = "Documentation is ${monthsOld.toInt()} months old, confidence decayed to ${String.format("%.2f", decayedConfidence)}",
+                            message = "Documentation is ${monthsOld.toInt()} months old, confidence decayed to ${
+                                String.format(
+                                    "%.2f",
+                                    decayedConfidence
+                                )
+                            }",
                             location = contract.primaryDoc,
                             suggestion = "Revalidate or update documentation"
                         )
@@ -259,7 +269,7 @@ class ContractValidationEngine(
                 }
             }
         }
-        
+
         return issues
     }
 
@@ -271,15 +281,15 @@ class ContractValidationEngine(
         artifacts: DocLayerImporter.ImportResult
     ): List<ValidationIssue> {
         val issues = mutableListOf<ValidationIssue>()
-        
+
         val freshnessRules = contract.syncRules.freshness
-        
+
         // Check primary doc
         val primaryDoc = File(projectRoot, contract.primaryDoc)
         if (primaryDoc.exists()) {
             val lastModified = Instant.ofEpochMilli(primaryDoc.lastModified())
             val daysOld = Duration.between(lastModified, Instant.now()).toDays()
-            
+
             when {
                 daysOld > freshnessRules.criticalDays -> {
                     issues.add(
@@ -292,6 +302,7 @@ class ContractValidationEngine(
                         )
                     )
                 }
+
                 daysOld > freshnessRules.warningDays -> {
                     issues.add(
                         ValidationIssue(
@@ -305,14 +316,14 @@ class ContractValidationEngine(
                 }
             }
         }
-        
+
         // Check secondary docs
         contract.secondaryDocs.forEach { secondaryPath ->
             val secondaryDoc = File(projectRoot, secondaryPath)
             if (secondaryDoc.exists()) {
                 val lastModified = Instant.ofEpochMilli(secondaryDoc.lastModified())
                 val daysOld = Duration.between(lastModified, Instant.now()).toDays()
-                
+
                 if (daysOld > freshnessRules.criticalDays) {
                     issues.add(
                         ValidationIssue(
@@ -326,7 +337,7 @@ class ContractValidationEngine(
                 }
             }
         }
-        
+
         return issues
     }
 
@@ -347,7 +358,7 @@ class ContractValidationEngine(
         rule: DocLayerContract.ValidationRule
     ): List<ValidationIssue> {
         val issues = mutableListOf<ValidationIssue>()
-        
+
         artifacts.artifacts.forEach { (field, items) ->
             items.forEach { item ->
                 val docRef = extractDocRef(item)
@@ -356,7 +367,7 @@ class ContractValidationEngine(
                     val parts = docRef.split("#")
                     val filename = parts[0]
                     val anchor = parts.getOrNull(1)
-                    
+
                     // Check if file exists
                     val docFile = File(projectRoot, filename)
                     if (!docFile.exists()) {
@@ -373,7 +384,8 @@ class ContractValidationEngine(
                         // Check if anchor exists in file
                         if (anchor != null) {
                             val content = docFile.readText()
-                            val anchorPattern = Regex("""#{1,6}\s+\Q${anchor.replace("-", "[-\\s]")}\E""", RegexOption.IGNORE_CASE)
+                            val anchorPattern =
+                                Regex("""#{1,6}\s+\Q${anchor.replace("-", "[-\\s]")}\E""", RegexOption.IGNORE_CASE)
                             if (!anchorPattern.containsMatchIn(content)) {
                                 issues.add(
                                     ValidationIssue(
@@ -386,7 +398,7 @@ class ContractValidationEngine(
                                 )
                             }
                         }
-                        
+
                         // Check content quality if rule specifies threshold
                         val threshold = rule.threshold?.toInt() ?: 100
                         val contentLength = docFile.readText().length
@@ -405,7 +417,7 @@ class ContractValidationEngine(
                 }
             }
         }
-        
+
         return issues
     }
 
@@ -424,9 +436,9 @@ class ContractValidationEngine(
      */
     private fun checkLLMRequirements(llmRequirements: DocLayerContract.LLMRequirements): List<ValidationIssue> {
         val issues = mutableListOf<ValidationIssue>()
-        
+
         val relationshipExtraction = llmRequirements.relationshipExtraction
-        
+
         // Check if LLM is required and available
         if (relationshipExtraction.requiresLlm) {
             // In a real implementation, this would check if an LLM provider is configured
@@ -441,7 +453,7 @@ class ContractValidationEngine(
                 )
             )
         }
-        
+
         // Check monitoring metrics
         relationshipExtraction.monitoring.forEach { metric ->
             when (metric.check) {
@@ -451,12 +463,14 @@ class ContractValidationEngine(
                         log.warn("[LLM] ${metric.actionIfMissing}")
                     }
                 }
+
                 "sufficient_for_extraction" -> {
                     // In real implementation: check token budget
                     metric.minimumTokens?.let { minTokens ->
                         log.debug("[LLM] Minimum tokens required: $minTokens")
                     }
                 }
+
                 "validate_extracted_relationships" -> {
                     // In real implementation: validate relationship extraction quality
                     metric.confidenceThreshold?.let { threshold ->
@@ -465,7 +479,7 @@ class ContractValidationEngine(
                 }
             }
         }
-        
+
         return issues
     }
 
@@ -477,13 +491,14 @@ class ContractValidationEngine(
         artifacts: DocLayerImporter.ImportResult
     ): List<ValidationIssue> {
         val issues = mutableListOf<ValidationIssue>()
-        
+
         gates.forEach { gate ->
             val passed = when (gate.condition) {
                 "all_doc_refs_resolve" -> {
                     // Check if all doc refs would resolve (placeholder for future implementation)
                     false  // Currently not implemented, so gate fails
                 }
+
                 "all_doc_sections_have_minimum_content" -> {
                     // Check if all referenced docs have minimum content
                     val allDocsHaveContent = artifacts.artifacts.values.flatten()
@@ -493,18 +508,21 @@ class ContractValidationEngine(
                         }
                     allDocsHaveContent
                 }
+
                 "relationships_extracted_or_manual_reviewed" -> {
                     // Check if relationships have been extracted (placeholder)
                     false  // Not yet implemented
                 }
+
                 "description_backup_exists" -> {
                     // Check if backup of descriptions exists
                     val backupFile = File(projectRoot, ".semantic-cache/description-backup.yaml")
                     backupFile.exists()
                 }
+
                 else -> false
             }
-            
+
             if (!passed) {
                 issues.add(
                     ValidationIssue(
@@ -517,7 +535,7 @@ class ContractValidationEngine(
                 )
             }
         }
-        
+
         return issues
     }
 
@@ -529,7 +547,7 @@ class ContractValidationEngine(
         allArtifacts: Map<Layer, DocLayerImporter.ImportResult>
     ): Map<Layer, ValidationReport> {
         log.info("[VALIDATOR] Validating all ${contracts.size} layer(s)")
-        
+
         return contracts.mapNotNull { (layer, contract) ->
             val artifacts = allArtifacts[layer]
             if (artifacts != null) {
@@ -555,28 +573,28 @@ class ContractValidationEngine(
         val success: Boolean get() = failed == 0
         val hasErrors: Boolean get() = issues.any { it.severity == DocLayerContract.Severity.ERROR }
         val hasWarnings: Boolean get() = issues.any { it.severity == DocLayerContract.Severity.WARNING }
-        
+
         fun summary(): String = buildString {
             val status = when {
                 hasErrors -> "❌ FAILED"
                 hasWarnings -> "⚠️ WARNING"
                 else -> "✅ PASSED"
             }
-            
+
             appendLine("Validation ${layer.name} layer: $status")
             appendLine("  Contract: $contractId")
             appendLine("  Checks: $passed/$totalChecks passed")
             appendLine("  Duration: ${durationMs}ms")
-            
+
             if (issues.isNotEmpty()) {
                 val errors = issues.count { it.severity == DocLayerContract.Severity.ERROR }
                 val warnings = issues.count { it.severity == DocLayerContract.Severity.WARNING }
                 val infos = issues.count { it.severity == DocLayerContract.Severity.INFO }
-                
+
                 appendLine("  Issues: $errors error(s), $warnings warning(s), $infos info")
                 appendLine()
                 appendLine("  Details:")
-                
+
                 issues.take(5).forEach { issue ->
                     val icon = when (issue.severity) {
                         DocLayerContract.Severity.ERROR -> "❌"
@@ -589,13 +607,13 @@ class ContractValidationEngine(
                         appendLine("       Suggestion: ${issue.suggestion}")
                     }
                 }
-                
+
                 if (issues.size > 5) {
                     appendLine("    ... and ${issues.size - 5} more issue(s)")
                 }
             }
         }
-        
+
         fun toYaml(): String = buildString {
             appendLine("validation_report:")
             appendLine("  layer: ${layer.name}")
@@ -604,7 +622,7 @@ class ContractValidationEngine(
             appendLine("  passed: $passed")
             appendLine("  failed: $failed")
             appendLine("  duration_ms: $durationMs")
-            
+
             if (issues.isNotEmpty()) {
                 appendLine("  issues:")
                 issues.forEach { issue ->

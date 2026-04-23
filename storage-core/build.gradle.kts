@@ -44,30 +44,30 @@ publishing {
     publications {
         create<MavenPublication>("maven") {
             from(components["java"])
-            
+
             pom {
                 name.set("storage-core")
                 description.set("Core storage abstractions for sessions, cache, projects, and other persistence needs")
-                url.set("https://github.com/i2vision/storage-core")
-                
+                url.set("https://github.com/alex-lykov/i2vision/storage-core")
+
                 licenses {
                     license {
                         name.set("MIT License")
                         url.set("https://opensource.org/licenses/MIT")
                     }
                 }
-                
+
                 developers {
                     developer {
                         id.set("i2vision")
                         name.set("i2vision Team")
                     }
                 }
-                
+
                 scm {
-                    connection.set("scm:git:git://github.com/i2vision/storage-core.git")
-                    developerConnection.set("scm:git:ssh://github.com/i2vision/storage-core.git")
-                    url.set("https://github.com/i2vision/storage-core")
+                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/storage-core.git")
+                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/storage-core.git")
+                    url.set("https://github.com/alex-lykov/i2vision/storage-core")
                 }
             }
         }

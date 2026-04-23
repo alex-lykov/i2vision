@@ -13,11 +13,11 @@ import org.slf4j.LoggerFactory
  * - Linux: ~/.i2vision/
  */
 object I2VisionPaths {
-    
+
     private val log = LoggerFactory.getLogger(I2VisionPaths::class.java)
     private val userHome: String = System.getProperty("user.home")
     private val osName: String = System.getProperty("os.name").lowercase()
-    
+
     /**
      * Root i2vision directory in user's home.
      */
@@ -30,14 +30,14 @@ object I2VisionPaths {
         dir.mkdirs()
         dir
     }
-    
+
     /**
      * Cache directory for all projects.
      */
     val cacheDir: File by lazy {
         File(rootDir, "cache").apply { mkdirs() }
     }
-    
+
     /**
      * Get cache directory for a specific project.
      * Uses project path hash to create unique directory.
@@ -56,35 +56,35 @@ object I2VisionPaths {
         // log.debug("Project path: '$projectPath' -> Canonical: '$canonicalPath' -> Normalized: '$normalizedPath' -> Hash: '$projectHash'")
         return File(cacheDir, "projects/$projectHash/.semantic-cache").apply { mkdirs() }
     }
-    
+
     /**
      * Configuration directory.
      */
     val configDir: File by lazy {
         File(rootDir, "config").apply { mkdirs() }
     }
-    
+
     /**
      * Presets directory.
      */
     val presetsDir: File by lazy {
         File(configDir, "presets").apply { mkdirs() }
     }
-    
+
     /**
      * Learning data directory.
      */
     val learningDir: File by lazy {
         File(configDir, "learning").apply { mkdirs() }
     }
-    
+
     /**
      * Logs directory.
      */
     val logsDir: File by lazy {
         File(rootDir, "logs").apply { mkdirs() }
     }
-    
+
     /**
      * Global shared cache (LLM models, etc.).
      */

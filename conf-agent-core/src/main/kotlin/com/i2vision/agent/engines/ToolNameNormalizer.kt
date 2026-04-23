@@ -31,19 +31,19 @@ internal object ToolNameNormalizer {
         val canonical = when (leaf) {
             // read_file aliases
             "open_file", "read_file_text", "read_text_file", "read_file_tool", "readfile", "read", "open", "get_file", "get_content" -> "read_file"
-            
+
             // list_dir aliases
             "print_tree", "list_directory", "list_files", "listdir", "list", "show_files", "show_directory" -> "list_dir"
-            
+
             // write_file aliases
             "write_file_tool", "write_text_file", "writefile", "write", "save_file", "create_file", "put_file", "update_file" -> "write_file"
-            
+
             // edit_file aliases (typically same as write_file)
             "editfile", "edit", "modify_file", "patch_file" -> "edit_file"
-            
+
             // search aliases
             "search_files", "search_file", "search_files_regex", "find_in_files", "find", "search", "grep", "regex_search" -> "grep_search"
-            
+
             else -> leaf
         }
 

@@ -48,7 +48,7 @@ class DocLayerImporter(
     private val projectRoot: File
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
-    
+
     private val sectionExtractor = DocSectionExtractor()
     private val evidenceFinder = CodeEvidenceFinder(projectRoot)
 
@@ -57,12 +57,12 @@ class DocLayerImporter(
      */
     fun importFromDocs(contract: DocLayerContract): ImportResult {
         log.info("[IMPORTER] Importing ${contract.layer.name} layer from documentation")
-        
+
         val startTime = Instant.now()
         val artifacts = mutableMapOf<String, List<ImportedItem>>()
         val errors = mutableListOf<String>()
         var totalItemsImported = 0
-        
+
         // Process primary documentation
         val primaryDoc = File(projectRoot, contract.primaryDoc)
         if (!primaryDoc.exists()) {
@@ -74,13 +74,13 @@ class DocLayerImporter(
             artifacts.putAll(primaryResults)
             totalItemsImported += primaryResults.values.sumOf { it.size }
         }
-        
+
         // Process secondary documentation
         contract.secondaryDocs.forEach { secondaryPath ->
             val secondaryDoc = File(projectRoot, secondaryPath)
             if (secondaryDoc.exists()) {
                 val secondaryResults = processDocumentFile(secondaryDoc, contract)
-                
+
                 // Merge with existing artifacts
                 secondaryResults.forEach { (field, items) ->
                     val existing = artifacts[field] ?: emptyList()
@@ -91,11 +91,11 @@ class DocLayerImporter(
                 log.debug("[IMPORTER] Secondary doc not found: $secondaryPath")
             }
         }
-        
+
         val duration = java.time.Duration.between(startTime, Instant.now())
-        
+
         log.info("[IMPORTER] Imported $totalItemsImported item(s) from ${contract.layer.name} layer documentation")
-        
+
         return ImportResult(
             layer = contract.layer,
             contractId = contract.contractId,
@@ -114,27 +114,27 @@ class DocLayerImporter(
         contract: DocLayerContract
     ): Map<String, List<ImportedItem>> {
         log.debug("[IMPORTER] Processing ${docFile.name}")
-        
+
         val results = mutableMapOf<String, List<ImportedItem>>()
-        
+
         // Extract all sections based on mappings
         val extractedSections = sectionExtractor.extractSections(docFile, contract.mappings)
-        
+
         // Process each extracted section
         extractedSections.forEach { (layerField, extraction) ->
             if (!extraction.found) {
                 log.debug("[IMPORTER] Section not found for field: $layerField")
                 return@forEach
             }
-            
+
             // Get the mapping for this field to know base confidence
             val mapping = contract.mappings.find { it.layerField == layerField }
             val baseConfidence = mapping?.confidence ?: 0.8
-            
+
             // Process each item in the section
             val items = extraction.items.mapNotNull { itemText ->
                 if (itemText.isBlank()) return@mapNotNull null
-                
+
                 processItem(
                     itemText = itemText,
                     layerField = layerField,
@@ -144,13 +144,13 @@ class DocLayerImporter(
                     sectionHeader = mapping?.docSection ?: ""
                 )
             }
-            
+
             if (items.isNotEmpty()) {
                 results[layerField] = items
                 log.debug("[IMPORTER] Imported ${items.size} item(s) for field: $layerField")
             }
         }
-        
+
         return results
     }
 
@@ -173,16 +173,16 @@ class DocLayerImporter(
             itemText,
             convertToVSLFCLayer(layer)
         )
-        
+
         // Calculate final confidence
         val finalConfidence = (baseConfidence * evidenceResult.confidenceMultiplier).coerceIn(0.0, 1.0)
-        
+
         // Extract title from item text (first line or sentence)
         val title = extractTitle(itemText)
         val description = if (itemText.length > title.length) {
             itemText.substring(title.length).trim().removePrefix(":").trim()
         } else ""
-        
+
         return ImportedItem(
             title = title,
             description = description,
@@ -211,11 +211,11 @@ class DocLayerImporter(
         if (colonIndex > 0 && colonIndex < 50) {
             return text.substring(0, colonIndex).trim()
         }
-        
+
         // Otherwise, take first line or first sentence
         val firstLine = text.lines().first().trim()
         val periodIndex = firstLine.indexOf('.')
-        
+
         return if (periodIndex > 0 && periodIndex < firstLine.length - 1) {
             firstLine.substring(0, periodIndex + 1).trim()
         } else {
@@ -241,7 +241,7 @@ class DocLayerImporter(
      */
     fun importAllLayers(contracts: Map<VSLFCLayerContracts.Layer, DocLayerContract>): Map<VSLFCLayerContracts.Layer, ImportResult> {
         log.info("[IMPORTER] Importing all ${contracts.size} VSLFC layer(s)")
-        
+
         return contracts.mapValues { (layer, contract) ->
             try {
                 importFromDocs(contract)
@@ -266,21 +266,28 @@ class DocLayerImporter(
         val durationMs: Long = 0
     ) {
         val success: Boolean get() = errors.isEmpty()
-        
+
         fun summary(): String = buildString {
             appendLine("Import ${layer.name} layer: ${if (success) "✅ SUCCESS" else "❌ FAILED"}")
             appendLine("  Contract: $contractId")
             appendLine("  Total items: $totalItems")
             appendLine("  Duration: ${durationMs}ms")
-            
+
             if (artifacts.isNotEmpty()) {
                 appendLine("  Artifacts:")
                 artifacts.forEach { (field, items) ->
                     val avgConfidence = items.map { it.finalConfidence }.average()
-                    appendLine("    - $field: ${items.size} item(s) (avg confidence: ${String.format("%.2f", avgConfidence)})")
+                    appendLine(
+                        "    - $field: ${items.size} item(s) (avg confidence: ${
+                            String.format(
+                                "%.2f",
+                                avgConfidence
+                            )
+                        })"
+                    )
                 }
             }
-            
+
             if (errors.isNotEmpty()) {
                 appendLine("  Errors:")
                 errors.forEach { error ->
@@ -288,7 +295,7 @@ class DocLayerImporter(
                 }
             }
         }
-        
+
         companion object {
             fun error(layer: DocLayerContract.VSLFCLayer, contractId: String, error: String) =
                 ImportResult(layer, contractId, emptyMap(), 0, listOf(error))
@@ -321,7 +328,7 @@ class DocLayerImporter(
             appendLine("    source: $source")
             appendLine("    source_doc: \"$sourceDoc\"")
             appendLine("    section: \"$sectionHeader\"")
-            
+
             if (codeEvidence.isNotEmpty()) {
                 appendLine("    evidence:")
                 codeEvidence.take(3).forEach { evidence ->

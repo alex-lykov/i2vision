@@ -15,16 +15,16 @@ class PresetCommand : CliktCommand(
     name = "preset",
     help = "Preset management"
 ) {
-    
+
     private val log = LoggerFactory.getLogger(PresetCommand::class.java)
-    
+
     private val action by argument("action", help = "Action: list, apply, create")
     private val presetName by option("-n", "--name", help = "Preset name")
     private val presetDir by option("--preset-dir", help = "Directory containing presets")
-    
+
     override fun run() {
         log.info("[CLI] Preset command started with action: $action")
-        
+
         when (action.lowercase()) {
             "list" -> listPresets()
             "apply" -> applyPreset()
@@ -35,7 +35,7 @@ class PresetCommand : CliktCommand(
             }
         }
     }
-    
+
     private fun listPresets() {
         val presetDirValue = presetDir ?: ".vision-ai/.presets"
         echo("Listing presets in: $presetDirValue")
@@ -44,9 +44,9 @@ class PresetCommand : CliktCommand(
             echo("No presets directory found: $presetDirValue")
             return
         }
-        
+
         val presets = dir.listFiles() ?: emptyArray()
-        
+
         if (presets.isEmpty()) {
             echo("No presets found")
         } else {
@@ -54,7 +54,7 @@ class PresetCommand : CliktCommand(
             presets.forEach { echo("  - ${it.name}") }
         }
     }
-    
+
     private fun applyPreset() {
         if (presetName == null) {
             echo("Error: --name required for apply action", err = true)
@@ -63,7 +63,7 @@ class PresetCommand : CliktCommand(
         echo("Applying preset: $presetName")
         echo("Preset application not yet implemented")
     }
-    
+
     private fun createPreset() {
         if (presetName == null) {
             echo("Error: --name required for create action", err = true)

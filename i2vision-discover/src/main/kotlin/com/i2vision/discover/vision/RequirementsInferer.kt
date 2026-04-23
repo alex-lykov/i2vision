@@ -25,12 +25,12 @@ class RequirementsInferer(
      */
     fun inferRequirements(sourceFiles: List<File>): List<InferredRequirement> {
         val requirements = mutableListOf<InferredRequirement>()
-        
+
         sourceFiles.forEach { file ->
             try {
                 val lines = file.readLines()
                 val relativePath = file.relativeTo(projectRoot).path
-                
+
                 lines.forEachIndexed { index, line ->
                     val inferred = inferFromLine(line, relativePath, index + 1)
                     if (inferred != null) {
@@ -41,7 +41,7 @@ class RequirementsInferer(
                 log.debug("[INFER] Error reading ${file.name}: ${e.message}")
             }
         }
-        
+
         log.info("[INFER] Inferred ${requirements.size} requirements from code")
         return requirements
     }
@@ -51,7 +51,7 @@ class RequirementsInferer(
      */
     private fun inferFromLine(line: String, file: String, lineNumber: Int): InferredRequirement? {
         val trimmed = line.trim()
-        
+
         // Pattern 1: require() calls
         val requireMatch = Regex("""require\s*\(\s*([^)]+)\)""").find(trimmed)
         if (requireMatch != null) {
@@ -63,15 +63,17 @@ class RequirementsInferer(
                 description = "Inferred from require() call",
                 priority = "MEDIUM",
                 source = Source.CODE_PATTERN,
-                evidence = listOf(VisionCodeEvidence(
-                    file = file,
-                    line = lineNumber,
-                    pattern = trimmed,
-                    description = "require() call"
-                ))
+                evidence = listOf(
+                    VisionCodeEvidence(
+                        file = file,
+                        line = lineNumber,
+                        pattern = trimmed,
+                        description = "require() call"
+                    )
+                )
             )
         }
-        
+
         // Pattern 2: check() calls
         val checkMatch = Regex("""check\s*\(\s*([^)]+)\)""").find(trimmed)
         if (checkMatch != null) {
@@ -83,15 +85,17 @@ class RequirementsInferer(
                 description = "Inferred from check() call",
                 priority = "HIGH",
                 source = Source.CODE_PATTERN,
-                evidence = listOf(VisionCodeEvidence(
-                    file = file,
-                    line = lineNumber,
-                    pattern = trimmed,
-                    description = "check() call"
-                ))
+                evidence = listOf(
+                    VisionCodeEvidence(
+                        file = file,
+                        line = lineNumber,
+                        pattern = trimmed,
+                        description = "check() call"
+                    )
+                )
             )
         }
-        
+
         // Pattern 3: Annotation-based requirements
         val annotationMatch = Regex("""@(\w+)""").find(trimmed)
         if (annotationMatch != null) {
@@ -104,16 +108,18 @@ class RequirementsInferer(
                     description = "Inferred from @$annotation annotation",
                     priority = "MEDIUM",
                     source = Source.CODE_PATTERN,
-                    evidence = listOf(VisionCodeEvidence(
-                        file = file,
-                        line = lineNumber,
-                        pattern = trimmed,
-                        description = "@$annotation annotation"
-                    ))
+                    evidence = listOf(
+                        VisionCodeEvidence(
+                            file = file,
+                            line = lineNumber,
+                            pattern = trimmed,
+                            description = "@$annotation annotation"
+                        )
+                    )
                 )
             }
         }
-        
+
         // Pattern 4: Class-based requirements
         val classMatch = Regex("""(class|interface|object)\s+(\w+)""").find(trimmed)
         if (classMatch != null) {
@@ -126,15 +132,17 @@ class RequirementsInferer(
                 description = "Inferred from $type $name",
                 priority = "MEDIUM",
                 source = Source.CODE_PATTERN,
-                evidence = listOf(VisionCodeEvidence(
-                    file = file,
-                    line = lineNumber,
-                    pattern = trimmed,
-                    description = "$type definition"
-                ))
+                evidence = listOf(
+                    VisionCodeEvidence(
+                        file = file,
+                        line = lineNumber,
+                        pattern = trimmed,
+                        description = "$type definition"
+                    )
+                )
             )
         }
-        
+
         return null
     }
 

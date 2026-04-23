@@ -5,6 +5,7 @@ VSLFC contracts and validation for discovery operations.
 ## Overview
 
 contracts provides the contract system for validating discovery operations and components:
+
 - **ComponentValidator**: Validates directories as valid components/clusters for discovery
 - **ContractModels**: Data models for contract definitions
 - **ContractValidator**: Validates contract definitions

@@ -42,33 +42,33 @@ fun main(args: Array<String>) {
     val testCli = args.contains("--test-cli")
     val validateLayers = args.contains("--validate-layers")
     val validateVision = args.contains("--validate-vision")
-    
+
     // Map --deep flag to intent depth (DEEP for --deep, STANDARD otherwise)
     val intentDepth = if (deep) IntentDepth.DEEP else IntentDepth.STANDARD
-    
+
     // Setup file logging
     val logDir = File(projectRoot, ".vision-ai/logs")
     logDir.mkdirs()
-    
+
     // Log rotation: keep only last 10 logs
     val maxLogs = 10
     val existingLogs = logDir.listFiles()
         ?.filter { it.name.startsWith("discovery-log-") && it.name.endsWith(".txt") }
         ?.sortedByDescending { it.lastModified() }
         ?: emptyList()
-    
+
     if (existingLogs.size >= maxLogs) {
         existingLogs.drop(maxLogs - 1).forEach { it.delete() }
     }
-    
+
     val timestamp = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss").format(LocalDateTime.now())
     val logFile = File(logDir, "discovery-log-$timestamp.txt")
     val logStream = PrintStream(logFile)
     val originalOut = System.out
-    
+
     // Tee output to both console and file
     System.setOut(TeePrintStream(originalOut, logStream))
-    
+
     println("================================================================================")
     println("                        i2vision Self-Discovery Test Log")
     println("================================================================================")
@@ -86,7 +86,7 @@ fun main(args: Array<String>) {
     if (validateLayers) println("Validate Layers: ENABLED")
     if (validateVision) println("Validate Vision: ENABLED")
     println()
-    
+
     // Step 1: Architecture Detection
     println("--- Architecture Detection ---")
     val signatureBuilder = SignatureBuilder(
@@ -96,7 +96,7 @@ fun main(args: Array<String>) {
         llmClient = null
     )
     val signature = signatureBuilder.build()
-    
+
     println("Build System: ${signature.buildSystem?.name ?: "unknown"}")
     println("Deployment Pattern: ${signature.deploymentPattern.name}")
     println("Clusters detected: ${signature.clusters.size}")
@@ -107,48 +107,48 @@ fun main(args: Array<String>) {
         println("  ... and ${signature.clusters.size - 10} more")
     }
     println()
-    
+
     // Step 2: Intent Resolution
     println("--- Intent Resolution ---")
     val intentParser = IntentParser
-    val intent = intentParser.parse(mapOf("intent" to "full_discovery")) 
+    val intent = intentParser.parse(mapOf("intent" to "full_discovery"))
         ?: error("Invalid intent 'full_discovery'")
     println("Intent: ${intent.goal}")
     println("Focus: ${intent.focus}")
     println()
-    
+
     // Step 3: Purge if requested
     if (purge) {
         println("--- Purging Semantic Cache ---")
         purgeSemanticCache(projectRoot)
         println()
     }
-    
+
     // Step 4: Discovery Pipeline
     println("--- Discovery Pipeline Execution (Intent Depth: $intentDepth) ---")
     val intentResolver = IntentResolverImpl()
     val cacheDir = I2VisionPaths.getProjectCacheDir(projectRoot.absolutePath)
     val cacheStore = FileCacheStore(cacheDir)
     val discovery = DiscoveryPipelineImpl(projectRoot.absolutePath, intentResolver, cacheStore)
-    
+
     // Enable batch mode for LinkService to collect links in memory and write once at end
     discovery.enableLinkBatchMode()
-    
+
     val clusters = signature.clusters
     if (clusters.isEmpty()) {
         throw IllegalStateException("No clusters detected")
     }
-    
+
     // Filter out empty clusters (with 0 files) to avoid processing clusters with no source files
     val validClusters = clusters.filter { it.fileCount > 0 }
     if (validClusters.size < clusters.size) {
         println("Filtered ${clusters.size - validClusters.size} empty clusters (with 0 files)")
     }
-    
+
     if (validClusters.isEmpty()) {
         throw IllegalStateException("No valid clusters with source files detected")
     }
-    
+
     // Create shared discovery context to avoid redundant operations
     // Note: Architecture is already detected once at the start (signature)
     // The discovery pipeline will still scan files per cluster, but we avoid re-detecting architecture
@@ -157,10 +157,10 @@ fun main(args: Array<String>) {
         allSourceFiles = emptyList(),  // DiscoveryPipeline handles file scanning internally
         architectureSignature = signature  // Re-use already-detected architecture
     )
-    
+
     val allResults = mutableListOf<ClusterDiscoveryResult>()
     val totalStartTime = System.currentTimeMillis()
-    
+
     // Process clusters in parallel using coroutines
     println("Processing ${validClusters.size} clusters in parallel...")
     runBlocking {
@@ -168,7 +168,7 @@ fun main(args: Array<String>) {
             async(Dispatchers.Default) {
                 val startTime = System.currentTimeMillis()
                 print("Discovering ${cluster.name}... ")
-                
+
                 // Create intent for this cluster
                 val intent = DiscoveryIntent(
                     goal = DiscoveryGoal.UNDERSTAND,
@@ -176,31 +176,31 @@ fun main(args: Array<String>) {
                     quality = DiscoveryQuality.BALANCED,
                     layerFocus = listOf("vision", "structure", "logic", "flow", "code")
                 )
-                
+
                 val result = discovery.discover(
                     intent = intent,
                     clusterId = cluster.name,
                     contracts = emptyList()
                 )
-                
+
                 val duration = System.currentTimeMillis() - startTime
                 val status = if (result.success) "✅" else "❌"
                 println("$status (${duration}ms, ${result.artifacts.size} artifacts)")
-                
+
                 ClusterDiscoveryResult(cluster.name, result, duration)
             }
         }
-        
+
         // Wait for all jobs to complete
         jobs.awaitAll().forEach { allResults.add(it) }
     }
-    
+
     val totalDuration = System.currentTimeMillis() - totalStartTime
-    
+
     // Flush all buffered links to disk in a single operation
     discovery.flushLinkBatch()
     println("Flushed all links to disk")
-    
+
     // Step 5: Discovery Summary
     println()
     println("--- Discovery Results Summary ---")
@@ -210,41 +210,48 @@ fun main(args: Array<String>) {
     println("Failed: ${allResults.count { !it.result.success }}")
     println("Total Artifacts: ${allResults.sumOf { it.result.artifacts.size }}")
     println()
-    
+
     // Step 6: Artifact Quality Analysis
     if (analyzeQuality) {
         println("--- Artifact Quality Analysis ---")
         analyzeArtifactQuality(projectRoot, allResults)
         println()
     }
-    
+
     // Step 7: Instant Context Test
     if (exportDocs || analyzeQuality || testContext) {
         println("--- Instant Context Test ---")
         testInstantContext(projectRoot)
         println()
     }
-    
+
     // Step 8: CLI Context Command Validation
     if (testCli) {
         testCliContextCommands(projectRoot)
         println()
     }
-    
+
     // Step 9: Documentation Export
     if (exportDocs) {
         println("--- Documentation Export ---")
         exportDocumentation(projectRoot, allResults)
         println()
     }
-    
+
     // Step 10: Key Findings
     println("--- Key Findings ---")
     val successfulClusters = allResults.count { it.result.success }
     val successRate = (successfulClusters * 100.0) / allResults.size
 
     println("✅ Architecture detection: ${signature.deploymentPattern.name} (${clusters.size} clusters)")
-    println("✅ Discovery pipeline: $successfulClusters/${allResults.size} clusters (${String.format("%.1f", successRate)}%)")
+    println(
+        "✅ Discovery pipeline: $successfulClusters/${allResults.size} clusters (${
+            String.format(
+                "%.1f",
+                successRate
+            )
+        }%)"
+    )
     println("✅ Semantic cache: .semantic-cache/{clusterId}/{vision|structure|logic|flow|code}/")
 
     if (analyzeQuality) {
@@ -280,7 +287,7 @@ fun main(args: Array<String>) {
 
     println()
     println("=== Self-Discovery Complete ===")
-    
+
     // Restore original System.out and close log stream
     System.setOut(originalOut)
     logStream.close()
@@ -325,7 +332,7 @@ fun purgeSemanticCache(root: File) {
         val deleted = semanticCacheDir.deleteRecursively()
         println("Deleted: ${semanticCacheDir.absolutePath}")
     }
-    
+
     val wrongDirs = listOf("code", "flow", "logic", "structure", "project")
     wrongDirs.forEach { dirName ->
         val dir = File(semanticCacheDir, dirName)
@@ -343,12 +350,12 @@ fun analyzeArtifactQuality(root: File, results: List<ClusterDiscoveryResult>) {
         projectRoot = root.absolutePath,
         cacheStore = FileCacheStore(I2VisionPaths.getProjectCacheDir(root.absolutePath))
     )
-    
+
     results.filter { it.result.success }.forEach { clusterResult ->
         val clusterName = clusterResult.name
         val semanticCacheDir = I2VisionPaths.getProjectCacheDir(root.absolutePath)
         val clusterCache = File(semanticCacheDir, clusterName)
-        
+
         // Check code layer - count actual symbols from symbols.yaml
         val symbolsFile = File(clusterCache, "code/symbols.yaml")
         var symbolCount = 0
@@ -361,38 +368,38 @@ fun analyzeArtifactQuality(root: File, results: List<ClusterDiscoveryResult>) {
                 symbolCount = 0
             }
         }
-        
+
         // Check flow layer - count individual YAML files
         val flowDir = File(clusterCache, "flow")
         var flowCount = 0
         if (flowDir.exists()) {
             flowCount = flowDir.walkTopDown().filter { it.isFile && it.name.endsWith(".yaml") }.count()
         }
-        
+
         // Check logic layer - count individual YAML files
         val logicDir = File(clusterCache, "logic")
         var ruleCount = 0
         if (logicDir.exists()) {
             ruleCount = logicDir.walkTopDown().filter { it.isFile && it.name.endsWith(".yaml") }.count()
         }
-        
+
         // Check structure layer - count individual YAML files
         val structureDir = File(clusterCache, "structure")
         var componentCount = 0
         if (structureDir.exists()) {
             componentCount = structureDir.walkTopDown().filter { it.isFile && it.name.endsWith(".yaml") }.count()
         }
-        
+
         // Check docs - count individual YAML files
         val docsDir = File(clusterCache, "docs")
         var docCount = 0
         if (docsDir.exists()) {
             docCount = docsDir.walkTopDown().filter { it.isFile && it.name.endsWith(".yaml") }.count()
         }
-        
+
         // Check enhanced context availability
         val hasEnhancedContext = contextProvider.hasDiscoveryCache(clusterName)
-        
+
         qualities.add(
             ArtifactQuality(
                 clusterName = clusterName,
@@ -409,7 +416,7 @@ fun analyzeArtifactQuality(root: File, results: List<ClusterDiscoveryResult>) {
             )
         )
     }
-    
+
     // Print summary table with enhanced context column
     println()
     println("Cluster                                    Symbols  Flows  Rules  Comps  Docs  Enhanced")
@@ -425,7 +432,7 @@ fun analyzeArtifactQuality(root: File, results: List<ClusterDiscoveryResult>) {
         println("$shortName  $symbols  $flows  $rules  $comps  $docs  $enhanced")
     }
     println()
-    
+
     // Statistics
     val clustersWithSymbols = qualities.count { it.hasSymbols }
     val clustersWithFlows = qualities.count { it.hasFlows }
@@ -434,7 +441,7 @@ fun analyzeArtifactQuality(root: File, results: List<ClusterDiscoveryResult>) {
     val clustersWithDocs = qualities.count { it.hasDocs }
     val clustersWithEnhanced = qualities.count { it.hasEnhancedContext }
     val totalClusters = qualities.size
-    
+
     println("Statistics:")
     println("  Clusters with symbols:    $clustersWithSymbols/$totalClusters (${clustersWithSymbols * 100 / totalClusters}%)")
     println("  Clusters with flows:      $clustersWithFlows/$totalClusters (${clustersWithFlows * 100 / totalClusters}%)")
@@ -442,13 +449,13 @@ fun analyzeArtifactQuality(root: File, results: List<ClusterDiscoveryResult>) {
     println("  Clusters with components: $clustersWithComponents/$totalClusters (${clustersWithComponents * 100 / totalClusters}%)")
     println("  Clusters with docs:       $clustersWithDocs/$totalClusters (${clustersWithDocs * 100 / totalClusters}%)")
     println("  Clusters with enhanced:   $clustersWithEnhanced/$totalClusters (${clustersWithEnhanced * 100 / totalClusters}%)")
-    
+
     // Total counts
     val totalSymbols = qualities.sumOf { it.symbolCount }
     val totalFlows = qualities.sumOf { it.flowCount }
     val totalRules = qualities.sumOf { it.ruleCount }
     val totalComponents = qualities.sumOf { it.componentCount }
-    
+
     println()
     println("Totals:")
     println("  Symbols:    $totalSymbols")
@@ -459,30 +466,30 @@ fun analyzeArtifactQuality(root: File, results: List<ClusterDiscoveryResult>) {
 
 fun testInstantContext(root: File) {
     println("=== Instant Context Validation ===")
-    
+
     val contextProvider = com.i2vision.instant.context.ContextProvider(
         projectRoot = root.absolutePath,
         cacheStore = FileCacheStore(I2VisionPaths.getProjectCacheDir(root.absolutePath))
     )
-    
+
     // Test 1: Basic context (should always work)
     println("\n--- Test 1: Basic Context ---")
     val testFile = findTestFile(root) ?: return
     println("Test file: ${testFile.relativeTo(root).path}")
-    
+
     runBlocking {
         val basicContext = contextProvider.getContext(
             testFile.relativeTo(root).path,
             "discovery"
         )
-        
+
         if (basicContext.success) {
             println("✅ Basic context: ${basicContext.symbols.size} symbols")
         } else {
             println("❌ Basic context failed: ${basicContext.error}")
         }
     }
-    
+
     // Test 2: Cache detection
     println("\n--- Test 2: Cache Detection ---")
     val clusters = findDiscoveredClusters(root)
@@ -491,11 +498,11 @@ fun testInstantContext(root: File) {
         val status = if (hasCache) "✅" else "❌"
         println("$status $cluster")
     }
-    
+
     // Test 3: Enhanced context (should work for clusters with cache)
     println("\n--- Test 3: Enhanced Context ---")
     val clusterWithCache = clusters.firstOrNull { contextProvider.hasDiscoveryCache(it) }
-    
+
     if (clusterWithCache != null) {
         val clusterFile = findFileInCluster(root, clusterWithCache)
         if (clusterFile != null) {
@@ -504,7 +511,7 @@ fun testInstantContext(root: File) {
                     clusterFile.relativeTo(root).path,
                     "discovery"
                 )
-                
+
                 if (enhancedContext.success) {
                     println("✅ Enhanced context for $clusterWithCache:")
                     println("   - Enhanced: ${enhancedContext.enhanced}")
@@ -521,7 +528,7 @@ fun testInstantContext(root: File) {
         println("⚠️ No clusters with discovery cache found")
         println("   Run discovery first to populate cache")
     }
-    
+
     // Test 4: Cache statistics
     println("\n--- Test 4: Cache Statistics ---")
     val stats = contextProvider.getCacheStats()
@@ -536,14 +543,14 @@ fun findTestFile(root: File): File? {
         "i2vision-discover/src/main/kotlin/com/i2vision/discover/pipeline/DiscoveryPipelineImpl.kt",
         "vslfc-core/src/main/kotlin/com/i2vision/vslfc/contracts/ContractModels.kt"
     )
-    
+
     return candidates.map { File(root, it) }.firstOrNull { it.exists() }
 }
 
 fun findDiscoveredClusters(root: File): List<String> {
     val cacheDir = I2VisionPaths.getProjectCacheDir(root.absolutePath)
     if (!cacheDir.exists()) return emptyList()
-    
+
     return cacheDir.listFiles()
         ?.filter { it.isDirectory && !it.name.startsWith(".") }
         ?.map { it.name }
@@ -553,7 +560,7 @@ fun findDiscoveredClusters(root: File): List<String> {
 fun findFileInCluster(root: File, cluster: String): File? {
     val clusterDir = File(root, cluster)
     if (!clusterDir.exists()) return null
-    
+
     return clusterDir.walkTopDown()
         .filter { it.isFile && it.extension == "kt" }
         .firstOrNull()
@@ -561,18 +568,18 @@ fun findFileInCluster(root: File, cluster: String): File? {
 
 fun testCliContextCommands(root: File) {
     println("\n--- CLI Context Command Validation ---")
-    
+
     val testFile = findTestFile(root) ?: return
     val relativePath = testFile.relativeTo(root).path
-    
+
     // Test 1: context file
     println("\nTest: context file --path=$relativePath")
     runCommand(root, "context", "file", "--path=$relativePath")
-    
+
     // Test 2: context enhanced
     println("\nTest: context enhanced --path=$relativePath")
     runCommand(root, "context", "enhanced", "--path=$relativePath")
-    
+
     // Test 3: context cache stats
     println("\nTest: context cache stats")
     runCommand(root, "context", "cache", "stats")
@@ -590,10 +597,10 @@ fun runCommand(root: File, vararg args: String) {
         )
         .redirectErrorStream(true)
         .start()
-    
+
     val output = process.inputStream.bufferedReader().readText()
     val exitCode = process.waitFor()
-    
+
     if (exitCode == 0) {
         // Show first 20 lines of output
         output.lines().take(20).forEach { println("  $it") }
@@ -611,28 +618,32 @@ fun exportDocumentation(root: File, results: List<ClusterDiscoveryResult>) {
     // TODO: Implement when doc exporter is available
 }
 
-fun generateQualityReport(root: File, results: List<ClusterDiscoveryResult>, signature: com.i2vision.arch.signature.ArchitectureSignature): String {
+fun generateQualityReport(
+    root: File,
+    results: List<ClusterDiscoveryResult>,
+    signature: com.i2vision.arch.signature.ArchitectureSignature
+): String {
     val report = StringBuilder()
     val timestamp = Instant.now()
-    
+
     report.appendLine("# i2vision Self-Discovery Quality Report")
     report.appendLine()
     report.appendLine("Generated: $timestamp")
     report.appendLine()
-    
+
     report.appendLine("## Project Overview")
     report.appendLine("- **Build System:** ${signature.buildSystem?.name ?: "unknown"}")
     report.appendLine("- **Deployment Pattern:** ${signature.deploymentPattern.name}")
     report.appendLine("- **Clusters:** ${signature.clusters.size}")
     report.appendLine()
-    
+
     report.appendLine("## Discovery Results")
     val successful = results.count { it.result.success }
     report.appendLine("- **Total Clusters:** ${results.size}")
     report.appendLine("- **Successful:** $successful")
     report.appendLine("- **Failed:** ${results.size - successful}")
     report.appendLine()
-    
+
     if (successful < results.size) {
         report.appendLine("### Failed Clusters")
         results.filter { !it.result.success }.forEach { cluster ->
@@ -640,30 +651,30 @@ fun generateQualityReport(root: File, results: List<ClusterDiscoveryResult>, sig
         }
         report.appendLine()
     }
-    
+
     report.appendLine("## Artifact Quality")
     report.appendLine()
     report.appendLine("| Cluster | Symbols | Flows | Rules | Components | Docs |")
     report.appendLine("|---------|---------|-------|-------|------------|------|")
-    
+
     results.filter { it.result.success }.forEach { clusterResult ->
         val clusterName = clusterResult.name
         val semanticCacheDir = I2VisionPaths.getProjectCacheDir(root.absolutePath)
         val clusterCache = File(semanticCacheDir, clusterName)
-        
+
         val symbols = countArtifactItems(clusterCache, "code", "symbols.yaml", "symbols")
         val flows = countArtifactItems(clusterCache, "flow", "sequences.yaml", "flows")
         val rules = countArtifactItems(clusterCache, "logic", "business-rules.yaml", "business_rules")
         val components = countArtifactItems(clusterCache, "structure", "components.yaml", "components")
         val docs = if (File(clusterCache, "docs").exists()) "✅" else "-"
-        
+
         report.appendLine("| $clusterName | $symbols | $flows | $rules | $components | $docs |")
     }
-    
+
     report.appendLine()
     report.appendLine("---")
     report.appendLine("*Report generated by i2vision Self-Discovery Test*")
-    
+
     return report.toString()
 }
 
@@ -671,7 +682,7 @@ fun countArtifactItems(cacheDir: File, layer: String, fileName: String, key: Str
     val layerDir = File(cacheDir, layer)
     val file = File(layerDir, fileName)
     if (!file.exists()) return 0
-    
+
     return try {
         val yaml = Yaml()
         val data = yaml.load<Map<String, Any>>(file.readText())
@@ -688,23 +699,23 @@ fun countArtifactItems(cacheDir: File, layer: String, fileName: String, key: Str
 class TeePrintStream(vararg streams: PrintStream) : PrintStream(TeeOutputStream(*streams)) {
     private class TeeOutputStream(vararg streams: PrintStream) : java.io.OutputStream() {
         private val streams = streams.toList()
-        
+
         override fun write(b: Int) {
             streams.forEach { it.write(b) }
         }
-        
+
         override fun write(b: ByteArray) {
             streams.forEach { it.write(b) }
         }
-        
+
         override fun write(b: ByteArray, off: Int, len: Int) {
             streams.forEach { it.write(b, off, len) }
         }
-        
+
         override fun flush() {
             streams.forEach { it.flush() }
         }
-        
+
         override fun close() {
             streams.forEach { it.close() }
         }
@@ -713,27 +724,27 @@ class TeePrintStream(vararg streams: PrintStream) : PrintStream(TeeOutputStream(
 
 fun validateLayerCompleteness(root: File, results: List<ClusterDiscoveryResult>) {
     val semanticCacheDir = I2VisionPaths.getProjectCacheDir(root.absolutePath)
-    
+
     println("Layer completeness per cluster:")
     println("Cluster                                    Code  Flow  Logic  Struct  Vision")
     println("-----------------------------------------  ----  ----  -----  ------  ------")
-    
+
     val layers = listOf("code", "flow", "logic", "structure", "vision")
     val completeness = mutableMapOf<String, MutableMap<String, Boolean>>()
-    
+
     results.filter { it.result.success }.forEach { clusterResult ->
         val clusterName = clusterResult.name
         val clusterCache = File(semanticCacheDir, clusterName)
         val layerStatus = mutableMapOf<String, Boolean>()
-        
+
         layers.forEach { layer ->
             val layerDir = File(clusterCache, layer)
             val hasLayer = layerDir.exists() && layerDir.listFiles()?.isNotEmpty() == true
             layerStatus[layer] = hasLayer
         }
-        
+
         completeness[clusterName] = layerStatus
-        
+
         val shortName = if (clusterName.length > 40) clusterName.take(37) + "..." else clusterName.padEnd(40)
         val code = if (layerStatus["code"] == true) "✅".padEnd(4) else "❌".padEnd(4)
         val flow = if (layerStatus["flow"] == true) "✅".padEnd(4) else "❌".padEnd(4)
@@ -742,19 +753,19 @@ fun validateLayerCompleteness(root: File, results: List<ClusterDiscoveryResult>)
         val vision = if (layerStatus["vision"] == true) "✅" else "❌"
         println("$shortName  $code  $flow  $logic  $struct  $vision")
     }
-    
+
     // Summary
     val totalClusters = completeness.size
     val clustersWithAllLayers = completeness.count { it.value.all { layer -> layer.value } }
     val clustersWithVision = completeness.count { it.value["vision"] == true }
     val clustersWithCode = completeness.count { it.value["code"] == true }
-    
+
     println()
     println("Summary:")
     println("  Clusters with ALL 5 layers: $clustersWithAllLayers/$totalClusters")
     println("  Clusters with Vision layer: $clustersWithVision/$totalClusters")
     println("  Clusters with Code layer:  $clustersWithCode/$totalClusters")
-    
+
     // Show missing layers
     completeness.forEach { (cluster, layers) ->
         val missing = layers.filter { !it.value }.keys
@@ -766,20 +777,20 @@ fun validateLayerCompleteness(root: File, results: List<ClusterDiscoveryResult>)
 
 fun validateVisionLayer(root: File, results: List<ClusterDiscoveryResult>) {
     val semanticCacheDir = I2VisionPaths.getProjectCacheDir(root.absolutePath)
-    
+
     println("Vision layer artifacts:")
     println()
-    
+
     var totalRequirements = 0
     var totalConstraints = 0
-    
+
     results.filter { it.result.success }.forEach { clusterResult ->
         val clusterName = clusterResult.name
         val visionDir = File(File(semanticCacheDir, clusterName), "vision")
-        
+
         if (visionDir.exists()) {
             val reqFiles = visionDir.listFiles()?.filter { it.name.endsWith(".yaml") } ?: emptyList()
-            
+
             if (reqFiles.isNotEmpty()) {
                 println("  $clusterName:")
                 reqFiles.forEach { file ->
@@ -790,10 +801,10 @@ fun validateVisionLayer(root: File, results: List<ClusterDiscoveryResult>) {
                         val title = data["title"] as? String ?: "(no title)"
                         val source = data["source"] as? String ?: "unknown"
                         val confidence = (data["confidence"] as? Number)?.toDouble() ?: 0.0
-                        
+
                         println("    - $id: ${title.take(60)}")
                         println("      source: $source, confidence: ${"%.2f".format(confidence)}")
-                        
+
                         if (data.containsKey("evidence")) {
                             val evidence = data["evidence"] as? List<*> ?: emptyList<Any>()
                             if (evidence.isNotEmpty()) {
@@ -802,7 +813,7 @@ fun validateVisionLayer(root: File, results: List<ClusterDiscoveryResult>) {
                                 println("      evidence: none (orphaned)")
                             }
                         }
-                        
+
                         totalRequirements++
                     } catch (e: Exception) {
                         println("    - ${file.name}: (parse error)")
@@ -815,12 +826,12 @@ fun validateVisionLayer(root: File, results: List<ClusterDiscoveryResult>) {
             println("  $clusterName: (no vision directory)")
         }
     }
-    
+
     println()
     println("Vision layer summary:")
     println("  Total requirements: $totalRequirements")
     println("  Total constraints: $totalConstraints")
-    
+
     // Check if .vision-ai/ contracts exist
     val visionContractFile = File(root, ".vision-ai/.vision/contracts/with-docs.yaml")
     if (visionContractFile.exists()) {

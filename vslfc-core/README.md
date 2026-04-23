@@ -4,7 +4,8 @@ Core data models and contracts for VSLFC (Vision-Structure-Logic-Flow-Code) laye
 
 ## Overview
 
-vslfc-core provides the foundational data structures and contract system for the VSLFC layered discovery framework. It defines the contract models, validation, and loading mechanisms used across the i2vision ecosystem.
+vslfc-core provides the foundational data structures and contract system for the VSLFC layered discovery framework. It
+defines the contract models, validation, and loading mechanisms used across the i2vision ecosystem.
 
 ## Features
 

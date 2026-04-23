@@ -7,7 +7,7 @@ package com.i2vision.intent
  * Feature flags can be controlled via environment variables or config files.
  */
 object IntentFeatureFlags {
-    
+
     /**
      * Enable Intent-based discovery system.
      * 
@@ -17,9 +17,9 @@ object IntentFeatureFlags {
      * Environment variable: I2VISION_INTENT_ENABLED
      * Default: true (enabled by default for testing)
      */
-    val INTENT_ENABLED: Boolean = 
+    val INTENT_ENABLED: Boolean =
         System.getenv("I2VISION_INTENT_ENABLED")?.toBoolean() ?: true
-    
+
     /**
      * Enable Intent resolution logging.
      * 
@@ -28,9 +28,9 @@ object IntentFeatureFlags {
      * Environment variable: I2VISION_INTENT_LOGGING
      * Default: false
      */
-    val INTENT_LOGGING: Boolean = 
+    val INTENT_LOGGING: Boolean =
         System.getenv("I2VISION_INTENT_LOGGING")?.toBoolean() ?: false
-    
+
     /**
      * Enable Intent validation strict mode.
      * 
@@ -40,9 +40,9 @@ object IntentFeatureFlags {
      * Environment variable: I2VISION_INTENT_STRICT
      * Default: true
      */
-    val INTENT_STRICT: Boolean = 
+    val INTENT_STRICT: Boolean =
         System.getenv("I2VISION_INTENT_STRICT")?.toBoolean() ?: true
-    
+
     /**
      * Enable Intent-only mode (disable Strategy system).
      * 
@@ -52,19 +52,19 @@ object IntentFeatureFlags {
      * Environment variable: I2VISION_INTENT_ONLY
      * Default: false (both systems work in parallel)
      */
-    val INTENT_ONLY: Boolean = 
+    val INTENT_ONLY: Boolean =
         System.getenv("I2VISION_INTENT_ONLY")?.toBoolean() ?: false
-    
+
     /**
      * Check if Intent system is available.
      */
     fun isIntentSystemAvailable(): Boolean = INTENT_ENABLED
-    
+
     /**
      * Check if Intent system is the primary (Strategy system deprecated).
      */
     fun isIntentPrimary(): Boolean = INTENT_ONLY
-    
+
     /**
      * Log intent resolution step.
      */

@@ -23,17 +23,17 @@ class HttpTransport(
     private val port: Int = 8080,
     private val host: String = "0.0.0.0"
 ) {
-    
+
     private val logger = LoggerFactory.getLogger(HttpTransport::class.java)
     private var server: NettyApplicationEngine? = null
-    
+
     /**
      * Start the HTTP transport
      */
     fun start() {
         logger.info("[HTTP] Starting HTTP transport on {}:{}", host, port)
         mcpServer.start()
-        
+
         server = embeddedServer(Netty, port = port, host = host) {
             install(ContentNegotiation) {
                 json(Json {
@@ -41,33 +41,33 @@ class HttpTransport(
                     isLenient = true
                 })
             }
-            
+
             routing {
                 post("/mcp") {
                     val requestText = call.receiveText()
                     logger.debug("[HTTP] Received request: {}", requestText)
-                    
+
                     val response = mcpServer.handleJsonRpcRequest(requestText)
                     logger.debug("[HTTP] Sending response: {}", response)
-                    
+
                     call.respondText(response, io.ktor.http.ContentType.Application.Json)
                 }
-                
+
                 get("/health") {
                     logger.debug("[HTTP] Health check")
                     call.respond(mapOf("status" to "healthy"))
                 }
-                
+
                 get("/") {
                     call.respondText("i2vision MCP Server - HTTP Transport")
                 }
             }
         }
-        
+
         server?.start(wait = false)
         logger.info("[HTTP] HTTP transport started")
     }
-    
+
     /**
      * Stop the HTTP transport
      */
@@ -87,19 +87,19 @@ fun main(args: Array<String>) {
     val projectRoot = System.getProperty("user.dir") ?: "."
     val port = System.getProperty("http.port", "8080").toInt()
     val host = System.getProperty("http.host", "0.0.0.0")
-    
+
     val mcpServer = McpServer(projectRoot)
     val transport = HttpTransport(mcpServer, port, host)
-    
+
     try {
         transport.start()
-        
+
         // Keep the server running
         Runtime.getRuntime().addShutdownHook(Thread {
             println("Shutting down MCP server...")
             transport.stop()
         })
-        
+
         Thread.currentThread().join()
     } catch (e: Exception) {
         System.err.println("Error starting MCP server: ${e.message}")

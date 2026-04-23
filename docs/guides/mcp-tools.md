@@ -2,18 +2,21 @@
 
 ## Overview
 
-MCP (Model Context Protocol) integration enables bidirectional communication between i2vision and external tools/LLMs. It provides standardized operations for synchronization and validation.
+MCP (Model Context Protocol) integration enables bidirectional communication between i2vision and external tools/LLMs.
+It provides standardized operations for synchronization and validation.
 
 ---
 
 ## Core Operations
 
 ### ai_link
+
 Create cross-layer semantic links.
 
 **Purpose:** Connect related elements across VSLFC layers
 
 **Input:**
+
 ```json
 {
   "source": {
@@ -32,6 +35,7 @@ Create cross-layer semantic links.
 ```
 
 **Output:**
+
 ```json
 {
   "link_id": "link-123",
@@ -43,11 +47,13 @@ Create cross-layer semantic links.
 ---
 
 ### ai_sync
+
 Synchronize clusters and layers.
 
 **Purpose:** Keep all VSLFC layers in sync
 
 **Input:**
+
 ```json
 {
   "direction": "code_to_vision",  # or vision_to_code
@@ -58,6 +64,7 @@ Synchronize clusters and layers.
 ```
 
 **Output:**
+
 ```json
 {
   "synced": true,
@@ -76,11 +83,13 @@ Synchronize clusters and layers.
 ---
 
 ### ai_validate
+
 Validate layer consistency and contracts.
 
 **Purpose:** Check VSLFC integrity and contract compliance
 
 **Input:**
+
 ```json
 {
   "cluster": "orchestrator",
@@ -91,6 +100,7 @@ Validate layer consistency and contracts.
 ```
 
 **Output:**
+
 ```json
 {
   "valid": true,
@@ -108,11 +118,13 @@ Validate layer consistency and contracts.
 ---
 
 ### ai_discover
+
 Run discovery operation on code.
 
 **Purpose:** Discover and populate layers from code
 
 **Input:**
+
 ```json
 {
   "cluster": "orchestrator",
@@ -124,6 +136,7 @@ Run discovery operation on code.
 ```
 
 **Output:**
+
 ```json
 {
   "discovered": true,
@@ -153,11 +166,13 @@ Run discovery operation on code.
 ---
 
 ### ai_search
+
 Search across VSLFC artifacts.
 
 **Purpose:** Find elements by name, type, or relationship
 
 **Input:**
+
 ```json
 {
   "query": "AgentOrchestrator",
@@ -168,6 +183,7 @@ Search across VSLFC artifacts.
 ```
 
 **Output:**
+
 ```json
 {
   "results": [
@@ -194,6 +210,7 @@ Search across VSLFC artifacts.
 ## Integration Points
 
 ### With Orchestrator
+
 ```kotlin
 val orchestrator = Orchestrator(...)
 val mcp = MCPServer(orchestrator)
@@ -203,6 +220,7 @@ mcp.start(port = 3001)
 **Endpoint:** `http://localhost:3001/mcp/`
 
 ### With External Tools
+
 Any tool can invoke MCP operations:
 
 ```bash
@@ -212,6 +230,7 @@ curl -X POST http://localhost:3001/mcp/ai_sync \
 ```
 
 ### With LLMs
+
 Claude, ChatGPT, etc. can use via tool calling:
 
 ```json
@@ -230,6 +249,7 @@ Claude, ChatGPT, etc. can use via tool calling:
 ## Protocol Details
 
 ### Request Format
+
 ```json
 {
   "operation": "ai_link",  # Operation name
@@ -242,6 +262,7 @@ Claude, ChatGPT, etc. can use via tool calling:
 ```
 
 ### Response Format
+
 ```json
 {
   "success": true,
@@ -255,6 +276,7 @@ Claude, ChatGPT, etc. can use via tool calling:
 ```
 
 ### Error Response
+
 ```json
 {
   "success": false,
@@ -271,16 +293,19 @@ Claude, ChatGPT, etc. can use via tool calling:
 ## Streaming
 
 ### Supported Operations
+
 - `ai_discover` - Stream discovery progress
 - `ai_sync` - Stream sync updates
 - `ai_validate` - Stream validation checks
 
 ### Streaming Example
+
 ```
 curl -N http://localhost:3001/mcp/ai_discover?stream=true
 ```
 
 **Output (newline-delimited JSON):**
+
 ```
 {"event": "started", "cluster": "orchestrator"}
 {"event": "discovering_code", "progress": 0.2}
@@ -295,13 +320,16 @@ curl -N http://localhost:3001/mcp/ai_discover?stream=true
 ## Configuration
 
 ### Server Configuration
-Server configuration is managed through environment variables and module-specific configuration files. Refer to the MCP Integration guide for setup details.
+
+Server configuration is managed through environment variables and module-specific configuration files. Refer to the MCP
+Integration guide for setup details.
 
 ---
 
 ## Usage Patterns
 
 ### Pattern 1: Sync Before Analyze
+
 ```
 → ai_sync (ensure fresh data)
 → ai_discover (get latest artifacts)
@@ -309,6 +337,7 @@ Server configuration is managed through environment variables and module-specifi
 ```
 
 ### Pattern 2: Search and Link
+
 ```
 → ai_search (find elements)
 → ai_link (create relationships)
@@ -316,6 +345,7 @@ Server configuration is managed through environment variables and module-specifi
 ```
 
 ### Pattern 3: Full Analysis
+
 ```
 → ai_discover (populate layers)
 → ai_sync (synchronize)
@@ -329,13 +359,13 @@ Server configuration is managed through environment variables and module-specifi
 
 ### Common Errors
 
-| Error | Cause | Solution |
-|-------|-------|----------|
-| CLUSTER_NOT_FOUND | Invalid cluster name | Check cluster name |
-| VALIDATION_ERROR | Invalid parameters | Check parameter types |
-| SYNC_CONFLICT | Conflicting changes | Resolve conflicts manually |
-| TIMEOUT | Operation took too long | Increase timeout or reduce scope |
-| AUTHENTICATION_FAILED | Invalid token | Check authentication settings |
+| Error                 | Cause                   | Solution                         |
+|-----------------------|-------------------------|----------------------------------|
+| CLUSTER_NOT_FOUND     | Invalid cluster name    | Check cluster name               |
+| VALIDATION_ERROR      | Invalid parameters      | Check parameter types            |
+| SYNC_CONFLICT         | Conflicting changes     | Resolve conflicts manually       |
+| TIMEOUT               | Operation took too long | Increase timeout or reduce scope |
+| AUTHENTICATION_FAILED | Invalid token           | Check authentication settings    |
 
 ---
 
@@ -352,6 +382,7 @@ Server configuration is managed through environment variables and module-specifi
 ### Monitoring
 
 Track:
+
 - Operation duration
 - Success/failure rates
 - Error types
@@ -363,16 +394,19 @@ Track:
 ## Security
 
 ### Authentication
+
 - Optional token-based auth
 - Header: `X-API-Token`
 - Configure in mcp-server.yaml
 
 ### Rate Limiting
+
 - Configurable per-minute limit
 - Per-IP or global
 - Returns 429 Too Many Requests
 
 ### CORS
+
 - Configurable origins
 - Default: localhost only
 - Production: restrict to known hosts

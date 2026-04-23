@@ -16,7 +16,7 @@ import java.time.Instant
  * - .semantic-cache/.tools/cross-module-imports.yaml
  */
 class IntelligenceService(private val projectRoot: String) {
-    
+
     private val log = LoggerFactory.getLogger(IntelligenceService::class.java)
     private val yaml = Yaml()
     private val semanticCachePath = I2VisionPaths.getProjectCacheDir(projectRoot).absolutePath
@@ -38,7 +38,8 @@ class IntelligenceService(private val projectRoot: String) {
                 timestamp = System.currentTimeMillis(),
                 timestamp_iso = Instant.now().toString()
             ).also {
-                log.info("[INTELLIGENCE] Quality metrics for {}: complexity={}, cohesion={}, coupling={}",
+                log.info(
+                    "[INTELLIGENCE] Quality metrics for {}: complexity={}, cohesion={}, coupling={}",
                     modulePath,
                     String.format("%.2f", complexityScore),
                     String.format("%.2f", cohesionScore),
@@ -91,10 +92,19 @@ class IntelligenceService(private val projectRoot: String) {
                 }
                 .distinctBy { it.file }
                 .also {
-                    log.info("[INTELLIGENCE] Found ${it.size} related files for {} in module {}", openedFile, modulePath)
+                    log.info(
+                        "[INTELLIGENCE] Found ${it.size} related files for {} in module {}",
+                        openedFile,
+                        modulePath
+                    )
                 }
         } catch (e: Exception) {
-            log.error("[INTELLIGENCE] Failed to get related files for {} in module {}: {}", openedFile, modulePath, e.message)
+            log.error(
+                "[INTELLIGENCE] Failed to get related files for {} in module {}: {}",
+                openedFile,
+                modulePath,
+                e.message
+            )
             emptyList()
         }
     }

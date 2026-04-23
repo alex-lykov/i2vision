@@ -17,36 +17,36 @@ import kotlin.time.Duration.Companion.milliseconds
 class FileCacheStore(
     private val cacheDir: File
 ) : CacheStore {
-    
+
     private val json = Json { ignoreUnknownKeys = true }
-    
+
     override suspend fun put(ref: ArtifactRef, content: ByteArray): PutResult {
         val relativePath = "${ref.module}/${ref.layer.name.lowercase()}/${ref.name}"
         val file = File(cacheDir, relativePath)
         file.parentFile?.mkdirs()
         file.writeBytes(content)
-        
+
         val hash = computeHash(content)
         val metadata = ArtifactMetadata(
             createdAt = Instant.now().toEpochMilli(),
             sourceFiles = emptyList(),
             hash = hash
         )
-        
+
         // Store metadata
         val metaFile = File(cacheDir, "$relativePath.meta")
         metaFile.writeText(
             json.encodeToString(metadata)
         )
-        
+
         return PutResult.Success(ref)
     }
-    
+
     override suspend fun get(ref: ArtifactRef): Artifact? {
         val relativePath = "${ref.module}/${ref.layer.name.lowercase()}/${ref.name}"
         val file = File(cacheDir, relativePath)
         if (!file.exists()) return null
-        
+
         val content = file.readBytes()
         val metadataFile = File(cacheDir, "$relativePath.meta")
         val metadata = if (metadataFile.exists()) {
@@ -58,29 +58,29 @@ class FileCacheStore(
                 hash = computeHash(content)
             )
         }
-        
+
         return Artifact(ref, content, metadata)
     }
-    
+
     override suspend fun list(module: String, layer: Layer): List<ArtifactRef> {
         val layerDir = File(cacheDir, "${module}/${layer.name.lowercase()}")
         if (!layerDir.exists()) return emptyList()
-        
+
         return layerDir.listFiles()
             ?.filter { it.isFile && it.extension in setOf("yaml", "json", "sd") }
             ?.map { ArtifactRef(module, layer, it.name) }
             ?: emptyList()
     }
-    
+
     override suspend fun isFresh(ref: ArtifactRef, maxAge: Duration): Boolean {
         val artifact = get(ref) ?: return false
         val age = Instant.now().toEpochMilli() - artifact.metadata.createdAt
         return age.milliseconds <= maxAge
     }
-    
+
     override suspend fun getAffected(changedFiles: List<String>): List<ArtifactRef> {
         val affected = mutableListOf<ArtifactRef>()
-        
+
         cacheDir.walkTopDown()
             .filter { it.isFile && it.name.endsWith(".meta") }
             .forEach { metaFile ->
@@ -97,20 +97,20 @@ class FileCacheStore(
                     // Skip corrupted metadata files
                 }
             }
-        
+
         return affected
     }
-    
+
     override suspend fun clear(module: String): Int {
         val moduleDir = File(cacheDir, module)
         if (!moduleDir.exists()) return 0
-        
+
         var count = 0
         moduleDir.deleteRecursively()
         count++
         return count
     }
-    
+
     private fun pathToRef(path: String): ArtifactRef? {
         val relativePath = if (File(path).isAbsolute) {
             path.removePrefix("${cacheDir.absolutePath}/")
@@ -119,7 +119,7 @@ class FileCacheStore(
         }
         val parts = relativePath.split('/')
         if (parts.size < 3) return null
-        
+
         val module = parts[0]
         val layer = try {
             Layer.valueOf(parts[1].uppercase())
@@ -127,10 +127,10 @@ class FileCacheStore(
             return null
         }
         val name = parts[2]
-        
+
         return ArtifactRef(module, layer, name)
     }
-    
+
     private fun computeHash(content: ByteArray): String {
         val digest = MessageDigest.getInstance("SHA-256")
         return digest.digest(content).joinToString("") { "%02x".format(it) }

@@ -55,30 +55,30 @@ publishing {
     publications {
         create<MavenPublication>("maven") {
             from(components["java"])
-            
+
             pom {
                 name.set("i2vision-discover")
                 description.set("Full discovery engine for i2vision - Code → Vision discovery")
-                url.set("https://github.com/i2vision/i2vision-discover")
-                
+                url.set("https://github.com/alex-lykov/i2vision/i2vision-discover")
+
                 licenses {
                     license {
                         name.set("MIT License")
                         url.set("https://opensource.org/licenses/MIT")
                     }
                 }
-                
+
                 developers {
                     developer {
                         id.set("i2vision")
                         name.set("i2vision Team")
                     }
                 }
-                
+
                 scm {
-                    connection.set("scm:git:git://github.com/i2vision/i2vision-discover.git")
-                    developerConnection.set("scm:git:ssh://github.com/i2vision/i2vision-discover.git")
-                    url.set("https://github.com/i2vision/i2vision-discover")
+                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/i2vision-discover.git")
+                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/i2vision-discover.git")
+                    url.set("https://github.com/alex-lykov/i2vision/i2vision-discover")
                 }
             }
         }

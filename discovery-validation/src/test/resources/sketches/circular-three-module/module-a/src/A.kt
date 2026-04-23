@@ -1,4 +1,5 @@
 package com.example.a
+
 import com.example.b.B
 
 class A {

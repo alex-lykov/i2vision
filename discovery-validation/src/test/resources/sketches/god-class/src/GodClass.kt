@@ -57,7 +57,7 @@ class GodClass {
     fun method48() = "method48"
     fun method49() = "method49"
     fun method50() = "method50"
-    
+
     // Mixed responsibilities
     fun doDatabaseWork() = "database"
     fun doUiWork() = "ui"

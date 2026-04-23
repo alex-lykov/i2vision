@@ -12,10 +12,10 @@ import kotlinx.coroutines.withContext
  * @deprecated Use UnifiedModelService with LocalOllamaRepository instead
  */
 class ModelRegistry(private val ollamaApiUrl: String = "http://localhost:11434") {
-    
+
     private val repository: LocalOllamaRepository = LocalOllamaRepository(ollamaApiUrl)
     private var cachedModels = mutableMapOf<String, ModelInfo>()
-    
+
     /**
      * Fetch available models from local Ollama API
      */
@@ -52,7 +52,7 @@ class ModelRegistry(private val ollamaApiUrl: String = "http://localhost:11434")
             emptyList()
         }
     }
-    
+
     /**
      * Get running models from Ollama API
      */
@@ -88,17 +88,17 @@ class ModelRegistry(private val ollamaApiUrl: String = "http://localhost:11434")
             emptyList()
         }
     }
-    
+
     /**
      * Get a specific model by ID
      */
     fun getModel(modelId: String): ModelInfo? = cachedModels[modelId]
-    
+
     /**
      * Get all available models
      */
     fun getAllModels(): List<ModelInfo> = cachedModels.values.toList()
-    
+
     /**
      * Create a ModelWrapper for the specified local model.
      * Fetches actual context_length from Ollama /api/show when available.
@@ -119,12 +119,12 @@ class ModelRegistry(private val ollamaApiUrl: String = "http://localhost:11434")
             performanceMonitor = performanceMonitor
         )
     }
-    
+
     /**
      * Check if a model exists
      */
     fun hasModel(modelId: String): Boolean = cachedModels.containsKey(modelId)
-    
+
     /**
      * Close HTTP client
      */

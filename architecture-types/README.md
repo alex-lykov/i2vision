@@ -1,10 +1,12 @@
 # Architecture Types Module
 
-A standalone, reusable library for multi-dimensional architecture detection and cluster analysis. This module provides tools for detecting, analyzing, and comparing software architecture patterns across projects.
+A standalone, reusable library for multi-dimensional architecture detection and cluster analysis. This module provides
+tools for detecting, analyzing, and comparing software architecture patterns across projects.
 
 ## Purpose
 
 The architecture-types module enables both discovery and development engines to:
+
 - Detect build systems, frameworks, and architectural patterns
 - Detect source code clusters dynamically without hardcoding paths
 - Analyze multi-dimensional architecture signatures
@@ -17,6 +19,7 @@ The architecture-types module enables both discovery and development engines to:
 ### Symbiotic Cluster and Architecture Detection
 
 Cluster detection and architecture detection work together symbiotically:
+
 1. **Cluster Detection First**: Detects clusters using build module boundaries (Gradle/Maven) or directory structure
 2. **Per-Cluster Architecture Detection**: Detects architecture patterns for each cluster independently
 3. **Confidence Evaluation**: Evaluates detection confidence and uses LLM fallback when needed
@@ -24,7 +27,9 @@ Cluster detection and architecture detection work together symbiotically:
 
 ### Multi-Dimensional Architecture Detection
 
-A single project can have multiple architectural patterns simultaneously across different modules. This module supports per-module detection of:
+A single project can have multiple architectural patterns simultaneously across different modules. This module supports
+per-module detection of:
+
 - **Build Level**: Build system (Gradle, Maven, npm, Cargo) and build tools
 - **Framework Level**: Frameworks and libraries (per-module)
 - **Module Level**: Module patterns (Hexagonal, Layered, Agent, Microservices, etc.)
@@ -35,20 +40,24 @@ A single project can have multiple architectural patterns simultaneously across 
 ### Core Components
 
 #### Detectors (`detector/`)
+
 - `BuildSystemDetector`: Detects build system from project root files
 - `FrameworkDetector`: Detects frameworks from build files and source code
 - `ModulePatternDetector`: Analyzes directory structure for architectural patterns
 
 #### Signature (`signature/`)
+
 - `ArchitectureSignature`: Multi-dimensional architecture signature data class
 - `SignatureBuilder`: Aggregates detector outputs into complete signatures
 - `SignatureMatcher`: Provides compatibility checks and similarity scoring
 
 #### Patterns (`patterns/`)
+
 - `Pattern`: Common architectural patterns (Hexagonal, Layered, Agent, Pipeline, Event-Driven)
 - Pattern catalog for matching and classification
 
 #### Compatibility (`compatibility/`)
+
 - `PatternCompatibility`: Checks compatibility between architectural patterns
 - `MigrationPath`: Defines migration steps and effort estimation
 
@@ -201,7 +210,8 @@ Project Root
     └── models/
 ```
 
-The architecture-types module detects each module's architecture independently, providing a complete multi-dimensional signature.
+The architecture-types module detects each module's architecture independently, providing a complete multi-dimensional
+signature.
 
 ## Integration
 
@@ -255,6 +265,7 @@ private fun detectBuildModules(root: File): List<String> {
 ### Directory Structure Clustering
 
 When build modules are not detected, the module falls back to directory structure clustering:
+
 - Scans top-level directories
 - Checks for source files (kt, java, scala, groovy, py, js, ts, go, rs)
 - Includes nested subdirectories as separate clusters
@@ -265,6 +276,7 @@ When build modules are not detected, the module falls back to directory structur
 ### Confidence Evaluation
 
 The module calculates confidence scores for each module's architecture detection based on:
+
 - Frameworks detected (contributes 0.3 to confidence)
 - Design patterns detected (contributes 0.35 to confidence)
 - Language features detected (contributes 0.35 to confidence)
@@ -272,6 +284,7 @@ The module calculates confidence scores for each module's architecture detection
 ### LLM Fallback Triggers
 
 LLM fallback is triggered when:
+
 - Module confidence < threshold (default 0.7)
 - LLM is enabled (`useLlmForLowConfidence = true`)
 - LLM client is available
@@ -279,6 +292,7 @@ LLM fallback is triggered when:
 ### LLM Fallback Behavior
 
 When LLM fallback is triggered:
+
 - LLM analyzes the cluster with low confidence
 - Merges LLM result with heuristic detection
 - Increases confidence score
@@ -287,19 +301,23 @@ When LLM fallback is triggered:
 ### User Control
 
 Users can control LLM usage via parameters:
+
 - `confidenceThreshold`: Minimum confidence to accept heuristic result (default 0.7)
 - `useLlmForLowConfidence`: Enable LLM fallback for low-confidence clusters
 - `llmClient`: LLM client instance for fallback analysis
 
 ## Deployment Pattern Detection
 
-The module detects deployment patterns (Monolith, Microservices, Modular Monolith, Aggregator) based on cluster analysis:
+The module detects deployment patterns (Monolith, Microservices, Modular Monolith, Aggregator) based on cluster
+analysis:
 
 ### Detection Logic
+
 - **File**: `signature/SignatureBuilder.kt`
 - **Method**: `detectDeploymentPattern()`
 
 The deployment pattern is determined as follows:
+
 1. Filter out empty clusters (fileCount = 0)
 2. If no valid clusters: `UNKNOWN`
 3. If single cluster: `MONOLITH`
@@ -307,14 +325,18 @@ The deployment pattern is determined as follows:
 5. Otherwise: `MODULAR_MONOLITH` (default for Gradle multi-module projects)
 
 ### Fix Applied
-Previously, the logic defaulted to `AGGREGATOR` for multi-module Gradle projects, which was incorrect. The fix ensures that:
+
+Previously, the logic defaulted to `AGGREGATOR` for multi-module Gradle projects, which was incorrect. The fix ensures
+that:
+
 - Gradle multi-module projects with 2-4 clusters are correctly identified as `MODULAR_MONOLITH`
 - Only projects with >= 5 independent build modules are identified as `MICROSERVICES`
 - This matches the typical Gradle multi-module project structure
 
 ## Sequence Diagram
 
-See [Cluster and Architecture Detection Flow](./docs/cluster-architecture-detection.sd) for the detailed sequence diagram showing how cluster detection and architecture detection work together.
+See [Cluster and Architecture Detection Flow](./docs/cluster-architecture-detection.sd) for the detailed sequence
+diagram showing how cluster detection and architecture detection work together.
 
 ## License
 

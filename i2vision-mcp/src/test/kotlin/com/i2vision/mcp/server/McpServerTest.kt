@@ -10,7 +10,7 @@ import java.io.File
  * Validates MCP server starts and accepts JSON-RPC requests, and all registered tools are discoverable.
  */
 class McpServerTest {
-    
+
     private fun withTempDir(block: (File) -> Unit) {
         val tempDir = java.nio.file.Files.createTempDirectory("mcp-test").toFile()
         try {
@@ -19,27 +19,27 @@ class McpServerTest {
             tempDir.deleteRecursively()
         }
     }
-    
+
     @Test
     fun `should create MCP server successfully`() = withTempDir { tempDir ->
         // Given: Project root directory
         val projectRoot = tempDir.absolutePath
-        
+
         // When: Create MCP server
         val server = McpServer(projectRoot)
-        
+
         // Then: Server should be created successfully
         assertNotNull(server)
     }
-    
+
     @Test
     fun `should register tools on initialization`() = withTempDir { tempDir ->
         // Given: Project root directory
         val projectRoot = tempDir.absolutePath
-        
+
         // When: Create MCP server
         val server = McpServer(projectRoot)
-        
+
         // Then: Server should have tool registry initialized
         assertNotNull(server)
         // Tool registry is private, but server creation succeeds means tools are registered

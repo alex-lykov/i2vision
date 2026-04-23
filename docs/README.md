@@ -39,7 +39,8 @@ Visual documentation:
 - [Incremental Sync Flow](diagrams/incremental-sync-flow.sd) - File change detection and targeted rediscovery
 - [Instant Context Flow](diagrams/instant-context-flow.sd) - Task-aware context optimization
 - [MCP Server Flow](diagrams/mcp-server-flow.sd) - MCP tool registration and execution
-- [Parallel Discovery Concurrency](diagrams/parallel-discovery-concurrency.sd) - Concurrent cluster processing techniques
+- [Parallel Discovery Concurrency](diagrams/parallel-discovery-concurrency.sd) - Concurrent cluster processing
+  techniques
 - [Quality Metrics Flow](diagrams/quality-metrics-flow.sd) - Cohesion, coupling, and complexity analysis
 
 ## Module Documentation
@@ -64,6 +65,7 @@ Individual module documentation:
 ## Internal Documentation
 
 Developer-facing documentation is located in [`../dev-docs/`](../dev-docs/):
+
 - Test plans
 - Cleanup documentation
 - Refactoring strategies

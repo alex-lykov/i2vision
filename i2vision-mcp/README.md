@@ -2,7 +2,8 @@
 
 ## Purpose
 
-i2vision-mcp provides a Model Context Protocol (MCP) server that exposes i2vision's discovery and context capabilities to LLMs through a standardized protocol. It enables AI assistants to access code intelligence tools via JSON-RPC 2.0.
+i2vision-mcp provides a Model Context Protocol (MCP) server that exposes i2vision's discovery and context capabilities
+to LLMs through a standardized protocol. It enables AI assistants to access code intelligence tools via JSON-RPC 2.0.
 
 ## Architecture
 
@@ -11,12 +12,14 @@ The module implements the MCP specification with support for multiple transport 
 ### Core Components
 
 **McpServer** (`server/`)
+
 - Central MCP server implementation
 - Tool registration and execution
 - JSON-RPC 2.0 request handling
 - Server lifecycle management
 
 **JSON-RPC Handler** (`server/JsonRpcHandler`)
+
 - Full JSON-RPC 2.0 protocol implementation
 - Request/response handling with error codes
 - Notification support (requests without id)
@@ -24,6 +27,7 @@ The module implements the MCP specification with support for multiple transport 
 - Method dispatch to tool handlers
 
 **Tool Registry** (`tools/`)
+
 - Central tool registration system
 - Tool metadata management
 - Handler dispatch mechanism
@@ -32,18 +36,22 @@ The module implements the MCP specification with support for multiple transport 
 ### Tool Categories
 
 **Discovery Tools** (`tools/discovery/`)
+
 - `discover_project`: Project structure discovery
 - `analyze_file`: Single-file analysis
 
 **Context Tools** (`tools/context/`)
+
 - `get_instant_context`: Instant context retrieval
 - `prefetch_context`: Context preloading
 
 **Contract Tools** (`tools/contract/`)
+
 - `validate_contract`: Contract validation
 - `list_contracts`: Contract listing
 
 **Intelligence Tools** (`tools/intelligence/`)
+
 - `get_quality_metrics`: Code quality metrics
 - `get_related_files`: Related file detection
 - `get_complexity_details`: Complexity analysis
@@ -51,6 +59,7 @@ The module implements the MCP specification with support for multiple transport 
 - `get_intelligence_report`: Comprehensive intelligence report
 
 **Intelligence Service** (`intelligence/`)
+
 - `IntelligenceService`: Core intelligence data provider
 - Quality metrics calculation
 - Cross-module import analysis
@@ -59,12 +68,14 @@ The module implements the MCP specification with support for multiple transport 
 ### Transport Layers
 
 **Stdio Transport** (`transport/StdioTransport`)
+
 - Stdin/stdout communication for Claude Desktop
 - Line-by-line JSON-RPC message handling
 - Graceful shutdown on EOF
 - Main entry point for desktop integration
 
 **HTTP Transport** (`transport/HttpTransport`)
+
 - HTTP-based communication for remote clients
 - Ktor/Netty server implementation
 - Configurable host and port
@@ -76,12 +87,14 @@ The module implements the MCP specification with support for multiple transport 
 ### JSON-RPC 2.0 Methods
 
 **Standard MCP Methods:**
+
 - `initialize`: Server initialization handshake
 - `shutdown`: Server shutdown
 - `tools/list`: List available tools
 - `tools/call`: Execute a tool
 
 **Direct Tool Methods:**
+
 - Tool names can be called directly as JSON-RPC methods
 - Backward compatibility with simple tool invocation
 
@@ -96,6 +109,7 @@ The module implements the MCP specification with support for multiple transport 
 ## Usage
 
 ### Stdio Transport (Claude Desktop)
+
 ```bash
 java -jar i2vision-mcp.jar
 ```
@@ -103,6 +117,7 @@ java -jar i2vision-mcp.jar
 The server reads JSON-RPC requests from stdin and writes responses to stdout.
 
 ### HTTP Transport
+
 ```bash
 java -Dhttp.port=8080 -Dhttp.host=0.0.0.0 -jar i2vision-mcp.jar
 ```
@@ -110,6 +125,7 @@ java -Dhttp.port=8080 -Dhttp.host=0.0.0.0 -jar i2vision-mcp.jar
 POST requests to `http://localhost:8080/mcp` with JSON-RPC body.
 
 ### Programmatic Usage
+
 ```kotlin
 val mcpServer = McpServer(projectRoot)
 val transport = StdioTransport(mcpServer)
@@ -119,6 +135,7 @@ transport.start()
 ## Tool Response Format
 
 ### Success Response
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -136,6 +153,7 @@ transport.start()
 ```
 
 ### Error Response
+
 ```json
 {
   "jsonrpc": "2.0",
@@ -165,11 +183,13 @@ transport.start()
 ## Configuration
 
 ### Server Configuration
+
 ```kotlin
 val mcpServer = McpServer(projectRoot)
 ```
 
 ### HTTP Transport Configuration
+
 ```kotlin
 val transport = HttpTransport(
     mcpServer = mcpServer,
@@ -181,7 +201,9 @@ val transport = HttpTransport(
 ## Integration
 
 ### Claude Desktop
+
 Configure in Claude Desktop settings:
+
 ```json
 {
   "mcpServers": {
@@ -194,6 +216,7 @@ Configure in Claude Desktop settings:
 ```
 
 ### Remote Clients
+
 HTTP endpoint: `POST http://host:port/mcp`
 Content-Type: `application/json`
 

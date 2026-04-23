@@ -44,30 +44,30 @@ publishing {
     publications {
         create<MavenPublication>("maven") {
             from(components["java"])
-            
+
             pom {
                 name.set("llm-client")
                 description.set("Unified LLM client library with support for local Ollama, cloud providers, and model runtime management")
-                url.set("https://github.com/i2vision/llm-client")
-                
+                url.set("https://github.com/alex-lykov/i2vision/llm-client")
+
                 licenses {
                     license {
                         name.set("MIT License")
                         url.set("https://opensource.org/licenses/MIT")
                     }
                 }
-                
+
                 developers {
                     developer {
                         id.set("i2vision")
                         name.set("i2vision Team")
                     }
                 }
-                
+
                 scm {
-                    connection.set("scm:git:git://github.com/i2vision/llm-client.git")
-                    developerConnection.set("scm:git:ssh://github.com/i2vision/llm-client.git")
-                    url.set("https://github.com/i2vision/llm-client")
+                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/llm-client.git")
+                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/llm-client.git")
+                    url.set("https://github.com/alex-lykov/i2vision/llm-client")
                 }
             }
         }

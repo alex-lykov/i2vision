@@ -16,13 +16,15 @@ import org.slf4j.LoggerFactory
  * Full functionality will be added incrementally.
  */
 class IntentResolverImpl : IntentResolver {
-    
+
     private val log = LoggerFactory.getLogger(IntentResolverImpl::class.java)
-    
+
     override fun resolveToParameterSet(intent: DiscoveryIntent): ModifiableParameterSet {
-        log.info("[INTENT] Resolving intent: goal={}, depth={}, quality={}", 
-            intent.goal, intent.depth, intent.quality)
-        
+        log.info(
+            "[INTENT] Resolving intent: goal={}, depth={}, quality={}",
+            intent.goal, intent.depth, intent.quality
+        )
+
         // TODO: Implement actual intent resolution logic
         // For now, return a minimal parameter set
         return ModifiableParameterSet(
@@ -37,24 +39,24 @@ class IntentResolverImpl : IntentResolver {
             )
         )
     }
-    
+
     override fun isValid(intent: DiscoveryIntent): Boolean {
         return validate(intent).isEmpty()
     }
-    
+
     override fun validate(intent: DiscoveryIntent): List<String> {
         val errors = mutableListOf<String>()
-        
+
         // Validate required fields
         if (intent.layerFocus.isEmpty() && intent.goal != DiscoveryGoal.UNDERSTAND) {
             errors.add("layerFocus is required for ${intent.goal.name} goal")
         }
-        
+
         // Validate combinations
         if (intent.depth == IntentDepth.DEEP && intent.quality == DiscoveryQuality.FAST) {
             errors.add("DEEP depth cannot be combined with FAST quality")
         }
-        
+
         return errors
     }
 }

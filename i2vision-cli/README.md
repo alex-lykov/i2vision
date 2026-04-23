@@ -2,7 +2,8 @@
 
 ## Purpose
 
-i2vision-cli provides the command-line interface for i2vision, enabling users to run discovery analysis, manage VSLFC structure, validate contracts, and get instant context for code.
+i2vision-cli provides the command-line interface for i2vision, enabling users to run discovery analysis, manage VSLFC
+structure, validate contracts, and get instant context for code.
 
 ## Architecture
 
@@ -11,27 +12,32 @@ The CLI is built using Clikt and provides commands for all major i2vision operat
 ### Core Commands
 
 **InitCommand** (`commands/InitCommand.kt`)
+
 - Initialize VSLFC directory structure in a project
 - Validate existing VSLFC structure
 - Force re-initialization with `--force` flag
 
 **DiscoverCommand** (`commands/DiscoverCommand.kt`)
+
 - Run discovery analysis on projects
 - Intent-driven discovery (recommended approach)
 - Cluster-based parallel processing
 - Support for legacy depth-based discovery
 
 **ContractCommand** (`commands/ContractCommand.kt`)
+
 - Contract validation and management
 - List, validate, and create contracts
 - Output in text, JSON, or YAML formats
 
 **PresetCommand** (`commands/PresetCommand.kt`)
+
 - Preset management for discovery configurations
 - Pre-built presets for different project types
 - Custom preset creation and management
 
 **ContextCommand** (`commands/ContextCommand.kt`)
+
 - Get instant context for files and directories
 - Task-specific context analysis (debug, refactor, etc.)
 - Multi-file context aggregation
@@ -46,6 +52,7 @@ The CLI is built using Clikt and provides commands for all major i2vision operat
 ```
 
 Options:
+
 - `-p, --path` - Project path (default: current directory)
 - `-f, --force` - Force re-initialization
 - `-v, --validate` - Validate existing structure instead of initializing
@@ -66,7 +73,9 @@ Options:
 ```
 
 Options:
-- `--intent` - Discovery intent (full_discovery, refactoring_analysis, quick_overview, architecture_audit, flow_mapping, documentation_generation)
+
+- `--intent` - Discovery intent (full_discovery, refactoring_analysis, quick_overview, architecture_audit, flow_mapping,
+  documentation_generation)
 - `--preset` - Preset name (future: kotlin-agent, spring-boot, conservative, permissive)
 - `--cluster` - Cluster ID for focused discovery
 - `--depth` - [DEPRECATED] Use --intent instead (BROWSE, STANDARD, DEEP)
@@ -96,12 +105,14 @@ Options:
 ```
 
 Context subcommands:
+
 - `file` - Get basic context for a specific file (symbols, complexity, suggestions)
 - `files` - Get basic context for multiple files
 - `enhanced` - Get enhanced context (requires discovery cache - flows, rules, components)
 - `cache` - Cache management (stats, clean, invalidate)
 
 **Context types:**
+
 - **Basic context**: Works immediately without discovery
 - **Enhanced context**: Requires discovery to be run first
 
@@ -152,6 +163,7 @@ The CLI provides structured output for all operations:
 ## Integration
 
 The CLI serves as the primary user-facing interface for i2vision, integrating with:
+
 - **i2vision-discover**: Running discovery pipelines
 - **i2vision-instant**: Providing instant context
 - **storage-core**: Managing semantic cache

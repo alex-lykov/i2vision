@@ -56,14 +56,14 @@ class DocSectionExtractor {
         parserType: DocLayerContract.ParserType
     ): ExtractionResult {
         log.debug("[EXTRACTOR] Extracting '$sectionHeader' from ${docFile.name}")
-        
+
         if (!docFile.exists()) {
             return ExtractionResult.notFound(sectionHeader, docFile.name)
         }
-        
+
         val content = docFile.readText()
         val sectionContent = findSection(content, sectionHeader)
-        
+
         if (sectionContent == null) {
             if (parserType == DocLayerContract.ParserType.FREE_TEXT && isIntroSection(sectionHeader)) {
                 val intro = extractDocumentIntro(content)
@@ -75,14 +75,14 @@ class DocSectionExtractor {
             log.warn("[EXTRACTOR] Section '$sectionHeader' not found in ${docFile.name}")
             return ExtractionResult.notFound(sectionHeader, docFile.name)
         }
-        
+
         val items = when (parserType) {
             DocLayerContract.ParserType.MARKDOWN_LIST -> extractMarkdownList(sectionContent)
             DocLayerContract.ParserType.MARKDOWN_TABLE -> extractMarkdownTable(sectionContent)
             DocLayerContract.ParserType.FREE_TEXT -> listOf(extractFreeText(sectionContent))
             DocLayerContract.ParserType.YAML_EMBEDDED -> extractYamlEmbedded(sectionContent)
         }
-        
+
         log.info("[EXTRACTOR] Extracted ${items.size} item(s) from '$sectionHeader'")
         return ExtractionResult.success(sectionHeader, docFile.name, items)
     }
@@ -95,7 +95,7 @@ class DocSectionExtractor {
         mappings: List<DocLayerContract.DocMapping>
     ): Map<String, ExtractionResult> {
         log.info("[EXTRACTOR] Extracting ${mappings.size} section(s) from ${docFile.name}")
-        
+
         return mappings.associate { mapping ->
             mapping.layerField to extractSection(docFile, mapping.docSection, mapping.parser)
         }
@@ -124,13 +124,13 @@ class DocSectionExtractor {
                 if (!trimmed.startsWith("#")) return@indexOfFirst false
                 val lineTitle = normalizeHeaderText(trimmed.trimStart('#').trim())
                 lineTitle == requestedTitle ||
-                    lineTitle.contains(requestedTitle) ||
-                    requestedTitle.contains(lineTitle)
+                        lineTitle.contains(requestedTitle) ||
+                        requestedTitle.contains(lineTitle)
             }
         }
 
         if (startIndex == -1) return null
-        
+
         // Find end of section (next header of same or higher level)
         val startLevel = lines[startIndex].trim().takeWhile { it == '#' }.length
             .takeIf { it > 0 }
@@ -139,17 +139,17 @@ class DocSectionExtractor {
         val endIndex = lines.drop(startIndex + 1).indexOfFirst { line ->
             val trimmed = line.trim()
             if (!trimmed.startsWith("#")) return@indexOfFirst false
-            
+
             val level = trimmed.takeWhile { it == '#' }.length
             level <= startLevel
         }
-        
+
         val sectionLines = if (endIndex == -1) {
             lines.drop(startIndex + 1)
         } else {
             lines.subList(startIndex + 1, startIndex + 1 + endIndex)
         }
-        
+
         return sectionLines.joinToString("\n").trim()
     }
 
@@ -163,8 +163,8 @@ class DocSectionExtractor {
     private fun isIntroSection(sectionHeader: String): Boolean {
         val normalized = normalizeHeaderText(sectionHeader.trimStart('#').trim())
         return normalized.contains("purpose") ||
-            normalized.contains("overview") ||
-            normalized.contains("description")
+                normalized.contains("overview") ||
+                normalized.contains("description")
     }
 
     private fun extractDocumentIntro(content: String): String? {
@@ -205,21 +205,21 @@ class DocSectionExtractor {
     fun extractMarkdownList(content: String): List<String> {
         val items = mutableListOf<String>()
         val lines = content.lines()
-        
+
         var currentItem: StringBuilder? = null
-        
+
         lines.forEach { line ->
             val trimmed = line.trim()
-            
+
             // Check if this is a list item
-            val isListItem = trimmed.startsWith("- ") || 
-                            trimmed.startsWith("* ") ||
-                            trimmed.matches(Regex("""^\d+\.\s+.*"""))
-            
+            val isListItem = trimmed.startsWith("- ") ||
+                    trimmed.startsWith("* ") ||
+                    trimmed.matches(Regex("""^\d+\.\s+.*"""))
+
             if (isListItem) {
                 // Save previous item
                 currentItem?.let { items.add(it.toString().trim()) }
-                
+
                 // Start new item (remove list marker)
                 val text = when {
                     trimmed.startsWith("- ") -> trimmed.substring(2)
@@ -236,10 +236,10 @@ class DocSectionExtractor {
                 currentItem = null
             }
         }
-        
+
         // Don't forget the last item
         currentItem?.let { items.add(it.toString().trim()) }
-        
+
         return items.filter { it.isNotBlank() }
     }
 
@@ -257,24 +257,24 @@ class DocSectionExtractor {
      */
     fun extractMarkdownTable(content: String): List<String> {
         val lines = content.lines().map { it.trim() }.filter { it.startsWith("|") }
-        
+
         if (lines.size < 3) return emptyList() // Need header, separator, and at least one row
-        
+
         // Parse header
         val headerLine = lines[0]
         val headers = headerLine.split("|")
             .drop(1).dropLast(1) // Remove empty strings from start/end pipes
             .map { it.trim() }
-        
+
         // Skip separator line (index 1)
-        
+
         // Parse data rows
         val items = mutableListOf<String>()
         lines.drop(2).forEach { line ->
             val values = line.split("|")
                 .drop(1).dropLast(1)
                 .map { it.trim() }
-            
+
             if (values.size == headers.size) {
                 val row = headers.zip(values).joinToString(", ") { (header, value) ->
                     "$header: $value"
@@ -282,7 +282,7 @@ class DocSectionExtractor {
                 items.add(row)
             }
         }
-        
+
         return items
     }
 
@@ -309,13 +309,13 @@ class DocSectionExtractor {
     private fun extractYamlEmbedded(content: String): List<String> {
         val yamlBlocks = mutableListOf<String>()
         val lines = content.lines()
-        
+
         var inYamlBlock = false
         val currentBlock = StringBuilder()
-        
+
         lines.forEach { line ->
             val trimmed = line.trim()
-            
+
             if (trimmed.startsWith("```yaml") || trimmed.startsWith("```yml")) {
                 inYamlBlock = true
                 currentBlock.clear()
@@ -326,7 +326,7 @@ class DocSectionExtractor {
                 currentBlock.append(line).append("\n")
             }
         }
-        
+
         return yamlBlocks
     }
 
@@ -342,7 +342,7 @@ class DocSectionExtractor {
         companion object {
             fun success(header: String, file: String, items: List<String>) =
                 ExtractionResult(header, file, true, items)
-            
+
             fun notFound(header: String, file: String) =
                 ExtractionResult(header, file, false, error = "Section not found")
         }

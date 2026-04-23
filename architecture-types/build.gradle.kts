@@ -34,30 +34,30 @@ publishing {
     publications {
         create<MavenPublication>("maven") {
             from(components["java"])
-            
+
             pom {
                 name.set("architecture-types")
                 description.set("Multi-dimensional architecture detection and cluster analysis library")
-                url.set("https://github.com/i2vision/architecture-types")
-                
+                url.set("https://github.com/alex-lykov/i2vision/architecture-types")
+
                 licenses {
                     license {
                         name.set("MIT License")
                         url.set("https://opensource.org/licenses/MIT")
                     }
                 }
-                
+
                 developers {
                     developer {
                         id.set("i2vision")
                         name.set("i2vision Team")
                     }
                 }
-                
+
                 scm {
-                    connection.set("scm:git:git://github.com/i2vision/architecture-types.git")
-                    developerConnection.set("scm:git:ssh://github.com/i2vision/architecture-types.git")
-                    url.set("https://github.com/i2vision/architecture-types")
+                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/architecture-types.git")
+                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/architecture-types.git")
+                    url.set("https://github.com/alex-lykov/i2vision/architecture-types")
                 }
             }
         }

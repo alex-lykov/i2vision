@@ -62,7 +62,7 @@ class DiscoveryFlowIntegrationTest {
         @JvmStatic
         fun cleanup() {
             println("[Cleanup] Starting cleanup of ${tempDirs.size} registered temp directories and ${cacheDirs.size} cache directories")
-            
+
             // Clean up all temp directories created during tests
             tempDirs.forEach { root ->
                 try {
@@ -123,7 +123,7 @@ class DiscoveryFlowIntegrationTest {
     fun `phase0 setup creates test project structure`() {
         runBlocking {
             val root = phase0_setupTestProject()
-            
+
             try {
                 assertNotNull(root, "Test project root should exist")
                 assertTrue(root.exists(), "Test project directory should exist")
@@ -137,21 +137,21 @@ class DiscoveryFlowIntegrationTest {
     fun `phase0 setup creates source files for discovery`() {
         runBlocking {
             val root = phase0_setupTestProject()
-            
+
             try {
                 // Check sketch folder structure (aggregator-pure has module-a, module-b, module-c)
                 val moduleAFile = File(root, "module-a/src/Main.kt")
                 assertTrue(moduleAFile.exists(), "Module-a source file should exist")
                 assertTrue(moduleAFile.readText().contains("class Main"), "Module-a file should contain Main class")
-                
+
                 val moduleBFile = File(root, "module-b/src/Main.kt")
                 assertTrue(moduleBFile.exists(), "Module-b source file should exist")
                 assertTrue(moduleBFile.readText().contains("class Main"), "Module-b file should contain Main class")
-                
+
                 val moduleCFile = File(root, "module-c/src/Main.kt")
                 assertTrue(moduleCFile.exists(), "Module-c source file should exist")
                 assertTrue(moduleCFile.readText().contains("class Main"), "Module-c file should contain Main class")
-                
+
                 assertTrue(File(root, "settings.gradle.kts").exists(), "Settings file should exist")
             } finally {
                 root.deleteRecursively()
@@ -165,10 +165,10 @@ class DiscoveryFlowIntegrationTest {
     fun `phase1 rollout creates vision-ai structure and vslfc layers`() {
         runBlocking {
             val root = phase0_setupTestProject()
-            
+
             try {
                 val rolloutResult = phase1_rolloutStructure(root)
-                
+
                 assertTrue(rolloutResult.success, "Roll-out should succeed")
                 assertTrue(rolloutResult.visionAiDir.exists(), ".vision-ai directory should be created")
                 assertTrue(rolloutResult.vslfcLayersCreated, "VSLFC layers should be created")
@@ -185,12 +185,12 @@ class DiscoveryFlowIntegrationTest {
     fun `phase2_0 architecture detection with cluster detection`() {
         runBlocking {
             val root = phase0_setupTestProject()
-            
+
             try {
                 phase1_rolloutStructure(root)
-                
+
                 val archResult = phase2_0_detectArchitecture(root, useLlm = false)
-                
+
                 assertTrue(archResult.clusters.isNotEmpty(), "Clusters should be detected")
                 assertTrue(archResult.deploymentPattern.isNotBlank(), "Deployment pattern should be derived")
                 assertTrue(archResult.buildSystem.isNotBlank(), "Build system should be detected")
@@ -204,32 +204,38 @@ class DiscoveryFlowIntegrationTest {
     fun `phase2_0 aggregator cluster detection discovers submodules`() {
         runBlocking {
             val root = phase0_setupTestProject()
-            
+
             try {
                 phase1_rolloutStructure(root)
-                
+
                 val archResult = phase2_0_detectArchitecture(root, useLlm = false)
-                
+
                 // Check that aggregator submodules are detected
                 val clusterNames = archResult.clusters.map { it.first }
-                
+
                 // Debug: print all detected clusters
                 println("Detected clusters: $clusterNames")
                 println("All cluster details: ${archResult.clusters}")
-                
+
                 // The aggregator-pure sketch has module-a, module-b, module-c submodules
                 // These should be detected as separate clusters
                 val moduleSubmodules = clusterNames.filter { it.startsWith("module") }
-                
+
                 assertTrue(moduleSubmodules.isNotEmpty(), "Module submodules should be detected. Found: $clusterNames")
-                
+
                 // Verify specific submodules are detected
-                assertTrue(clusterNames.any { it.contains("module-a") || it == "module-a" }, 
-                    "Module-a submodule should be detected. Found: $clusterNames")
-                assertTrue(clusterNames.any { it.contains("module-b") || it == "module-b" }, 
-                    "Module-b submodule should be detected. Found: $clusterNames")
-                assertTrue(clusterNames.any { it.contains("module-c") || it == "module-c" }, 
-                    "Module-c submodule should be detected. Found: $clusterNames")
+                assertTrue(
+                    clusterNames.any { it.contains("module-a") || it == "module-a" },
+                    "Module-a submodule should be detected. Found: $clusterNames"
+                )
+                assertTrue(
+                    clusterNames.any { it.contains("module-b") || it == "module-b" },
+                    "Module-b submodule should be detected. Found: $clusterNames"
+                )
+                assertTrue(
+                    clusterNames.any { it.contains("module-c") || it == "module-c" },
+                    "Module-c submodule should be detected. Found: $clusterNames"
+                )
             } finally {
                 root.deleteRecursively()
             }
@@ -240,18 +246,18 @@ class DiscoveryFlowIntegrationTest {
     fun `phase2_1 purge clears existing semantic cache artifacts`() {
         runBlocking {
             val root = phase0_setupTestProject()
-            
+
             try {
                 phase1_rolloutStructure(root)
-                
+
                 // Create some dummy artifacts
                 val semanticCache = I2VisionPaths.getProjectCacheDir(root.absolutePath)
                 semanticCache.mkdirs()
                 File(semanticCache, "dummy.yaml").writeText("dummy content")
-                
+
                 // Phase 2.1: Purge
                 phase2_1_purgeArtifacts(root)
-                
+
                 // Verify purge
                 assertFalse(File(semanticCache, "dummy.yaml").exists(), "Dummy artifact should be purged")
             } finally {
@@ -264,18 +270,18 @@ class DiscoveryFlowIntegrationTest {
     fun `phase2_2 discover with standard depth generates artifacts`() {
         runBlocking {
             val root = phase0_setupTestProject()
-            
+
             try {
                 phase1_rolloutStructure(root)
                 phase2_1_purgeArtifacts(root)
-                
+
                 // Phase 2.2: Discover with standard depth
                 val discoveryResult = phase2_2_runDiscovery(root, depth = DiscoveryDepth.STANDARD)
-                
+
                 // Verify discovery succeeded
                 assertNotNull(discoveryResult, "Discovery result should not be null")
                 assertTrue(discoveryResult.artifacts.isNotEmpty(), "Artifacts should be generated")
-                
+
                 // Strict verification of generated artifacts
                 val strictValidation = phase2_2_strictValidation(root, discoveryResult)
                 assertTrue(strictValidation.artifactsGenerated, "Artifacts should be generated")
@@ -293,14 +299,14 @@ class DiscoveryFlowIntegrationTest {
     fun `phase2_2 discover with browse depth generates lightweight artifacts`() {
         runBlocking {
             val root = phase0_setupTestProject()
-            
+
             try {
                 phase1_rolloutStructure(root)
                 phase2_1_purgeArtifacts(root)
-                
+
                 // Phase 2.2: Discover with browse depth
                 val discoveryResult = phase2_2_runDiscovery(root, depth = DiscoveryDepth.BROWSE)
-                
+
                 // Verify discovery succeeded
                 assertNotNull(discoveryResult, "Discovery result should not be null")
             } finally {
@@ -315,15 +321,15 @@ class DiscoveryFlowIntegrationTest {
     fun `phase3_1 context retrieval for discovered files`() {
         runBlocking {
             val root = phase0_setupTestProject()
-            
+
             try {
                 phase1_rolloutStructure(root)
                 phase2_1_purgeArtifacts(root)
                 phase2_2_runDiscovery(root, depth = DiscoveryDepth.STANDARD)
-                
+
                 // Phase 3.1: Get context
                 val contextResult = phase3_1_getContext(root)
-                
+
                 // Verify context retrieval
                 assertNotNull(contextResult, "Context should be retrieved")
                 assertTrue(contextResult.success || contextResult.error != null, "Context should succeed or have error")
@@ -339,15 +345,15 @@ class DiscoveryFlowIntegrationTest {
     fun `phase3_2 analyzeResults validates contract registry health`() {
         runBlocking {
             val root = phase0_setupTestProject()
-            
+
             try {
                 phase1_rolloutStructure(root)
                 phase2_1_purgeArtifacts(root)
                 phase2_2_runDiscovery(root, depth = DiscoveryDepth.STANDARD)
-                
+
                 // Phase 3.2: Analyze results
                 val analysisResult = phase3_2_analyzeResults(root)
-                
+
                 // Verify analysis
                 assertTrue(analysisResult.artifactCount >= 0, "Artifacts should be counted")
             } finally {
@@ -360,19 +366,19 @@ class DiscoveryFlowIntegrationTest {
     fun `phase3_3 validate artifact content`() {
         runBlocking {
             val root = phase0_setupTestProject()
-            
+
             try {
                 phase1_rolloutStructure(root)
                 phase2_1_purgeArtifacts(root)
                 val discoveryResult = phase2_2_runDiscovery(root, depth = DiscoveryDepth.STANDARD)
-                
+
                 // Phase 3.3: Validate artifact content
                 val validation = phase3_3_validateArtifactContent(root, discoveryResult)
-                
+
                 // Verify validation
                 assertNotNull(validation, "Validation should complete")
                 assertTrue(validation.allArtifactsExist, "All artifacts should exist")
-                
+
                 // Strict verification
                 val strictValidation = phase3_3_strictArtifactValidation(root, discoveryResult)
                 assertTrue(strictValidation.yamlFilesValid, "YAML files should be valid")
@@ -388,16 +394,16 @@ class DiscoveryFlowIntegrationTest {
     fun `phase3_4 validate vslfc structure`() {
         runBlocking {
             val root = phase0_setupTestProject()
-            
+
             try {
                 phase1_rolloutStructure(root)
-                
+
                 // Phase 3.4: Validate VSLFC structure
                 val validation = phase3_4_validateVslfcStructure(root)
-                
+
                 assertTrue(validation.allLayersExist, "All VSLFC layers should exist")
                 assertTrue(validation.semanticCacheExists, "Semantic cache should exist")
-                
+
                 // Strict verification
                 val strictValidation = phase3_4_strictVslfcValidation(root)
                 assertTrue(strictValidation.correctStructure, "Correct structure should be maintained")
@@ -415,12 +421,12 @@ class DiscoveryFlowIntegrationTest {
     fun `phase4 learning feedback records results for pattern improvement`() {
         runBlocking {
             val root = phase0_setupTestProject()
-            
+
             try {
                 phase1_rolloutStructure(root)
                 val discoveryResult = phase2_2_runDiscovery(root, depth = DiscoveryDepth.STANDARD)
                 val analysisResult = phase3_2_analyzeResults(root)
-                
+
                 // Phase 4: Learning feedback
                 val feedback = phase4_recordFeedback(
                     runId = "test-run-${System.currentTimeMillis()}",
@@ -432,7 +438,7 @@ class DiscoveryFlowIntegrationTest {
                     rating = 4,
                     comment = "Test discovery completed successfully"
                 )
-                
+
                 assertTrue(feedback.recorded, "Feedback should be recorded")
                 assertNotNull(feedback.feedbackData, "Feedback data should be stored")
                 assertTrue(feedback.feedbackData.containsKey("runId"), "Feedback should have runId")
@@ -449,19 +455,19 @@ class DiscoveryFlowIntegrationTest {
     fun `phase5 incremental sync updates only changed artifacts`() {
         runBlocking {
             val root = phase0_setupTestProject()
-            
+
             try {
                 phase1_rolloutStructure(root)
                 val firstRun = phase2_2_runDiscovery(root, depth = DiscoveryDepth.STANDARD)
-                
+
                 // Modify a single file (use module-a file from sketch folder)
                 val moduleAFile = File(root, "module-a/src/Main.kt")
                 val originalContent = moduleAFile.readText()
                 moduleAFile.writeText(originalContent + "\n    fun stopAgent(id: String) { /* new */ }")
-                
+
                 // Phase 5: Incremental sync
                 val syncResult = phase5_incrementalSync(root, changedFile = moduleAFile)
-                
+
                 assertTrue(syncResult.scope in listOf("file", "main"), "Should detect file-level or main change")
                 assertTrue(syncResult.affectedLayers.contains("code"), "Code layer should be affected")
                 assertTrue(syncResult.fileHash != 0, "File hash should be calculated")
@@ -482,10 +488,10 @@ class DiscoveryFlowIntegrationTest {
                 println("Sketch directory not found at ${sketchDir.absolutePath}, skipping test")
                 return@runBlocking
             }
-            
+
             try {
                 val archResult = phase2_0_detectArchitecture(sketchDir, useLlm = false)
-                
+
                 // Be more lenient - just check that architecture is detected
                 assertTrue(archResult.deploymentPattern.isNotBlank(), "Architecture pattern should be detected")
                 assertTrue(archResult.clusters.isNotEmpty(), "Should detect clusters")
@@ -525,6 +531,7 @@ class DiscoveryFlowIntegrationTest {
                     }
 
                     val config = yaml.load<Map<String, Any>>(configFile.readText())
+
                     @Suppress("UNCHECKED_CAST")
                     val expected = config["expected"] as? Map<String, Any> ?: emptyMap()
 
@@ -582,18 +589,18 @@ class DiscoveryFlowIntegrationTest {
     fun `end-to-end full discovery flow from setup to analysis`() {
         runBlocking {
             val root = phase0_setupTestProject()
-            
+
             try {
                 // Phase 1: Roll-out
                 val rolloutResult = phase1_rolloutStructure(root)
                 assertTrue(rolloutResult.success, "Roll-out should succeed")
-                
+
                 // Phase 2: Discovery
                 phase2_1_purgeArtifacts(root)
                 val discoveryResult = phase2_2_runDiscovery(root, depth = DiscoveryDepth.STANDARD)
                 assertNotNull(discoveryResult, "Discovery should generate result")
                 assertTrue(discoveryResult.artifacts.isNotEmpty(), "Discovery should generate artifacts")
-                
+
                 // Strict validation of discovery results
                 val strictValidation = phase2_2_strictValidation(root, discoveryResult)
                 assertTrue(strictValidation.artifactsGenerated, "Artifacts should be generated")
@@ -601,20 +608,20 @@ class DiscoveryFlowIntegrationTest {
                 assertTrue(strictValidation.metadataValid, "Metadata should be valid")
                 assertTrue(strictValidation.clusterIdCorrect, "Cluster ID should be correct")
                 assertFalse(strictValidation.hasWrongDirectories, "Should not have wrong directories")
-                
+
                 // Phase 3: Analysis
                 val analysisResult = phase3_2_analyzeResults(root)
                 assertTrue(analysisResult.artifactCount > 0, "Artifacts should be counted")
-                
+
                 val validation = phase3_3_validateArtifactContent(root, discoveryResult)
                 assertNotNull(validation, "Artifact validation should complete")
-                
+
                 // Strict artifact validation
                 val strictArtifactValidation = phase3_3_strictArtifactValidation(root, discoveryResult)
                 assertTrue(strictArtifactValidation.yamlFilesValid, "YAML files should be valid")
                 assertTrue(strictArtifactValidation.requiredFieldsPresent, "Required fields should be present")
                 assertTrue(strictArtifactValidation.contentNotEmpty, "Content should not be empty")
-                
+
                 // Strict VSLFC structure validation
                 val strictVslfcValidation = phase3_4_strictVslfcValidation(root)
                 assertTrue(strictVslfcValidation.correctStructure, "Correct structure should be maintained")
@@ -636,12 +643,12 @@ class DiscoveryFlowIntegrationTest {
         val root = Files.createTempDirectory("discovery-phase-").toFile()
         tempDirs.add(root) // Register for cleanup
         println("[Setup] Created temp directory: ${root.absolutePath}")
-        
+
         // Register cache directory for cleanup
         val cacheDir = I2VisionPaths.getProjectCacheDir(root.absolutePath)
         cacheDirs.add(cacheDir)
         println("[Setup] Registered cache directory for cleanup: ${cacheDir.absolutePath}")
-        
+
         // Copy aggregator-pure sketch folder to temp directory
         // Find project root by looking for settings.gradle.kts
         var projectRoot = File(".").absoluteFile
@@ -652,13 +659,13 @@ class DiscoveryFlowIntegrationTest {
         if (!sketchDir.exists()) {
             throw IllegalStateException("Sketch directory not found: ${sketchDir.absolutePath}")
         }
-        
+
         // Copy sketch contents to temp directory
         copyDirectory(sketchDir, root)
-        
+
         return root
     }
-    
+
     /**
      * Helper function to copy directory recursively
      */
@@ -666,7 +673,7 @@ class DiscoveryFlowIntegrationTest {
         source.walk().forEach { file ->
             val relativePath = source.toPath().relativize(file.toPath()).toString()
             val destFile = File(destination, relativePath)
-            
+
             if (file.isDirectory) {
                 destFile.mkdirs()
             } else {
@@ -683,14 +690,14 @@ class DiscoveryFlowIntegrationTest {
     private suspend fun phase1_rolloutStructure(root: File): RolloutResult {
         val rolloutManager = RolloutManager()
         val initResult = rolloutManager.initialize(root)
-        
+
         // Also create VSLFC layer directories in src/
         val layers = listOf("vision", "structure", "logic", "flow", "code")
         val vslfcLayersCreated = layers.all { layer ->
             val layerDir = File(root, "src/$layer")
             layerDir.exists() || layerDir.mkdirs()
         }
-        
+
         return RolloutResult(
             success = initResult.success,
             visionAiDir = File(root, ".vision-ai"),
@@ -711,7 +718,7 @@ class DiscoveryFlowIntegrationTest {
             llmClient = null  // LLM disabled for tests unless explicitly needed
         )
         val signature = signatureBuilder.build()
-        
+
         return ArchitectureDetectionResult(
             style = signature.deploymentPattern.name,
             buildSystem = signature.buildSystem?.name ?: "unknown",
@@ -743,7 +750,7 @@ class DiscoveryFlowIntegrationTest {
         val cacheDir = I2VisionPaths.getProjectCacheDir(root.absolutePath)
         val cacheStore = FileCacheStore(cacheDir)
         val pipeline = DiscoveryPipelineImpl(root.path, intentResolver, cacheStore)
-        
+
         // Detect clusters first
         val signatureBuilder = SignatureBuilder(
             projectRoot = root.path,
@@ -752,16 +759,16 @@ class DiscoveryFlowIntegrationTest {
             llmClient = null
         )
         val signature = signatureBuilder.build()
-        
+
         // Use first cluster as module path for discovery
         val clusterId = if (signature.clusters.isNotEmpty()) signature.clusters[0].name else "src"
-        
+
         val result = pipeline.discover(
             depth = depth,
             clusterId = clusterId,
             contracts = emptyList()
         )
-        
+
         return DiscoveryResult(
             success = result.success,
             artifacts = result.artifacts,
@@ -784,11 +791,11 @@ class DiscoveryFlowIntegrationTest {
             projectRoot = root.path,
             cacheStore = FileCacheStore(cacheDir)
         )
-        
+
         // Get context for the main source file
         val filePath = "src/main/kotlin/com/example/service/UserService.kt"
         val instantContext = contextProvider.getContext(filePath, "discovery")
-        
+
         return InstantContextResult(
             filePath = instantContext.filePath,
             symbolsFound = instantContext.symbols.size,
@@ -807,7 +814,7 @@ class DiscoveryFlowIntegrationTest {
         val artifactCount = I2VisionPaths.getProjectCacheDir(root.absolutePath).walkTopDown()
             .filter { it.isFile }
             .count()
-        
+
         return AnalysisResult(
             artifactCount = artifactCount,
             contractRegistry = null
@@ -828,7 +835,7 @@ class DiscoveryFlowIntegrationTest {
         } else {
             false
         }
-        
+
         return ArtifactValidation(
             allArtifactsExist = allArtifactsExist,
             featureContainsScenarios = false,  // Not applicable in new structure
@@ -846,7 +853,7 @@ class DiscoveryFlowIntegrationTest {
             File(root, "src/$layer").exists()
         }
         val semanticCacheExists = I2VisionPaths.getProjectCacheDir(root.absolutePath).exists()
-        
+
         return VslfcStructureValidation(
             allLayersExist = allLayersExist,
             semanticCacheExists = semanticCacheExists
@@ -880,7 +887,7 @@ class DiscoveryFlowIntegrationTest {
             "rating" to rating,
             "comment" to comment
         )
-        
+
         // In a real implementation, this would use the learning module
         // For now, we simulate successful recording
         return FeedbackResult(
@@ -897,7 +904,7 @@ class DiscoveryFlowIntegrationTest {
     private suspend fun phase5_incrementalSync(root: File, changedFile: File): SyncResult {
         // Calculate hash of changed file
         val currentHash = changedFile.readText().hashCode()
-        
+
         // Determine scope based on file path
         val filePath = changedFile.relativeTo(root).path
         val scope = when {
@@ -905,7 +912,7 @@ class DiscoveryFlowIntegrationTest {
             filePath.contains("main") -> "main"
             else -> "file"
         }
-        
+
         // Determine affected layers based on file type and path
         val affectedLayers = mutableListOf<String>()
         when {
@@ -915,12 +922,12 @@ class DiscoveryFlowIntegrationTest {
             filePath.contains("config") -> affectedLayers.add("structure")
             else -> affectedLayers.add("code")
         }
-        
+
         // In a real implementation, this would:
         // 1. Compare hash with stored hash in semantic cache metadata
         // 2. If changed, trigger targeted discovery for affected layers
         // 3. Only re-generate artifacts for changed files
-        
+
         return SyncResult(
             scope = scope,
             affectedLayers = affectedLayers,
@@ -1109,85 +1116,88 @@ class DiscoveryFlowIntegrationTest {
     fun `parallel discovery correctness validation`() {
         runBlocking {
             val root = phase0_setupTestProject()
-            
+
             try {
                 phase1_rolloutStructure(root)
                 phase2_1_purgeArtifacts(root)
-                
+
                 // Get clusters from signature
                 val signature = SignatureBuilder(root.absolutePath).build()
                 val clusters = signature.clusters.filter { it.fileCount > 0 }
-                
+
                 if (clusters.size < 2) {
                     // Skip test if not enough clusters for parallel validation
                     println("Skipping parallel discovery test - not enough clusters (found ${clusters.size})")
                     return@runBlocking
                 }
-                
+
                 println("Testing parallel discovery with ${clusters.size} clusters")
-                
+
                 // Run discovery on first 3 clusters in parallel to validate correctness
                 val testClusters = clusters.take(3)
                 val startTime = System.currentTimeMillis()
-                
+
                 val results = testClusters.map { cluster ->
                     async {
                         val clusterStart = System.currentTimeMillis()
                         println("Discovering cluster: ${cluster.name}")
-                        
+
                         val cacheDir = I2VisionPaths.getProjectCacheDir(root.absolutePath)
                         val intentResolver = IntentResolverImpl()
                         val cacheStore = FileCacheStore(cacheDir)
                         val discovery = DiscoveryPipelineImpl(root.absolutePath, intentResolver, cacheStore)
-                        
+
                         val result = discovery.discover(
                             depth = DiscoveryDepth.STANDARD,
                             clusterId = cluster.name,
                             contracts = emptyList()
                         )
-                        
+
                         val duration = System.currentTimeMillis() - clusterStart
                         println("Cluster ${cluster.name} completed in ${duration}ms with ${result.artifacts.size} artifacts")
-                        
+
                         cluster.name to result
                     }
                 }.awaitAll().toMap()
-                
+
                 val totalDuration = System.currentTimeMillis() - startTime
                 println("Parallel discovery completed in ${totalDuration}ms")
-                
+
                 // Validate results
                 assertEquals(testClusters.size, results.keys.size, "All clusters should have results")
-                
+
                 results.forEach { (clusterName, result) ->
                     val pipelineResult = result
-                    
+
                     // Check for path-related errors
-                    val pathErrors = pipelineResult.errors.filter { 
-                        it.contains("different roots") || 
-                        it.contains("relativeTo") ||
-                        it.contains("IllegalArgumentException") 
+                    val pathErrors = pipelineResult.errors.filter {
+                        it.contains("different roots") ||
+                                it.contains("relativeTo") ||
+                                it.contains("IllegalArgumentException")
                     }
-                    
+
                     if (pathErrors.isNotEmpty()) {
                         println("PATH ERRORS in cluster $clusterName:")
                         pathErrors.forEach { println("  - $it") }
                     }
-                    
+
                     // Check for NullPointerException errors
-                    val nullPointerErrors = pipelineResult.errors.filter { 
-                        it.contains("NullPointerException") || 
-                        it.contains("Nodes must be provided") 
+                    val nullPointerErrors = pipelineResult.errors.filter {
+                        it.contains("NullPointerException") ||
+                                it.contains("Nodes must be provided")
                     }
-                    
+
                     if (nullPointerErrors.isNotEmpty()) {
                         println("NULLPOINTER ERRORS in cluster $clusterName:")
                         nullPointerErrors.forEach { println("  - $it") }
                     }
-                    
-                    assertTrue(pipelineResult.success, "Cluster $clusterName should succeed: ${pipelineResult.errors.joinToString()}")
+
+                    assertTrue(
+                        pipelineResult.success,
+                        "Cluster $clusterName should succeed: ${pipelineResult.errors.joinToString()}"
+                    )
                     assertTrue(pipelineResult.artifacts.isNotEmpty(), "Cluster $clusterName should generate artifacts")
-                    
+
                     // Validate no path duplication in artifacts
                     pipelineResult.artifacts.forEach { artifact ->
                         assertFalse(
@@ -1201,7 +1211,7 @@ class DiscoveryFlowIntegrationTest {
                         )
                     }
                 }
-                
+
                 println("Parallel discovery correctness validation passed")
             } finally {
                 root.deleteRecursively()
@@ -1232,7 +1242,7 @@ class DiscoveryFlowIntegrationTest {
         // Check cluster ID correctness (should match expected cluster structure)
         val clusterIdCorrect = discoveryResult.artifacts.any { artifact ->
             artifact.content.contains("module-a") || artifact.content.contains("module-b") ||
-            artifact.content.contains("module-c")
+                    artifact.content.contains("module-c")
         }
 
         // Check for wrong directories (should not have unexpected paths)
@@ -1241,13 +1251,14 @@ class DiscoveryFlowIntegrationTest {
             .any { dir ->
                 val relativePath = dir.relativeTo(semanticCache).path
                 relativePath.contains("wrong") || relativePath.contains("invalid") ||
-                relativePath.contains("test") || relativePath.contains("temp")
+                        relativePath.contains("test") || relativePath.contains("temp")
             }
 
         val details = mapOf(
             "artifactCount" to discoveryResult.artifacts.size,
             "cacheDirExists" to semanticCache.exists(),
-            "cacheFiles" to (if (semanticCache.exists()) semanticCache.walkTopDown().filter { it.isFile }.count() else 0)
+            "cacheFiles" to (if (semanticCache.exists()) semanticCache.walkTopDown().filter { it.isFile }
+                .count() else 0)
         )
 
         return StrictValidationResult(
@@ -1264,7 +1275,10 @@ class DiscoveryFlowIntegrationTest {
      * Phase 3.3: Strict Artifact Validation
      * Performs strict validation of artifact content
      */
-    private fun phase3_3_strictArtifactValidation(root: File, discoveryResult: DiscoveryResult): StrictArtifactValidationResult {
+    private fun phase3_3_strictArtifactValidation(
+        root: File,
+        discoveryResult: DiscoveryResult
+    ): StrictArtifactValidationResult {
         val semanticCache = I2VisionPaths.getProjectCacheDir(root.absolutePath)
 
         // Check YAML files validity
@@ -1291,11 +1305,11 @@ class DiscoveryFlowIntegrationTest {
                     val content = yamlFile.readText()
                     // Check for YAML key patterns (allowing for various formatting)
                     val hasId = content.contains(Regex("^id:\\s*.+", RegexOption.MULTILINE)) ||
-                               content.contains(Regex("\\nid:\\s*.+", RegexOption.MULTILINE))
+                            content.contains(Regex("\\nid:\\s*.+", RegexOption.MULTILINE))
                     val hasName = content.contains(Regex("^name:\\s*.+", RegexOption.MULTILINE)) ||
-                                 content.contains(Regex("\\nname:\\s*.+", RegexOption.MULTILINE))
+                            content.contains(Regex("\\nname:\\s*.+", RegexOption.MULTILINE))
                     val hasType = content.contains(Regex("^type:\\s*.+", RegexOption.MULTILINE)) ||
-                                 content.contains(Regex("\\ntype:\\s*.+", RegexOption.MULTILINE))
+                            content.contains(Regex("\\ntype:\\s*.+", RegexOption.MULTILINE))
                     hasId || hasName || hasType
                 } catch (e: Exception) {
                     false
@@ -1338,12 +1352,12 @@ class DiscoveryFlowIntegrationTest {
         }
 
         val correctStructure = layers.all { layer -> existingDirs.contains(layer) } &&
-                              existingDirs.all { dir -> layers.contains(dir) || dir == "main" || dir == "test" }
+                existingDirs.all { dir -> layers.contains(dir) || dir == "main" || dir == "test" }
 
         // Check no wrong directories
         val wrongDirectories = existingDirs.filter { dir ->
             dir.contains("wrong") || dir.contains("invalid") || dir.contains("temp") ||
-            dir.contains("backup") || dir.contains("old")
+                    dir.contains("backup") || dir.contains("old")
         }
         val noWrongDirectories = wrongDirectories.isEmpty()
 

@@ -34,7 +34,7 @@ class ScannerService(private val projectRoot: String) {
      */
     fun listFiles(subPath: String = "src"): List<SourceFile> {
         val root = File(projectRoot, subPath)
-        
+
         // If the specified path exists, use it directly
         if (root.exists()) {
             return root.walkTopDown()
@@ -49,17 +49,17 @@ class ScannerService(private val projectRoot: String) {
                 .toList()
                 .also { log.debug("[SCANNER] listFiles({}): {} files", subPath, it.size) }
         }
-        
+
         // For multi-module projects: if "src" doesn't exist at root, search for all src directories
         if (subPath == "src") {
             log.debug("[SCANNER] Top-level src not found, searching for all src directories in multi-module project")
             return findAllSrcDirectories()
         }
-        
+
         log.warn("[SCANNER] listFiles({}) skipped: path does not exist under project root {}", subPath, projectRoot)
         return emptyList()
     }
-    
+
     /**
      * Find all src directories in a multi-module project.
      * Searches recursively for directories named "src" under the project root.
@@ -70,14 +70,17 @@ class ScannerService(private val projectRoot: String) {
             .maxDepth(5)  // Limit depth to avoid excessive searching
             .filter { it.isDirectory && it.name == "src" }
             .toList()
-        
+
         if (srcDirs.isEmpty()) {
             log.warn("[SCANNER] No src directories found in project")
             return emptyList()
         }
-        
-        log.debug("[SCANNER] Found {} src directories: {}", srcDirs.size, srcDirs.map { it.relativeTo(File(projectRoot)) })
-        
+
+        log.debug(
+            "[SCANNER] Found {} src directories: {}",
+            srcDirs.size,
+            srcDirs.map { it.relativeTo(File(projectRoot)) })
+
         return srcDirs.flatMap { srcDir ->
             srcDir.walkTopDown()
                 .filter { it.isFile && !isExcluded(it) }
@@ -131,9 +134,9 @@ class ScannerService(private val projectRoot: String) {
                 root.walkTopDown()
                     .filter {
                         it.isFile &&
-                            it.extension == "yaml" &&
-                            !it.name.contains("config") &&
-                            it.path.replace('\\', '/').contains("/logic/")
+                                it.extension == "yaml" &&
+                                !it.name.contains("config") &&
+                                it.path.replace('\\', '/').contains("/logic/")
                     }
                     .asSequence()
             }
@@ -163,10 +166,10 @@ class ScannerService(private val projectRoot: String) {
     private fun isExcluded(file: File): Boolean {
         val path = file.path.replace('\\', '/')
         return path.contains("/build/") ||
-            path.contains("/.gradle/") ||
-            path.contains("/node_modules/") ||
-            path.contains("/.git/") ||
-            file.name.startsWith(".")
+                path.contains("/.gradle/") ||
+                path.contains("/node_modules/") ||
+                path.contains("/.git/") ||
+                file.name.startsWith(".")
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -176,7 +179,9 @@ class ScannerService(private val projectRoot: String) {
             val result = mutableListOf<LogicEntity>()
             extractIds(raw, file.nameWithoutExtension, result)
             result
-        } catch (_: Exception) { emptyList() }
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     private fun extractIds(node: Any?, namespace: String, out: MutableList<LogicEntity>) {
@@ -187,6 +192,7 @@ class ScannerService(private val projectRoot: String) {
                 if (id != null) out.add(LogicEntity(id = id, displayName = name ?: id, sourceFile = namespace))
                 node.values.forEach { extractIds(it, namespace, out) }
             }
+
             is List<*> -> node.forEach { extractIds(it, namespace, out) }
         }
     }
@@ -232,18 +238,20 @@ class KotlinAdapter : LanguageAdapter {
 
     private val symbolRegex = Regex(
         """^(?:(?:public|internal|private|protected|abstract|open|data|sealed|inline|suspend|override)\s+)*"""
-        + """(class|object|interface|fun|val|var|enum class|typealias)\s+(\w+)"""
+                + """(class|object|interface|fun|val|var|enum class|typealias)\s+(\w+)"""
     )
 
     override fun extractSymbols(file: File): List<CodeSymbol> = buildList {
         file.readLines().forEachIndexed { idx, line ->
             symbolRegex.find(line.trim())?.let { m ->
-                add(CodeSymbol(
-                    name = m.groupValues[2],
-                    kind = m.groupValues[1].trim(),
-                    filePath = file.path,
-                    line = idx + 1
-                ))
+                add(
+                    CodeSymbol(
+                        name = m.groupValues[2],
+                        kind = m.groupValues[1].trim(),
+                        filePath = file.path,
+                        line = idx + 1
+                    )
+                )
             }
         }
     }

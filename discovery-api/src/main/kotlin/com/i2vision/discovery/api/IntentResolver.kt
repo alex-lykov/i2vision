@@ -10,7 +10,7 @@ import com.i2vision.discover.api.models.ModifiableParameterSet
  * allowing discovery pipeline to depend on the interface rather than the concrete implementation.
  */
 interface IntentResolver {
-    
+
     /**
      * Resolve a high-level DiscoveryIntent to a concrete ModifiableParameterSet.
      * 
@@ -18,7 +18,7 @@ interface IntentResolver {
      * @return Resolved ModifiableParameterSet with discovery parameters
      */
     fun resolveToParameterSet(intent: DiscoveryIntent): ModifiableParameterSet
-    
+
     /**
      * Validate that a DiscoveryIntent is valid.
      * 
@@ -26,7 +26,7 @@ interface IntentResolver {
      * @return true if valid, false otherwise
      */
     fun isValid(intent: DiscoveryIntent): Boolean
-    
+
     /**
      * Validate a DiscoveryIntent and return validation errors.
      * 

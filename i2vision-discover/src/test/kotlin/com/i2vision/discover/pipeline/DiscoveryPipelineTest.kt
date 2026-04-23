@@ -12,7 +12,7 @@ import java.io.File
  * Validates self-discovery on project and parallel cluster processing.
  */
 class DiscoveryPipelineTest {
-    
+
     private fun withTempDir(block: (File) -> Unit) {
         val tempDir = java.nio.file.Files.createTempDirectory("discovery-test").toFile()
         try {
@@ -21,18 +21,18 @@ class DiscoveryPipelineTest {
             tempDir.deleteRecursively()
         }
     }
-    
+
     @Test
     fun `should run discovery pipeline successfully`() = withTempDir { tempDir ->
         // Given: Project with simple structure
         val srcDir = File(tempDir, "src/main/kotlin/test")
         srcDir.mkdirs()
         File(srcDir, "Test.kt").writeText("class Test {}")
-        
+
         val intentResolver = IntentResolverImpl()
         val cacheStore = com.i2vision.storage.impl.FileCacheStore(tempDir)
         val pipeline = DiscoveryPipelineImpl(tempDir.absolutePath, intentResolver, cacheStore)
-        
+
         // When: Run discovery
         val result = runBlocking {
             pipeline.discover(
@@ -41,7 +41,7 @@ class DiscoveryPipelineTest {
                 contracts = emptyList()
             )
         }
-        
+
         // Then: Should complete successfully
         assertNotNull(result)
         assertTrue(result.success || true, "Discovery should complete")

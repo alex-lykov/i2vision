@@ -5,6 +5,7 @@ Core configurable agent framework with discovery, execution, and formatting engi
 ## Overview
 
 conf-agent-core provides the foundational components for building configurable AI agents with:
+
 - **DiscoveryEngine**: Parses model output to extract tool calls and reasoning
 - **ExecutionEngine**: Executes tool calls with timeout and error handling
 - **FormattingEngine**: Formats assistant text and iteration messages
@@ -80,20 +81,24 @@ val result = executionEngine.executeToolCall(
 ## Features
 
 ### Engines
+
 - **DiscoveryEngine**: Multi-format tool call parsing (JSON, XML, quoted JSON)
 - **ExecutionEngine**: Tool execution with timeout and error handling
 - **FormattingEngine**: Text formatting and iteration limit messages
 
 ### Tool Support
+
 - **ToolNameNormalizer**: Normalizes tool names across different formats
 - **ToolDispatcher**: Dispatches tool calls to appropriate handlers
 - **ToolExecutionResult**: Structured tool execution results
 
 ### Shell Integration
+
 - **ShellCommandRunner**: Executes shell commands safely
 - **ShellToolHandlers**: Built-in shell tool handlers
 
 ### Agent Memory
+
 - **AgentMemory**: Conversation history management
 - **RetrieveFactsFromHistory**: Fact extraction from conversation history
 

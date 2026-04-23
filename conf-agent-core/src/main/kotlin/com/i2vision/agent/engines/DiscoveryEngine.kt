@@ -26,8 +26,8 @@ class DiscoveryEngine(
 ) {
     private val log = LoggerFactory.getLogger(DiscoveryEngine::class.java)
 
-    private val reasoningRegex   = Regex("(?im)^\\s*reasoning\\s*:\\s*(.+)$")
-    private val toolHeaderRegex  = Regex("(?im)^\\s*(?:```\\s*)?tool_call\\s*:")
+    private val reasoningRegex = Regex("(?im)^\\s*reasoning\\s*:\\s*(.+)$")
+    private val toolHeaderRegex = Regex("(?im)^\\s*(?:```\\s*)?tool_call\\s*:")
 
     // XML <invoke> patterns – handles multiple model dialects:
     //   <invoke name="readFile">…</invoke>
@@ -41,11 +41,13 @@ class DiscoveryEngine(
         """<function_calls>\s*(.*?)\s*</function_calls>""",
         setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
     )
+
     // Captures tool name from: name="tool" | name='tool' | ="tool" | ='tool'
     private val xmlToolNameRegex = Regex(
         """<invoke(?:\s+name\s*=\s*["']([^"'>\s]+)["']|\s*=\s*["']([^"'>\s]+)["']|\s+name\s*=\s*([^"'>\s]+))[^>]*>""",
         RegexOption.IGNORE_CASE
     )
+
     // Simple child element: <key>value</key>  or  <parameter name="key">value</parameter>
     private val xmlChildParamRegex = Regex(
         """<(\w+)(?:\s+name\s*=\s*["']([^"']+)["'])?[^>]*>([^<]*)</\1>""",
@@ -102,10 +104,10 @@ class DiscoveryEngine(
         )
 
         return ParsedAssistantOutput(
-            rawText       = rawText,
+            rawText = rawText,
             assistantText = assistantText,
-            reasoning     = reasoningRegex.find(assistantText)?.groupValues?.getOrNull(1)?.trim(),
-            toolCall      = parsedTool
+            reasoning = reasoningRegex.find(assistantText)?.groupValues?.getOrNull(1)?.trim(),
+            toolCall = parsedTool
         )
     }
 
@@ -128,7 +130,8 @@ class DiscoveryEngine(
             return null
         }
 
-        val argsRaw = normalized["args"] ?: normalized["arguments"] ?: normalized["parameters"] ?: emptyMap<String, Any>()
+        val argsRaw =
+            normalized["args"] ?: normalized["arguments"] ?: normalized["parameters"] ?: emptyMap<String, Any>()
         val args = when (argsRaw) {
             is Map<*, *> -> normalizeMap(argsRaw)
             else -> mapOf("value" to argsRaw)
@@ -175,7 +178,10 @@ class DiscoveryEngine(
         if (directJsonStart != null) {
             val seg = extractFirstJsonObject(text, directJsonStart)
             if (seg != null) {
-                log.debug("[DISCOVERY][TRACE] extractToolSegment; strategy=naked_json at {}, segmentFound=true", directJsonStart)
+                log.debug(
+                    "[DISCOVERY][TRACE] extractToolSegment; strategy=naked_json at {}, segmentFound=true",
+                    directJsonStart
+                )
                 return seg
             }
         }
@@ -206,7 +212,10 @@ class DiscoveryEngine(
 
         val parsed = parseToolCall(unescaped)
         if (parsed != null) {
-            log.info("[DISCOVERY][TRACE] parseQuotedJsonToolCall; extracted tool={} from quoted JSON payload", parsed.tool)
+            log.info(
+                "[DISCOVERY][TRACE] parseQuotedJsonToolCall; extracted tool={} from quoted JSON payload",
+                parsed.tool
+            )
         }
         return parsed
     }
@@ -215,11 +224,11 @@ class DiscoveryEngine(
     private fun extractXmlInvoke(text: String): ToolSegment? {
         // Prefer the whole <function_calls> wrapper when present
         val searchIn = xmlFunctionCallsRegex.find(text)?.value ?: text
-        val offset   = if (searchIn !== text) text.indexOf(searchIn) else 0
+        val offset = if (searchIn !== text) text.indexOf(searchIn) else 0
 
         val invokeMatch = xmlInvokeOuterRegex.find(searchIn) ?: return null
         val absStart = offset + invokeMatch.range.first
-        val absEnd   = offset + invokeMatch.range.last + 1
+        val absEnd = offset + invokeMatch.range.last + 1
         return ToolSegment(startIndex = absStart, endIndexExclusive = absEnd, json = invokeMatch.value, isXml = true)
     }
 
@@ -248,7 +257,7 @@ class DiscoveryEngine(
         val args = linkedMapOf<String, Any>()
         xmlChildParamRegex.findAll(inner).forEach { m ->
             // If <parameter name="key">value</parameter> → use name attr; otherwise use tag name
-            val key   = m.groupValues[2].takeIf { it.isNotEmpty() } ?: m.groupValues[1]
+            val key = m.groupValues[2].takeIf { it.isNotEmpty() } ?: m.groupValues[1]
             val value = m.groupValues[3].trim()
             if (key.isNotEmpty()) args[key] = value
         }
@@ -259,7 +268,12 @@ class DiscoveryEngine(
             if (bare.isNotEmpty()) args["value"] = bare
         }
 
-        log.info("[DISCOVERY][TRACE] parseXmlToolCall; rawTool={} → normalizedTool={}, argKeys={}", rawToolName, normalizedTool, args.keys)
+        log.info(
+            "[DISCOVERY][TRACE] parseXmlToolCall; rawTool={} → normalizedTool={}, argKeys={}",
+            rawToolName,
+            normalizedTool,
+            args.keys
+        )
         return ParsedToolCall(tool = normalizedTool, args = args)
     }
 
@@ -276,12 +290,14 @@ class DiscoveryEngine(
 
         for (i in start until text.length) {
             val ch = text[i]
-            if (escaped) { escaped = false; continue }
+            if (escaped) {
+                escaped = false; continue
+            }
             when (ch) {
                 '\\' -> if (inString) escaped = true
-                '"'  -> inString = !inString
-                '{'  -> if (!inString) depth++
-                '}'  -> if (!inString) {
+                '"' -> inString = !inString
+                '{' -> if (!inString) depth++
+                '}' -> if (!inString) {
                     depth--
                     if (depth == 0) return ToolSegment(start, i + 1, text.substring(start, i + 1))
                 }

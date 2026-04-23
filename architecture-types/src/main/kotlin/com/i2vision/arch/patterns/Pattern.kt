@@ -78,33 +78,33 @@ class PatternCatalog {
         PipelinePattern(),
         EventDrivenPattern()
     )
-    
+
     /**
      * Get all patterns
      */
     fun getAllPatterns(): List<Pattern> = patterns
-    
+
     /**
      * Find pattern by name
      */
     fun findByName(name: String): Pattern? {
         return patterns.find { it.name.equals(name, ignoreCase = true) }
     }
-    
+
     /**
      * Find patterns by module pattern
      */
     fun findByModulePattern(modulePattern: ModulePattern): List<Pattern> {
         return patterns.filter { it.modulePattern == modulePattern }
     }
-    
+
     /**
      * Find patterns by design pattern
      */
     fun findByDesignPattern(designPattern: DesignPattern): List<Pattern> {
         return patterns.filter { it.designPattern == designPattern }
     }
-    
+
     /**
      * Find patterns by deployment pattern
      */

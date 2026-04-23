@@ -7,15 +7,15 @@ import java.io.File
  * Detects build system from project structure
  */
 class BuildSystemDetector(private val projectRoot: String) {
-    
+
     /**
      * Detect build system from project root
      */
     fun detect(): BuildSystemDetector.Result {
         val root = File(projectRoot)
-        
+
         val buildFiles = root.listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList()
-        
+
         return when {
             "build.gradle.kts" in buildFiles -> Result(BuildSystem.GRADLE_KTS, 0.95)
             "build.gradle" in buildFiles -> Result(BuildSystem.GRADLE_GROOVY, 0.95)
@@ -26,7 +26,7 @@ class BuildSystemDetector(private val projectRoot: String) {
             else -> Result(BuildSystem.UNKNOWN, 0.0)
         }
     }
-    
+
     data class Result(
         val buildSystem: BuildSystem,
         val confidence: Double

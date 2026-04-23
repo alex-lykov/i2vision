@@ -13,13 +13,13 @@ class CliParser : CliktCommand(
     name = "i2vision",
     help = "i2vision - Intelligent code discovery and analysis tool"
 ) {
-    
+
     private val log = LoggerFactory.getLogger(CliParser::class.java)
-    
+
     private val verbose by option("-v", "--verbose", help = "Enable verbose output").flag()
     private val quiet by option("-q", "--quiet", help = "Suppress non-error output").flag()
     private val config by option("-c", "--config", help = "Path to configuration file")
-    
+
     override fun run() {
         log.info("[CLI] Parser started")
         if (verbose) {

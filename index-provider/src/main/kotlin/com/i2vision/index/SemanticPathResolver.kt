@@ -28,7 +28,7 @@ class SemanticPathResolver(
     companion object {
         const val OVERRIDES_ROOT = ".vision-ai/overrides"
     }
-    
+
     private val cacheRoot: String by lazy {
         I2VisionPaths.getProjectCacheDir(projectRoot).absolutePath
     }
@@ -41,6 +41,7 @@ class SemanticPathResolver(
             val module = normalizedModule(modulePath)
             if (module.isBlank()) "src" else "$module/src"
         }
+
         SemanticArtifactMode.dual,
         SemanticArtifactMode.cache -> {
             val module = normalizedModule(modulePath)
@@ -54,16 +55,18 @@ class SemanticPathResolver(
         return listOfNotNull(primary, mirror).distinct()
     }
 
-    fun primaryLayerKotlinDirectoryPath(layer: String, modulePath: String?, packagePath: String?): String = when (mode) {
-        SemanticArtifactMode.legacy -> legacyLayerKotlinDirectoryPath(layer, modulePath, packagePath)
-        SemanticArtifactMode.dual,
-        SemanticArtifactMode.cache -> cacheLayerKotlinDirectoryPath(layer, modulePath, packagePath)
-    }
+    fun primaryLayerKotlinDirectoryPath(layer: String, modulePath: String?, packagePath: String?): String =
+        when (mode) {
+            SemanticArtifactMode.legacy -> legacyLayerKotlinDirectoryPath(layer, modulePath, packagePath)
+            SemanticArtifactMode.dual,
+            SemanticArtifactMode.cache -> cacheLayerKotlinDirectoryPath(layer, modulePath, packagePath)
+        }
 
-    fun mirrorLayerKotlinDirectoryPath(layer: String, modulePath: String?, packagePath: String?): String? = when (mode) {
-        SemanticArtifactMode.dual -> legacyLayerKotlinDirectoryPath(layer, modulePath, packagePath)
-        else -> null
-    }
+    fun mirrorLayerKotlinDirectoryPath(layer: String, modulePath: String?, packagePath: String?): String? =
+        when (mode) {
+            SemanticArtifactMode.dual -> legacyLayerKotlinDirectoryPath(layer, modulePath, packagePath)
+            else -> null
+        }
 
     fun cacheLayerKotlinDirectoryPath(layer: String, modulePath: String?, packagePath: String?): String {
         val module = normalizedModule(modulePath)
@@ -102,6 +105,7 @@ class SemanticPathResolver(
                 val modulePrefix = if (module.isBlank()) "" else "$module/"
                 File(projectRoot, "${modulePrefix}src/$suffix")
             }
+
             SemanticArtifactMode.cache,
             SemanticArtifactMode.dual -> {
                 val idx = normalized.indexOf("/src/${layer.lowercase()}/")

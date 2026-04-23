@@ -5,6 +5,7 @@ Unified LLM client library with support for local Ollama, cloud providers, and m
 ## Overview
 
 llm-client provides a comprehensive interface for interacting with Large Language Models (LLMs) including:
+
 - Local Ollama integration
 - Cloud provider support (OpenAI, Anthropic, etc.)
 - Model repository management
@@ -91,20 +92,24 @@ val wrapper = runtime.createModelWrapper("llama2")
 ## Features
 
 ### Model Repositories
+
 - **LocalOllamaRepository**: Interact with local Ollama instances
 - **CloudOllamaRepository**: Connect to cloud-hosted Ollama endpoints
 - **ModelRepository Interface**: Unified API for different repository types
 
 ### Model Wrappers
+
 - **LocalModelWrapper**: HTTP client for local Ollama REST APIs
 - **CloudModelWrapper**: HTTP client for cloud providers with API key management
 - **Streaming Support**: Real-time streaming responses
 
 ### Token Estimation
+
 - **TokenEstimator**: Estimate token counts for prompts and responses
 - **Context Length Management**: Automatic context length inference
 
 ### Model Runtime
+
 - **ModelRuntime**: Facade for model discovery, wrapper creation, and lifecycle
 - **UnifiedModelManager**: Unified management across local and cloud models
 - **Model Selection Planning**: Intelligent model selection based on requirements

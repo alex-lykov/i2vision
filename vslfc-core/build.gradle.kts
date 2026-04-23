@@ -40,30 +40,30 @@ publishing {
     publications {
         create<MavenPublication>("maven") {
             from(components["java"])
-            
+
             pom {
                 name.set("vslfc-core")
                 description.set("Core data models and contracts for VSLFC (Vision-Structure-Logic-Flow-Code) layered discovery")
-                url.set("https://github.com/i2vision/vslfc-core")
-                
+                url.set("https://github.com/alex-lykov/i2vision/vslfc-core")
+
                 licenses {
                     license {
                         name.set("MIT License")
                         url.set("https://opensource.org/licenses/MIT")
                     }
                 }
-                
+
                 developers {
                     developer {
                         id.set("i2vision")
                         name.set("i2vision Team")
                     }
                 }
-                
+
                 scm {
-                    connection.set("scm:git:git://github.com/i2vision/vslfc-core.git")
-                    developerConnection.set("scm:git:ssh://github.com/i2vision/vslfc-core.git")
-                    url.set("https://github.com/i2vision/vslfc-core")
+                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/vslfc-core.git")
+                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/vslfc-core.git")
+                    url.set("https://github.com/alex-lykov/i2vision/vslfc-core")
                 }
             }
         }

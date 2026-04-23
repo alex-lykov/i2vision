@@ -30,21 +30,21 @@ data class CloudRepositoryConfig(
 class LocalOllamaRepository(
     private val ollamaUrl: String = "http://localhost:11434"
 ) : ModelRepository {
-    
+
     private val httpClient = HttpClient.newHttpClient()
     private val _modelUpdates = MutableSharedFlow<OllamaModelMetadata>()
-    
+
     override val repositoryType: RepositoryType = RepositoryType.LOCAL_OLLAMA
-    
+
     override suspend fun scanModels(): Result<List<OllamaModelMetadata>> = withContext(Dispatchers.IO) {
         try {
             val request = HttpRequest.newBuilder()
                 .uri(URI.create("$ollamaUrl/api/tags"))
                 .GET()
                 .build()
-                
+
             val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-            
+
             if (response.statusCode() == 200) {
                 val models = ModelParsingUtils.parseOllamaModelsResponse(
                     response.body(),
@@ -59,7 +59,7 @@ class LocalOllamaRepository(
             Result.failure(e)
         }
     }
-    
+
     override suspend fun getModel(modelId: String): Result<OllamaModelMetadata?> = withContext(Dispatchers.IO) {
         try {
             val scanResult = scanModels()
@@ -74,27 +74,27 @@ class LocalOllamaRepository(
             Result.failure(e)
         }
     }
-    
+
     override fun observeModels(): Flow<OllamaModelMetadata> = _modelUpdates
-    
+
     override suspend fun isAvailable(): Boolean = withContext(Dispatchers.IO) {
         try {
             val request = HttpRequest.newBuilder()
                 .uri(URI.create("$ollamaUrl/api/tags"))
                 .GET()
                 .build()
-                
+
             val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
             response.statusCode() == 200
         } catch (e: Exception) {
             false
         }
     }
-    
+
     override fun close() {
         // HttpClient doesn't need explicit closing in Java 11+
     }
-    
+
     /**
      * Get running models from local Ollama
      */
@@ -104,9 +104,9 @@ class LocalOllamaRepository(
                 .uri(URI.create("$ollamaUrl/api/ps"))
                 .GET()
                 .build()
-                
+
             val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-            
+
             if (response.statusCode() == 200) {
                 val models = ModelParsingUtils.parseOllamaModelsResponse(
                     response.body(),
@@ -129,26 +129,26 @@ class LocalOllamaRepository(
 class CloudOllamaRepository(
     private val config: CloudRepositoryConfig
 ) : ModelRepository {
-    
+
     private val httpClient = HttpClient.newHttpClient()
     private val _modelUpdates = MutableSharedFlow<OllamaModelMetadata>()
-    
+
     override val repositoryType: RepositoryType = config.provider
-    
+
     override suspend fun scanModels(): Result<List<OllamaModelMetadata>> = withContext(Dispatchers.IO) {
         try {
             val requestBuilder = HttpRequest.newBuilder()
                 .uri(URI.create("${config.url}/api/tags"))
                 .GET()
-                
+
             // Add authentication header if API key is provided
             config.apiKey?.let { apiKey ->
                 requestBuilder.header("Authorization", "Bearer $apiKey")
             }
-            
+
             val request = requestBuilder.build()
             val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-            
+
             if (response.statusCode() == 200) {
                 val models = ModelParsingUtils.parseOllamaModelsResponse(
                     response.body(),
@@ -163,7 +163,7 @@ class CloudOllamaRepository(
             Result.failure(e)
         }
     }
-    
+
     override suspend fun getModel(modelId: String): Result<OllamaModelMetadata?> = withContext(Dispatchers.IO) {
         try {
             val scanResult = scanModels()
@@ -178,19 +178,19 @@ class CloudOllamaRepository(
             Result.failure(e)
         }
     }
-    
+
     override fun observeModels(): Flow<OllamaModelMetadata> = _modelUpdates
-    
+
     override suspend fun isAvailable(): Boolean = withContext(Dispatchers.IO) {
         try {
             val requestBuilder = HttpRequest.newBuilder()
                 .uri(URI.create("${config.url}/api/tags"))
                 .GET()
-                
+
             config.apiKey?.let { apiKey ->
                 requestBuilder.header("Authorization", "Bearer $apiKey")
             }
-            
+
             val request = requestBuilder.build()
             val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
             response.statusCode() == 200
@@ -198,7 +198,7 @@ class CloudOllamaRepository(
             false
         }
     }
-    
+
     override fun close() {
         // HttpClient doesn't need explicit closing in Java 11+
     }

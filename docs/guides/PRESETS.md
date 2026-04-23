@@ -2,7 +2,8 @@
 
 ## Overview
 
-Presets are pre-configured discovery and analysis configurations that can be applied to projects. They encapsulate best practices for specific project types, frameworks, or use cases.
+Presets are pre-configured discovery and analysis configurations that can be applied to projects. They encapsulate best
+practices for specific project types, frameworks, or use cases.
 
 ## Preset Structure
 
@@ -84,6 +85,7 @@ output:
 ### Standard Presets
 
 **Java Maven**
+
 ```yaml
 name: "Java Maven"
 description: "Standard Maven project structure"
@@ -91,6 +93,7 @@ strategies: ["maven-standard"]
 ```
 
 **Kotlin Gradle**
+
 ```yaml
 name: "Kotlin Gradle"
 description: "Gradle-based Kotlin projects"
@@ -98,6 +101,7 @@ strategies: ["kotlin-gradle"]
 ```
 
 **Spring Boot**
+
 ```yaml
 name: "Spring Boot"
 description: "Spring Boot framework projects"
@@ -105,6 +109,7 @@ strategies: ["spring-boot-standard"]
 ```
 
 **Node.js**
+
 ```yaml
 name: "Node.js"
 description: "Node.js and npm projects"
@@ -112,6 +117,7 @@ strategies: ["nodejs-standard"]
 ```
 
 **Python**
+
 ```yaml
 name: "Python"
 description: "Python projects with pip/poetry"
@@ -121,6 +127,7 @@ strategies: ["python-standard"]
 ### Framework-Specific Presets
 
 **React**
+
 ```yaml
 name: "React"
 description: "React frontend projects"
@@ -128,6 +135,7 @@ strategies: ["react-standard"]
 ```
 
 **Django**
+
 ```yaml
 name: "Django"
 description: "Django web framework projects"
@@ -135,6 +143,7 @@ strategies: ["django-standard"]
 ```
 
 **Rails**
+
 ```yaml
 name: "Rails"
 description: "Ruby on Rails projects"
@@ -193,6 +202,7 @@ yaml.dump(customPreset, writer)
 ### Step 1: Define Project Characteristics
 
 Identify the key characteristics of your project type:
+
 - Build system (Maven, Gradle, npm, pip)
 - Framework (Spring, React, Django)
 - Language (Java, Kotlin, JavaScript, Python)
@@ -400,6 +410,7 @@ presets/
 ### Sharing Presets
 
 Presets can be shared via:
+
 - Git repositories
 - Package managers
 - Configuration management systems
@@ -408,21 +419,25 @@ Presets can be shared via:
 ## Best Practices
 
 ### Naming Conventions
+
 - Use kebab-case for preset names
 - Include framework/language in name
 - Use descriptive names for custom presets
 
 ### Versioning
+
 - Include version in preset metadata
 - Use semantic versioning
 - Document breaking changes
 
 ### Documentation
+
 - Include description of use case
 - Document any special requirements
 - Provide examples of projects suited for preset
 
 ### Performance
+
 - Minimize pattern complexity
 - Use efficient glob patterns
 - Configure appropriate cache settings
@@ -430,6 +445,7 @@ Presets can be shared via:
 ## Examples
 
 See existing presets in the project for reference:
+
 - `presets/standard/` - Standard project presets
 - `presets/frameworks/` - Framework-specific presets
 - `presets/custom/` - Custom user presets

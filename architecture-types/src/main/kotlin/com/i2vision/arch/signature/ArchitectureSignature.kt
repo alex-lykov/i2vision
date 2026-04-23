@@ -23,24 +23,24 @@ data class ArchitectureSignature(
     // Build level (global - same for entire project)
     val buildSystem: BuildSystem?,
     val buildTools: List<BuildTool> = emptyList(),
-    
+
     // Framework level (per-module - different modules can use different frameworks)
     val moduleFrameworks: Map<String, List<Framework>> = emptyMap(),
     val libraries: List<Library> = emptyList(),
-    
+
     // Module level (per-module - different modules can have different patterns)
     val modulePatterns: Map<String, ModulePattern> = emptyMap(),
-    
+
     // Cluster level (global - source code clusters for organization)
     val clusters: List<ClusterInfo> = emptyList(),
-    
+
     // Code level (per-module - different modules can use different design patterns)
     val moduleDesignPatterns: Map<String, List<DesignPattern>> = emptyMap(),
     val moduleLanguageFeatures: Map<String, List<LanguageFeature>> = emptyMap(),
-    
+
     // Deployment level (global - overall deployment pattern)
     val deploymentPattern: DeploymentPattern = DeploymentPattern.UNKNOWN,
-    
+
     // Meta
     val confidence: Map<String, Double> = emptyMap(),
     val detectedAt: Instant = Instant.now()
@@ -51,63 +51,63 @@ data class ArchitectureSignature(
     fun hasFramework(framework: Framework): Boolean {
         return moduleFrameworks.values.any { it.contains(framework) }
     }
-    
+
     /**
      * Check if a specific module has a framework
      */
     fun moduleHasFramework(module: String, framework: Framework): Boolean {
         return moduleFrameworks[module]?.contains(framework) ?: false
     }
-    
+
     /**
      * Check if signature has a specific module pattern
      */
     fun hasModulePattern(pattern: ModulePattern): Boolean {
         return modulePatterns.values.contains(pattern)
     }
-    
+
     /**
      * Check if signature has a specific design pattern in any module
      */
     fun hasDesignPattern(pattern: DesignPattern): Boolean {
         return moduleDesignPatterns.values.any { it.contains(pattern) }
     }
-    
+
     /**
      * Check if a specific module has a design pattern
      */
     fun moduleHasDesignPattern(module: String, pattern: DesignPattern): Boolean {
         return moduleDesignPatterns[module]?.contains(pattern) ?: false
     }
-    
+
     /**
      * Get all frameworks across all modules
      */
     fun getAllFrameworks(): Set<Framework> {
         return moduleFrameworks.values.flatten().toSet()
     }
-    
+
     /**
      * Get all design patterns across all modules
      */
     fun getAllDesignPatterns(): Set<DesignPattern> {
         return moduleDesignPatterns.values.flatten().toSet()
     }
-    
+
     /**
      * Get all language features across all modules
      */
     fun getAllLanguageFeatures(): Set<LanguageFeature> {
         return moduleLanguageFeatures.values.flatten().toSet()
     }
-    
+
     /**
      * Get confidence score for a specific category
      */
     fun getConfidence(category: String): Double {
         return confidence[category] ?: 0.0
     }
-    
+
     /**
      * Get architecture signature for a specific module
      */
@@ -116,11 +116,11 @@ data class ArchitectureSignature(
         val frameworks = moduleFrameworks[module]
         val designPatterns = moduleDesignPatterns[module]
         val languageFeatures = moduleLanguageFeatures[module]
-        
+
         if (patterns == null && frameworks == null && designPatterns == null && languageFeatures == null) {
             return null
         }
-        
+
         return ModuleSignature(
             module = module,
             modulePattern = patterns,

@@ -10,9 +10,9 @@ import java.io.File
 class FileAnalyzer(
     private val projectRoot: String
 ) {
-    
+
     private val log = LoggerFactory.getLogger(FileAnalyzer::class.java)
-    
+
     data class FileAnalysis(
         val filePath: String,
         val componentRole: String,
@@ -24,7 +24,7 @@ class FileAnalyzer(
         val codeSmells: List<String>,
         val maintainabilityIndex: Int
     )
-    
+
     /**
      * Analyze a file and return comprehensive analysis data
      */
@@ -32,7 +32,7 @@ class FileAnalyzer(
         val absolutePath = if (File(filePath).isAbsolute) filePath else File(projectRoot, filePath).absolutePath
         val file = File(absolutePath)
         val content = if (file.exists()) file.readText() else ""
-        
+
         return FileAnalysis(
             filePath = filePath,
             componentRole = detectComponentRole(filePath, content),
@@ -45,7 +45,7 @@ class FileAnalyzer(
             maintainabilityIndex = calculateMaintainabilityIndex(content)
         )
     }
-    
+
     /**
      * Detect the component role based on file path and content
      */
@@ -62,7 +62,7 @@ class FileAnalyzer(
             else -> "Utility"
         }
     }
-    
+
     /**
      * Extract import dependencies from content
      */
@@ -70,7 +70,7 @@ class FileAnalyzer(
         val imports = Regex("import\\s+([\\w.]+)").findAll(content)
         return imports.map { it.groupValues[1] }.take(10).toList()
     }
-    
+
     /**
      * Calculate coupling score based on import count
      */
@@ -83,7 +83,7 @@ class FileAnalyzer(
             else -> 1          // Very low coupling
         }
     }
-    
+
     /**
      * Detect design patterns in the code
      */
@@ -99,7 +99,7 @@ class FileAnalyzer(
         if (content.contains("sealed class")) patterns.add("Sealed Class")
         return patterns
     }
-    
+
     /**
      * Calculate complexity score based on branching
      */
@@ -107,18 +107,18 @@ class FileAnalyzer(
         val branches = Regex("(if|when|for|while)\\s*\\(").findAll(content).count()
         return (branches / 5).coerceIn(1, 10)
     }
-    
+
     /**
      * Estimate test coverage based on test file existence
      */
     fun estimateTestCoverage(filePath: String): Int {
         val testFilePath = filePath.replace("/main/", "/test/").replace(".kt", "Test.kt")
         val testFile = File(projectRoot, testFilePath)
-        return if (testFile.exists()) 
-            (testFile.readText().split("@Test").size - 1) * 10 
+        return if (testFile.exists())
+            (testFile.readText().split("@Test").size - 1) * 10
         else 0
     }
-    
+
     /**
      * Detect code smells in the code
      */
@@ -132,7 +132,7 @@ class FileAnalyzer(
         if (Regex("!!").findAll(content).count() > 10) smells.add("Excessive null assertions")
         return smells
     }
-    
+
     /**
      * Calculate maintainability index
      */
@@ -140,11 +140,11 @@ class FileAnalyzer(
         val complexity = calculateComplexity(content)
         val linesOfCode = content.lines().size
         val documentation = if (content.contains("/**")) 10 else if (content.contains("//")) 5 else 0
-        
+
         val baseScore = 100 - (complexity * 5) - (linesOfCode / 10)
         return (baseScore + documentation).coerceIn(0, 100)
     }
-    
+
     /**
      * Get complexity details for a file
      */
@@ -160,7 +160,7 @@ class FileAnalyzer(
             patterns = analysis.patterns
         )
     }
-    
+
     data class ComplexityDetails(
         val filePath: String,
         val complexityScore: Int,

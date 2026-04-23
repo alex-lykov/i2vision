@@ -10,7 +10,7 @@ object StorageConstants {
      * Safe to expose - this is just a directory name, not the full path structure.
      */
     const val SEMANTIC_CACHE_DIR = ".semantic-cache"
-    
+
     /**
      * The vision-ai control plane directory name.
      * Safe to expose - this is just a directory name, not the full path structure.

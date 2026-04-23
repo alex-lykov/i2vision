@@ -8,13 +8,13 @@ import org.yaml.snakeyaml.DumperOptions
  * ConsoleOutput - Formatted output for CLI.
  */
 class ConsoleOutput {
-    
+
     private val yaml = Yaml(DumperOptions().apply {
         defaultFlowStyle = DumperOptions.FlowStyle.BLOCK
         indicatorIndent = 2
         indent = 4
     })
-    
+
     /**
      * Format discovery result for console output.
      */
@@ -25,17 +25,17 @@ class ConsoleOutput {
             else -> formatText(result)
         }
     }
-    
+
     private fun formatText(result: PipelineResult): String {
         val sb = StringBuilder()
         sb.appendLine("Discovery Results")
-        sb.appendLine("=" .repeat(50))
+        sb.appendLine("=".repeat(50))
         sb.appendLine()
         sb.appendLine("Status: ${if (result.success) "✓ SUCCESS" else "✗ FAILED"}")
         sb.appendLine("Artifacts: ${result.artifacts.size}")
         sb.appendLine("Errors: ${result.errors.size}")
         sb.appendLine()
-        
+
         if (result.metadata.isNotEmpty()) {
             sb.appendLine("Metadata:")
             result.metadata.forEach { (key, value) ->
@@ -43,7 +43,7 @@ class ConsoleOutput {
             }
             sb.appendLine()
         }
-        
+
         if (result.errors.isNotEmpty()) {
             sb.appendLine("Errors:")
             result.errors.forEach { error ->
@@ -51,10 +51,10 @@ class ConsoleOutput {
             }
             sb.appendLine()
         }
-        
+
         return sb.toString()
     }
-    
+
     private fun formatJson(result: PipelineResult): String {
         // Simple JSON representation
         val sb = StringBuilder()
@@ -71,7 +71,7 @@ class ConsoleOutput {
         sb.appendLine("}")
         return sb.toString()
     }
-    
+
     private fun formatYaml(result: PipelineResult): String {
         val data = mapOf(
             "success" to result.success,
@@ -81,7 +81,7 @@ class ConsoleOutput {
         )
         return yaml.dump(data)
     }
-    
+
     /**
      * Format error message for console output.
      */
@@ -93,7 +93,7 @@ class ConsoleOutput {
         }
         return sb.toString()
     }
-    
+
     /**
      * Format success message for console output.
      */

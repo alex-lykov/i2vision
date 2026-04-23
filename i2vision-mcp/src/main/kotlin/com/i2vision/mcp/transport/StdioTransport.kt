@@ -15,11 +15,11 @@ import java.io.InputStreamReader
 class StdioTransport(
     private val mcpServer: McpServer
 ) {
-    
+
     private val log = LoggerFactory.getLogger(StdioTransport::class.java)
     private val reader = BufferedReader(InputStreamReader(System.`in`))
     private var running = false
-    
+
     /**
      * Start the stdio transport
      */
@@ -27,7 +27,7 @@ class StdioTransport(
         log.info("[STDIO] Starting stdio transport")
         running = true
         mcpServer.start()
-        
+
         runBlocking {
             launch(Dispatchers.IO) {
                 while (running) {
@@ -46,7 +46,8 @@ class StdioTransport(
                     } catch (e: Exception) {
                         log.error("[STDIO] Error processing request: {}", e.message, e)
                         // Send error response
-                        val errorResponse = """{"jsonrpc":"2.0","error":{"code":-32603,"message":"Internal error","data":"${e.message}"},"id":null}"""
+                        val errorResponse =
+                            """{"jsonrpc":"2.0","error":{"code":-32603,"message":"Internal error","data":"${e.message}"},"id":null}"""
                         println(errorResponse)
                         System.out.flush()
                     }
@@ -54,7 +55,7 @@ class StdioTransport(
             }
         }
     }
-    
+
     /**
      * Stop the stdio transport
      */
@@ -73,7 +74,7 @@ fun main(args: Array<String>) {
     val projectRoot = System.getProperty("user.dir") ?: "."
     val mcpServer = McpServer(projectRoot)
     val transport = StdioTransport(mcpServer)
-    
+
     try {
         transport.start()
     } catch (e: Exception) {

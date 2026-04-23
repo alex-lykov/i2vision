@@ -33,7 +33,7 @@ class ContractLoader(
      */
     fun loadContract(name: String): DiscoveryContract? {
         val cacheKey = "contract:$name"
-        
+
         // Check cache first
         cache[cacheKey]?.let {
             log.debug("[CONTRACT] Cache hit for {}", name)
@@ -54,7 +54,7 @@ class ContractLoader(
      */
     fun loadAllContracts(): List<DiscoveryContract> {
         val dir = File(contractsDir)
-        
+
         if (!dir.exists() || !dir.isDirectory) {
             log.warn("[CONTRACT] Contracts directory not found: {}", contractsDir)
             return emptyList()
@@ -79,7 +79,7 @@ class ContractLoader(
     fun loadContractsForLayer(layer: String): List<DiscoveryContract> {
         return loadAllContracts().filter { contract ->
             contract.metadata.targetLayers.contains(layer) ||
-            contract.metadata.targetLayers.contains("all")
+                    contract.metadata.targetLayers.contains("all")
         }
     }
 
@@ -89,7 +89,7 @@ class ContractLoader(
     fun loadContractsByPriority(minPriority: ContractPriority): List<DiscoveryContract> {
         val priorityOrder = ContractPriority.values()
         val minIndex = priorityOrder.indexOf(minPriority)
-        
+
         return loadAllContracts().filter { contract ->
             priorityOrder.indexOf(contract.metadata.priority) >= minIndex
         }
@@ -163,7 +163,7 @@ class ContractLoader(
         yamlMap ?: return null
 
         val contractMap = yamlMap["contract"] as? Map<String, Any> ?: return null
-        
+
         return DiscoveryContract(
             metadata = parseMetadata(contractMap),
             layerExpectations = parseLayerExpectations(yamlMap["layer_expectations"] as? Map<String, Any>),
@@ -271,7 +271,7 @@ class ContractLoader(
      */
     fun listContractNames(): List<String> {
         val dir = File(contractsDir)
-        
+
         if (!dir.exists() || !dir.isDirectory) {
             return emptyList()
         }

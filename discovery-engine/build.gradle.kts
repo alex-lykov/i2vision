@@ -46,30 +46,30 @@ publishing {
     publications {
         create<MavenPublication>("maven") {
             from(components["java"])
-            
+
             pom {
                 name.set("discovery-engine")
                 description.set("Discovery engine for code flow, logic, and architecture analysis")
-                url.set("https://github.com/i2vision/discovery-engine")
-                
+                url.set("https://github.com/alex-lykov/i2vision/discovery-engine")
+
                 licenses {
                     license {
                         name.set("MIT License")
                         url.set("https://opensource.org/licenses/MIT")
                     }
                 }
-                
+
                 developers {
                     developer {
                         id.set("i2vision")
                         name.set("i2vision Team")
                     }
                 }
-                
+
                 scm {
-                    connection.set("scm:git:git://github.com/i2vision/discovery-engine.git")
-                    developerConnection.set("scm:git:ssh://github.com/i2vision/discovery-engine.git")
-                    url.set("https://github.com/i2vision/discovery-engine")
+                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/discovery-engine.git")
+                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/discovery-engine.git")
+                    url.set("https://github.com/alex-lykov/i2vision/discovery-engine")
                 }
             }
         }

@@ -15,7 +15,7 @@ import java.io.File
  * - Source directories → Discovered normally
  */
 class ComponentValidator(private val projectRoot: String) {
-    
+
     /**
      * Component validation result with quality metrics
      */
@@ -26,7 +26,7 @@ class ComponentValidator(private val projectRoot: String) {
         val reason: String,             // Human-readable explanation
         val category: ComponentCategory // For metrics tracking
     )
-    
+
     enum class ComponentCategory {
         SOURCE,           // Primary source code
         TEST,             // Test code
@@ -36,7 +36,7 @@ class ComponentValidator(private val projectRoot: String) {
         CONFIG,           // Configuration files
         EMPTY             // No meaningful content
     }
-    
+
     /**
      * Validate if a directory should be discovered as a component/cluster.
      * 
@@ -46,7 +46,7 @@ class ComponentValidator(private val projectRoot: String) {
     fun validate(dirPath: String): ValidationResult {
         val dir = File(projectRoot, dirPath)
         val dirName = dir.name
-        
+
         // 1. Hard exclusions - NEVER discover these
         val cacheAndConfig = setOf(".semantic-cache", ".vision-ai", ".git", ".idea", ".vscode")
         if (cacheAndConfig.contains(dirName)) {
@@ -58,7 +58,7 @@ class ComponentValidator(private val projectRoot: String) {
                 category = ComponentCategory.CACHE
             )
         }
-        
+
         // 2. Build artifacts - architecture-aware exclusion
         val buildArtifacts = getBuildArtifactDirs()
         if (buildArtifacts.contains(dirName)) {
@@ -70,7 +70,7 @@ class ComponentValidator(private val projectRoot: String) {
                 category = ComponentCategory.BUILD_ARTIFACT
             )
         }
-        
+
         // 2b. buildSrc - special Gradle build helper directory
         if (dirName == "buildSrc" || dirPath == "buildSrc") {
             return ValidationResult(
@@ -81,7 +81,7 @@ class ComponentValidator(private val projectRoot: String) {
                 category = ComponentCategory.BUILD_ARTIFACT
             )
         }
-        
+
         // 3. Test directories - VALID but lower priority
         val testDirs = setOf("test", "tests", "testing")
         if (testDirs.contains(dirName.lowercase())) {
@@ -93,7 +93,7 @@ class ComponentValidator(private val projectRoot: String) {
                 category = ComponentCategory.TEST
             )
         }
-        
+
         // 4. Documentation - VALID but lowest priority
         val docDirs = setOf("docs", "documentation", "examples", "samples", "demo")
         if (docDirs.contains(dirName.lowercase())) {
@@ -105,7 +105,7 @@ class ComponentValidator(private val projectRoot: String) {
                 category = ComponentCategory.DOCUMENTATION
             )
         }
-        
+
         // 5. Check if directory contains RUNNABLE application source code
         if (!dir.exists()) {
             return ValidationResult(
@@ -116,9 +116,9 @@ class ComponentValidator(private val projectRoot: String) {
                 category = ComponentCategory.EMPTY
             )
         }
-        
+
         val hasRunnableCode = detectRunnableCode(dir)
-        
+
         if (!hasRunnableCode) {
             // No runnable application code - could be build scripts, schemas, etc.
             return ValidationResult(
@@ -129,7 +129,7 @@ class ComponentValidator(private val projectRoot: String) {
                 category = ComponentCategory.CONFIG
             )
         }
-        
+
         // 6. Normal source directory with runnable code - high confidence
         return ValidationResult(
             path = dirPath,
@@ -139,7 +139,7 @@ class ComponentValidator(private val projectRoot: String) {
             category = ComponentCategory.SOURCE
         )
     }
-    
+
     /**
      * Detect if directory contains runnable application source code.
      * Distinguishes application code from build scripts, schemas, and config.
@@ -152,34 +152,35 @@ class ComponentValidator(private val projectRoot: String) {
             File(dir, "src/main/ts"),
             File(dir, "src/main/python")
         ).any { it.exists() && it.isDirectory }
-        
+
         if (hasStandardSourceLayout) {
             // Standard layout = runnable application code
             return true
         }
-        
+
         // Check if files are in application source locations (not build scripts)
         val files = dir.walkTopDown()
             .take(100)
             .filter { it.isFile }
             .toList()
-        
+
         if (files.isEmpty()) {
             return false
         }
-        
+
         // Count application source files vs build/config files
         var appSourceCount = 0
         var buildConfigCount = 0
-        
+
         files.forEach { file ->
             val relativePath = file.relativeTo(dir).path.replace('\\', '/')
-            
+
             when {
                 // Application source code locations
                 relativePath.startsWith("src/main/") && file.extension in SOURCE_EXTENSIONS -> {
                     appSourceCount++
                 }
+
                 relativePath.startsWith("src/") && file.extension in SOURCE_EXTENSIONS -> {
                     appSourceCount++
                 }
@@ -187,21 +188,22 @@ class ComponentValidator(private val projectRoot: String) {
                 file.parent == dir.absolutePath && file.extension in SOURCE_EXTENSIONS -> {
                     appSourceCount++
                 }
-                
+
                 // Build/config files
                 file.extension in setOf("gradle", "kts", "xml", "yaml", "yml", "json", "properties") -> {
                     buildConfigCount++
                 }
+
                 file.name in setOf("build.gradle", "build.gradle.kts", "pom.xml", "package.json", "Cargo.toml") -> {
                     buildConfigCount++
                 }
             }
         }
-        
+
         // Runnable code if we have application source files, even if we also have build files
         return appSourceCount > 0
     }
-    
+
     /**
      * Get build artifact directories based on detected build system
      */
@@ -215,7 +217,7 @@ class ComponentValidator(private val projectRoot: String) {
             else -> setOf("build", "out", "target") // fallback
         }
     }
-    
+
     /**
      * Detect build system for the project
      */
@@ -230,7 +232,7 @@ class ComponentValidator(private val projectRoot: String) {
             else -> "unknown"
         }
     }
-    
+
     companion object {
         /**
          * Source code extensions - actual runnable/compilable code.

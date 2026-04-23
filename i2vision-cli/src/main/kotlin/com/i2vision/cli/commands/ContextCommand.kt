@@ -22,7 +22,7 @@ class ContextCommand : CliktCommand(
     name = "context",
     help = "Get instant context for files, directories, or project"
 ) {
-    
+
     init {
         subcommands(
             FileContext(),
@@ -31,7 +31,7 @@ class ContextCommand : CliktCommand(
             CacheContext()
         )
     }
-    
+
     override fun run() = Unit
 }
 
@@ -62,42 +62,46 @@ private fun extractModulePath(filePath: String): String {
  * Get context for a specific file.
  */
 class FileContext : CliktCommand(name = "file", help = "Get context for a specific file") {
-    
+
     private val log = LoggerFactory.getLogger(FileContext::class.java)
-    
+
     private val path by option("--path", "-p", help = "File path").required()
-    private val task by option("--task", "-t", help = "Task type (debug, refactor, add feature, fix bug, optimize)").default("discovery")
+    private val task by option(
+        "--task",
+        "-t",
+        help = "Task type (debug, refactor, add feature, fix bug, optimize)"
+    ).default("discovery")
     private val project by option("--project", help = "Project root").default(".")
-    
+
     override fun run() {
         log.info("[CLI] Context file command for: $path, task: $task")
-        
+
         val projectRoot = File(project).absoluteFile
         if (!projectRoot.exists()) {
             echo("Error: Project root does not exist: $project", err = true)
             throw IllegalArgumentException("Project root does not exist: $project")
         }
-        
+
         // Convert absolute path to relative path if necessary
         val filePath = if (File(path).isAbsolute) {
             File(path).relativeTo(projectRoot).path
         } else {
             path
         }
-        
+
         val contextProvider = ContextProvider(
             projectRoot = projectRoot.path,
             cacheStore = FileCacheStore(projectRoot)
         )
-        
+
         val context = runBlocking {
             contextProvider.getContext(filePath, task)
         }
-        
+
         if (context.success) {
             echo("=== File Context ===")
             echo("File: ${context.filePath}")
-            
+
             // Check and display cache status
             val modulePath = extractModulePath(filePath)
             val hasCache = contextProvider.hasDiscoveryCache(modulePath)
@@ -112,7 +116,7 @@ class FileContext : CliktCommand(name = "file", help = "Get context for a specif
             echo("Symbols: ${context.symbols.size}")
             echo("Related files: ${context.relatedFiles.size}")
             echo("")
-            
+
             if (context.symbols.isNotEmpty()) {
                 echo("Symbols:")
                 context.symbols.take(20).forEach { symbol ->
@@ -123,7 +127,7 @@ class FileContext : CliktCommand(name = "file", help = "Get context for a specif
                 }
                 echo("")
             }
-            
+
             if (context.relatedFiles.isNotEmpty()) {
                 echo("Related files:")
                 context.relatedFiles.take(10).forEach { file ->
@@ -134,16 +138,16 @@ class FileContext : CliktCommand(name = "file", help = "Get context for a specif
                 }
                 echo("")
             }
-            
+
             echo("Task: ${context.taskContext.task}")
             echo("Suggestions:")
             context.taskContext.suggestions.forEach { echo("  - $it") }
             echo("")
-            
+
             if (context.artifacts.isNotEmpty()) {
                 echo("Artifacts: ${context.artifacts.joinToString(", ")}")
             }
-            
+
             val complexity = context.complexityDetails
             if (complexity != null) {
                 echo("")
@@ -152,7 +156,7 @@ class FileContext : CliktCommand(name = "file", help = "Get context for a specif
                 echo("Cognitive Complexity: ${complexity.cognitiveComplexity}")
                 echo("Maintainability Index: ${complexity.maintainabilityIndex}")
             }
-            
+
             if (context.strategySuggestions.isNotEmpty()) {
                 echo("")
                 echo("Strategy suggestions:")
@@ -171,27 +175,31 @@ class FileContext : CliktCommand(name = "file", help = "Get context for a specif
  * Get context for multiple files.
  */
 class FilesContext : CliktCommand(name = "files", help = "Get context for multiple files") {
-    
+
     private val log = LoggerFactory.getLogger(FilesContext::class.java)
-    
+
     private val paths by argument("paths", help = "File paths").multiple()
-    private val task by option("--task", "-t", help = "Task type (debug, refactor, add feature, fix bug, optimize)").default("discovery")
+    private val task by option(
+        "--task",
+        "-t",
+        help = "Task type (debug, refactor, add feature, fix bug, optimize)"
+    ).default("discovery")
     private val project by option("--project", help = "Project root").default(".")
-    
+
     override fun run() {
         log.info("[CLI] Context files command for ${paths.size} files, task: $task")
-        
+
         if (paths.isEmpty()) {
             echo("Error: At least one file path required", err = true)
             throw IllegalArgumentException("At least one file path required")
         }
-        
+
         val projectRoot = File(project).absoluteFile
         if (!projectRoot.exists()) {
             echo("Error: Project root does not exist: $project", err = true)
             throw IllegalArgumentException("Project root does not exist: $project")
         }
-        
+
         // Convert absolute paths to relative paths if necessary
         val filePaths = paths.map { path ->
             if (File(path).isAbsolute) {
@@ -200,20 +208,20 @@ class FilesContext : CliktCommand(name = "files", help = "Get context for multip
                 path
             }
         }
-        
+
         val contextProvider = ContextProvider(
             projectRoot = projectRoot.path,
             cacheStore = FileCacheStore(projectRoot)
         )
-        
+
         val context = runBlocking {
             contextProvider.getContextForFiles(filePaths, task)
         }
-        
+
         if (context.success) {
             echo("=== Files Context ===")
             echo("Files: ${context.filePath}")
-            
+
             // Check and display cache status (use first file's module)
             val modulePath = extractModulePath(filePaths.first())
             val hasCache = contextProvider.hasDiscoveryCache(modulePath)
@@ -228,7 +236,7 @@ class FilesContext : CliktCommand(name = "files", help = "Get context for multip
             echo("Total symbols: ${context.symbols.size}")
             echo("Total related files: ${context.relatedFiles.size}")
             echo("")
-            
+
             if (context.symbols.isNotEmpty()) {
                 echo("Symbols:")
                 context.symbols.take(30).forEach { symbol ->
@@ -239,7 +247,7 @@ class FilesContext : CliktCommand(name = "files", help = "Get context for multip
                 }
                 echo("")
             }
-            
+
             if (context.relatedFiles.isNotEmpty()) {
                 echo("Related files:")
                 context.relatedFiles.take(15).forEach { file ->
@@ -250,16 +258,16 @@ class FilesContext : CliktCommand(name = "files", help = "Get context for multip
                 }
                 echo("")
             }
-            
+
             echo("Task: ${context.taskContext.task}")
             echo("Suggestions:")
             context.taskContext.suggestions.forEach { echo("  - $it") }
             echo("")
-            
+
             if (context.artifacts.isNotEmpty()) {
                 echo("Artifacts: ${context.artifacts.joinToString(", ")}")
             }
-            
+
             if (context.strategySuggestions.isNotEmpty()) {
                 echo("")
                 echo("Strategy suggestions:")
@@ -278,34 +286,38 @@ class FilesContext : CliktCommand(name = "files", help = "Get context for multip
  * Get enhanced context (requires discovery cache).
  */
 class EnhancedContext : CliktCommand(name = "enhanced", help = "Get enhanced context (requires discovery cache)") {
-    
+
     private val log = LoggerFactory.getLogger(EnhancedContext::class.java)
-    
+
     private val path by option("--path", "-p", help = "File path").required()
-    private val task by option("--task", "-t", help = "Task type (debug, refactor, add feature, fix bug, optimize)").default("discovery")
+    private val task by option(
+        "--task",
+        "-t",
+        help = "Task type (debug, refactor, add feature, fix bug, optimize)"
+    ).default("discovery")
     private val project by option("--project", help = "Project root").default(".")
-    
+
     override fun run() {
         log.info("[CLI] Context enhanced command for: $path, task: $task")
-        
+
         val projectRoot = File(project).absoluteFile
         if (!projectRoot.exists()) {
             echo("Error: Project root does not exist: $project", err = true)
             throw IllegalArgumentException("Project root does not exist: $project")
         }
-        
+
         // Convert absolute path to relative path if necessary
         val filePath = if (File(path).isAbsolute) {
             File(path).relativeTo(projectRoot).path
         } else {
             path
         }
-        
+
         val contextProvider = ContextProvider(
             projectRoot = projectRoot.path,
             cacheStore = FileCacheStore(projectRoot)
         )
-        
+
         // Check cache first
         val modulePath = extractModulePath(filePath)
         if (!contextProvider.hasDiscoveryCache(modulePath)) {
@@ -314,18 +326,18 @@ class EnhancedContext : CliktCommand(name = "enhanced", help = "Get enhanced con
             echo("  i2vision discover --intent=full_discovery", err = true)
             throw IllegalArgumentException("No discovery cache found")
         }
-        
+
         // Get enhanced context
         val context = runBlocking {
             contextProvider.getEnhancedContext(filePath, task)
         }
-        
+
         if (context.success) {
             echo("=== Enhanced Context ===")
             echo("File: ${context.filePath}")
             echo("[ENHANCED] Discovery cache active")
             echo("")
-            
+
             // Flows
             if (context.flows.isNotEmpty()) {
                 echo("Flows: ${context.flows.size}")
@@ -337,7 +349,7 @@ class EnhancedContext : CliktCommand(name = "enhanced", help = "Get enhanced con
                 }
                 echo("")
             }
-            
+
             // Business Rules
             if (context.businessRules.isNotEmpty()) {
                 echo("Business Rules: ${context.businessRules.size}")
@@ -349,14 +361,14 @@ class EnhancedContext : CliktCommand(name = "enhanced", help = "Get enhanced con
                 }
                 echo("")
             }
-            
+
             // Component
             context.component?.let { comp ->
                 echo("Component: ${comp.name} (cohesion: ${String.format("%.2f", comp.cohesion)})")
                 echo("Files: ${comp.files.size}")
                 echo("")
             }
-            
+
             // Related Components
             if (context.relatedComponents.isNotEmpty()) {
                 echo("Related Components:")
@@ -368,12 +380,12 @@ class EnhancedContext : CliktCommand(name = "enhanced", help = "Get enhanced con
                 }
                 echo("")
             }
-            
+
             // Basic context (always show)
             echo("Symbols: ${context.symbols.size}")
             echo("Related files: ${context.relatedFiles.size}")
             echo("")
-            
+
             if (context.symbols.isNotEmpty()) {
                 echo("Symbols:")
                 context.symbols.take(20).forEach { symbol ->
@@ -384,7 +396,7 @@ class EnhancedContext : CliktCommand(name = "enhanced", help = "Get enhanced con
                 }
                 echo("")
             }
-            
+
             if (context.relatedFiles.isNotEmpty()) {
                 echo("Related files:")
                 context.relatedFiles.take(10).forEach { file ->
@@ -395,16 +407,16 @@ class EnhancedContext : CliktCommand(name = "enhanced", help = "Get enhanced con
                 }
                 echo("")
             }
-            
+
             echo("Task: ${context.taskContext.task}")
             echo("Suggestions:")
             context.taskContext.suggestions.forEach { echo("  - $it") }
             echo("")
-            
+
             if (context.artifacts.isNotEmpty()) {
                 echo("Artifacts: ${context.artifacts.joinToString(", ")}")
             }
-            
+
             val complexity = context.complexityDetails
             if (complexity != null) {
                 echo("")
@@ -413,7 +425,7 @@ class EnhancedContext : CliktCommand(name = "enhanced", help = "Get enhanced con
                 echo("Cognitive Complexity: ${complexity.cognitiveComplexity}")
                 echo("Maintainability Index: ${complexity.maintainabilityIndex}")
             }
-            
+
             if (context.strategySuggestions.isNotEmpty()) {
                 echo("")
                 echo("Strategy suggestions:")
@@ -432,27 +444,27 @@ class EnhancedContext : CliktCommand(name = "enhanced", help = "Get enhanced con
  * Cache management for context.
  */
 class CacheContext : CliktCommand(name = "cache", help = "Context cache management") {
-    
+
     private val log = LoggerFactory.getLogger(CacheContext::class.java)
-    
+
     private val action by argument("action", help = "Action: stats, clean, invalidate")
     private val pattern by option("--pattern", help = "Pattern for invalidate action")
     private val project by option("--project", help = "Project root").default(".")
-    
+
     override fun run() {
         log.info("[CLI] Context cache command with action: $action")
-        
+
         val projectRoot = File(project).absoluteFile
         if (!projectRoot.exists()) {
             echo("Error: Project root does not exist: $project", err = true)
             throw IllegalArgumentException("Project root does not exist: $project")
         }
-        
+
         val contextProvider = ContextProvider(
             projectRoot = projectRoot.path,
             cacheStore = FileCacheStore(projectRoot)
         )
-        
+
         when (action.lowercase()) {
             "stats" -> showCacheStats(contextProvider)
             "clean" -> cleanCache(contextProvider)
@@ -463,7 +475,7 @@ class CacheContext : CliktCommand(name = "cache", help = "Context cache manageme
             }
         }
     }
-    
+
     private fun showCacheStats(contextProvider: ContextProvider) {
         val stats = contextProvider.getCacheStats()
         echo("Cache Statistics:")
@@ -471,12 +483,12 @@ class CacheContext : CliktCommand(name = "cache", help = "Context cache manageme
         echo("  Expired entries: ${stats.expiredEntries}")
         echo("  Valid entries: ${stats.validEntries}")
     }
-    
+
     private fun cleanCache(contextProvider: ContextProvider) {
         contextProvider.cleanCache()
         echo("Cache cleaned successfully")
     }
-    
+
     private fun invalidateCache(contextProvider: ContextProvider) {
         val patternValue = pattern ?: run {
             echo("Error: --pattern required for invalidate action", err = true)

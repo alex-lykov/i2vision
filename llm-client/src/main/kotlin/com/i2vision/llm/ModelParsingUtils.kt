@@ -9,9 +9,9 @@ import kotlinx.serialization.json.jsonPrimitive
  * Common utilities for parsing model information from Ollama API responses
  */
 object ModelParsingUtils {
-    
+
     private val json = Json { ignoreUnknownKeys = true }
-    
+
     /**
      * Parse models from Ollama API response
      */
@@ -23,30 +23,30 @@ object ModelParsingUtils {
         return try {
             val jsonObject = json.decodeFromString<JsonObject>(response)
             val modelsArray = jsonObject["models"]?.jsonArray ?: return emptyList()
-            
+
             modelsArray.mapNotNull { modelElement ->
                 val modelObj = modelElement as? JsonObject ?: return@mapNotNull null
                 val name = modelObj["name"]?.jsonPrimitive?.content ?: return@mapNotNull null
-                
+
                 // Parse model info from API response
                 val size = modelObj["size"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
                 val digest = modelObj["digest"]?.jsonPrimitive?.content ?: "unknown"
                 val modified = modelObj["modified_at"]?.jsonPrimitive?.content ?: "unknown"
-                
+
                 // Extract model name and tag
                 val parts = name.split(":")
                 val modelName = parts[0]
                 val tag = parts.getOrNull(1) ?: "latest"
-                
+
                 // Create model ID based on repository type
                 val modelId = when (repositoryType) {
                     RepositoryType.LOCAL_OLLAMA -> name
                     else -> "${repositoryType.name.lowercase()}:$name"
                 }
-                
+
                 // Infer context length
                 val contextLength = inferContextLength(name)
-                
+
                 OllamaModelMetadata(
                     id = modelId,
                     name = modelName,
@@ -64,7 +64,7 @@ object ModelParsingUtils {
             emptyList()
         }
     }
-    
+
     /**
      * Parse real token counts from Ollama /api/generate response (final chunk when done=true).
      * Returns (prompt_eval_count, eval_count) or fallbacks when API doesn't provide them.
@@ -101,7 +101,7 @@ object ModelParsingUtils {
             else -> 4096
         }
     }
-    
+
     /**
      * Format file size in human-readable format
      */
@@ -131,10 +131,10 @@ data class OllamaModelMetadata(
     val layers: Int = 0,
     val error: String? = null
 ) : ModelMetadata {
-    
+
     override val formattedSize: String
         get() = ModelParsingUtils.formatFileSize(size)
-    
+
     override val displayName: String
         get() = when (repositoryType) {
             RepositoryType.LOCAL_OLLAMA -> "$name:$tag"

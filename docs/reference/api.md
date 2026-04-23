@@ -3,6 +3,7 @@
 Complete API documentation for i2vision.
 
 ## Base URL
+
 ```
 http://localhost:3001
 ```
@@ -12,9 +13,11 @@ http://localhost:3001
 ## Context Endpoints
 
 ### GET /context/health
+
 Health check endpoint.
 
 **Response:**
+
 ```json
 {
   "status": "healthy",
@@ -23,18 +26,22 @@ Health check endpoint.
 ```
 
 ### GET /context/quick
+
 Quick context with auto-detection.
 
 **Parameters:**
+
 - `q` (required): File path or query
 - `type` (optional): `file`, `dir`, or `auto` (default: `auto`)
 
 **Example:**
+
 ```bash
 curl "http://localhost:3001/context/quick?q=src/main/Application.kt"
 ```
 
 **Response:**
+
 ```json
 {
   "query": "src/main/Application.kt",
@@ -47,24 +54,28 @@ curl "http://localhost:3001/context/quick?q=src/main/Application.kt"
 ```
 
 ### GET /context/file
+
 Task-specific context for a file.
 
 **Parameters:**
+
 - `path` (required): File path
 - `task` (optional): Task type (default: `code_analysis`)
-  - `debug` - Debug mode with error analysis
-  - `refactor` - Refactoring with dependency analysis
-  - `testing` - Test coverage and quality
-  - `security` - Security vulnerability scan
-  - `performance` - Performance bottleneck analysis
-  - `feature` - Feature development context
+    - `debug` - Debug mode with error analysis
+    - `refactor` - Refactoring with dependency analysis
+    - `testing` - Test coverage and quality
+    - `security` - Security vulnerability scan
+    - `performance` - Performance bottleneck analysis
+    - `feature` - Feature development context
 
 **Example:**
+
 ```bash
 curl "http://localhost:3001/context/file?path=Application.kt&task=refactor"
 ```
 
 **Response:**
+
 ```json
 {
   "content": "# Refactoring Context for Application.kt\n...",
@@ -76,17 +87,21 @@ curl "http://localhost:3001/context/file?path=Application.kt&task=refactor"
 ```
 
 ### GET /context/suggest
+
 Get strategy suggestions for a file.
 
 **Parameters:**
+
 - `path` (required): File path
 
 **Example:**
+
 ```bash
 curl "http://localhost:3001/context/suggest?path=Application.kt"
 ```
 
 **Response:**
+
 ```json
 {
   "path": "Application.kt",
@@ -106,18 +121,22 @@ curl "http://localhost:3001/context/suggest?path=Application.kt"
 ## Analysis Endpoints
 
 ### GET /analyze/refactor
+
 Get LLM-powered refactoring suggestions for a module.
 
 **Parameters:**
+
 - `path` (required): Module path
 - `target` (optional): Specific target path within module
 
 **Example:**
+
 ```bash
 curl "http://localhost:3001/analyze/refactor?path=core/orchestrator"
 ```
 
 **Response:**
+
 ```json
 {
   "module": "core/orchestrator",
@@ -165,18 +184,22 @@ curl "http://localhost:3001/analyze/refactor?path=core/orchestrator"
 ---
 
 ### GET /analyze/compare
+
 Compare two modules for cross-module analysis.
 
 **Parameters:**
+
 - `module1` (required): First module name
 - `module2` (required): Second module name
 
 **Example:**
+
 ```bash
 curl "http://localhost:3001/analyze/compare?module1=core/orchestrator&module2=core/mcp"
 ```
 
 **Response:**
+
 ```json
 {
   "module1": "core/orchestrator",
@@ -208,18 +231,22 @@ curl "http://localhost:3001/analyze/compare?module1=core/orchestrator&module2=co
 ## Intelligence Endpoints
 
 ### POST /intelligence/proactive/file-opened
+
 Proactively get context when a file is opened.
 
 **Parameters:**
+
 - `path` (required): Opened file path
 - `userId` (optional): User identifier (default: `default`)
 
 **Example:**
+
 ```bash
 curl "http://localhost:3001/intelligence/proactive/file-opened?path=Application.kt&userId=user123"
 ```
 
 **Response:**
+
 ```json
 {
   "primaryContext": {
@@ -240,18 +267,22 @@ curl "http://localhost:3001/intelligence/proactive/file-opened?path=Application.
 ```
 
 ### POST /intelligence/proactive/task-started
+
 Pre-fetch context when starting a task.
 
 **Parameters:**
+
 - `task` (required): Task description
 - `files` (optional): Comma-separated list of current files
 
 **Example:**
+
 ```bash
 curl "http://localhost:3001/intelligence/proactive/task-started?task=Fix%20authentication%20bug&files=Auth.kt,User.kt"
 ```
 
 **Response:**
+
 ```json
 {
   "taskType": "debug",
@@ -262,18 +293,22 @@ curl "http://localhost:3001/intelligence/proactive/task-started?task=Fix%20authe
 ```
 
 ### POST /intelligence/enhance-request
+
 Enhance an LLM request with project context.
 
 **Parameters:**
+
 - `request` (required): Original LLM request
 - `userId` (optional): User identifier (default: `default`)
 
 **Example:**
+
 ```bash
 curl "http://localhost:3001/intelligence/enhance-request?request=How%20does%20authentication%20work?"
 ```
 
 **Response:**
+
 ```json
 {
   "originalRequest": "How does authentication work?",
@@ -292,17 +327,21 @@ curl "http://localhost:3001/intelligence/enhance-request?request=How%20does%20au
 ```
 
 ### GET /intelligence/quality
+
 Get comprehensive quality metrics for a file.
 
 **Parameters:**
+
 - `path` (required): File path
 
 **Example:**
+
 ```bash
 curl "http://localhost:3001/intelligence/quality?path=Application.kt"
 ```
 
 **Response:**
+
 ```json
 {
   "cohesionScore": 0.75,
@@ -346,20 +385,24 @@ curl "http://localhost:3001/intelligence/quality?path=Application.kt"
 ```
 
 ### POST /intelligence/feedback
+
 Record user feedback on context quality.
 
 **Parameters:**
+
 - `contextId` (required): Context identifier
 - `helpful` (required): Boolean (true/false)
 - `rating` (optional): Rating 1-5 (default: 3)
 - `comment` (optional): Feedback comment
 
 **Example:**
+
 ```bash
 curl -X POST "http://localhost:3001/intelligence/feedback?contextId=ctx123&helpful=true&rating=5&comment=Very%20helpful"
 ```
 
 **Response:**
+
 ```json
 {
   "status": "success",
@@ -368,18 +411,22 @@ curl -X POST "http://localhost:3001/intelligence/feedback?contextId=ctx123&helpf
 ```
 
 ### GET /intelligence/strategy-recommend
+
 Get AI-recommended strategy for a file and task.
 
 **Parameters:**
+
 - `path` (required): File path
 - `task` (optional): Task type (default: `code_analysis`)
 
 **Example:**
+
 ```bash
 curl "http://localhost:3001/intelligence/strategy-recommend?path=Application.kt&task=refactor"
 ```
 
 **Response:**
+
 ```json
 {
   "recommendedStrategy": "component-boundaries",
@@ -396,14 +443,17 @@ curl "http://localhost:3001/intelligence/strategy-recommend?path=Application.kt&
 ```
 
 ### GET /intelligence/learning-insights
+
 Get insights from the learning loop.
 
 **Example:**
+
 ```bash
 curl "http://localhost:3001/intelligence/learning-insights"
 ```
 
 **Response:**
+
 ```json
 {
   "totalContextsTracked": 1247,
@@ -429,28 +479,36 @@ curl "http://localhost:3001/intelligence/learning-insights"
 ## Quality Metrics Explained
 
 ### Cohesion Score (0-1)
+
 How well the internals of a module belong together. Higher is better.
+
 - **0.8-1.0**: Excellent - Single, well-defined responsibility
 - **0.6-0.8**: Good - Mostly cohesive with minor issues
 - **0.4-0.6**: Fair - Some unrelated functionality
 - **0.0-0.4**: Poor - Multiple responsibilities, needs refactoring
 
 ### Coupling Score (0-1)
+
 How tightly a module depends on others. Lower is better.
+
 - **0.0-0.3**: Excellent - Minimal dependencies
 - **0.3-0.5**: Good - Reasonable coupling
 - **0.5-0.7**: Fair - High coupling, consider refactoring
 - **0.7-1.0**: Poor - Very high coupling, difficult to maintain
 
 ### Complexity Score (0-1)
+
 Cyclomatic complexity normalized. Lower is better.
+
 - **0.0-0.3**: Simple - Easy to understand
 - **0.3-0.5**: Moderate - Acceptable complexity
 - **0.5-0.7**: Complex - Consider simplification
 - **0.7-1.0**: Very Complex - High risk, needs refactoring
 
 ### Maintainability Index (0-1)
+
 Overall code health. Higher is better.
+
 - **0.8-1.0**: Excellent - Easy to maintain
 - **0.6-0.8**: Good - Acceptable maintenance burden
 - **0.4-0.6**: Fair - Significant effort needed
@@ -460,21 +518,22 @@ Overall code health. Higher is better.
 
 ## Task Types
 
-| Task | Purpose | Context Focus |
-|------|---------|---------------|
-| `code_analysis` | General code review | Structure, patterns, quality |
-| `debug` | Fix bugs/errors | Dependencies, error paths, state |
-| `refactor` | Improve code structure | Coupling, cohesion, patterns |
-| `testing` | Write/improve tests | Coverage, test files, assertions |
-| `security` | Security review | Vulnerabilities, auth, validation |
-| `performance` | Optimize performance | Bottlenecks, algorithms, resources |
-| `feature` | Add new features | Architecture, integration points |
+| Task            | Purpose                | Context Focus                      |
+|-----------------|------------------------|------------------------------------|
+| `code_analysis` | General code review    | Structure, patterns, quality       |
+| `debug`         | Fix bugs/errors        | Dependencies, error paths, state   |
+| `refactor`      | Improve code structure | Coupling, cohesion, patterns       |
+| `testing`       | Write/improve tests    | Coverage, test files, assertions   |
+| `security`      | Security review        | Vulnerabilities, auth, validation  |
+| `performance`   | Optimize performance   | Bottlenecks, algorithms, resources |
+| `feature`       | Add new features       | Architecture, integration points   |
 
 ---
 
 ## Best Practices
 
 ### 1. Use Task-Specific Context
+
 ```javascript
 // ✅ Good - Task-specific optimization
 const ctx = await fetch(`/context/file?path=${file}&task=refactor`);
@@ -484,6 +543,7 @@ const ctx = await fetch(`/context/quick?q=${file}`);
 ```
 
 ### 2. Leverage Proactive Context
+
 ```javascript
 // ✅ Proactively fetch when file opens
 onFileOpen(async (file) => {
@@ -493,12 +553,14 @@ onFileOpen(async (file) => {
 ```
 
 ### 3. Provide Feedback
+
 ```javascript
 // ✅ Help the system learn
 await fetch(`/intelligence/feedback?contextId=${id}&helpful=true&rating=5`);
 ```
 
 ### 4. Use Quality Metrics
+
 ```javascript
 // ✅ Get comprehensive quality analysis
 const quality = await fetch(`/intelligence/quality?path=${file}`);
@@ -508,6 +570,7 @@ if (quality.refactoringPriority === 'HIGH') {
 ```
 
 ### 5. Check Learning Insights
+
 ```javascript
 // ✅ Monitor system improvement
 const insights = await fetch(`/intelligence/learning-insights`);
@@ -519,6 +582,7 @@ console.log(`System improvement: ${insights.overallSystemImprovement * 100}%`);
 ## Integration Examples
 
 ### Claude Desktop MCP Tool
+
 ```json
 {
   "mcpServers": {
@@ -535,6 +599,7 @@ console.log(`System improvement: ${insights.overallSystemImprovement * 100}%`);
 ```
 
 ### VSCode Extension
+
 ```typescript
 import axios from 'axios';
 
@@ -558,6 +623,7 @@ const i2visionContext = {
 ```
 
 ### Python Script
+
 ```python
 import requests
 

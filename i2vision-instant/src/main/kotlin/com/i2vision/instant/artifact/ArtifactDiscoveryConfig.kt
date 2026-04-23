@@ -16,13 +16,13 @@ data class ArtifactDiscoveryConfig(
         val maxItems: Int = 100,                        // Max items to load
         val mergeStrategy: MergeStrategy = MergeStrategy.APPEND
     )
-    
+
     enum class MergeStrategy {
         APPEND,     // Add all artifacts
         REPLACE,    // Replace with newest
         MERGE       // Smart merge by ID
     }
-    
+
     companion object {
         /**
          * Default VSLFC configuration - can be overridden
@@ -56,7 +56,7 @@ data class ArtifactDiscoveryConfig(
                 )
             )
         )
-        
+
         /**
          * Generic configuration - loads everything
          */
@@ -69,20 +69,21 @@ data class ArtifactDiscoveryConfig(
                 )
             )
         )
-        
+
         /**
          * Load from YAML file
          */
         fun fromYaml(content: String): ArtifactDiscoveryConfig {
             val yaml = Yaml()
+
             @Suppress("UNCHECKED_CAST")
             val map = yaml.load(content) as? Map<String, Any> ?: return defaultVslfc()
-            
+
             val layersMap = mutableMapOf<String, LayerConfig>()
             (map["layers"] as? Map<String, Any>)?.forEach { (layerName, layerConfig) ->
                 @Suppress("UNCHECKED_CAST")
                 val config = layerConfig as? Map<String, Any> ?: return@forEach
-                
+
                 layersMap[layerName] = LayerConfig(
                     patterns = (config["patterns"] as? List<String>) ?: emptyList(),
                     required = (config["required"] as? Boolean) ?: false,
@@ -94,7 +95,7 @@ data class ArtifactDiscoveryConfig(
                     }
                 )
             }
-            
+
             return ArtifactDiscoveryConfig(
                 layers = layersMap,
                 defaultPatterns = (map["defaultPatterns"] as? List<String>) ?: listOf("*.yaml", "*.yml")

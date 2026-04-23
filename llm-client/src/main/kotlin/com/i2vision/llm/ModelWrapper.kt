@@ -60,7 +60,10 @@ class LocalModelWrapper(
                     generateStreamingAggregate(client, prompt)
                 }
                 .getOrElse { failure ->
-                    throw IllegalStateException("Ollama /api/generate failed after fallback: ${failure.message}", failure)
+                    throw IllegalStateException(
+                        "Ollama /api/generate failed after fallback: ${failure.message}",
+                        failure
+                    )
                 }
         }
     }
@@ -254,16 +257,16 @@ class CloudModelWrapper(
                 ),
                 systemPrompt = systemPrompt
             )
-            
+
             val startTime = System.currentTimeMillis()
             val response = agent.run(prompt)
             val responseTime = System.currentTimeMillis() - startTime
-            
+
             // Record performance metrics
             val tokensUsed = estimateTokens(prompt)
             val tokensGenerated = estimateTokens(response)
             performanceMonitor?.recordMetric(responseTime, tokensUsed, tokensGenerated)
-            
+
             // Emit response in chunks for streaming effect
             val chunkSize = 50
             var offset = 0

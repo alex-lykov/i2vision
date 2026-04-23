@@ -7,9 +7,9 @@ import org.slf4j.LoggerFactory
  * Provides strategy-aware context generation and suggestions
  */
 object StrategyLibrary {
-    
+
     private val log = LoggerFactory.getLogger(StrategyLibrary::class.java)
-    
+
     enum class StrategyCategory {
         ARCHITECTURE,
         DOCUMENTATION,
@@ -17,7 +17,7 @@ object StrategyLibrary {
         DEVELOPMENT,
         QUALITY
     }
-    
+
     data class Strategy(
         val id: String,
         val category: StrategyCategory,
@@ -27,7 +27,7 @@ object StrategyLibrary {
         val prompt: String,
         val estimatedTime: String
     )
-    
+
     data class StrategySuggestion(
         val id: String,
         val name: String,
@@ -35,94 +35,132 @@ object StrategyLibrary {
         val priority: String,
         val icon: String
     )
-    
+
     /**
      * Get all available strategies
      */
     fun getAllStrategies(): List<Strategy> {
         return strategies
     }
-    
+
     /**
      * Find strategy by ID
      */
     fun findStrategy(id: String): Strategy? {
         return strategies.find { it.id == id }
     }
-    
+
     /**
      * Detect strategy from task hint
      */
     fun detectStrategyFromTask(taskHint: String): Strategy? {
         return when (taskHint.lowercase()) {
-            "debug", "debugging", "error", "troubleshoot" -> 
+            "debug", "debugging", "error", "troubleshoot" ->
                 findStrategy("gap-analysis")
-            "refactor", "refactoring", "restructure", "cleanup" -> 
+
+            "refactor", "refactoring", "restructure", "cleanup" ->
                 findStrategy("component-boundaries")
-            "feature", "development", "implement", "enhance" -> 
-                findStrategy("architecture-overview") 
+
+            "feature", "development", "implement", "enhance" ->
+                findStrategy("architecture-overview")
+
             "test", "testing", "coverage", "quality" ->
                 findStrategy("test-coverage")
+
             "security", "audit", "vulnerability" ->
                 findStrategy("security-audit")
+
             "performance", "optimize", "speed" ->
                 findStrategy("performance-analysis")
+
             "documentation", "docs", "readme" ->
                 findStrategy("quick-start")
+
             "architecture", "design", "structure" ->
                 findStrategy("architecture-overview")
+
             else -> null
         }
     }
-    
+
     /**
      * Get suggested strategies based on confidence and context
      */
     fun getSuggestedStrategies(confidence: Double, fileType: String = "unknown"): List<StrategySuggestion> {
         val baseSuggestions = when {
             confidence < 0.3 -> listOf(
-                StrategySuggestion("quick-start", "Generate documentation", "Low context confidence - create foundational documentation", "high", "rocket"),
-                StrategySuggestion("component-boundaries", "Identify structure", "Medium", "architecture", "architecture"),
+                StrategySuggestion(
+                    "quick-start",
+                    "Generate documentation",
+                    "Low context confidence - create foundational documentation",
+                    "high",
+                    "rocket"
+                ),
+                StrategySuggestion(
+                    "component-boundaries",
+                    "Identify structure",
+                    "Medium",
+                    "architecture",
+                    "architecture"
+                ),
                 StrategySuggestion("gap-analysis", "Find missing context", "High", "search", "search")
             )
+
             confidence < 0.6 -> listOf(
                 StrategySuggestion("gap-analysis", "Find missing context", "High", "chart", "chart"),
                 StrategySuggestion("drift-detection", "Check consistency", "Medium", "target", "target"),
                 StrategySuggestion("dependency-audit", "Review dependencies", "Medium", "link", "link")
             )
+
             confidence < 0.8 -> listOf(
-                StrategySuggestion("architecture-overview", "Broader architectural view", "Medium", "architecture", "architecture"),
+                StrategySuggestion(
+                    "architecture-overview",
+                    "Broader architectural view",
+                    "Medium",
+                    "architecture",
+                    "architecture"
+                ),
                 StrategySuggestion("api-contracts", "Validate interfaces", "Medium", "api", "api"),
                 StrategySuggestion("performance-analysis", "Optimize performance", "Low", "performance", "performance")
             )
+
             else -> listOf(
                 StrategySuggestion("security-audit", "Security review", "Low", "security", "security"),
                 StrategySuggestion("test-coverage", "Enhance testing", "Low", "tests", "tests"),
-                StrategySuggestion("maintainability-check", "Code health review", "Low", "maintainability", "maintainability")
+                StrategySuggestion(
+                    "maintainability-check",
+                    "Code health review",
+                    "Low",
+                    "maintainability",
+                    "maintainability"
+                )
             )
         }
-        
+
         return baseSuggestions + getFileTypeSpecificSuggestions(fileType)
     }
-    
+
     private fun getFileTypeSpecificSuggestions(fileType: String): List<StrategySuggestion> {
         return when (fileType.lowercase()) {
             "kotlin", "kt" -> listOf(
                 StrategySuggestion("code-quality-check", "Kotlin code analysis", "medium", "quality", "quality"),
                 StrategySuggestion("test-coverage", "Unit test analysis", "low", "tests", "tests")
             )
+
             "yaml", "yml" -> listOf(
                 StrategySuggestion("configuration-audit", "Config validation", "medium", "config", "config"),
                 StrategySuggestion("security-audit", "Config security check", "high", "security", "security")
             )
+
             "gradle", "gradle.kts" -> listOf(
                 StrategySuggestion("dependency-audit", "Build dependency analysis", "high", "link", "link"),
                 StrategySuggestion("build-optimization", "Build performance", "medium", "performance", "performance")
             )
+
             else -> emptyList()
         }
     }
-    
+
     // Pre-defined strategies
     private val strategies = listOf(
         // Architecture Strategies

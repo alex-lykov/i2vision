@@ -18,31 +18,31 @@ class UnifiedModelService(
     private val _models = MutableStateFlow<List<OllamaModelMetadata>>(emptyList())
     private val _isLoading = MutableStateFlow(false)
     private val _errors = MutableStateFlow<List<String>>(emptyList())
-    
+
     val models: Flow<List<OllamaModelMetadata>> = _models.asStateFlow()
     val isLoading: Flow<Boolean> = _isLoading.asStateFlow()
     val errors: Flow<List<String>> = _errors.asStateFlow()
-    
+
     /**
      * Scan all repositories and update the model list
      */
     suspend fun refreshAllModels(): Result<List<OllamaModelMetadata>> = withContext(Dispatchers.IO) {
         _isLoading.value = true
         _errors.value = emptyList()
-        
+
         try {
             val allModels = mutableListOf<OllamaModelMetadata>()
             val errors = mutableListOf<String>()
-            
+
             repositories.forEach { repository: ModelRepository ->
                 try {
                     val result = repository.scanModels()
                     result.fold(
-                        onSuccess = { models: List<OllamaModelMetadata> -> 
+                        onSuccess = { models: List<OllamaModelMetadata> ->
                             allModels.addAll(models)
                             println("[UNIFIED] Successfully scanned ${models.size} models from ${repository.repositoryType}")
                         },
-                        onFailure = { error: Throwable -> 
+                        onFailure = { error: Throwable ->
                             val errorMsg = "Failed to scan ${repository.repositoryType}: ${error.message ?: "null"}"
                             println("[UNIFIED] $errorMsg")
                             errors.add(errorMsg)
@@ -54,10 +54,10 @@ class UnifiedModelService(
                     errors.add(errorMsg)
                 }
             }
-            
+
             _models.value = allModels
             _errors.value = errors
-            
+
             // Return success if we found any models, even if some repositories failed
             if (allModels.isNotEmpty()) {
                 println("[UNIFIED] Returning ${allModels.size} models (with ${errors.size} repository errors)")
@@ -75,7 +75,7 @@ class UnifiedModelService(
             _isLoading.value = false
         }
     }
-    
+
     /**
      * Get a specific model by ID from any repository
      */
@@ -97,14 +97,14 @@ class UnifiedModelService(
         }
         Result.success(null)
     }
-    
+
     /**
      * Get models by repository type
      */
     fun getModelsByType(repositoryType: RepositoryType): List<OllamaModelMetadata> {
         return _models.value.filter { it.repositoryType == repositoryType }
     }
-    
+
     /**
      * Get models by name pattern
      */
@@ -112,10 +112,10 @@ class UnifiedModelService(
         val lowercaseQuery = query.lowercase()
         return _models.value.filter { model ->
             model.name.lowercase().contains(lowercaseQuery) ||
-            model.displayName.lowercase().contains(lowercaseQuery)
+                    model.displayName.lowercase().contains(lowercaseQuery)
         }
     }
-    
+
     /**
      * Add a new repository
      */
@@ -124,7 +124,7 @@ class UnifiedModelService(
         // For now, we'll assume repositories are immutable after creation
         throw UnsupportedOperationException("Repositories are immutable after creation")
     }
-    
+
     /**
      * Check if any repository is available
      */
@@ -137,19 +137,19 @@ class UnifiedModelService(
             }
         }
     }
-    
+
     /**
      * Get current model count
      */
     fun getModelCount(): Int = _models.value.size
-    
+
     /**
      * Get model count by type
      */
     fun getModelCountByType(repositoryType: RepositoryType): Int {
         return getModelsByType(repositoryType).size
     }
-    
+
     /**
      * Close all repositories and HTTP client
      */
@@ -169,7 +169,7 @@ class UnifiedModelService(
  * Factory for creating UnifiedModelService instances
  */
 object UnifiedModelServiceFactory {
-    
+
     /**
      * Create a service with local Ollama repository
      */
@@ -177,7 +177,7 @@ object UnifiedModelServiceFactory {
         val localRepo = LocalOllamaRepository(ollamaUrl)
         return UnifiedModelService(listOf(localRepo))
     }
-    
+
     /**
      * Create a service with cloud repositories
      */
@@ -187,7 +187,7 @@ object UnifiedModelServiceFactory {
         }
         return UnifiedModelService(cloudRepos)
     }
-    
+
     /**
      * Create a service with both local and cloud repositories
      */

@@ -22,10 +22,10 @@ dependencies {
     implementation(project(":discovery-api"))
     implementation(project(":architecture-types"))
     implementation(project(":conf-agent-core"))
-    
+
     // YAML config parsing
     implementation("org.yaml:snakeyaml:2.2")
-    
+
     // Test frameworks - JUnit 4 for compatibility with existing tests
     testImplementation(kotlin("test"))
     testImplementation("junit:junit:4.13.2")

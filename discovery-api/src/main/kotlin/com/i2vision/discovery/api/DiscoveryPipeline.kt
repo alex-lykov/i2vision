@@ -12,7 +12,7 @@ import com.i2vision.discover.api.models.DiscoveryIntent
  * allowing orchestrator to depend on the interface rather than the concrete implementation.
  */
 interface DiscoveryPipeline {
-    
+
     /**
      * Main entry point for depth-aware discovery.
      * Routes to appropriate strategy based on depth level.
@@ -27,7 +27,7 @@ interface DiscoveryPipeline {
         clusterId: String? = null,
         contracts: List<ContractHint> = emptyList()
     ): PipelineResult
-    
+
     /**
      * Intent-based discovery entry point.
      * Resolves intent to parameter set and executes discovery.

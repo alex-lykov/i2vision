@@ -17,17 +17,18 @@ class ContractLoaderTest {
     fun `should return null when contract file does not exist`() {
         val loader = ContractLoader(contractsDir = tempDir.absolutePath)
         val contract = loader.loadContract("nonexistent")
-        
+
         assertNull(contract)
     }
 
     @Test
     fun `should load contract from file`() {
         val loader = ContractLoader(contractsDir = tempDir.absolutePath)
-        
+
         // Create a test contract file
         val contractFile = File(tempDir, "test-contract.yaml")
-        contractFile.writeText("""
+        contractFile.writeText(
+            """
             contract:
               name: test-contract
               version: "1.0"
@@ -39,10 +40,11 @@ class ContractLoaderTest {
               depth: STANDARD
               include_patterns:
                 - "**/*.kt"
-        """.trimIndent())
-        
+        """.trimIndent()
+        )
+
         val contract = loader.loadContract("test-contract")
-        
+
         assertNotNull(contract)
         assertEquals("test-contract", contract.metadata.name)
         assertEquals("1.0", contract.metadata.version)
@@ -52,23 +54,25 @@ class ContractLoaderTest {
     @Test
     fun `should cache loaded contracts`() {
         val loader = ContractLoader(contractsDir = tempDir.absolutePath)
-        
+
         val contractFile = File(tempDir, "cache-test.yaml")
-        contractFile.writeText("""
+        contractFile.writeText(
+            """
             contract:
               name: cache-test
               version: "1.0"
               target_layers: ["all"]
-        """.trimIndent())
-        
+        """.trimIndent()
+        )
+
         // First load
         val first = loader.loadContract("cache-test")
         assertNotNull(first)
-        
+
         // Second load should use cache
         val second = loader.loadContract("cache-test")
         assertNotNull(second)
-        
+
         // Verify cache stats
         val stats = loader.getCacheStats()
         assertTrue(stats.size > 0)
@@ -77,18 +81,20 @@ class ContractLoaderTest {
     @Test
     fun `should clear cache`() {
         val loader = ContractLoader(contractsDir = tempDir.absolutePath)
-        
+
         val contractFile = File(tempDir, "clear-test.yaml")
-        contractFile.writeText("""
+        contractFile.writeText(
+            """
             contract:
               name: clear-test
               version: "1.0"
               target_layers: ["all"]
-        """.trimIndent())
-        
+        """.trimIndent()
+        )
+
         loader.loadContract("clear-test")
         assertTrue(loader.getCacheStats().size > 0)
-        
+
         loader.clearCache()
         assertEquals(0, loader.getCacheStats().size)
     }
@@ -96,23 +102,27 @@ class ContractLoaderTest {
     @Test
     fun `should list contract names`() {
         val loader = ContractLoader(contractsDir = tempDir.absolutePath)
-        
-        File(tempDir, "contract1.yaml").writeText("""
+
+        File(tempDir, "contract1.yaml").writeText(
+            """
             contract:
               name: contract1
               version: "1.0"
               target_layers: ["all"]
-        """.trimIndent())
-        
-        File(tempDir, "contract2.yaml").writeText("""
+        """.trimIndent()
+        )
+
+        File(tempDir, "contract2.yaml").writeText(
+            """
             contract:
               name: contract2
               version: "1.0"
               target_layers: ["all"]
-        """.trimIndent())
-        
+        """.trimIndent()
+        )
+
         val names = loader.listContractNames()
-        
+
         assertTrue(names.contains("contract1"))
         assertTrue(names.contains("contract2"))
     }
@@ -120,23 +130,27 @@ class ContractLoaderTest {
     @Test
     fun `should load contracts by layer`() {
         val loader = ContractLoader(contractsDir = tempDir.absolutePath)
-        
-        File(tempDir, "vision-contract.yaml").writeText("""
+
+        File(tempDir, "vision-contract.yaml").writeText(
+            """
             contract:
               name: vision-contract
               version: "1.0"
               target_layers: ["vision"]
-        """.trimIndent())
-        
-        File(tempDir, "all-contract.yaml").writeText("""
+        """.trimIndent()
+        )
+
+        File(tempDir, "all-contract.yaml").writeText(
+            """
             contract:
               name: all-contract
               version: "1.0"
               target_layers: ["all"]
-        """.trimIndent())
-        
+        """.trimIndent()
+        )
+
         val visionContracts = loader.loadContractsForLayer("vision")
-        
+
         assertEquals(2, visionContracts.size) // vision-contract + all-contract
     }
 }

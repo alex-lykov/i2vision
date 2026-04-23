@@ -19,9 +19,9 @@ class ContractValidatorTest {
                 targetLayers = listOf("all")
             )
         )
-        
+
         val result = validator.validate(contract)
-        
+
         assertTrue(result.isValid)
         assertTrue(result.errors.isEmpty())
     }
@@ -35,9 +35,9 @@ class ContractValidatorTest {
                 targetLayers = listOf("all")
             )
         )
-        
+
         val result = validator.validate(contract)
-        
+
         assertFalse(result.isValid)
         assertTrue(result.errors.any { it.field == "contract.name" })
     }
@@ -51,9 +51,9 @@ class ContractValidatorTest {
                 targetLayers = listOf("all")
             )
         )
-        
+
         val result = validator.validate(contract)
-        
+
         // Should still be valid but with warning
         assertTrue(result.isValid)
         assertTrue(result.warnings.any { it.field == "contract.version" })
@@ -69,9 +69,9 @@ class ContractValidatorTest {
                 targetLayers = listOf("all")
             )
         )
-        
+
         val result = validator.validate(contract)
-        
+
         assertTrue(result.isValid)
         assertTrue(result.warnings.any { it.field == "contract.description" })
     }
@@ -85,9 +85,9 @@ class ContractValidatorTest {
                 targetLayers = emptyList()
             )
         )
-        
+
         val result = validator.validate(contract)
-        
+
         assertFalse(result.isValid)
         assertTrue(result.errors.any { it.field == "contract.target_layers" })
     }
@@ -104,9 +104,9 @@ class ContractValidatorTest {
                 minCoveragePercentage = 150.0 // Invalid
             )
         )
-        
+
         val result = validator.validate(contract)
-        
+
         assertFalse(result.isValid)
         assertTrue(result.errors.any { it.field == "quality_gates.min_coverage_percentage" })
     }
@@ -121,9 +121,9 @@ class ContractValidatorTest {
                 metadata = ContractMetadata(name = "", targetLayers = listOf("all"))
             )
         )
-        
+
         val result = validator.validateBatch(contracts)
-        
+
         assertEquals(2, result.total)
         assertEquals(1, result.valid)
         assertEquals(1, result.invalid)
@@ -134,7 +134,7 @@ class ContractValidatorTest {
         val validContract = DiscoveryContract(
             metadata = ContractMetadata(name = "valid", targetLayers = listOf("all"))
         )
-        
+
         assertTrue(validator.validateQuick(validContract))
     }
 }

@@ -1,4 +1,11 @@
-package com.i2vision.discover.api.models
+/*
+ * Copyright © 2026 Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
+package com.i2vision.discovery.api.models
 
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json

@@ -2,7 +2,8 @@
 
 **Internal test harness - not published to Maven**
 
-This module contains integration tests and architecture sketches for validating the i2vision discovery system across all modules.
+This module contains integration tests and architecture sketches for validating the i2vision discovery system across all
+modules.
 
 ## Purpose
 

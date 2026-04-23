@@ -2,20 +2,24 @@
 
 ## Overview
 
-Documentation Contracts enable formal validation of documentation against source code. They define mappings between documentation sections and VSLFC artifact fields, ensuring documentation stays synchronized and validated.
+Documentation Contracts enable formal validation of documentation against source code. They define mappings between
+documentation sections and VSLFC artifact fields, ensuring documentation stays synchronized and validated.
 
 ---
 
 ## Core Concepts
 
 ### Contract Definition
+
 A contract specifies:
+
 - Which documentation file to import
 - Which VSLFC layer it maps to
 - How to parse documentation sections
 - Confidence and validation rules
 
 ### Example Contract
+
 ```yaml
 contract: vision-documentation
 version: 2.0
@@ -42,34 +46,42 @@ validation:
 ## Components
 
 ### DocContractYamlParser
+
 Parses YAML contract files and validates structure.
 
 **Supports:**
+
 - All 5 VSLFC layers
 - Contract versioning
 - Batch loading
 
 ### DocSectionExtractor
+
 Extracts documentation sections from markdown files.
 
 **Parser Types:**
+
 - `markdown_list` - Bullet point lists
 - `table` - Markdown tables
 - `free_text` - Prose paragraphs
 - `yaml_embedded` - YAML sections in markdown
 
 ### CodeEvidenceFinder
+
 Searches source code for evidence matching documentation claims.
 
 **Confidence Multipliers:**
+
 - 0 matches: 0.5x (probably not implemented)
 - 1-2 matches: 1.0x (likely implemented)
 - 3+ matches: 1.2x (definitely implemented)
 
 ### DocLayerImporter
+
 Imports documentation into VSLFC artifacts using contracts.
 
 **Process:**
+
 1. Load contract
 2. Extract sections
 3. Find code evidence
@@ -77,9 +89,11 @@ Imports documentation into VSLFC artifacts using contracts.
 5. Generate artifacts
 
 ### ContractValidationEngine
+
 Validates imported documentation against code.
 
 **5 Validation Rules:**
+
 1. **Code Evidence** - Every claim needs code evidence
 2. **Doc Reference** - Code should be documented
 3. **Contradictions** - No conflicts between docs and code
@@ -91,6 +105,7 @@ Validates imported documentation against code.
 ## Workflow
 
 ### Step 1: Create Contracts
+
 Define YAML contracts for each VSLFC layer:
 
 ```yaml
@@ -105,6 +120,7 @@ mappings:
 ```
 
 ### Step 2: Write Documentation
+
 Document your architecture following the contract structure:
 
 ```markdown
@@ -117,6 +133,7 @@ Document your architecture following the contract structure:
 ```
 
 ### Step 3: Run Import
+
 Enable contracts in the pipeline:
 
 ```kotlin
@@ -129,6 +146,7 @@ val result = pipeline.discoverFromFiles(sourceFiles)
 ```
 
 ### Step 4: Check Results
+
 Review imported artifacts and validation report:
 
 ```yaml
@@ -146,32 +164,39 @@ components:
 ## Validation Rules
 
 ### 1. Code Evidence Rule
+
 Every documented item must have corresponding code evidence.
 
 **Severity:** WARNING
 
 **Triggers When:**
+
 - Documented component not found in code
 - Code evidence matches < 0.5 confidence threshold
 
 ### 2. Doc Reference Rule
+
 Important code elements should be documented.
 
 **Severity:** INFO
 
 **Triggers When:**
+
 - Code element lacks documentation
 
 ### 3. Contradiction Rule
+
 Documentation and code should not contradict.
 
 **Severity:** ERROR
 
 **Triggers When:**
+
 - Documented API differs from code
 - Documented flow differs from actual flow
 
 ### 4. Confidence Decay Rule
+
 Confidence decreases over time without updates.
 
 **Formula:** confidence × (0.95 ^ months_since_update)
@@ -179,9 +204,11 @@ Confidence decreases over time without updates.
 **Severity:** WARNING
 
 ### 5. Freshness Rule
+
 Documentation older than threshold needs review.
 
 **Thresholds:**
+
 - 30 days: Warning
 - 90 days: Yellow flag
 - 180 days: Critical
@@ -191,6 +218,7 @@ Documentation older than threshold needs review.
 ## Confidence Scoring
 
 ### Base Scores
+
 ```
 Perfect match (direct from code): 1.0
 Good match (1-2 references): 0.9
@@ -200,6 +228,7 @@ No match: 0.0
 ```
 
 ### Final Confidence
+
 ```
 Final = Base × Evidence Multiplier × Freshness Factor
 
@@ -215,9 +244,11 @@ Freshness Factor:
 ## Configuration
 
 ### Location
+
 Contract definitions are stored in the project root or module-specific directories.
 
 ### Key Settings
+
 - **Import mode:** automatic or manual
 - **Validation mode:** strict, warning, or lenient
 - **Freshness thresholds:** configurable per layer
@@ -227,16 +258,19 @@ Contract definitions are stored in the project root or module-specific directori
 ## Quality Levels
 
 ### Green ✅
+
 - Confidence ≥ 0.9
 - All validations pass
 - Recently updated (< 30 days)
 
 ### Yellow ⚠️
+
 - Confidence 0.7-0.9
 - Minor warnings
 - Moderately updated (30-90 days)
 
 ### Red ❌
+
 - Confidence < 0.7
 - Validation errors
 - Stale (> 90 days)
@@ -246,12 +280,15 @@ Contract definitions are stored in the project root or module-specific directori
 ## Three-Way Synchronization
 
 ### Import Flow
+
 User Docs → Contracts → VSLFC Artifacts
 
 ### Export Flow (Future)
+
 VSLFC Artifacts → Templates → Generated Docs
 
 ### Promote Flow (Future)
+
 Generated Docs → Update → User Docs
 
 ---
@@ -259,18 +296,21 @@ Generated Docs → Update → User Docs
 ## Use Cases
 
 ### Case 1: Import Existing Documentation
+
 1. Create contracts for your layers
 2. Run import
 3. Review confidence scores
 4. Address low-confidence items
 
 ### Case 2: Validate Documentation Quality
+
 1. Run contracts system
 2. Get validation report
 3. Fix contradictions
 4. Update stale documentation
 
 ### Case 3: Keep Docs in Sync
+
 1. Set up contracts for your project
 2. Run on each commit
 3. Get alerts for stale documentation
@@ -291,16 +331,19 @@ Generated Docs → Update → User Docs
 ## Troubleshooting
 
 ### Low Confidence Scores
+
 - Make documentation more specific
 - Add code location references
 - Include method/class names exactly as in code
 
 ### Missing Evidence
+
 - Verify component exists in code
 - Check code was compiled/indexed
 - Ensure discovery ran successfully
 
 ### Stale Documentation Warnings
+
 - Update timestamp in documentation
 - Review for accuracy
 - Refresh if implementation changed

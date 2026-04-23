@@ -7,7 +7,7 @@ package com.i2vision.discovery
 data class ModifiableParameterSet(
     val name: String,
     val description: String = "",
-    
+
     // Parameter categories
     val flowParameters: FlowDiscoveryParameters = FlowDiscoveryParameters(),
     val qualityGateParameters: QualityGateParameters = QualityGateParameters(),
@@ -26,18 +26,18 @@ data class ModifiableParameterSet(
         val minSteps: Int = 1,
         val enableBusinessLogicFilter: Boolean = true,
         val entryPointPatterns: List<String> = listOf(
-            ".*Controller$", ".*Handler$", ".*Orchestrator$", 
+            ".*Controller$", ".*Handler$", ".*Orchestrator$",
             ".*Agent$", ".*Service$", ".*Repository$"
         ),
         val entryAnnotations: List<String> = listOf(
-            "@RestController", "@Controller", "@GetMapping", 
+            "@RestController", "@Controller", "@GetMapping",
             "@PostMapping", "@EventListener", "@Scheduled"
         ),
         val excludePatterns: List<String> = listOf(
             ".*Test$", ".*TestKt$", ".*Spec$"
         )
     )
-    
+
     /**
      * Quality Gate Parameters - Control quality filtering
      */
@@ -50,7 +50,7 @@ data class ModifiableParameterSet(
         val mediumPriorityThreshold: Double = 0.5,
         val lowPriorityThreshold: Double = 0.3
     )
-    
+
     /**
      * Link Generation Parameters - Control cross-layer link creation
      */
@@ -60,7 +60,7 @@ data class ModifiableParameterSet(
         val maxComponentLinks: Int = 50,
         val minConfidence: Double = 0.60
     )
-    
+
     /**
      * Architecture Detection Parameters - Control architecture classification
      */
@@ -71,7 +71,7 @@ data class ModifiableParameterSet(
         val enableLayerDetection: Boolean = true,
         val enablePatternDetection: Boolean = true
     )
-    
+
     /**
      * Clustering Parameters - Control module boundary detection
      */
@@ -82,7 +82,7 @@ data class ModifiableParameterSet(
         val maxClusterSize: Int = 50,
         val enableCrossModuleAnalysis: Boolean = true
     )
-    
+
     /**
      * LLM Enhancement Parameters - Control LLM-based enhancement
      */
@@ -94,7 +94,7 @@ data class ModifiableParameterSet(
         val enableFlowDescription: Boolean = false,
         val enableArchitectureSummarization: Boolean = false
     )
-    
+
     companion object {
         /**
          * Convert from DiscoveryStrategy to ModifiableParameterSet
@@ -130,7 +130,7 @@ data class ModifiableParameterSet(
                 )
             )
         }
-        
+
         /**
          * Convert from ModifiableParameterSet to DiscoveryStrategy
          */

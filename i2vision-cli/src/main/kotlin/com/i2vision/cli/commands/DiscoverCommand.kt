@@ -43,41 +43,44 @@ class DiscoverCommand : CliktCommand(
     name = "discover",
     help = "Run discovery analysis on a project"
 ) {
-    
+
     private val log = LoggerFactory.getLogger(DiscoverCommand::class.java)
-    
+
     private val projectPath by argument("project-path", help = "Path to project directory")
-    
+
     // Intent-based (primary)
     private val intent by option(
         "--intent",
         help = "Discovery intent: full_discovery, refactoring_analysis, quick_overview, architecture_audit, flow_mapping, documentation_generation"
     )
-    
+
     // Preset-based (placeholder for future implementation)
     private val preset by option(
         "--preset",
         help = "Preset name (future: kotlin-agent, spring-boot, conservative, permissive)"
     )
-    
+
     private val cluster by option("--cluster", help = "Cluster ID for focused discovery")
     private val output by option("-o", "--output", help = "Output directory for artifacts")
     private val json by option("--json", help = "Output results as JSON").flag()
     private val yaml by option("--yaml", help = "Output results as YAML").flag()
-    private val validateContext by option("--validate-context", help = "Validate enhanced context availability after discovery").flag()
-    
+    private val validateContext by option(
+        "--validate-context",
+        help = "Validate enhanced context availability after discovery"
+    ).flag()
+
     private val consoleOutput = ConsoleOutput()
-    
+
     override fun run() {
         log.info("[CLI] Discover command started for project: $projectPath")
         echo("Running discovery on: $projectPath")
-        
+
         val projectFile = File(projectPath)
         if (!projectFile.exists()) {
             echo("Error: Project path does not exist: $projectPath", err = true)
             throw IllegalArgumentException("Project path does not exist: $projectPath")
         }
-        
+
         // Find project root by walking up to find settings.gradle.kts (same as self-discovery test)
         var projectRoot = File(projectPath).absoluteFile
         while (projectRoot.parentFile != null && !File(projectRoot, "settings.gradle.kts").exists()) {
@@ -87,69 +90,69 @@ class DiscoverCommand : CliktCommand(
             log.warn("[CLI] No settings.gradle.kts found in parent directories, using current directory")
             projectRoot = File(projectPath).absoluteFile
         }
-        
+
         log.info("[CLI] Project root: ${projectRoot.path}")
         echo("Project root: ${projectRoot.path}")
-        
+
         // Setup compact file logging
         val logDir = File(projectRoot, ".vision-ai/logs")
         logDir.mkdirs()
-        
+
         // Log rotation: keep only last 10 logs
         val maxLogs = 10
         val existingLogs = logDir.listFiles()
             ?.filter { it.name.startsWith("discovery-log-") && it.name.endsWith(".txt") }
             ?.sortedByDescending { it.lastModified() }
             ?: emptyList()
-        
+
         if (existingLogs.size >= maxLogs) {
             existingLogs.drop(maxLogs - 1).forEach { it.delete() }
         }
-        
+
         val timestamp = DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss").format(LocalDateTime.now())
         val logFile = File(logDir, "discovery-log-$timestamp.txt")
         val originalOut = System.out
-        
+
         // Create compact log writer that filters verbose logs
         val compactLogStream = object : PrintStream(logFile) {
             override fun println(x: String?) {
                 // Filter out verbose discovery pipeline logs and artifact listings
-                val shouldLog = x?.let { 
+                val shouldLog = x?.let {
                     !it.contains("[DISCOVERY] Step") &&
-                    !it.contains("[FLOW_DISCOVERY]") &&
-                    !it.contains("[LOGIC_EXTRACTOR]") &&
-                    !it.contains("[STRUCTURE_BUILDER]") &&
-                    !it.contains("[ARTIFACT_WRITER]") &&
-                    !it.contains("[CUSTOM_INDEX]") &&
-                    !it.contains("[SCANNER]") &&
-                    !it.contains("[INTENT]") &&
-                    !it.contains("  - Layer:") &&
-                    !it.contains("Artifacts written to:")
+                            !it.contains("[FLOW_DISCOVERY]") &&
+                            !it.contains("[LOGIC_EXTRACTOR]") &&
+                            !it.contains("[STRUCTURE_BUILDER]") &&
+                            !it.contains("[ARTIFACT_WRITER]") &&
+                            !it.contains("[CUSTOM_INDEX]") &&
+                            !it.contains("[SCANNER]") &&
+                            !it.contains("[INTENT]") &&
+                            !it.contains("  - Layer:") &&
+                            !it.contains("Artifacts written to:")
                 } ?: true
                 if (shouldLog) {
                     super.println(x)
                 }
             }
         }
-        
+
         // Tee output to both console and compact file log
         System.setOut(TeePrintStream(originalOut, compactLogStream))
-        
+
         echo("=== i2vision CLI Discovery ===")
         echo("Project: ${projectRoot.canonicalPath}")
         echo("Log file: ${logFile.absolutePath}")
         echo("Started at: ${LocalDateTime.now()}")
         echo("")
-        
+
         // Create IntentResolver and DiscoveryPipeline using the actual project root
         val intentResolver = IntentResolverImpl()
         val projectCacheDir = I2VisionPaths.getProjectCacheDir(projectRoot.path)
         val cacheStore = FileCacheStore(projectCacheDir)
         val pipeline = DiscoveryPipelineImpl(projectRoot.path, intentResolver, cacheStore)
-        
+
         // Enable batch mode for LinkService to collect links in memory and write once at end (same as SelfDiscoveryTest)
         pipeline.enableLinkBatchMode()
-        
+
         // Wrap suspend functions in runBlocking
         val discoveryStartTime = System.currentTimeMillis()
         runBlocking {
@@ -163,14 +166,14 @@ class DiscoverCommand : CliktCommand(
                     val discoveryIntent = convertPresetToIntent(preset!!)
                     runWithIntent(pipeline, discoveryIntent, cluster, projectRoot.path)
                 }
-                
+
                 // PATH 2: Intent-based (PRIMARY)
                 intent != null -> {
                     echo("Intent: $intent")
                     val discoveryIntent = parseIntent(intent!!)
                     runWithIntent(pipeline, discoveryIntent, cluster, projectRoot.path)
                 }
-                
+
                 // DEFAULT: Full discovery intent
                 else -> {
                     echo("Defaulting to --intent=full_discovery")
@@ -179,13 +182,13 @@ class DiscoverCommand : CliktCommand(
                 }
             }
         }
-        
+
         val discoveryDuration = System.currentTimeMillis() - discoveryStartTime
         echo("")
         echo("=== Discovery Complete ===")
         echo("Total discovery time: ${discoveryDuration}ms (${discoveryDuration / 1000}s)")
         echo("Ended at: ${LocalDateTime.now()}")
-        
+
         // Lightweight context validation if flag is set
         if (validateContext) {
             echo("")
@@ -194,41 +197,41 @@ class DiscoverCommand : CliktCommand(
                 projectRoot = projectRoot.path,
                 cacheStore = FileCacheStore(projectRoot)
             )
-            
+
             // Get cluster list from cache directories
             val cacheDir = File(projectRoot, ".semantic-cache")
             val clusters = cacheDir.listFiles()
                 ?.filter { it.isDirectory }
                 ?.map { it.name }
                 ?: emptyList()
-            
+
             if (clusters.isEmpty()) {
                 echo("No clusters found in semantic cache")
             } else {
                 echo("Checking enhanced context availability for ${clusters.size} clusters...")
                 echo("")
-                
+
                 clusters.take(10).forEach { cluster ->
                     val hasCache = contextProvider.hasDiscoveryCache(cluster)
                     val status = if (hasCache) "[OK]" else "[MISSING]"
                     echo("$status $cluster")
                 }
-                
+
                 if (clusters.size > 10) {
                     echo("... and ${clusters.size - 10} more clusters")
                 }
-                
+
                 val enhancedClusters = clusters.count { contextProvider.hasDiscoveryCache(it) }
                 echo("")
                 echo("Enhanced context available for $enhancedClusters/${clusters.size} clusters")
-                
+
                 if (enhancedClusters < clusters.size) {
                     echo("Run 'i2vision discover --intent=full_discovery' for missing clusters")
                 }
             }
         }
     }
-    
+
     /**
      * Parse intent string and convert to discovery-api DiscoveryIntent
      */
@@ -237,11 +240,11 @@ class DiscoverCommand : CliktCommand(
         val args = mapOf("intent" to intentStr)
         val parserIntent = IntentParser.parse(args)
             ?: error("Invalid intent: $intentStr")
-        
+
         // Bridge from intent-parser DiscoveryIntent to discovery-api DiscoveryIntent
         return bridgeIntent(parserIntent)
     }
-    
+
     /**
      * Bridge from intent-parser DiscoveryIntent to discovery-api DiscoveryIntent
      */
@@ -254,7 +257,7 @@ class DiscoverCommand : CliktCommand(
             customParameters = parserIntent.constraints.mapKeys { it.key }.mapValues { it.value.toString() }
         )
     }
-    
+
     /**
      * Map IntentGoal to DiscoveryGoal
      */
@@ -268,7 +271,7 @@ class DiscoverCommand : CliktCommand(
             IntentGoal.QUICK_OVERVIEW -> DiscoveryGoal.UNDERSTAND
         }
     }
-    
+
     /**
      * Map IntentDepth to IntentDepth (API)
      */
@@ -279,7 +282,7 @@ class DiscoverCommand : CliktCommand(
             ParserIntentDepth.DEEP -> ApiIntentDepth.DEEP
         }
     }
-    
+
     /**
      * Map QualityFocus to DiscoveryQuality
      */
@@ -290,7 +293,7 @@ class DiscoverCommand : CliktCommand(
             QualityFocus.QUANTITY -> DiscoveryQuality.FAST
         }
     }
-    
+
     /**
      * Convert preset name to intent (placeholder)
      */
@@ -305,16 +308,18 @@ class DiscoverCommand : CliktCommand(
                 quality = DiscoveryQuality.THOROUGH,
                 layerFocus = listOf("structure", "logic", "flow")
             )
+
             "permissive" -> ApiDiscoveryIntent(
                 goal = DiscoveryGoal.UNDERSTAND,
                 depth = ApiIntentDepth.STANDARD,
                 quality = DiscoveryQuality.FAST,
                 layerFocus = listOf("code", "structure", "logic", "flow")
             )
+
             else -> createDefaultIntent()
         }
     }
-    
+
     /**
      * Create default full discovery intent
      */
@@ -326,7 +331,7 @@ class DiscoverCommand : CliktCommand(
             layerFocus = listOf("vision", "structure", "logic", "flow", "code")
         )
     }
-    
+
     /**
      * Run discovery with intent (includes cluster detection and parallel execution)
      */
@@ -340,14 +345,14 @@ class DiscoverCommand : CliktCommand(
         echo("Depth: ${intent.depth}")
         echo("Quality: ${intent.quality}")
         echo("Layer Focus: ${intent.layerFocus.joinToString(", ")}")
-        
+
         // Auto-detect clusters if not specified
         val clusters = if (clusterId != null) {
             listOf(clusterId)
         } else {
             detectClusters(projectRoot)
         }
-        
+
         echo("")
         echo("Clusters: ${clusters.size}")
         if (clusters.isEmpty()) {
@@ -359,7 +364,7 @@ class DiscoverCommand : CliktCommand(
             echo("Detected clusters: ${clusters.joinToString(", ")}")
             echo("")
             echo("Running parallel cluster discovery...")
-            
+
             val startTime = System.currentTimeMillis()
             val clusterTimings = coroutineScope {
                 clusters.map { cluster ->
@@ -372,20 +377,20 @@ class DiscoverCommand : CliktCommand(
                 }.awaitAll()
             }
             val duration = System.currentTimeMillis() - startTime
-            
+
             echo("")
             echo("Parallel discovery completed in ${duration}ms")
-            
+
             // Flush all buffered links to disk in a single operation (same as SelfDiscoveryTest)
             pipeline.flushLinkBatch()
             echo("Flushed all links to disk")
-            
+
             // Aggregate results
             val results = clusterTimings.map { it.first }
             val allArtifacts = results.flatMap { result -> result.artifacts }
             val allErrors = results.flatMap { result -> result.errors }
             val success = results.all { result -> result.success }
-            
+
             // Log summary statistics
             echo("")
             echo("=== Discovery Summary ===")
@@ -399,7 +404,7 @@ class DiscoverCommand : CliktCommand(
             echo("Total errors: ${allErrors.size}")
             echo("Success: $success")
             echo("")
-            
+
             displayResults(
                 PipelineResult(
                     success = success,
@@ -410,7 +415,7 @@ class DiscoverCommand : CliktCommand(
             )
         }
     }
-    
+
     /**
      * Run single cluster discovery with timing
      * Use depth-based discovery directly to match SelfDiscoveryTest approach
@@ -422,7 +427,7 @@ class DiscoverCommand : CliktCommand(
         clusterId: String?
     ): Pair<PipelineResult, Long> {
         val startTime = System.currentTimeMillis()
-        
+
         // Map intent depth to discovery depth
         val discoveryDepth = when (intent.depth) {
             com.i2vision.discover.api.models.IntentDepth.BROWSE -> com.i2vision.discover.api.models.DiscoveryDepth.BROWSE
@@ -431,18 +436,18 @@ class DiscoverCommand : CliktCommand(
         }
         // Use depth-based discovery directly (same as SelfDiscoveryTest) to avoid intent resolution overhead
         val result = pipeline.discover(depth = discoveryDepth, clusterId = clusterId, contracts = emptyList())
-        
+
         val duration = System.currentTimeMillis() - startTime
         return Pair(result, duration)
     }
-    
+
     /**
      * Detect clusters using SignatureBuilder (same approach as self-discovery test)
      */
     private fun detectClusters(projectRoot: String): List<String> {
         return try {
             log.info("[CLI] Detecting clusters for project root: $projectRoot")
-            
+
             val signatureBuilder = SignatureBuilder(
                 projectRoot = projectRoot,
                 confidenceThreshold = 0.7,
@@ -450,22 +455,22 @@ class DiscoverCommand : CliktCommand(
                 llmClient = null
             )
             val signature = signatureBuilder.build()
-            
+
             // Filter out empty clusters (with 0 files)
             val validClusters = signature.clusters.filter { it.fileCount > 0 }
-            
+
             log.info("[CLI] Detected ${validClusters.size} clusters from SignatureBuilder")
             validClusters.forEach { cluster ->
                 log.info("[CLI]   - ${cluster.name} (${cluster.fileCount} files)")
             }
-            
+
             validClusters.map { it.name }
         } catch (e: Exception) {
             log.warn("[CLI] Failed to detect clusters with SignatureBuilder: ${e.message}")
             emptyList()
         }
     }
-    
+
     /**
      * Display discovery results
      */
@@ -475,36 +480,36 @@ class DiscoverCommand : CliktCommand(
         echo("  Success: ${result.success}")
         echo("  Artifacts: ${result.artifacts.size}")
         echo("  Errors: ${result.errors.size}")
-        
+
         if (result.metadata.containsKey("duration_ms")) {
             echo("  Duration: ${result.metadata["duration_ms"]}ms")
         }
-        
+
         if (!result.success) {
             echo("")
             echo("Errors:")
             result.errors.forEach { echo("  - $it", err = true) }
         }
-        
+
         if (result.success) {
             echo("")
             echo("Metadata:")
             result.metadata.forEach { (key, value) ->
                 echo("  $key: $value")
             }
-            
+
             echo("")
             echo("Artifacts:")
             result.artifacts.forEach { artifact ->
                 echo("  - Layer: ${artifact.layer}")
                 echo("    Path: ${artifact.path}")
             }
-            
+
             val outputDir = output ?: I2VisionPaths.getProjectCacheDir(projectPath).absolutePath
             echo("")
             echo("Artifacts written to: $outputDir")
         }
-        
+
         // Format output based on flags
         if (json) {
             echo("")
@@ -523,15 +528,15 @@ class DiscoverCommand : CliktCommand(
 class TeePrintStream(vararg streams: PrintStream) : PrintStream(TeeOutputStream(*streams)) {
     private class TeeOutputStream(vararg streams: PrintStream) : OutputStream() {
         private val streams = streams.toList()
-        
+
         override fun write(b: Int) {
             streams.forEach { it.write(b) }
         }
-        
+
         override fun write(b: ByteArray, off: Int, len: Int) {
             streams.forEach { it.write(b, off, len) }
         }
-        
+
         override fun flush() {
             streams.forEach { it.flush() }
         }

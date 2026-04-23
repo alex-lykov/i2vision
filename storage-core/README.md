@@ -1,6 +1,7 @@
 # storage-core
 
-Storage abstraction layer for the i2vision modular ecosystem. Provides unified storage interfaces with protected physical layout knowledge.
+Storage abstraction layer for the i2vision modular ecosystem. Provides unified storage interfaces with protected
+physical layout knowledge.
 
 ## Architecture
 
@@ -121,11 +122,13 @@ println("Health score: ${registry.summary.healthScore}")
 ## Protection Against Path Leakage
 
 ### Module Visibility
+
 - **Public API**: `com.i2vision.storage.api.*` - exported to all modules
 - **Public Models**: `com.i2vision.storage.model.*` - exported to all modules
 - **Internal Implementation**: `com.i2vision.storage.impl.*` - NOT exported
 
 ### Architectural Rules
+
 - Only `storage-core/impl/internal/StorageLayout.kt` contains physical path knowledge
 - No other module should import from `com.i2vision.storage.impl.internal`
 - All application modules must use public interfaces only
@@ -133,6 +136,7 @@ println("Health score: ${registry.summary.healthScore}")
 ## Features
 
 ### CacheStore
+
 - Store/retrieve VSLFC artifacts by module, layer, and name
 - List artifacts by module and layer
 - Check artifact freshness with TTL
@@ -140,22 +144,26 @@ println("Health score: ${registry.summary.healthScore}")
 - Clear artifacts by module
 
 ### ContractStore
+
 - Store contract definitions (design-time)
 - Store validation results (runtime)
 - Get unified contract registry with health score
 - List all contract definitions
 
 ### ArtifactStore
+
 - Store artifacts with metadata
 - Delete artifacts
 - List artifacts by module or layer
 
 ### SessionStore
+
 - Session persistence (in-memory or database-backed)
 - Automatic cleanup of inactive sessions
 - Project path association
 
 ### ProjectsStore
+
 - Project list management
 - Active project tracking
 - Simple CRUD operations

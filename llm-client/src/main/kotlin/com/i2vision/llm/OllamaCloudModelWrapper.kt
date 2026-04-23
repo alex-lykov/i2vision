@@ -31,11 +31,12 @@ class OllamaCloudModelWrapper(
     private val cloudConfig: OllamaCloudConfig,
     private val performanceMonitor: PerformanceMonitor? = null
 ) : ModelWrapper {
-    
+
     override suspend fun generate(prompt: String): String {
         return withContext(Dispatchers.IO) {
             val client = HttpClient.newHttpClient()
-            val body = Json.encodeToString(OllamaCloudGenerateRequest(model = modelName, prompt = prompt, stream = false))
+            val body =
+                Json.encodeToString(OllamaCloudGenerateRequest(model = modelName, prompt = prompt, stream = false))
             val requestBuilder = HttpRequest.newBuilder()
                 .uri(URI.create("${cloudConfig.apiUrl.trimEnd('/')}/api/generate"))
                 .header("Content-Type", "application/json")
@@ -73,7 +74,8 @@ class OllamaCloudModelWrapper(
     override suspend fun generateStreaming(prompt: String): Flow<String> = flow {
         withContext(Dispatchers.IO) {
             val client = HttpClient.newHttpClient()
-            val body = Json.encodeToString(OllamaCloudGenerateRequest(model = modelName, prompt = prompt, stream = true))
+            val body =
+                Json.encodeToString(OllamaCloudGenerateRequest(model = modelName, prompt = prompt, stream = true))
             val requestBuilder = HttpRequest.newBuilder()
                 .uri(URI.create("${cloudConfig.apiUrl.trimEnd('/')}/api/generate"))
                 .header("Content-Type", "application/json")
@@ -142,7 +144,7 @@ enum class CloudProvider {
     HUGGING_FACE,
     REPLICATE,
     ANYSCALE;
-    
+
     companion object {
         fun fromString(value: String): CloudProvider {
             return try {

@@ -17,9 +17,11 @@ Code       ← How it is built (implementation, unit tests, actual code)
 ## Each Layer Explained
 
 ### Vision Layer
+
 **Purpose:** Understand the system's purpose and requirements
 
 **Contains:**
+
 - Business goals and constraints
 - User needs and scenarios
 - Quality attributes
@@ -28,9 +30,11 @@ Code       ← How it is built (implementation, unit tests, actual code)
 **Generated From:** User documentation, requirements, business context
 
 ### Structure Layer
+
 **Purpose:** Understand how components are organized
 
 **Contains:**
+
 - Component definitions
 - Module boundaries
 - Dependency relationships
@@ -40,9 +44,11 @@ Code       ← How it is built (implementation, unit tests, actual code)
 **Generated From:** Code analysis, package structure, class hierarchies
 
 ### Logic Layer
+
 **Purpose:** Understand what each component does
 
 **Contains:**
+
 - Business rules
 - State machines
 - Validation logic
@@ -52,9 +58,11 @@ Code       ← How it is built (implementation, unit tests, actual code)
 **Generated From:** Code analysis, domain knowledge, business rules
 
 ### Flow Layer
+
 **Purpose:** Understand how components interact
 
 **Contains:**
+
 - User workflows
 - Sequence diagrams
 - API call sequences
@@ -64,9 +72,11 @@ Code       ← How it is built (implementation, unit tests, actual code)
 **Generated From:** Code analysis, user scenarios, integration patterns
 
 ### Code Layer
+
 **Purpose:** Understand the actual implementation
 
 **Contains:**
+
 - Source code
 - Unit tests
 - Implementation details
@@ -80,9 +90,11 @@ Code       ← How it is built (implementation, unit tests, actual code)
 ## Discovery Directions
 
 ### Bottom-Up: Code → Vision
+
 **Process:** Code → Flow → Logic → Structure → Vision
 
 **Use When:**
+
 - Analyzing existing codebase
 - Understanding what IS
 - Discovering undocumented features
@@ -91,9 +103,11 @@ Code       ← How it is built (implementation, unit tests, actual code)
 **Confidence:** High (based on actual code)
 
 ### Top-Down: Vision → Code
+
 **Process:** Vision → Structure → Logic → Flow → Code
 
 **Use When:**
+
 - Planning new features
 - Designing new systems
 - Defining requirements
@@ -102,9 +116,11 @@ Code       ← How it is built (implementation, unit tests, actual code)
 **Confidence:** Based on specification completeness
 
 ### Bidirectional: Both Directions
+
 **Process:** Discover both and compare
 
 **Use When:**
+
 - Validating architecture
 - Checking consistency
 - Finding gaps between intent and implementation
@@ -125,6 +141,7 @@ Code       ← How it is built (implementation, unit tests, actual code)
 All VSLFC artifacts are stored in the OS user directory for portability across projects.
 
 ### Per-Cluster Structure
+
 ```
 {cache-directory}/.semantic-cache/
 ├── {cluster-1}/
@@ -137,17 +154,21 @@ All VSLFC artifacts are stored in the OS user directory for portability across p
 ```
 
 ### Format
+
 - **YAML:** Structured, human-readable
 - **Markdown:** For documentation and sequences
 - **Mermaid:** For diagrams and visualizations
 
 ### Versioning
+
 - **Git-based:** Commit snapshots for definitions
 - **Timestamped:** Per-discovery markers for artifacts
 - **Portable:** Can be exported and versioned separately
 
 ### Contract Lifecycle
-See [Contract Lifecycle Flow](./seqdiag/contract-lifecycle.sd) for a detailed sequence diagram showing the complete contract lifecycle from definition to validation.
+
+See [Contract Lifecycle Flow](./seqdiag/contract-lifecycle.sd) for a detailed sequence diagram showing the complete
+contract lifecycle from definition to validation.
 
 ---
 
@@ -194,16 +215,19 @@ Coverage varies based on module maturity and documentation.
 ## Using VSLFC Layers
 
 ### In Discovery Pipeline
+
 - Layers are discovered in order
 - Each layer builds on previous
 - Results stored in OS-specific semantic cache directory
 
 ### In Strategy Execution
+
 - Strategy determines which layers to focus on
 - Different strategies use different layers
 - Can combine layers for richer analysis
 
 ### In Documentation
+
 - Each layer can have documentation
 - Can map to user docs via contracts
 - Provides comprehensive view

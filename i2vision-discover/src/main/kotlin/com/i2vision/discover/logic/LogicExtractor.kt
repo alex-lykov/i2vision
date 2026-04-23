@@ -19,12 +19,12 @@ class LogicExtractor(
     projectRoot: String,
     private val indexProvider: IndexProvider
 ) {
-    
+
     private val log = LoggerFactory.getLogger(LogicExtractor::class.java)
-    
+
     // Normalize projectRoot to absolute path to avoid path normalization issues
     private val projectRoot = File(projectRoot).absolutePath
-    
+
     /**
      * Extract business rules from source files.
      * 
@@ -33,19 +33,19 @@ class LogicExtractor(
      */
     fun extractBusinessRules(files: List<File>): List<BusinessRule> {
         log.info("[LOGIC_EXTRACTOR] Extracting business rules from {} files", files.size)
-        
+
         val rules = mutableListOf<BusinessRule>()
-        
+
         files.forEach { file ->
             val fileRules = extractRulesFromFile(file)
             rules.addAll(fileRules)
         }
-        
+
         log.info("[LOGIC_EXTRACTOR] Extracted {} business rules", rules.size)
-        
+
         return rules
     }
-    
+
     /**
      * Extract business rules from a single file.
      * 
@@ -54,36 +54,36 @@ class LogicExtractor(
      */
     private fun extractRulesFromFile(file: File): List<BusinessRule> {
         val rules = mutableListOf<BusinessRule>()
-        
+
         try {
             val content = file.readText()
             val lines = content.lines()
-            
+
             // Pattern 1: require() statements
             rules.addAll(extractRequireStatements(file, lines))
-            
+
             // Pattern 2: check() statements
             rules.addAll(extractCheckStatements(file, lines))
-            
+
             // Pattern 3: validate() methods
             rules.addAll(extractValidateMethods(file, lines))
-            
+
             // Pattern 4: if-else conditions with business meaning
             rules.addAll(extractIfElseConditions(file, lines))
-            
+
             // Pattern 5: when expressions
             rules.addAll(extractWhenExpressions(file, lines))
-            
+
             // Pattern 6: assert statements
             rules.addAll(extractAssertStatements(file, lines))
-            
+
         } catch (e: Exception) {
             log.warn("[LOGIC_EXTRACTOR] Failed to extract rules from {}: {}", file.path, e.message)
         }
-        
+
         return rules
     }
-    
+
     /**
      * Extract require() statements.
      * 
@@ -93,27 +93,29 @@ class LogicExtractor(
      */
     private fun extractRequireStatements(file: File, lines: List<String>): List<BusinessRule> {
         val rules = mutableListOf<BusinessRule>()
-        
+
         lines.forEachIndexed { index, line ->
             val requirePattern = Regex("""require\s*\(\s*([^)]+)\)""")
             val match = requirePattern.find(line)
-            
+
             if (match != null) {
                 val condition = match.groupValues[1].trim()
-                rules.add(BusinessRule(
-                    id = generateRuleId(file, index, "require"),
-                    name = "Requirement",
-                    type = "require",
-                    condition = condition,
-                    file = file.relativeTo(File(projectRoot)).path,
-                    line = index + 1
-                ))
+                rules.add(
+                    BusinessRule(
+                        id = generateRuleId(file, index, "require"),
+                        name = "Requirement",
+                        type = "require",
+                        condition = condition,
+                        file = file.relativeTo(File(projectRoot)).path,
+                        line = index + 1
+                    )
+                )
             }
         }
-        
+
         return rules
     }
-    
+
     /**
      * Extract check() statements.
      * 
@@ -123,27 +125,29 @@ class LogicExtractor(
      */
     private fun extractCheckStatements(file: File, lines: List<String>): List<BusinessRule> {
         val rules = mutableListOf<BusinessRule>()
-        
+
         lines.forEachIndexed { index, line ->
             val checkPattern = Regex("""check\s*\(\s*([^)]+)\)""")
             val match = checkPattern.find(line)
-            
+
             if (match != null) {
                 val condition = match.groupValues[1].trim()
-                rules.add(BusinessRule(
-                    id = generateRuleId(file, index, "check"),
-                    name = "Check",
-                    type = "check",
-                    condition = condition,
-                    file = file.relativeTo(File(projectRoot)).path,
-                    line = index + 1
-                ))
+                rules.add(
+                    BusinessRule(
+                        id = generateRuleId(file, index, "check"),
+                        name = "Check",
+                        type = "check",
+                        condition = condition,
+                        file = file.relativeTo(File(projectRoot)).path,
+                        line = index + 1
+                    )
+                )
             }
         }
-        
+
         return rules
     }
-    
+
     /**
      * Extract validate() methods.
      * 
@@ -153,28 +157,30 @@ class LogicExtractor(
      */
     private fun extractValidateMethods(file: File, lines: List<String>): List<BusinessRule> {
         val rules = mutableListOf<BusinessRule>()
-        
+
         val validatePattern = Regex("""fun\s+validate(\w+)\s*\([^)]*\)\s*:\s*\w+""")
-        
+
         lines.forEachIndexed { index, line ->
             val match = validatePattern.find(line)
-            
+
             if (match != null) {
                 val methodName = "validate${match.groupValues[1]}"
-                rules.add(BusinessRule(
-                    id = generateRuleId(file, index, "validate"),
-                    name = "Validation",
-                    type = "validate",
-                    condition = "Method: $methodName",
-                    file = file.relativeTo(File(projectRoot)).path,
-                    line = index + 1
-                ))
+                rules.add(
+                    BusinessRule(
+                        id = generateRuleId(file, index, "validate"),
+                        name = "Validation",
+                        type = "validate",
+                        condition = "Method: $methodName",
+                        file = file.relativeTo(File(projectRoot)).path,
+                        line = index + 1
+                    )
+                )
             }
         }
-        
+
         return rules
     }
-    
+
     /**
      * Extract if-else conditions with business meaning.
      * 
@@ -184,7 +190,7 @@ class LogicExtractor(
      */
     private fun extractIfElseConditions(file: File, lines: List<String>): List<BusinessRule> {
         val rules = mutableListOf<BusinessRule>()
-        
+
         lines.forEachIndexed { index, line ->
             // Look for if statements with business-related keywords
             val businessKeywords = listOf(
@@ -192,34 +198,36 @@ class LogicExtractor(
                 "valid", "invalid", "authorized", "permission",
                 "exists", "empty", "null", "blank", "positive"
             )
-            
+
             if (line.trim().startsWith("if (") || line.trim().startsWith("if(")) {
                 val hasBusinessKeyword = businessKeywords.any { keyword ->
                     line.lowercase().contains(keyword)
                 }
-                
+
                 if (hasBusinessKeyword) {
                     val ifPattern = Regex("""if\s*\(\s*([^)]+)\)""")
                     val match = ifPattern.find(line)
-                    
+
                     if (match != null) {
                         val condition = match.groupValues[1].trim()
-                        rules.add(BusinessRule(
-                            id = generateRuleId(file, index, "if"),
-                            name = "Conditional Rule",
-                            type = "if-else",
-                            condition = condition,
-                            file = file.relativeTo(File(projectRoot)).path,
-                            line = index + 1
-                        ))
+                        rules.add(
+                            BusinessRule(
+                                id = generateRuleId(file, index, "if"),
+                                name = "Conditional Rule",
+                                type = "if-else",
+                                condition = condition,
+                                file = file.relativeTo(File(projectRoot)).path,
+                                line = index + 1
+                            )
+                        )
                     }
                 }
             }
         }
-        
+
         return rules
     }
-    
+
     /**
      * Extract when expressions.
      * 
@@ -229,29 +237,31 @@ class LogicExtractor(
      */
     private fun extractWhenExpressions(file: File, lines: List<String>): List<BusinessRule> {
         val rules = mutableListOf<BusinessRule>()
-        
+
         lines.forEachIndexed { index, line ->
             if (line.trim().startsWith("when (") || line.trim().startsWith("when(")) {
                 val whenPattern = Regex("""when\s*\(\s*([^)]+)\)""")
                 val match = whenPattern.find(line)
-                
+
                 if (match != null) {
                     val condition = match.groupValues[1].trim()
-                    rules.add(BusinessRule(
-                        id = generateRuleId(file, index, "when"),
-                        name = "Branching Rule",
-                        type = "when",
-                        condition = condition,
-                        file = file.relativeTo(File(projectRoot)).path,
-                        line = index + 1
-                    ))
+                    rules.add(
+                        BusinessRule(
+                            id = generateRuleId(file, index, "when"),
+                            name = "Branching Rule",
+                            type = "when",
+                            condition = condition,
+                            file = file.relativeTo(File(projectRoot)).path,
+                            line = index + 1
+                        )
+                    )
                 }
             }
         }
-        
+
         return rules
     }
-    
+
     /**
      * Extract assert statements.
      * 
@@ -261,27 +271,29 @@ class LogicExtractor(
      */
     private fun extractAssertStatements(file: File, lines: List<String>): List<BusinessRule> {
         val rules = mutableListOf<BusinessRule>()
-        
+
         lines.forEachIndexed { index, line ->
             val assertPattern = Regex("""assert\s*\(\s*([^)]+)\)""")
             val match = assertPattern.find(line)
-            
+
             if (match != null) {
                 val condition = match.groupValues[1].trim()
-                rules.add(BusinessRule(
-                    id = generateRuleId(file, index, "assert"),
-                    name = "Assertion",
-                    type = "assert",
-                    condition = condition,
-                    file = file.relativeTo(File(projectRoot)).path,
-                    line = index + 1
-                ))
+                rules.add(
+                    BusinessRule(
+                        id = generateRuleId(file, index, "assert"),
+                        name = "Assertion",
+                        type = "assert",
+                        condition = condition,
+                        file = file.relativeTo(File(projectRoot)).path,
+                        line = index + 1
+                    )
+                )
             }
         }
-        
+
         return rules
     }
-    
+
     /**
      * Generate a unique rule ID.
      * 

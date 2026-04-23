@@ -6,10 +6,10 @@ import org.slf4j.LoggerFactory
  * Tool Registry - Manages MCP tool registration and execution.
  */
 class ToolRegistry {
-    
+
     private val log = LoggerFactory.getLogger(ToolRegistry::class.java)
     private val tools = mutableMapOf<String, ToolHandler>()
-    
+
     /**
      * Register a tool.
      * 
@@ -20,7 +20,7 @@ class ToolRegistry {
         tools[name] = handler
         log.debug("[TOOL_REGISTRY] Registered tool: {}", name)
     }
-    
+
     /**
      * Get a tool by name.
      * 
@@ -30,7 +30,7 @@ class ToolRegistry {
     fun get(name: String): ToolHandler? {
         return tools[name]
     }
-    
+
     /**
      * List all registered tools.
      * 
@@ -39,7 +39,7 @@ class ToolRegistry {
     fun listTools(): List<String> {
         return tools.keys.toList()
     }
-    
+
     /**
      * Get the number of registered tools.
      * 

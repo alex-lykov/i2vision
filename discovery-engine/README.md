@@ -5,6 +5,7 @@ Discovery engine for code flow, logic, and architecture analysis.
 ## Overview
 
 discovery-engine provides configurable discovery parameters and strategies for analyzing code structure:
+
 - **DiscoveryStrategy**: Configurable parameters for flow, logic, and quality filtering
 - **DiscoveryManifest**: Manifest for discovery operations
 - **ModifiableParameterSet**: Tunable parameters organized by category
@@ -73,6 +74,7 @@ println("Primary language: ${profile.primaryLanguage}")
 ### Discovery Strategy Configuration
 
 **Flow Discovery Config**:
+
 - Maximum call depth for traversal
 - Maximum steps per flow
 - Entry point patterns
@@ -80,6 +82,7 @@ println("Primary language: ${profile.primaryLanguage}")
 - Exclusion patterns
 
 **Quality Gate Config**:
+
 - Minimum business steps
 - Minimum participants
 - Self-call ratio limits
@@ -87,6 +90,7 @@ println("Primary language: ${profile.primaryLanguage}")
 - Priority thresholds
 
 **Link Generation Config**:
+
 - Maximum flow links
 - Maximum requirement links
 - Maximum component links

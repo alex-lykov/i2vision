@@ -3,14 +3,18 @@
 Semantic link management for i2vision - manages cross-layer references between VSLFC artifacts.
 
 ## Purpose
+
 Manages semantic links between Vision, Structure, Logic, Flow, and Code layers:
+
 - Link upsertion and retrieval
 - Cross-layer reference resolution
 - Alias management
 - Batch processing for parallel discovery
 
 ## Current Status
+
 **Phase 1: Basic Functionality** (Complete)
+
 - Link storage and retrieval
 - Alias caching
 - Reference normalization
@@ -19,7 +23,9 @@ Manages semantic links between Vision, Structure, Logic, Flow, and Code layers:
 ## Components
 
 ### LinkService
+
 Main service for managing semantic links:
+
 - Load links from user home cache links.yaml
 - Upsert links with deduplication
 - Resolve aliases and references
@@ -28,6 +34,7 @@ Main service for managing semantic links:
 ## Parallel Discovery & Concurrency Safety
 
 ### Batch Mode
+
 - **Implementation**: Links buffered in memory during discovery, single disk write at end
 - **Purpose**: Eliminates concurrent file corruption when multiple clusters write links simultaneously
 - **Usage**:
@@ -38,6 +45,7 @@ Main service for managing semantic links:
   ```
 
 ### Performance Impact
+
 - **Before**: Constant upserts to links.yaml caused YAML parsing errors
 - **After**: Single write at end eliminates corruption
 - **Result**: 82% faster discovery (4m 41s vs 26m 51s)
@@ -61,10 +69,12 @@ linkService.flushBatch()  // Write all at once
 ```
 
 ## Dependencies
+
 - storage-core
 - SnakeYAML
 
 ## Architecture
+
 ```
 link-service
 └── src/main/kotlin/com/i2vision/link/
@@ -72,7 +82,9 @@ link-service
 ```
 
 ## License
+
 MIT License
 
 ## Version
+
 1.0.0

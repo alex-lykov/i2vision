@@ -14,9 +14,9 @@ import java.io.File
 class FileContractStore(
     private val projectRoot: File
 ) : ContractStore {
-    
+
     private val json = Json { ignoreUnknownKeys = true }
-    
+
     override suspend fun putDefinition(contract: ContractDefinition): PutResult {
         val relativePath = StorageLayout.contractDefinitionPath(
             layer = contract.id.sourceLayer.name.lowercase(),
@@ -25,10 +25,10 @@ class FileContractStore(
         val file = File(projectRoot, relativePath)
         file.parentFile?.mkdirs()
         file.writeText(json.encodeToString(contract))
-        
+
         return PutResult.Success(contract.id)
     }
-    
+
     override suspend fun getDefinition(id: ContractId): ContractDefinition? {
         val relativePath = StorageLayout.contractDefinitionPath(
             layer = id.sourceLayer.name.lowercase(),
@@ -36,13 +36,13 @@ class FileContractStore(
         )
         val file = File(projectRoot, relativePath)
         if (!file.exists()) return null
-        
+
         return json.decodeFromString<ContractDefinition>(file.readText())
     }
-    
+
     override suspend fun listDefinitions(): List<ContractDefinition> {
         val definitions = mutableListOf<ContractDefinition>()
-        
+
         Layer.entries.forEach { layer ->
             val dir = File(projectRoot, StorageLayout.contractDefinitionsDir(layer.name.lowercase()))
             if (dir.exists()) {
@@ -58,38 +58,40 @@ class FileContractStore(
                     }
             }
         }
-        
+
         return definitions
     }
-    
+
     override suspend fun putValidation(contractId: ContractId, result: ValidationResult): PutResult {
-        val relativePath = "${StorageLayout.contractArtifactsDir(contractId.sourceLayer.name.lowercase())}/${contractId.name}-validation.yaml"
+        val relativePath =
+            "${StorageLayout.contractArtifactsDir(contractId.sourceLayer.name.lowercase())}/${contractId.name}-validation.yaml"
         val file = File(projectRoot, relativePath)
         file.parentFile?.mkdirs()
         file.writeText(json.encodeToString(result))
-        
+
         return PutResult.Success(contractId)
     }
-    
+
     override suspend fun getValidation(contractId: ContractId): ValidationResult? {
-        val relativePath = "${StorageLayout.contractArtifactsDir(contractId.sourceLayer.name.lowercase())}/${contractId.name}-validation.yaml"
+        val relativePath =
+            "${StorageLayout.contractArtifactsDir(contractId.sourceLayer.name.lowercase())}/${contractId.name}-validation.yaml"
         val file = File(projectRoot, relativePath)
         if (!file.exists()) return null
-        
+
         return json.decodeFromString<ValidationResult>(file.readText())
     }
-    
+
     override suspend fun getRegistry(): ContractRegistry {
         val definitions = listDefinitions()
         val validations = mutableMapOf<ContractId, ValidationResult>()
-        
+
         definitions.forEach { contract ->
             val validation = getValidation(contract.id)
             if (validation != null) {
                 validations[contract.id] = validation
             }
         }
-        
+
         val passedValidations = validations.values.count { it.passed }
         val failedValidations = validations.values.count { !it.passed }
         val totalViolations = validations.values.sumOf { it.violations.size }
@@ -98,7 +100,7 @@ class FileContractStore(
         } else {
             1.0
         }
-        
+
         return ContractRegistry(
             definitions = definitions,
             validations = validations,

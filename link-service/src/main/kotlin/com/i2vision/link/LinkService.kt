@@ -22,7 +22,7 @@ class LinkService(private val projectRoot: String) {
     private val aliasCache = mutableMapOf<String, Map<String, String>>()
     private val aliasCacheStamp = mutableMapOf<String, Long>()
     private val normalizedRefCache = mutableMapOf<String, String?>()
-    
+
     // Batch mode for collecting links in memory during parallel discovery
     private val batchBuffer = mutableMapOf<String, LayerLink>()
     private var batchMode = false
@@ -70,7 +70,7 @@ class LinkService(private val projectRoot: String) {
         return allLinks().filter { link ->
             // Check if link references files in this cluster
             link.code.file.contains(clusterId) || link.code.file.contains(clusterPath) ||
-            link.logic.module.contains(clusterId) || link.logic.module.contains(clusterPath)
+                    link.logic.module.contains(clusterId) || link.logic.module.contains(clusterPath)
         }
     }
 
@@ -104,18 +104,18 @@ class LinkService(private val projectRoot: String) {
     fun flushBatch() {
         synchronized(batchBuffer) {
             if (batchBuffer.isEmpty()) return
-            
+
             val current = load()
             val merged = LinkedHashMap<String, LayerLink>()
             current.links.forEach { existing ->
                 merged[identityKey(existing)] = existing
             }
-            
+
             // Add all buffered links
             batchBuffer.values.forEach { link ->
                 merged[identityKey(link)] = link
             }
-            
+
             save(current.copy(links = merged.values.toList()))
             batchBuffer.clear()
         }
@@ -143,7 +143,7 @@ class LinkService(private val projectRoot: String) {
 
     fun upsertLinks(links: List<LayerLink>): Result<Unit> {
         if (links.isEmpty()) return Result.success(Unit)
-        
+
         // In batch mode, just add to buffer without writing
         if (batchMode) {
             synchronized(batchBuffer) {
@@ -153,7 +153,7 @@ class LinkService(private val projectRoot: String) {
             }
             return Result.success(Unit)
         }
-        
+
         // Normal mode: load, merge, and save
         val current = load()
         val merged = LinkedHashMap<String, LayerLink>()
@@ -184,6 +184,7 @@ class LinkService(private val projectRoot: String) {
                     link = link,
                     reason = "Code path does not exist: ${link.code.file}"
                 )
+
                 else -> null
             }
         }
@@ -265,7 +266,9 @@ class LinkService(private val projectRoot: String) {
                     note = entry["note"] as? String,
                     source = source
                 )
-            } catch (_: Exception) { null }
+            } catch (_: Exception) {
+                null
+            }
         } ?: emptyList()
         return LinksFile(version = raw["version"]?.toString() ?: "1", links = links)
     }
@@ -303,7 +306,12 @@ class LinkService(private val projectRoot: String) {
                 registerAlias(aliases, ambiguous, canonical, canonical)
                 if (shortRef.isNotBlank()) {
                     registerAlias(aliases, ambiguous, shortRef, canonical)
-                    if (artifactFile.isNotBlank()) registerAlias(aliases, ambiguous, "$artifactFile:$shortRef", canonical)
+                    if (artifactFile.isNotBlank()) registerAlias(
+                        aliases,
+                        ambiguous,
+                        "$artifactFile:$shortRef",
+                        canonical
+                    )
                 }
             }
         }
@@ -324,7 +332,9 @@ class LinkService(private val projectRoot: String) {
         ).filter { it.exists() }.forEach { root ->
             addAll(
                 root.walkTopDown()
-                    .filter { it.isFile && it.extension == "yaml" && it.path.replace('\\', '/').contains("/$normalizedLayer/") }
+                    .filter {
+                        it.isFile && it.extension == "yaml" && it.path.replace('\\', '/').contains("/$normalizedLayer/")
+                    }
                     .toList()
             )
         }
@@ -338,11 +348,17 @@ class LinkService(private val projectRoot: String) {
                 if (canonical.isNotBlank()) onAlias(canonical, shortRef)
                 node.values.forEach { extractSemanticAliases(it, onAlias) }
             }
+
             is List<*> -> node.forEach { extractSemanticAliases(it, onAlias) }
         }
     }
 
-    private fun registerAlias(target: MutableMap<String, String>, ambiguous: MutableSet<String>, alias: String, canonical: String) {
+    private fun registerAlias(
+        target: MutableMap<String, String>,
+        ambiguous: MutableSet<String>,
+        alias: String,
+        canonical: String
+    ) {
         val normalizedAlias = alias.replace('\\', '/').trim()
         if (normalizedAlias.isBlank()) return
         val existing = target[normalizedAlias]

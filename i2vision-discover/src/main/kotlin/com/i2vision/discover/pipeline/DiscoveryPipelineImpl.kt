@@ -83,9 +83,9 @@ class DiscoveryPipelineImpl(
     private val cacheStore: CacheStore,
     private val rolloutManager: RolloutManager = RolloutManager()
 ) : DiscoveryPipeline {
-    
+
     private val log = LoggerFactory.getLogger(DiscoveryPipelineImpl::class.java)
-    
+
     // Orchestrator internals
     private val indexProvider by lazy { CustomIndex(projectRoot) }
     private val linkService by lazy { LinkService(projectRoot) }
@@ -96,28 +96,28 @@ class DiscoveryPipelineImpl(
     private val artifactWriter by lazy { ArtifactWriter(projectRoot, cacheStore) }
     private val contractValidator by lazy { ContractValidator() }
     private val architectureDetector by lazy { ArchitectureDetector(projectRoot) }
-    
+
     // Vision layer population components
     private val docContractParser by lazy { DocContractYamlParser(File(projectRoot)) }
     private val docLayerImporter by lazy { DocLayerImporter(File(projectRoot)) }
     private val requirementsInferer by lazy { RequirementsInferer(File(projectRoot)) }
-    
+
     // Batch mode control for LinkService
     fun enableLinkBatchMode() {
         linkService.enableBatchMode()
     }
-    
+
     fun flushLinkBatch() {
         linkService.flushBatch()
     }
-    
+
     override suspend fun discover(
         depth: DiscoveryDepth,
         clusterId: String?,
         contracts: List<ContractHint>
     ): PipelineResult {
         log.info("[DISCOVERY] Starting {} discovery for cluster '{}'", depth, clusterId ?: "unknown")
-        
+
         // Auto-rollout if needed
         if (rolloutManager.needsRollout(File(projectRoot))) {
             log.info("[DISCOVERY] Running automatic rollout before discovery")
@@ -128,16 +128,16 @@ class DiscoveryPipelineImpl(
                 log.info("[DISCOVERY] Rollout completed: created {} items", rolloutResult.created.size)
             }
         }
-        
+
         val startTime = System.currentTimeMillis()
         val artifacts = mutableListOf<DiscoveryArtifact>()
         val errors = mutableListOf<String>()
-        
+
         try {
             // Step 1: File scanning using index-provider
             log.info("[DISCOVERY] Step 1: Scanning source files")
             val allSourceFiles = indexProvider.listSourceFiles()
-            
+
             // Filter source files by clusterId if provided
             val sourceFiles = if (clusterId != null) {
                 log.info("[DISCOVERY] Filtering source files for cluster '{}'", clusterId)
@@ -149,47 +149,59 @@ class DiscoveryPipelineImpl(
             } else {
                 allSourceFiles
             }
-            
-            artifacts.add(DiscoveryArtifact(
-                layer = "code",
-                path = "source_files",
-                content = "Found ${sourceFiles.size} source files (cluster: ${clusterId ?: "all"})"
-            ))
-            log.info("[DISCOVERY] Found {} source files (filtered from {} total)", sourceFiles.size, allSourceFiles.size)
-            
+
+            artifacts.add(
+                DiscoveryArtifact(
+                    layer = "code",
+                    path = "source_files",
+                    content = "Found ${sourceFiles.size} source files (cluster: ${clusterId ?: "all"})"
+                )
+            )
+            log.info(
+                "[DISCOVERY] Found {} source files (filtered from {} total)",
+                sourceFiles.size,
+                allSourceFiles.size
+            )
+
             // Step 2: Symbol extraction using index-provider
             log.info("[DISCOVERY] Step 2: Extracting symbols")
             val symbols = sourceFiles.flatMap { file ->
                 indexProvider.symbolsInFile(File(projectRoot, file.path))
             }
-            artifacts.add(DiscoveryArtifact(
-                layer = "code",
-                path = "symbols",
-                content = "Extracted ${symbols.size} symbols"
-            ))
+            artifacts.add(
+                DiscoveryArtifact(
+                    layer = "code",
+                    path = "symbols",
+                    content = "Extracted ${symbols.size} symbols"
+                )
+            )
             log.info("[DISCOVERY] Extracted {} symbols", symbols.size)
-            
+
             // Step 3: Entry point detection using index-provider
             log.info("[DISCOVERY] Step 3: Detecting entry points")
             val entryPoints = indexProvider.findEntryPoints()
-            artifacts.add(DiscoveryArtifact(
-                layer = "code",
-                path = "entry_points",
-                content = "Found ${entryPoints.size} entry points"
-            ))
+            artifacts.add(
+                DiscoveryArtifact(
+                    layer = "code",
+                    path = "entry_points",
+                    content = "Found ${entryPoints.size} entry points"
+                )
+            )
             log.info("[DISCOVERY] Found {} entry points", entryPoints.size)
-            
+
             // Step 4: Cluster suggestions using index-provider
             log.info("[DISCOVERY] Step 4: Generating cluster suggestions")
             val clusters = indexProvider.findClusters()
-            
-            artifacts.add(DiscoveryArtifact(
-                layer = "structure",
-                path = "clusters",
-                content = "Generated ${clusters.size} cluster suggestions"
-            ))
+
+            artifacts.add(
+                DiscoveryArtifact(
+                    layer = "structure",
+                    path = "clusters",
+                    content = "Generated ${clusters.size} cluster suggestions"
+                )
+            )
             log.info("[DISCOVERY] Generated {} cluster suggestions", clusters.size)
-            
+
             // Step 5: Load existing links using link-service
             log.info("[DISCOVERY] Step 5: Loading semantic links")
             // Use lazy loading: only load links relevant to this cluster if clusterId is provided
@@ -198,36 +210,44 @@ class DiscoveryPipelineImpl(
             } else {
                 linkService.allLinks()
             }
-            artifacts.add(DiscoveryArtifact(
-                layer = "logic",
-                path = "existing_links",
-                content = "Loaded ${existingLinks.size} existing links ${if (clusterId != null) "(cluster: $clusterId)" else "(all)"}"
-            ))
-            log.info("[DISCOVERY] Loaded {} existing links {}", existingLinks.size, if (clusterId != null) "(cluster: $clusterId)" else "(all)")
-            
+            artifacts.add(
+                DiscoveryArtifact(
+                    layer = "logic",
+                    path = "existing_links",
+                    content = "Loaded ${existingLinks.size} existing links ${if (clusterId != null) "(cluster: $clusterId)" else "(all)"}"
+                )
+            )
+            log.info(
+                "[DISCOVERY] Loaded {} existing links {}",
+                existingLinks.size,
+                if (clusterId != null) "(cluster: $clusterId)" else "(all)"
+            )
+
             // Step 6: Architecture detection using ArchitectureDetector
             // Skip per-cluster architecture detection for performance - run only for full project discovery
             if ((depth == DiscoveryDepth.STANDARD || depth == DiscoveryDepth.DEEP) && clusterId == null) {
                 log.info("[DISCOVERY] Step 6: Running architecture detection (only for full project discovery)")
                 try {
                     val techStack = architectureDetector.detectStack()
-                    artifacts.add(DiscoveryArtifact(
-                        layer = "vision",
-                        path = "architecture_detection",
-                        content = "Architecture detection completed\n" +
-                            "Primary language: ${techStack.primaryLanguage.name}\n" +
-                            "Frameworks: ${techStack.frameworks.joinToString(", ") { it.name }}\n" +
-                            "Platforms: ${techStack.platforms.joinToString(", ") { it.name }}\n" +
-                            "Patterns: ${techStack.patterns.joinToString(", ") { it.name }}\n" +
-                            "Confidence: ${techStack.confidence}"
-                    ))
+                    artifacts.add(
+                        DiscoveryArtifact(
+                            layer = "vision",
+                            path = "architecture_detection",
+                            content = "Architecture detection completed\n" +
+                                    "Primary language: ${techStack.primaryLanguage.name}\n" +
+                                    "Frameworks: ${techStack.frameworks.joinToString(", ") { it.name }}\n" +
+                                    "Platforms: ${techStack.platforms.joinToString(", ") { it.name }}\n" +
+                                    "Patterns: ${techStack.patterns.joinToString(", ") { it.name }}\n" +
+                                    "Confidence: ${techStack.confidence}"
+                        )
+                    )
                     log.info("[DISCOVERY] Architecture detection completed: {}", techStack.primaryLanguage.name)
                 } catch (e: Exception) {
                     log.warn("[DISCOVERY] Architecture detection failed: {}", e.message)
                     errors.add("Architecture detection failed: ${e.message}")
                 }
             }
-            
+
             // Step 6.5: Vision layer population from documentation
             if (depth == DiscoveryDepth.STANDARD || depth == DiscoveryDepth.DEEP) {
                 log.info("[DISCOVERY] Step 6.5: Populating Vision layer from documentation")
@@ -235,25 +255,26 @@ class DiscoveryPipelineImpl(
                     // Load Vision contract
                     val visionContractPath = VSLFCLayerContracts.contractPath(VSLFCLayerContracts.Layer.VISION)
                     val visionContractFile = File(projectRoot, visionContractPath)
-                    
+
                     if (visionContractFile.exists()) {
                         val visionContract = docContractParser.parse(visionContractFile)
                         log.info("[DISCOVERY] Loaded Vision contract: {}", visionContract.contractId)
-                        
+
                         // Import from documentation
                         val importResult = docLayerImporter.importFromDocs(visionContract)
-                        
+
                         if (importResult.success) {
                             log.info("[DISCOVERY] Imported {} Vision items from documentation", importResult.totalItems)
-                            
+
                             // Convert imported items to Vision artifacts
                             val visionRequirements = mutableListOf<VisionRequirement>()
                             val visionConstraints = mutableListOf<VisionConstraint>()
-                            
+
                             importResult.artifacts.values.flatten().forEach { item ->
                                 when (item.layerField) {
                                     "requirements" -> {
-                                        visionRequirements.add(VisionRequirement(
+                                        visionRequirements.add(
+                                            VisionRequirement(
                                             id = sanitizeRequirementId(item.title),
                                             title = item.title,
                                             docRef = "${item.sourceDoc}#${item.sectionHeader}",
@@ -269,8 +290,10 @@ class DiscoveryPipelineImpl(
                                             }
                                         ))
                                     }
+
                                     "constraints" -> {
-                                        visionConstraints.add(VisionConstraint(
+                                        visionConstraints.add(
+                                            VisionConstraint(
                                             id = sanitizeRequirementId(item.title),
                                             docRef = "${item.sourceDoc}#${item.sectionHeader}",
                                             type = ConstraintType.BUSINESS,
@@ -289,12 +312,12 @@ class DiscoveryPipelineImpl(
                                     }
                                 }
                             }
-                            
+
                             // Write Vision artifacts to semantic cache
                             kotlinx.coroutines.runBlocking {
                                 // Infer requirements from code patterns
                                 val normalizedProjectRoot = projectRoot.replace("\\", "/")
-                                val sourceFileList = sourceFiles.map { 
+                                val sourceFileList = sourceFiles.map {
                                     val file = File(it.path)
                                     val resolvedFile = if (file.isAbsolute) file else File(projectRoot, it.path)
                                     // Normalize path to remove duplicated project roots
@@ -305,41 +328,51 @@ class DiscoveryPipelineImpl(
                                     File(normalizedPath)
                                 }
                                 val codeInferredRequirements = requirementsInferer.inferRequirements(sourceFileList)
-                                
+
                                 // Merge documentation-imported and code-inferred requirements
                                 val mergedRequirements = mutableListOf<VisionRequirement>()
                                 mergedRequirements.addAll(visionRequirements)
-                                
+
                                 // Add code-inferred requirements that don't duplicate documentation ones
                                 codeInferredRequirements.forEach { inferred ->
-                                    val isDuplicate = visionRequirements.any { 
-                                        it.title.equals(inferred.title, ignoreCase = true) 
+                                    val isDuplicate = visionRequirements.any {
+                                        it.title.equals(inferred.title, ignoreCase = true)
                                     }
                                     if (!isDuplicate) {
-                                        mergedRequirements.add(VisionRequirement(
-                                            id = inferred.id,
-                                            title = inferred.title,
-                                            docRef = "code-inferred",
-                                            confidence = 0.8, // Default confidence for code-inferred
-                                            source = Source.CODE_PATTERN,
-                                            evidence = inferred.evidence
-                                        ))
+                                        mergedRequirements.add(
+                                            VisionRequirement(
+                                                id = inferred.id,
+                                                title = inferred.title,
+                                                docRef = "code-inferred",
+                                                confidence = 0.8, // Default confidence for code-inferred
+                                                source = Source.CODE_PATTERN,
+                                                evidence = inferred.evidence
+                                            )
+                                        )
                                     }
                                 }
-                                
-                                log.info("[DISCOVERY] Total Vision requirements: {} ({} from docs, {} from code)", 
-                                    mergedRequirements.size, visionRequirements.size, codeInferredRequirements.size)
-                                
+
+                                log.info(
+                                    "[DISCOVERY] Total Vision requirements: {} ({} from docs, {} from code)",
+                                    mergedRequirements.size, visionRequirements.size, codeInferredRequirements.size
+                                )
+
                                 val writtenVisionArtifacts = artifactWriter.writeVisionArtifacts(
                                     clusterId ?: "root",
                                     mergedRequirements,
                                     visionConstraints
                                 )
-                                artifacts.add(DiscoveryArtifact(
-                                    layer = "vision",
-                                    path = "vision_artifacts",
-                                    content = "Wrote ${writtenVisionArtifacts.size} Vision artifacts to semantic cache:\n${writtenVisionArtifacts.take(10).joinToString("\n") { "- ${it.layer}/${it.name}" }}"
-                                ))
+                                artifacts.add(
+                                    DiscoveryArtifact(
+                                        layer = "vision",
+                                        path = "vision_artifacts",
+                                        content = "Wrote ${writtenVisionArtifacts.size} Vision artifacts to semantic cache:\n${
+                                            writtenVisionArtifacts.take(
+                                                10
+                                            ).joinToString("\n") { "- ${it.layer}/${it.name}" }
+                                        }"
+                                    )
+                                )
                                 log.info("[DISCOVERY] Wrote {} Vision artifacts", writtenVisionArtifacts.size)
                             }
                         } else {
@@ -347,31 +380,38 @@ class DiscoveryPipelineImpl(
                             errors.addAll(importResult.errors)
                         }
                     } else {
-                        log.info("[DISCOVERY] Vision contract not found at {}, skipping Vision layer population", visionContractPath)
+                        log.info(
+                            "[DISCOVERY] Vision contract not found at {}, skipping Vision layer population",
+                            visionContractPath
+                        )
                     }
                 } catch (e: Exception) {
                     log.warn("[DISCOVERY] Vision layer population failed: {}", e.message)
                     errors.add("Vision layer population failed: ${e.message}")
                 }
             }
-            
+
             // Step 7: Flow discovery using FlowDiscovery
             if (depth == DiscoveryDepth.STANDARD || depth == DiscoveryDepth.DEEP) {
                 log.info("[DISCOVERY] Step 7: Discovering flows using call graph")
                 val flows = flowDiscovery.discoverFlows(symbols, clusterId)
-                artifacts.add(DiscoveryArtifact(
-                    layer = "flow",
-                    path = "flows",
-                    content = "Discovered ${flows.size} flows:\n${flows.take(10).joinToString("\n") { "- ${it.name} (${it.steps.size} steps)" }}"
-                ))
+                artifacts.add(
+                    DiscoveryArtifact(
+                        layer = "flow",
+                        path = "flows",
+                        content = "Discovered ${flows.size} flows:\n${
+                            flows.take(10).joinToString("\n") { "- ${it.name} (${it.steps.size} steps)" }
+                        }"
+                    )
+                )
                 log.info("[DISCOVERY] Discovered {} flows", flows.size)
             }
-            
+
             // Step 7.5: Business rule extraction using LogicExtractor
             if (depth == DiscoveryDepth.STANDARD || depth == DiscoveryDepth.DEEP) {
                 log.info("[DISCOVERY] Step 7.5: Extracting business rules")
                 val normalizedProjectRoot = projectRoot.replace("\\", "/")
-                val sourceFileList = sourceFiles.map { 
+                val sourceFileList = sourceFiles.map {
                     val file = File(it.path)
                     val resolvedFile = if (file.isAbsolute) file else File(projectRoot, it.path)
                     // Normalize path to remove duplicated project roots
@@ -382,20 +422,24 @@ class DiscoveryPipelineImpl(
                     File(normalizedPath)
                 }
                 val businessRules = logicExtractor.extractBusinessRules(sourceFileList)
-                artifacts.add(DiscoveryArtifact(
-                    layer = "logic",
-                    path = "business_rules",
-                    content = "Extracted ${businessRules.size} business rules:\n${businessRules.take(10).joinToString("\n") { "- ${it.name} (${it.type}): ${it.condition}" }}"
-                ))
+                artifacts.add(
+                    DiscoveryArtifact(
+                        layer = "logic",
+                        path = "business_rules",
+                        content = "Extracted ${businessRules.size} business rules:\n${
+                            businessRules.take(10).joinToString("\n") { "- ${it.name} (${it.type}): ${it.condition}" }
+                        }"
+                    )
+                )
                 log.info("[DISCOVERY] Extracted {} business rules", businessRules.size)
             }
-            
+
             // Step 7.6: Component building using StructureBuilder
             if (depth == DiscoveryDepth.STANDARD || depth == DiscoveryDepth.DEEP) {
                 log.info("[DISCOVERY] Step 7.6: Building components from package structure")
                 log.debug("[DISCOVERY] Sample source file paths: {}", sourceFiles.take(3).map { it.path })
                 val normalizedProjectRoot = projectRoot.replace("\\", "/")
-                val sourceFileList = sourceFiles.map { 
+                val sourceFileList = sourceFiles.map {
                     val file = File(it.path)
                     val resolvedFile = if (file.isAbsolute) file else File(projectRoot, it.path)
                     // Normalize path to remove duplicated project roots
@@ -406,19 +450,24 @@ class DiscoveryPipelineImpl(
                     File(normalizedPath)
                 }
                 val components = structureBuilder.buildComponents(sourceFileList, symbols)
-                artifacts.add(DiscoveryArtifact(
-                    layer = "structure",
-                    path = "components",
-                    content = "Built ${components.size} components:\n${components.take(10).joinToString("\n") { "- ${it.name} (${it.type}): ${it.files.size} files, ${it.dependencies.size} deps" }}"
-                ))
+                artifacts.add(
+                    DiscoveryArtifact(
+                        layer = "structure",
+                        path = "components",
+                        content = "Built ${components.size} components:\n${
+                            components.take(10)
+                                .joinToString("\n") { "- ${it.name} (${it.type}): ${it.files.size} files, ${it.dependencies.size} deps" }
+                        }"
+                    )
+                )
                 log.info("[DISCOVERY] Built {} components", components.size)
-                
+
                 // Step 7.7: Write artifacts to semantic cache using ArtifactWriter
                 if (depth == DiscoveryDepth.STANDARD || depth == DiscoveryDepth.DEEP) {
                     log.info("[DISCOVERY] Step 7.7: Writing artifacts to semantic cache")
                     val flows = flowDiscovery.discoverFlows(symbols, clusterId)
                     val normalizedProjectRoot = projectRoot.replace("\\", "/")
-                    val sourceFileList = sourceFiles.map { 
+                    val sourceFileList = sourceFiles.map {
                         val file = File(it.path)
                         val resolvedFile = if (file.isAbsolute) file else File(projectRoot, it.path)
                         // Normalize path to remove duplicated project roots
@@ -430,54 +479,68 @@ class DiscoveryPipelineImpl(
                     }
                     val businessRules = logicExtractor.extractBusinessRules(sourceFileList)
                     kotlinx.coroutines.runBlocking {
-                        val writtenArtifacts = artifactWriter.writeArtifacts(clusterId, flows, businessRules, components)
-                        artifacts.add(DiscoveryArtifact(
-                            layer = "code",
-                            path = "artifact_files",
-                            content = "Wrote ${writtenArtifacts.size} artifact files to semantic cache:\n${writtenArtifacts.take(10).joinToString("\n") { "- ${it.module}/${it.layer}/${it.name}" }}"
-                        ))
+                        val writtenArtifacts =
+                            artifactWriter.writeArtifacts(clusterId, flows, businessRules, components)
+                        artifacts.add(
+                            DiscoveryArtifact(
+                                layer = "code",
+                                path = "artifact_files",
+                                content = "Wrote ${writtenArtifacts.size} artifact files to semantic cache:\n${
+                                    writtenArtifacts.take(
+                                        10
+                                    ).joinToString("\n") { "- ${it.module}/${it.layer}/${it.name}" }
+                                }"
+                            )
+                        )
                         log.info("[DISCOVERY] Wrote {} artifact files", writtenArtifacts.size)
-                        
+
                         // Write discovery summary to CODE layer
-                        val summaryRef = artifactWriter.writeSummary(clusterId ?: "unknown", flows, businessRules, components)
-                        artifacts.add(DiscoveryArtifact(
-                            layer = "code",
-                            path = "discovery_summary",
-                            content = "Wrote discovery summary: ${summaryRef.module}/${summaryRef.layer}/${summaryRef.name}"
-                        ))
+                        val summaryRef =
+                            artifactWriter.writeSummary(clusterId ?: "unknown", flows, businessRules, components)
+                        artifacts.add(
+                            DiscoveryArtifact(
+                                layer = "code",
+                                path = "discovery_summary",
+                                content = "Wrote discovery summary: ${summaryRef.module}/${summaryRef.layer}/${summaryRef.name}"
+                            )
+                        )
                         log.info("[DISCOVERY] Wrote discovery summary to CODE layer")
-                        
+
                         // Generate and write links between artifacts
                         val generatedLinksCount = if (clusterId != null) {
                             generateLinks(clusterId, flows, businessRules, components)
                         } else {
                             0
                         }
-                        artifacts.add(DiscoveryArtifact(
-                            layer = "logic",
-                            path = "generated_links",
-                            content = "Generated $generatedLinksCount cross-layer links"
-                        ))
+                        artifacts.add(
+                            DiscoveryArtifact(
+                                layer = "logic",
+                                path = "generated_links",
+                                content = "Generated $generatedLinksCount cross-layer links"
+                            )
+                        )
                         log.info("[DISCOVERY] Generated {} cross-layer links", generatedLinksCount)
                     }
                 }
             }
-            
+
             // Step 8: Contract validation using ContractValidator
             if (contracts.isNotEmpty() && (depth == DiscoveryDepth.STANDARD || depth == DiscoveryDepth.DEEP)) {
                 log.info("[DISCOVERY] Step 8: Validating {} contract hints", contracts.size)
                 // For now, log contract hints - full integration would require DiscoveryContract objects
-                artifacts.add(DiscoveryArtifact(
-                    layer = "vision",
-                    path = "contract_validation",
-                    content = "Contract hints: ${contracts.size}\n${contracts.joinToString("\n") { "- ${it.contractPath} (${it.relatedFiles.size} files, ${it.entryPoints.size} entry points)" }}"
-                ))
+                artifacts.add(
+                    DiscoveryArtifact(
+                        layer = "vision",
+                        path = "contract_validation",
+                        content = "Contract hints: ${contracts.size}\n${contracts.joinToString("\n") { "- ${it.contractPath} (${it.relatedFiles.size} files, ${it.entryPoints.size} entry points)" }}"
+                    )
+                )
                 log.info("[DISCOVERY] Contract validation completed")
             }
-            
+
             val duration = System.currentTimeMillis() - startTime
             log.info("[DISCOVERY] Discovery completed in {}ms", duration)
-            
+
             val flowCount = artifacts.count { it.layer == "flow" }
             val businessRuleCount = artifacts.count { it.layer == "logic" && it.path == "business_rules" }
             val componentCount = artifacts.count { it.layer == "structure" && it.path == "components" }
@@ -523,15 +586,17 @@ class DiscoveryPipelineImpl(
             )
         }
     }
-    
+
     override suspend fun discover(
         intent: DiscoveryIntent,
         clusterId: String?,
         contracts: List<ContractHint>
     ): PipelineResult {
-        log.info("[DISCOVERY] Starting intent-based discovery: goal={}, depth={}", 
-            intent.goal, intent.depth)
-        
+        log.info(
+            "[DISCOVERY] Starting intent-based discovery: goal={}, depth={}",
+            intent.goal, intent.depth
+        )
+
         // Validate intent
         if (!intentResolver.isValid(intent)) {
             val errors = intentResolver.validate(intent)
@@ -543,22 +608,22 @@ class DiscoveryPipelineImpl(
                 metadata = emptyMap()
             )
         }
-        
+
         // Resolve intent to parameter set
         val parameterSet = intentResolver.resolveToParameterSet(intent)
         log.info("[DISCOVERY] Resolved intent to parameter set: {}", parameterSet.name)
-        
+
         // Map intent depth to discovery depth
         val discoveryDepth = when (intent.depth) {
             com.i2vision.discover.api.models.IntentDepth.BROWSE -> DiscoveryDepth.BROWSE
             com.i2vision.discover.api.models.IntentDepth.STANDARD -> DiscoveryDepth.STANDARD
             com.i2vision.discover.api.models.IntentDepth.DEEP -> DiscoveryDepth.DEEP
         }
-        
+
         // Execute discovery with resolved parameters
         return discover(discoveryDepth, clusterId, contracts)
     }
-    
+
     /**
      * Generate cross-layer links between discovered artifacts.
      * 
@@ -574,7 +639,7 @@ class DiscoveryPipelineImpl(
         components: List<com.i2vision.discover.structure.Component>
     ): Int {
         var linkCount = 0
-        
+
         // Generate business rule -> code links
         businessRules.forEach { rule ->
             try {
@@ -600,7 +665,7 @@ class DiscoveryPipelineImpl(
                 log.warn("[DISCOVERY] Failed to generate link for rule ${rule.id}: ${e.message}")
             }
         }
-        
+
         // Generate flow -> code links (entry points)
         flows.forEach { flow ->
             try {
@@ -626,7 +691,7 @@ class DiscoveryPipelineImpl(
                 log.warn("[DISCOVERY] Failed to generate link for flow ${flow.id}: ${e.message}")
             }
         }
-        
+
         // Generate component -> code links
         components.forEach { component ->
             component.files.forEach { file ->
@@ -654,10 +719,10 @@ class DiscoveryPipelineImpl(
                 }
             }
         }
-        
+
         return linkCount
     }
-    
+
     /**
      * Extension function to extract integer from content string.
      * Example: "Generated 15 cross-layer links" -> 15
@@ -666,7 +731,7 @@ class DiscoveryPipelineImpl(
         val regex = Regex("\\d+")
         return regex.find(this)?.value?.toIntOrNull() ?: 0
     }
-    
+
     /**
      * Sanitize a requirement title for use as an ID.
      * Removes special characters and normalizes to lowercase with hyphens.

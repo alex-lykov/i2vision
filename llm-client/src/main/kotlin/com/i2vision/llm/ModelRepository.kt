@@ -10,27 +10,27 @@ interface ModelRepository {
      * Scan and return all available models from this repository
      */
     suspend fun scanModels(): Result<List<OllamaModelMetadata>>
-    
+
     /**
      * Get a specific model by ID
      */
     suspend fun getModel(modelId: String): Result<OllamaModelMetadata?>
-    
+
     /**
      * Stream model updates (if supported)
      */
     fun observeModels(): Flow<OllamaModelMetadata>
-    
+
     /**
      * Check if repository is available
      */
     suspend fun isAvailable(): Boolean
-    
+
     /**
      * Get repository type information
      */
     val repositoryType: RepositoryType
-    
+
     /**
      * Close repository resources
      */

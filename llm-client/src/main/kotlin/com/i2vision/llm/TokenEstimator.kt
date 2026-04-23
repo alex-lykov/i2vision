@@ -4,7 +4,7 @@ package com.i2vision.llm
  * Utility class for consistent token estimation across all model implementations
  */
 object TokenEstimator {
-    
+
     /**
      * Estimate token count for a given text
      * Uses a simple heuristic: approximately 4 characters per token for English text
@@ -12,27 +12,27 @@ object TokenEstimator {
      */
     fun estimateTokens(text: String): Int {
         if (text.isEmpty()) return 0
-        
+
         // Basic heuristic: ~4 characters per token for English
         // This accounts for spaces and punctuation
         return (text.length + 3) / 4
     }
-    
+
     /**
      * Estimate token count with more sophisticated heuristics
      * Takes into account code-specific patterns
      */
     fun estimateTokensForCode(text: String): Int {
         if (text.isEmpty()) return 0
-        
+
         var tokenCount = 0
-        
+
         // Split by lines to handle code patterns better
         text.lines().forEach { line ->
             when {
                 // Comments and strings tend to have more natural language
                 line.trimStart().startsWith("//") || line.trimStart().startsWith("/*") ||
-                line.trimStart().startsWith("*") || line.contains("\"") -> {
+                        line.trimStart().startsWith("*") || line.contains("\"") -> {
                     tokenCount += estimateTokens(line)
                 }
                 // Code with many symbols typically has more tokens per character
@@ -45,10 +45,10 @@ object TokenEstimator {
                 }
             }
         }
-        
+
         return tokenCount
     }
-    
+
     /**
      * Estimate max tokens that can fit in context window
      */

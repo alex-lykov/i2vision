@@ -64,11 +64,11 @@ class DocContractYamlParser(
      */
     fun parse(contractFile: File): DocLayerContract {
         log.info("[PARSER] Parsing contract: ${contractFile.path}")
-        
+
         if (!contractFile.exists()) {
             throw ContractParseException("Contract file not found: ${contractFile.path}")
         }
-        
+
         try {
             val data = yaml.load<Map<String, Any>>(contractFile.reader())
             if (data == null) {
@@ -86,13 +86,13 @@ class DocContractYamlParser(
      */
     fun parseAll(): Map<Layer, DocLayerContract> {
         log.info("[PARSER] Parsing all VSLFC layer contracts")
-        
+
         val contracts = mutableMapOf<Layer, DocLayerContract>()
-        
+
         Layer.values().forEach { layer ->
             val contractPath = VSLFCLayerContracts.contractPath(layer)
             val contractFile = File(projectRoot, contractPath)
-            
+
             if (contractFile.exists()) {
                 try {
                     val contract = parse(contractFile)
@@ -105,7 +105,7 @@ class DocContractYamlParser(
                 log.warn("[PARSER] Contract not found for ${layer.name}: $contractPath")
             }
         }
-        
+
         log.info("[PARSER] Loaded ${contracts.size}/${Layer.values().size} contracts")
         return contracts
     }
@@ -116,20 +116,20 @@ class DocContractYamlParser(
     fun validate(contractFile: File): ValidationResult {
         val errors = mutableListOf<String>()
         val warnings = mutableListOf<String>()
-        
+
         if (!contractFile.exists()) {
             errors.add("Contract file not found")
             return ValidationResult(false, errors, warnings)
         }
-        
+
         try {
             val data = yaml.load<Map<String, Any>>(contractFile.reader())
-            
+
             // Required fields
             if (!data.containsKey("contract")) errors.add("Missing 'contract' field")
             if (!data.containsKey("layer")) errors.add("Missing 'layer' field")
             if (!data.containsKey("version")) warnings.add("Missing 'version' field")
-            
+
             // Validate layer value
             if (data.containsKey("layer")) {
                 val layerValue = data["layer"] as? String
@@ -137,54 +137,54 @@ class DocContractYamlParser(
                     errors.add("Invalid layer: $layerValue")
                 }
             }
-            
+
             // Validate documentation section
             if (!data.containsKey("documentation")) {
                 warnings.add("Missing 'documentation' section")
             }
-            
+
             // Validate mappings
             if (!data.containsKey("mappings")) {
                 warnings.add("Missing 'mappings' section")
             }
-            
+
         } catch (e: Exception) {
             errors.add("YAML parse error: ${e.message}")
         }
-        
+
         return ValidationResult(errors.isEmpty(), errors, warnings)
     }
 
     // Private parsing methods
 
     private fun parseContract(data: Map<String, Any>, sourceFile: File): DocLayerContract {
-        val contractId = data["contract"] as? String 
+        val contractId = data["contract"] as? String
             ?: throw ContractParseException("Missing 'contract' field")
-        
-        val layerStr = data["layer"] as? String 
+
+        val layerStr = data["layer"] as? String
             ?: throw ContractParseException("Missing 'layer' field")
-        
+
         val layer = parseLayer(layerStr)
-        
+
         val version = data["version"]?.toString() ?: "1.0"
-        
+
         val directionStr = data["direction"] as? String ?: "bidirectional"
         val direction = parseDirection(directionStr)
-        
+
         val documentation = parseDocumentation(data["documentation"] as? Map<String, Any> ?: emptyMap())
-        
+
         val mappings = parseMappings(data["mappings"] as? List<Map<String, Any>> ?: emptyList())
-        
+
         val syncRules = parseSyncRules(data["sync_rules"] as? Map<String, Any> ?: emptyMap())
-        
+
         val validationRules = parseValidationRules(data["validation"] as? List<Map<String, Any>> ?: emptyList())
-        
+
         val llmRequirements = parseLLMRequirements(data["llm_requirements"] as? Map<String, Any>)
-        
+
         val removalGates = parseRemovalGates(data["description_removal_gates"] as? List<Map<String, Any>>)
-        
+
         log.debug("[PARSER] Parsed contract: $contractId for layer $layerStr")
-        
+
         return DocLayerContract(
             contractId = contractId,
             layer = layer,
@@ -223,23 +223,23 @@ class DocContractYamlParser(
     private fun parseDocumentation(data: Map<String, Any>): DocumentationConfig {
         val primary = data["primary"] as? String ?: ""
         val secondary = (data["secondary"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
-        
+
         return DocumentationConfig(primary, secondary)
     }
 
     private fun parseMappings(data: List<Map<String, Any>>): List<DocLayerContract.DocMapping> {
         return data.map { mapping ->
-            val docSection = mapping["doc_section"] as? String 
+            val docSection = mapping["doc_section"] as? String
                 ?: throw ContractParseException("Mapping missing 'doc_section'")
-            
-            val layerField = mapping["layer_field"] as? String 
+
+            val layerField = mapping["layer_field"] as? String
                 ?: throw ContractParseException("Mapping missing 'layer_field'")
-            
+
             val parserStr = mapping["parser"] as? String ?: "free_text"
             val parser = parseParserType(parserStr)
-            
+
             val confidence = (mapping["confidence"] as? Number)?.toDouble() ?: 0.8
-            
+
             DocLayerContract.DocMapping(docSection, layerField, parser, confidence)
         }
     }
@@ -257,18 +257,18 @@ class DocContractYamlParser(
     private fun parseSyncRules(data: Map<String, Any>): DocLayerContract.SyncRules {
         val onDocChangeStr = data["on_doc_change"] as? String ?: "reimport"
         val onDocChange = parseSyncAction(onDocChangeStr)
-        
+
         val onLayerChangeStr = data["on_layer_change"] as? String ?: "suggest_update"
         val onLayerChange = parseSyncAction(onLayerChangeStr)
-        
+
         val conflictResolution = parseConflictResolution(
             data["conflict_resolution"] as? Map<String, Any> ?: emptyMap()
         )
-        
+
         val freshness = parseFreshnessRules(
             data["freshness"] as? Map<String, Any> ?: emptyMap()
         )
-        
+
         return DocLayerContract.SyncRules(
             onDocChange = onDocChange,
             onLayerChange = onLayerChange,
@@ -293,13 +293,13 @@ class DocContractYamlParser(
             val threshold = (ruleData["confidence_threshold"] as? Number)?.toDouble() ?: 0.5
             val actionStr = ruleData["action"] as? String ?: "manual_review"
             val action = parseConflictAction(actionStr)
-            
+
             DocLayerContract.ConflictRule(threshold, action)
         }
-        
+
         val defaultStr = data["default"] as? String ?: "manual_review"
         val default = parseConflictAction(defaultStr)
-        
+
         return DocLayerContract.ConflictResolutionStrategy(rules, default)
     }
 
@@ -317,10 +317,10 @@ class DocContractYamlParser(
     private fun parseFreshnessRules(data: Map<String, Any>): DocLayerContract.FreshnessRules {
         val warningDays = (data["warning_days"] as? Number)?.toInt() ?: 90
         val criticalDays = (data["critical_days"] as? Number)?.toInt() ?: 180
-        
+
         val actionStr = data["action_on_stale"] as? String ?: "revalidate_with_lower_confidence"
         val action = parseStaleAction(actionStr)
-        
+
         return DocLayerContract.FreshnessRules(warningDays, criticalDays, action)
     }
 
@@ -335,28 +335,28 @@ class DocContractYamlParser(
 
     private fun parseValidationRules(data: List<Map<String, Any>>): List<DocLayerContract.ValidationRule> {
         return data.map { ruleData ->
-            val rule = ruleData["rule"] as? String 
+            val rule = ruleData["rule"] as? String
                 ?: throw ContractParseException("Validation rule missing 'rule' field")
-            
+
             val severityStr = ruleData["severity"] as? String ?: "warning"
             val severity = parseSeverity(severityStr)
-            
+
             val formula = ruleData["formula"] as? String
             val threshold = (ruleData["threshold"] as? Number)?.toDouble()
             val action = ruleData["action"] as? String
             val description = ruleData["description"] as? String
-            
+
             DocLayerContract.ValidationRule(rule, severity, formula, threshold, action, description)
         }
     }
 
     private fun parseLLMRequirements(data: Map<String, Any>?): DocLayerContract.LLMRequirements? {
         if (data == null) return null
-        
+
         val relationshipExtractionData = data["relationship_extraction"] as? Map<String, Any> ?: return null
         val requiresLlm = relationshipExtractionData["requires_llm"] as? Boolean ?: false
         val fallbackStrategy = relationshipExtractionData["fallback_strategy"] as? String ?: "manual_curation"
-        
+
         val monitoringData = relationshipExtractionData["monitoring"] as? List<Map<String, Any>> ?: emptyList()
         val monitoring = monitoringData.map { metricData ->
             DocLayerContract.LLMMonitoringMetric(
@@ -369,7 +369,7 @@ class DocContractYamlParser(
                 actionIfLow = metricData["action_if_low"] as? String
             )
         }
-        
+
         return DocLayerContract.LLMRequirements(
             relationshipExtraction = DocLayerContract.LLMDependency(
                 requiresLlm = requiresLlm,
@@ -381,7 +381,7 @@ class DocContractYamlParser(
 
     private fun parseRemovalGates(data: List<Map<String, Any>>?): List<DocLayerContract.RemovalGate> {
         if (data == null) return emptyList()
-        
+
         return data.map { gateData ->
             val gate = gateData["gate"] as? String ?: ""
             val condition = gateData["condition"] as? String ?: ""
@@ -389,7 +389,7 @@ class DocContractYamlParser(
             val severity = parseSeverity(severityStr)
             val description = gateData["description"] as? String ?: ""
             val minimumContentLength = (gateData["minimum_content_length"] as? Number)?.toInt()
-            
+
             DocLayerContract.RemovalGate(gate, condition, severity, description, minimumContentLength)
         }
     }

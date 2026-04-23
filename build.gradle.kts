@@ -21,20 +21,20 @@ allprojects {
 subprojects {
     apply(plugin = "org.jetbrains.kotlin.jvm")
     apply(plugin = "org.jetbrains.kotlin.plugin.serialization")
-    
+
     group = rootProject.group
     version = rootProject.version
-    
+
     configure<org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension> {
         jvmToolchain(21)
     }
-    
+
     dependencies {
         // Common dependencies for all modules
         add("implementation", "org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
         add("implementation", "org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.0")
         add("implementation", "org.slf4j:slf4j-api:2.0.9")
-        
+
         add("testImplementation", "org.jetbrains.kotlin:kotlin-test")
     }
 }

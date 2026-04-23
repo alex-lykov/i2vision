@@ -9,7 +9,7 @@ class UserController(
 ) {
     @GetMapping("/{id}")
     fun getUser(@PathVariable id: String) = userService.findById(id)
-    
+
     @PostMapping
     fun createUser(@RequestBody request: CreateUserRequest) = userService.create(request)
 }

@@ -10,6 +10,7 @@
 ## Quick Start
 
 ### 1. Clone and Build
+
 ```bash
 git clone <repository-url>
 cd ${PROJECT_ROOT}
@@ -17,6 +18,7 @@ cd ${PROJECT_ROOT}
 ```
 
 ### 2. Start Context Server
+
 ```bash
 # Using PowerShell wrapper (recommended)
 .\i2vision-context.ps1 -StartServer -Port 3001
@@ -26,6 +28,7 @@ cd ${PROJECT_ROOT}
 ```
 
 ### 3. Verify Installation
+
 ```bash
 curl http://localhost:3001/context/health
 # Should return: {"status":"healthy","service":"i2vision"}
@@ -38,11 +41,13 @@ curl http://localhost:3001/context/health
 ### Server Configuration
 
 **Environment Variables:**
+
 - `I2VISION_PORT` - Server port (default: 3001)
 - `I2VISION_PROJECT_PATH` - Project root path (default: current directory)
 - `I2VISION_CACHE_TTL` - Context cache TTL in minutes (default: 5)
 
 **Command Line Arguments:**
+
 ```bash
 .\gradlew :server:run --args="--port=8080 --project=/path/to/project"
 ```
@@ -61,6 +66,7 @@ The system uses the semantic cache for context generation. Ensure discovery has 
 ## Deployment Scenarios
 
 ### Local Development
+
 ```bash
 # Start server for local development
 .\i2vision-context.ps1 -StartServer
@@ -70,6 +76,7 @@ curl "http://localhost:3001/context/quick?q=src/main/kotlin/Application.kt"
 ```
 
 ### CI/CD Integration
+
 ```yaml
 # GitHub Actions example
 name: Context Server Test
@@ -98,6 +105,7 @@ jobs:
 ### Production Deployment
 
 #### Docker Deployment
+
 ```dockerfile
 FROM openjdk:21-jdk-slim
 
@@ -110,6 +118,7 @@ CMD ["./gradlew", ":server:run", "--args=--port=3001"]
 ```
 
 #### Systemd Service
+
 ```ini
 [Unit]
 Description=i2vision Context Server
@@ -130,6 +139,7 @@ WantedBy=multi-user.target
 ### Cloud Deployment
 
 #### AWS EC2
+
 ```bash
 # Install dependencies
 sudo yum update
@@ -145,6 +155,7 @@ nohup ./gradlew :server:run --args="--port=3001" > context-server.log 2>&1 &
 ```
 
 #### Kubernetes
+
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -188,17 +199,21 @@ spec:
 ## Security Considerations
 
 ### Network Security
+
 - **Local Development**: Server binds to localhost only
 - **Production**: Use reverse proxy (nginx, Apache) for HTTPS
 - **Firewall**: Restrict access to authorized clients only
 
 ### Authentication
+
 Currently no authentication is implemented. For production:
+
 - Add API key authentication
 - Implement rate limiting
 - Use HTTPS with proper certificates
 
 ### Data Security
+
 - Context data contains code analysis - ensure secure transmission
 - Cache files contain sensitive project information
 - Consider data retention policies
@@ -208,6 +223,7 @@ Currently no authentication is implemented. For production:
 ## Monitoring and Logging
 
 ### Health Monitoring
+
 ```bash
 # Basic health check
 curl http://localhost:3001/context/health
@@ -217,26 +233,26 @@ curl http://localhost:3001/metrics
 ```
 
 ### Log Configuration
+
 Default logging goes to console. For production, configure log files:
 
 ```properties
 # logback-spring.xml
-<configuration>
-    <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
-        <file>logs/context-server.log</file>
-        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-            <fileNamePattern>logs/context-server.%d{yyyy-MM-dd}.gz</fileNamePattern>
-            <maxHistory>30</maxHistory>
-        </rollingPolicy>
-        <encoder>
-            <pattern>%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
-        </encoder>
-    </appender>
-    
-    <root level="INFO">
-        <appender-ref ref="FILE" />
-    </root>
-</configuration>
+<configuration>=
+<appender=name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
+<file>logs/context-server.log</file>=
+<rollingPolicy=class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
+<fileNamePattern>logs/context-server.%d{yyyy-MM-dd}.gz</fileNamePattern>=
+<maxHistory>30</maxHistory>=
+</rollingPolicy>=
+<encoder>=
+<pattern>%d{yyyy-MM-dd=HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n</pattern>
+</encoder>=
+</appender>=
+<root=level="INFO">
+<appender-ref=ref="FILE" />
+</root>=
+</configuration>=
 ```
 
 ---
@@ -246,6 +262,7 @@ Default logging goes to console. For production, configure log files:
 ### Common Issues
 
 #### Server Won't Start
+
 ```bash
 # Check if port is already in use
 netstat -an | grep :3001
@@ -255,6 +272,7 @@ netstat -an | grep :3001
 ```
 
 #### Low Context Confidence
+
 ```bash
 # Run discovery to improve context quality
 ./gradlew :i2vision-cli:run --args="discover /path/to/project"
@@ -266,6 +284,7 @@ netstat -an | grep :3001
 ```
 
 #### Performance Issues
+
 ```bash
 # Increase JVM memory
 export GRADLE_OPTS="-Xmx2g -Xms1g"
@@ -275,6 +294,7 @@ curl "http://localhost:3001/context/cache/invalidate"
 ```
 
 ### Log Analysis
+
 ```bash
 # Check for errors
 grep "ERROR" logs/context-server.log
@@ -291,11 +311,13 @@ grep "took" logs/context-server.log
 ## Maintenance
 
 ### Regular Maintenance
+
 - **Weekly**: Clear expired cache entries
 - **Monthly**: Update discovery analysis
 - **Quarterly**: Review and update configurations
 
 ### Cache Management
+
 ```bash
 # Clear all cache
 curl "http://localhost:3001/context/cache/invalidate"
@@ -305,6 +327,7 @@ curl "http://localhost:3001/context/cache/invalidate?pattern=orchestrator"
 ```
 
 ### Updates and Upgrades
+
 ```bash
 # Update codebase
 git pull origin main
@@ -318,6 +341,7 @@ git pull origin main
 
 ---
 
-For additional support, see the [API Reference](../reference/API_REFERENCE.md) and [Integration Guide](MCP_INTEGRATION.md).
+For additional support, see the [API Reference](../reference/API_REFERENCE.md)
+and [Integration Guide](MCP_INTEGRATION.md).
 
 

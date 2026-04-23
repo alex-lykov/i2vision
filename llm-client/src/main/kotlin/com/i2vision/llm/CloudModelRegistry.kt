@@ -30,14 +30,14 @@ class CloudModelRegistry(
         )
     }
     private val models = mutableMapOf<String, CloudModelInfo>()
-    
+
     /**
      * Scan all configured cloud endpoints for available models
      */
     suspend fun scanModels(): List<CloudModelInfo> = withContext(Dispatchers.IO) {
         models.clear()
         val allModels = mutableListOf<CloudModelInfo>()
-        
+
         repositories.forEach { repository ->
             try {
                 val result = repository.scanModels()
@@ -72,15 +72,15 @@ class CloudModelRegistry(
                 println("Failed to scan cloud repository: ${e.message}")
             }
         }
-        
+
         allModels
     }
-    
+
     private fun findConfigForUrl(url: String): OllamaCloudConfig {
-        return cloudConfigs.find { it.apiUrl == url } 
+        return cloudConfigs.find { it.apiUrl == url }
             ?: OllamaCloudConfig(url) // Fallback config
     }
-    
+
     /**
      * Create a ModelWrapper for the specified cloud model
      */
@@ -89,7 +89,7 @@ class CloudModelRegistry(
         performanceMonitor: PerformanceMonitor? = null
     ): ModelWrapper? {
         val model = models[modelId] ?: return null
-        
+
         return OllamaCloudModelWrapper(
             modelName = model.name,
             maxContextLength = model.contextLength,
@@ -97,21 +97,21 @@ class CloudModelRegistry(
             performanceMonitor = performanceMonitor
         )
     }
-    
+
     /**
      * Get models by provider
      */
     fun getModelsByProvider(provider: CloudProvider): List<CloudModelInfo> {
         return models.values.filter { it.provider == provider }
     }
-    
+
     /**
      * Get models by region
      */
     fun getModelsByRegion(region: String): List<CloudModelInfo> {
         return models.values.filter { it.region == region }
     }
-    
+
     /**
      * Close all repositories
      */
@@ -145,7 +145,7 @@ data class CloudModelInfo(
             size > 1_000 -> "${size / 1_000} KB"
             else -> "$size B"
         }
-        
+
     val displayName: String
         get() = "${provider.name.lowercase()}:${name}:${tag}"
 }

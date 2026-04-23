@@ -10,17 +10,17 @@ import org.slf4j.LoggerFactory
 class IntelligenceTools(
     private val projectRoot: String
 ) {
-    
+
     private val log = LoggerFactory.getLogger(IntelligenceTools::class.java)
     private val intelligenceService = IntelligenceService(projectRoot)
-    
+
     /**
      * Get quality metrics for a module
      */
     fun getQualityMetrics(modulePath: String): Map<String, Any> {
         log.debug("[INTELLIGENCE_TOOLS] Getting quality metrics for module: {}", modulePath)
         val metrics = intelligenceService.getQualityMetrics(modulePath)
-        
+
         return mapOf(
             "module" to metrics.module,
             "complexity_score" to metrics.complexityScore,
@@ -31,14 +31,14 @@ class IntelligenceTools(
             "assessment" to assessOverallQuality(metrics)
         )
     }
-    
+
     /**
      * Get related files for a specific file
      */
     fun getRelatedFiles(openedFile: String, modulePath: String): Map<String, Any> {
         log.debug("[INTELLIGENCE_TOOLS] Getting related files for: {} in module: {}", openedFile, modulePath)
         val relatedFiles = intelligenceService.getRelatedFiles(openedFile, modulePath)
-        
+
         return mapOf(
             "opened_file" to openedFile,
             "module_path" to modulePath,
@@ -53,21 +53,21 @@ class IntelligenceTools(
             "count" to relatedFiles.size
         )
     }
-    
+
     /**
      * Get complexity details for a module
      */
     fun getComplexityDetails(modulePath: String): Map<String, Any> {
         log.debug("[INTELLIGENCE_TOOLS] Getting complexity details for module: {}", modulePath)
         val details = intelligenceService.getComplexityDetails(modulePath)
-        
+
         if (details == null) {
             return mapOf(
                 "module" to modulePath,
                 "error" to "Complexity details not available for this module"
             )
         }
-        
+
         return mapOf(
             "module" to details.module,
             "average_score" to details.averageScore,
@@ -85,21 +85,21 @@ class IntelligenceTools(
             "assessment" to assessComplexity(details)
         )
     }
-    
+
     /**
      * Get cohesion details for a module
      */
     fun getCohesionDetails(modulePath: String): Map<String, Any> {
         log.debug("[INTELLIGENCE_TOOLS] Getting cohesion details for module: {}", modulePath)
         val details = intelligenceService.getCohesionDetails(modulePath)
-        
+
         if (details == null) {
             return mapOf(
                 "module" to modulePath,
                 "error" to "Cohesion details not available for this module"
             )
         }
-        
+
         return mapOf(
             "module" to details.module,
             "average_cohesion" to details.averageCohesion,
@@ -115,17 +115,17 @@ class IntelligenceTools(
             "assessment" to assessCohesion(details)
         )
     }
-    
+
     /**
      * Get comprehensive intelligence report for a module
      */
     fun getIntelligenceReport(modulePath: String): Map<String, Any> {
         log.debug("[INTELLIGENCE_TOOLS] Generating intelligence report for module: {}", modulePath)
-        
+
         val qualityMetrics = intelligenceService.getQualityMetrics(modulePath)
         val complexityDetails = intelligenceService.getComplexityDetails(modulePath)
         val cohesionDetails = intelligenceService.getCohesionDetails(modulePath)
-        
+
         return mapOf(
             "module" to modulePath,
             "quality_metrics" to mapOf(
@@ -151,9 +151,9 @@ class IntelligenceTools(
             "overall_assessment" to generateOverallAssessment(qualityMetrics, complexityDetails, cohesionDetails)
         )
     }
-    
+
     // ── Assessment Helper Methods ────────────────────────────────────────
-    
+
     private fun assessOverallQuality(metrics: com.i2vision.mcp.intelligence.QualityMetrics): String {
         val avgScore = (metrics.complexityScore + metrics.cohesionScore + metrics.couplingScore) / 3.0
         return when {
@@ -164,7 +164,7 @@ class IntelligenceTools(
             else -> "Critical"
         }
     }
-    
+
     private fun assessComplexity(details: com.i2vision.mcp.intelligence.ComplexityDetails): String {
         return when {
             details.averageScore >= 0.8 -> "Low complexity - well structured"
@@ -173,7 +173,7 @@ class IntelligenceTools(
             else -> "Very high complexity - refactoring recommended"
         }
     }
-    
+
     private fun assessCohesion(details: com.i2vision.mcp.intelligence.CohesionDetails): String {
         return when {
             details.averageCohesion >= 0.8 -> "High cohesion - well organized"
@@ -182,7 +182,7 @@ class IntelligenceTools(
             else -> "Very low cohesion - consider refactoring"
         }
     }
-    
+
     private fun generateOverallAssessment(
         metrics: com.i2vision.mcp.intelligence.QualityMetrics,
         complexityDetails: com.i2vision.mcp.intelligence.ComplexityDetails?,
@@ -190,25 +190,25 @@ class IntelligenceTools(
     ): Map<String, Any> {
         val issues = mutableListOf<String>()
         val recommendations = mutableListOf<String>()
-        
+
         // Analyze complexity
         if (metrics.complexityScore < 0.4) {
             issues.add("High complexity detected")
             recommendations.add("Consider breaking down complex functions")
         }
-        
+
         // Analyze cohesion
         if (metrics.cohesionScore < 0.4) {
             issues.add("Low cohesion between components")
             recommendations.add("Review component boundaries and responsibilities")
         }
-        
+
         // Analyze coupling
         if (metrics.couplingScore < 0.4) {
             issues.add("High coupling between modules")
             recommendations.add("Apply dependency inversion principle")
         }
-        
+
         // Add specific complexity recommendations
         complexityDetails?.let { cd ->
             if (cd.averageCyclomatic > 10) {
@@ -220,7 +220,7 @@ class IntelligenceTools(
                 recommendations.add("Extract complex logic into smaller functions")
             }
         }
-        
+
         // Add specific cohesion recommendations
         cohesionDetails?.let { ch ->
             val lowCohesionComponents = ch.components.filter { it.cohesion < 0.5 }
@@ -229,7 +229,7 @@ class IntelligenceTools(
                 recommendations.add("Review and restructure low-cohesion components")
             }
         }
-        
+
         return mapOf(
             "overall_quality" to assessOverallQuality(metrics),
             "issues" to issues,

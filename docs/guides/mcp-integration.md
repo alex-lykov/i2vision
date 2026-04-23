@@ -2,11 +2,13 @@
 
 ## Overview
 
-i2vision provides Model Context Protocol (MCP) integration to give LLMs instant access to project context, architecture, and code understanding through a standard JSON-RPC 2.0 interface.
+i2vision provides Model Context Protocol (MCP) integration to give LLMs instant access to project context, architecture,
+and code understanding through a standard JSON-RPC 2.0 interface.
 
 ## i2vision MCP Server
 
-The `i2vision-mcp` module implements a full MCP server that can be used with Claude Desktop, Cursor, Continue.dev, and other MCP-compatible clients.
+The `i2vision-mcp` module implements a full MCP server that can be used with Claude Desktop, Cursor, Continue.dev, and
+other MCP-compatible clients.
 
 ### Available MCP Tools
 
@@ -45,6 +47,7 @@ The `i2vision-mcp` module implements a full MCP server that can be used with Cla
 ## Architecture
 
 The MCP server is built using:
+
 - **Koog Agents** (`ai.koog:koog-agents:0.6.3`) - AI agent framework for tool registry
 - **conf-agent-core** - YAML-configurable agent framework
 - **Ktor** - For HTTP transport (optional, stdio is default)

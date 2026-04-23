@@ -16,17 +16,17 @@ class ContractCommand : CliktCommand(
     name = "contract",
     help = "Contract validation and management"
 ) {
-    
+
     private val log = LoggerFactory.getLogger(ContractCommand::class.java)
-    
+
     private val action by argument("action", help = "Action: validate, list, create")
     private val contractPath by option("-c", "--contract", help = "Path to contract file")
     private val contractDir by option("--contract-dir", help = "Directory containing contracts")
     private val output by option("-o", "--output", help = "Output format (text, json, yaml)")
-    
+
     override fun run() {
         log.info("[CLI] Contract command started with action: $action")
-        
+
         when (action.lowercase()) {
             "validate" -> validateContract()
             "list" -> listContracts()
@@ -37,24 +37,24 @@ class ContractCommand : CliktCommand(
             }
         }
     }
-    
+
     private fun validateContract() {
         echo("Validating contract...")
         if (contractPath == null) {
             echo("Error: --contract path required for validation", err = true)
             throw IllegalArgumentException("Contract path required")
         }
-        
+
         val contractFile = File(contractPath!!)
         if (!contractFile.exists()) {
             echo("Error: Contract file does not exist: $contractPath", err = true)
             throw IllegalArgumentException("Contract file does not exist")
         }
-        
+
         echo("Contract validation not yet implemented")
         echo("Contract: $contractPath")
     }
-    
+
     private fun listContracts() {
         val contractDirValue = contractDir ?: ".vision-ai/.contracts"
         echo("Listing contracts in: $contractDirValue")
@@ -63,11 +63,11 @@ class ContractCommand : CliktCommand(
             echo("No contracts directory found: $contractDirValue")
             return
         }
-        
-        val contracts = dir.listFiles()?.filter { 
-            it.extension == "yaml" || it.extension == "yml" 
+
+        val contracts = dir.listFiles()?.filter {
+            it.extension == "yaml" || it.extension == "yml"
         } ?: emptyList()
-        
+
         if (contracts.isEmpty()) {
             echo("No contracts found")
         } else {
@@ -75,7 +75,7 @@ class ContractCommand : CliktCommand(
             contracts.forEach { echo("  - ${it.name}") }
         }
     }
-    
+
     private fun createContract() {
         echo("Creating new contract...")
         echo("Contract creation not yet implemented")

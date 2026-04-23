@@ -34,30 +34,30 @@ publishing {
     publications {
         create<MavenPublication>("maven") {
             from(components["java"])
-            
+
             pom {
                 name.set("intent-parser")
                 description.set("Intent parsing and models for high-level user intent specification")
-                url.set("https://github.com/i2vision/intent-parser")
-                
+                url.set("https://github.com/alex-lykov/i2vision/intent-parser")
+
                 licenses {
                     license {
                         name.set("MIT License")
                         url.set("https://opensource.org/licenses/MIT")
                     }
                 }
-                
+
                 developers {
                     developer {
                         id.set("i2vision")
                         name.set("i2vision Team")
                     }
                 }
-                
+
                 scm {
-                    connection.set("scm:git:git://github.com/i2vision/intent-parser.git")
-                    developerConnection.set("scm:git:ssh://github.com/i2vision/intent-parser.git")
-                    url.set("https://github.com/i2vision/intent-parser")
+                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/intent-parser.git")
+                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/intent-parser.git")
+                    url.set("https://github.com/alex-lykov/i2vision/intent-parser")
                 }
             }
         }

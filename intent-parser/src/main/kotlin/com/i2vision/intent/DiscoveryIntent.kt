@@ -25,26 +25,27 @@ data class DiscoveryIntent(
      */
     fun validate(): List<String> {
         val errors = mutableListOf<String>()
-        
+
         // Validate goal and focus compatibility
         if (goal == IntentGoal.FLOW_MAPPING && !focus.contains(LayerFocus.FLOW)) {
             errors.add("FLOW_MAPPING goal requires FOCUS layer to be included")
         }
-        
-        if (goal == IntentGoal.DOCUMENTATION_GENERATION && 
-            !focus.contains(LayerFocus.STRUCTURE) && 
-            !focus.contains(LayerFocus.LOGIC)) {
+
+        if (goal == IntentGoal.DOCUMENTATION_GENERATION &&
+            !focus.contains(LayerFocus.STRUCTURE) &&
+            !focus.contains(LayerFocus.LOGIC)
+        ) {
             errors.add("DOCUMENTATION_GENERATION goal requires STRUCTURE or LOGIC focus")
         }
-        
+
         // Validate depth constraints
         if (depth == IntentDepth.BROWSE && quality == QualityFocus.QUALITY) {
             errors.add("BROWSE depth cannot be combined with QUALITY focus")
         }
-        
+
         return errors
     }
-    
+
     /**
      * Check if this intent is valid.
      */
@@ -57,19 +58,19 @@ data class DiscoveryIntent(
 enum class IntentGoal {
     /** Complete discovery of all layers */
     FULL_DISCOVERY,
-    
+
     /** Focus on refactoring opportunities */
     REFACTORING_ANALYSIS,
-    
+
     /** Audit architecture and dependencies */
     ARCHITECTURE_AUDIT,
-    
+
     /** Map flows and interactions */
     FLOW_MAPPING,
-    
+
     /** Generate documentation */
     DOCUMENTATION_GENERATION,
-    
+
     /** Quick overview for exploration */
     QUICK_OVERVIEW
 }
@@ -83,7 +84,7 @@ enum class LayerFocus {
     LOGIC,
     FLOW,
     CODE;
-    
+
     companion object {
         val ALL = values().toSet()
         val CORE = setOf(STRUCTURE, LOGIC, FLOW)
@@ -97,10 +98,10 @@ enum class LayerFocus {
 enum class IntentDepth {
     /** Shallow scan for quick overview */
     BROWSE,
-    
+
     /** Standard depth for most use cases */
     STANDARD,
-    
+
     /** Deep analysis with LLM enhancement */
     DEEP
 }
@@ -111,10 +112,10 @@ enum class IntentDepth {
 enum class QualityFocus {
     /** Prioritize quality over quantity */
     QUALITY,
-    
+
     /** Balanced approach */
     BALANCED,
-    
+
     /** Prioritize quantity (maximum discovery) */
     QUANTITY
 }
@@ -139,7 +140,7 @@ object IntentParser {
         } catch (e: IllegalArgumentException) {
             return null
         }
-        
+
         val focusStr = args["focus"]
         val focus = if (focusStr != null) {
             focusStr.split(",").mapNotNull { layer ->
@@ -152,7 +153,7 @@ object IntentParser {
         } else {
             LayerFocus.ALL
         }
-        
+
         val depthStr = args["depth"]
         val depth = if (depthStr != null) {
             try {
@@ -163,7 +164,7 @@ object IntentParser {
         } else {
             IntentDepth.STANDARD
         }
-        
+
         val qualityStr = args["quality"]
         val quality = if (qualityStr != null) {
             try {
@@ -174,12 +175,12 @@ object IntentParser {
         } else {
             QualityFocus.BALANCED
         }
-        
+
         // Parse additional constraints
-        val constraints = args.filterKeys { 
-            it !in listOf("intent", "focus", "depth", "quality") 
+        val constraints = args.filterKeys {
+            it !in listOf("intent", "focus", "depth", "quality")
         }
-        
+
         return DiscoveryIntent(
             goal = goal,
             focus = focus,

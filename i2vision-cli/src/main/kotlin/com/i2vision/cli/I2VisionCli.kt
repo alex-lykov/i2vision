@@ -19,9 +19,9 @@ class I2VisionCli : CliktCommand(
     name = "i2vision",
     help = "i2vision - Intelligent code discovery and analysis tool"
 ) {
-    
+
     private val log = LoggerFactory.getLogger(I2VisionCli::class.java)
-    
+
     override fun run() {
         log.info("[CLI] i2vision CLI started")
         echo("i2vision - Intelligent code discovery and analysis tool")
@@ -42,5 +42,6 @@ class I2VisionCli : CliktCommand(
  * Main function - entry point for CLI application.
  */
 fun main(args: Array<String>) {
-    I2VisionCli().subcommands(InitCommand(), DiscoverCommand(), ContractCommand(), PresetCommand(), ContextCommand()).main(args)
+    I2VisionCli().subcommands(InitCommand(), DiscoverCommand(), ContractCommand(), PresetCommand(), ContextCommand())
+        .main(args)
 }

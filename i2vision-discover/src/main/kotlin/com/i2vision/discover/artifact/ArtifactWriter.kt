@@ -29,22 +29,22 @@ class ArtifactWriter(
     private val projectRoot: String,
     private val cacheStore: CacheStore
 ) {
-    
+
     private val log = LoggerFactory.getLogger(ArtifactWriter::class.java)
     private val yaml = Yaml(DumperOptions().apply {
         defaultFlowStyle = DumperOptions.FlowStyle.BLOCK
         indicatorIndent = 2
         indent = 4
     })
-    
+
     // Cluster-level locks to prevent concurrent writes to the same cluster's artifacts
     private val clusterLocks = ConcurrentHashMap<String, Mutex>()
-    
+
     private fun getClusterLock(clusterId: String?): Mutex {
         val key = clusterId ?: "default"
         return clusterLocks.computeIfAbsent(key) { Mutex() }
     }
-    
+
     /**
      * Write all discovered artifacts to the semantic cache.
      * 
@@ -60,33 +60,35 @@ class ArtifactWriter(
         businessRules: List<BusinessRule>,
         components: List<Component>
     ): List<ArtifactRef> {
-        log.info("[ARTIFACT_WRITER] Writing {} flows, {} business rules, {} components", 
-            flows.size, businessRules.size, components.size)
-        
+        log.info(
+            "[ARTIFACT_WRITER] Writing {} flows, {} business rules, {} components",
+            flows.size, businessRules.size, components.size
+        )
+
         val lock = getClusterLock(clusterId)
         val writtenArtifacts = mutableListOf<ArtifactRef>()
-        
+
         return lock.withLock {
             // Write flows
             flows.forEach { flow ->
                 writtenArtifacts.add(writeFlow(clusterId ?: "unknown", flow))
             }
-            
+
             // Write business rules
             businessRules.forEach { rule ->
                 writtenArtifacts.add(writeBusinessRule(clusterId ?: "unknown", rule))
             }
-            
+
             // Write components
             components.forEach { component ->
                 writtenArtifacts.add(writeComponent(clusterId ?: "unknown", component))
             }
-            
+
             log.info("[ARTIFACT_WRITER] Wrote {} artifact files", writtenArtifacts.size)
             writtenArtifacts
         }
     }
-    
+
     /**
      * Write a flow to the semantic cache using CacheStore.
      * 
@@ -100,7 +102,7 @@ class ArtifactWriter(
             layer = Layer.FLOW,
             name = "${flow.id}.yaml"
         )
-        
+
         // Create immutable copy to prevent ConcurrentModificationException during YAML serialization
         val flowData = mapOf(
             "id" to flow.id,
@@ -116,7 +118,7 @@ class ArtifactWriter(
                 )
             }
         )
-        
+
         // Debug: Check for any null values in the data structure
         fun checkForNulls(data: Any?, path: String = ""): Boolean {
             return when (data) {
@@ -124,12 +126,15 @@ class ArtifactWriter(
                     log.error("[ARTIFACT_WRITER] Found null value at path: $path")
                     true
                 }
+
                 is Map<*, *> -> {
                     data.entries.any { (k, v) -> checkForNulls(v, "$path.$k") }
                 }
+
                 is List<*> -> {
                     data.withIndex().any { (i, item) -> checkForNulls(item, "$path[$i]") }
                 }
+
                 else -> false
             }
         }
@@ -144,14 +149,16 @@ class ArtifactWriter(
             log.debug("[ARTIFACT_WRITER] Wrote flow: {}", ref.name)
         } catch (e: Exception) {
             log.error("[ARTIFACT_WRITER] Failed to write flow: {}", ref.name, e)
-            log.error("[ARTIFACT_WRITER] Flow data: id={}, name={}, entryPoint={}, pattern={}, steps={}", 
-                flow.id, flow.name, flow.entryPoint, flow.pattern, flow.steps.size)
+            log.error(
+                "[ARTIFACT_WRITER] Flow data: id={}, name={}, entryPoint={}, pattern={}, steps={}",
+                flow.id, flow.name, flow.entryPoint, flow.pattern, flow.steps.size
+            )
             // Don't rethrow - continue with other artifacts
         }
-        
+
         return ref
     }
-    
+
     /**
      * Write a business rule to the semantic cache using CacheStore.
      * 
@@ -165,7 +172,7 @@ class ArtifactWriter(
             layer = Layer.LOGIC,
             name = "${rule.id}.yaml"
         )
-        
+
         val ruleData = mutableMapOf<String, Any>()
         ruleData["id"] = rule.id
         ruleData["name"] = rule.name
@@ -173,20 +180,22 @@ class ArtifactWriter(
         ruleData["condition"] = rule.condition
         ruleData["file"] = rule.file
         ruleData["line"] = rule.line
-        
+
         try {
             cacheStore.put(ref, yaml.dump(ruleData).toByteArray())
             log.debug("[ARTIFACT_WRITER] Wrote business rule: {}", ref.name)
         } catch (e: Exception) {
             log.error("[ARTIFACT_WRITER] Failed to write business rule: {}", ref.name, e)
-            log.error("[ARTIFACT_WRITER] Rule data: id={}, name={}, type={}, condition={}, file={}, line={}", 
-                rule.id, rule.name, rule.type, rule.condition, rule.file, rule.line)
+            log.error(
+                "[ARTIFACT_WRITER] Rule data: id={}, name={}, type={}, condition={}, file={}, line={}",
+                rule.id, rule.name, rule.type, rule.condition, rule.file, rule.line
+            )
             throw e
         }
-        
+
         return ref
     }
-    
+
     /**
      * Write a component to the semantic cache using CacheStore.
      * 
@@ -200,7 +209,7 @@ class ArtifactWriter(
             layer = Layer.STRUCTURE,
             name = "${component.id}.yaml"
         )
-        
+
         val componentData = mutableMapOf<String, Any>()
         componentData["id"] = component.id
         componentData["name"] = component.name
@@ -210,21 +219,23 @@ class ArtifactWriter(
         componentData["classes"] = component.classes
         componentData["functions"] = component.functions
         componentData["dependencies"] = component.dependencies
-        
+
         try {
             cacheStore.put(ref, yaml.dump(componentData).toByteArray())
             log.debug("[ARTIFACT_WRITER] Wrote component: {}", ref.name)
         } catch (e: Exception) {
             log.error("[ARTIFACT_WRITER] Failed to write component: {}", ref.name, e)
-            log.error("[ARTIFACT_WRITER] Component data: id={}, name={}, type={}, packageName={}, files={}, classes={}, functions={}, dependencies={}",
+            log.error(
+                "[ARTIFACT_WRITER] Component data: id={}, name={}, type={}, packageName={}, files={}, classes={}, functions={}, dependencies={}",
                 component.id, component.name, component.type, component.packageName,
-                component.files.size, component.classes.size, component.functions.size, component.dependencies.size)
+                component.files.size, component.classes.size, component.functions.size, component.dependencies.size
+            )
             throw e
         }
-        
+
         return ref
     }
-    
+
     /**
      * Write a discovery summary to the semantic cache using CacheStore.
      * 
@@ -245,7 +256,7 @@ class ArtifactWriter(
             layer = Layer.CODE,
             name = "discovery-summary.yaml"
         )
-        
+
         val summaryData = mapOf(
             "timestamp" to System.currentTimeMillis(),
             "flows" to flows.size,
@@ -255,13 +266,13 @@ class ArtifactWriter(
             "ruleIds" to businessRules.map { it.id },
             "componentIds" to components.map { it.id }
         )
-        
+
         cacheStore.put(ref, yaml.dump(summaryData).toByteArray())
         log.debug("[ARTIFACT_WRITER] Wrote discovery summary: {}", ref.name)
-        
+
         return ref
     }
-    
+
     /**
      * Write Vision layer artifacts to the semantic cache using CacheStore.
      * 
@@ -275,11 +286,13 @@ class ArtifactWriter(
         requirements: List<VisionRequirement>,
         constraints: List<VisionConstraint>
     ): List<ArtifactRef> {
-        log.info("[ARTIFACT_WRITER] Writing {} requirements, {} constraints to vision layer", 
-            requirements.size, constraints.size)
-        
+        log.info(
+            "[ARTIFACT_WRITER] Writing {} requirements, {} constraints to vision layer",
+            requirements.size, constraints.size
+        )
+
         val writtenArtifacts = mutableListOf<ArtifactRef>()
-        
+
         // Write requirements
         requirements.forEach { requirement ->
             val safeId = sanitizeFilename(requirement.id)
@@ -288,7 +301,7 @@ class ArtifactWriter(
                 layer = Layer.VISION,
                 name = "${safeId}.yaml"
             )
-            
+
             val requirementData = mutableMapOf<String, Any>()
             requirementData["id"] = requirement.id
             requirement.title?.let { requirementData["title"] = it }
@@ -308,7 +321,7 @@ class ArtifactWriter(
                     )
                 }
             }
-            
+
             try {
                 cacheStore.put(ref, yaml.dump(requirementData).toByteArray())
                 log.debug("[ARTIFACT_WRITER] Wrote vision requirement: {}", ref.name)
@@ -317,7 +330,7 @@ class ArtifactWriter(
                 log.error("[ARTIFACT_WRITER] Failed to write vision requirement: {}", ref.name, e)
             }
         }
-        
+
         // Write constraints
         constraints.forEach { constraint ->
             val safeId = sanitizeFilename(constraint.id)
@@ -326,7 +339,7 @@ class ArtifactWriter(
                 layer = Layer.VISION,
                 name = "${safeId}.yaml"
             )
-            
+
             val constraintData = mutableMapOf<String, Any>()
             constraintData["id"] = constraint.id
             constraint.docRef?.let { constraintData["docRef"] = it }
@@ -344,7 +357,7 @@ class ArtifactWriter(
                     )
                 }
             }
-            
+
             try {
                 cacheStore.put(ref, yaml.dump(constraintData).toByteArray())
                 log.debug("[ARTIFACT_WRITER] Wrote vision constraint: {}", ref.name)
@@ -353,11 +366,11 @@ class ArtifactWriter(
                 log.error("[ARTIFACT_WRITER] Failed to write vision constraint: {}", ref.name, e)
             }
         }
-        
+
         log.info("[ARTIFACT_WRITER] Wrote {} vision artifact files", writtenArtifacts.size)
         return writtenArtifacts
     }
-    
+
     /**
      * Sanitize a string for use as a filename.
      * Removes or replaces characters that are invalid in filesystem paths.

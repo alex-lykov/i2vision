@@ -112,7 +112,7 @@ package com.i2vision.vslfc
 object VSLFCLayerContracts {
     const val VERSION = "1.0"
     const val APPROACH = "Documentation as First-Class Citizen"
-    
+
     /**
      * All VSLFC layers that must have contracts.
      */
@@ -123,7 +123,7 @@ object VSLFCLayerContracts {
         FLOW,       // User flows, API sequences, interactions
         CODE        // API documentation, inline comments
     }
-    
+
     /**
      * Standard contract locations for each layer.
      */
@@ -134,7 +134,7 @@ object VSLFCLayerContracts {
         Layer.FLOW -> ".vision-ai/.flow/contracts/with-docs.yaml"
         Layer.CODE -> ".vision-ai/.code/contracts/with-docs.yaml"
     }
-    
+
     /**
      * Primary documentation for each layer.
      */

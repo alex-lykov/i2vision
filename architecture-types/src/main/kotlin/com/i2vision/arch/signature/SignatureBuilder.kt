@@ -23,38 +23,38 @@ class SignatureBuilder(
     private val llmClient: Any? = null,  // TODO: Define LLM client interface
     private val indexProvider: Any? = null  // Optional - no hard compile-time dependency
 ) {
-    
+
     private val log = LoggerFactory.getLogger(SignatureBuilder::class.java)
     private val buildSystemDetector = BuildSystemDetector(projectRoot)
     private val modulePatternDetector = ModulePatternDetector(projectRoot)
-    
+
     /**
      * Build complete architecture signature with per-module detection
      */
     fun build(): ArchitectureSignature {
         val useIndex = indexProvider != null
         log.info("[SIGNATURE_BUILDER] Building signature (using index: $useIndex)")
-        
+
         val confidenceMap = mutableMapOf<String, Double>()
-        
+
         // Detect build system (global)
         val buildSystemResult = buildSystemDetector.detect()
         confidenceMap["buildSystem"] = buildSystemResult.confidence
-        
+
         // Detect module patterns (per-module)
         val modulePatternResult = modulePatternDetector.detect()
         confidenceMap.putAll(modulePatternResult.confidences)
-        
+
         // Detect per-module architecture
         val moduleFrameworks = mutableMapOf<String, List<Framework>>()
         val moduleDesignPatterns = mutableMapOf<String, List<DesignPattern>>()
         val moduleLanguageFeatures = mutableMapOf<String, List<LanguageFeature>>()
-        
+
         // Analyze each module separately
         val modules = identifyModules(projectRoot)
         for (module in modules) {
             val modulePath = File(projectRoot, module)
-            
+
             // Detect frameworks per module
             val frameworkDetector = FrameworkDetector(modulePath.absolutePath)
             val frameworkResult = frameworkDetector.detect()
@@ -62,39 +62,44 @@ class SignatureBuilder(
                 moduleFrameworks[module] = frameworkResult.frameworks
                 confidenceMap.putAll(frameworkResult.confidences.mapKeys { "${module}_framework_${it.key}" })
             }
-            
+
             // Detect design patterns per module
             val designPatterns = detectDesignPatternsInModule(modulePath)
             if (designPatterns.isNotEmpty()) {
                 moduleDesignPatterns[module] = designPatterns
                 confidenceMap["${module}_design_patterns"] = 0.70
             }
-            
+
             // Detect language features per module
             val languageFeatures = detectLanguageFeaturesInModule(modulePath)
             if (languageFeatures.isNotEmpty()) {
                 moduleLanguageFeatures[module] = languageFeatures
                 confidenceMap["${module}_language_features"] = 0.75
             }
-            
+
             // Evaluate confidence for this module and use LLM fallback if needed
-            val moduleConfidence = calculateModuleConfidence(module, moduleFrameworks[module], moduleDesignPatterns[module], moduleLanguageFeatures[module])
+            val moduleConfidence = calculateModuleConfidence(
+                module,
+                moduleFrameworks[module],
+                moduleDesignPatterns[module],
+                moduleLanguageFeatures[module]
+            )
             confidenceMap["${module}_overall"] = moduleConfidence
-            
+
             if (moduleConfidence < confidenceThreshold && useLlmForLowConfidence && llmClient != null) {
                 // TODO: Call LLM for low-confidence modules
                 // detectWithLLM(module, modulePath, heuristicResult)
             }
         }
-        
+
         // Detect clusters dynamically by scanning project structure
         val clusters = detectClustersDynamically()
         confidenceMap["clusterDetection"] = if (clusters.isEmpty()) 0.0 else 0.80
-        
+
         // Detect deployment pattern derived from cluster analysis
         val deploymentPattern = detectDeploymentPattern(clusters)
         confidenceMap["deploymentPattern"] = 0.70
-        
+
         return ArchitectureSignature(
             buildSystem = buildSystemResult.buildSystem,
             buildTools = detectBuildTools(),
@@ -108,33 +113,33 @@ class SignatureBuilder(
             confidence = confidenceMap
         )
     }
-    
+
     /**
      * Identify modules in the project
      */
     private fun identifyModules(projectRoot: String): List<String> {
         val root = File(projectRoot)
         val modules = mutableListOf<String>()
-        
+
         // Top-level directories as modules
         root.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.forEach { dir ->
             modules.add(dir.name)
         }
-        
+
         // Nested modules (e.g., core/*)
         root.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.forEach { dir ->
             dir.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.forEach { subdir ->
                 modules.add("${dir.name}/${subdir.name}")
             }
         }
-        
+
         return modules
     }
-    
+
     private fun detectBuildTools(): List<BuildTool> {
         val root = File(projectRoot)
         val tools = mutableListOf<BuildTool>()
-        
+
         val buildFile = File(root, "build.gradle.kts")
         if (buildFile.exists()) {
             val content = buildFile.readText()
@@ -143,14 +148,14 @@ class SignatureBuilder(
             if (content.contains("docker") || content.contains("Docker")) tools.add(BuildTool.DOCKER)
             if (content.contains("compose")) tools.add(BuildTool.COMPOSE)
         }
-        
+
         return tools
     }
-    
+
     private fun detectLibraries(): List<Library> {
         val root = File(projectRoot)
         val libraries = mutableListOf<Library>()
-        
+
         val buildFile = File(root, "build.gradle.kts")
         if (buildFile.exists()) {
             val content = buildFile.readText()
@@ -163,24 +168,24 @@ class SignatureBuilder(
             if (content.contains("gson")) libraries.add(Library.GSON)
             if (content.contains("snakyaml")) libraries.add(Library.SNAKEYAML)
         }
-        
+
         return libraries
     }
-    
+
     private fun detectDesignPatternsInModule(modulePath: File): List<DesignPattern> {
         val patterns = mutableListOf<DesignPattern>()
-        
+
         val srcDirs = listOf(
             File(modulePath, "src/main/kotlin"),
             File(modulePath, "src/main/java")
         )
-        
+
         for (srcDir in srcDirs) {
             if (srcDir.exists()) {
                 val files = srcDir.walkTopDown()
                     .filter { it.isFile && it.extension in setOf("kt", "java") }
                     .toList()
-                
+
                 for (file in files) {
                     val content = file.readText()
                     if (content.contains("Agent") && content.contains("orchestrator")) {
@@ -207,24 +212,24 @@ class SignatureBuilder(
                 }
             }
         }
-        
+
         return patterns
     }
-    
+
     private fun detectLanguageFeaturesInModule(modulePath: File): List<LanguageFeature> {
         val features = mutableListOf<LanguageFeature>()
-        
+
         val srcDirs = listOf(
             File(modulePath, "src/main/kotlin"),
             File(modulePath, "src/main/java")
         )
-        
+
         for (srcDir in srcDirs) {
             if (srcDir.exists() && srcDir.name.contains("kotlin")) {
                 val files = srcDir.walkTopDown()
                     .filter { it.isFile && it.extension == "kt" }
                     .toList()
-                
+
                 for (file in files) {
                     val content = file.readText()
                     if (content.contains("suspend") || content.contains("suspend ")) {
@@ -243,17 +248,17 @@ class SignatureBuilder(
                         if (!features.contains(LanguageFeature.EXTENSION_FUNCTIONS)) features.add(LanguageFeature.EXTENSION_FUNCTIONS)
                     }
                 }
-                
+
                 // Kotlin projects typically use coroutines
                 if (features.isNotEmpty() || files.isNotEmpty()) {
                     if (!features.contains(LanguageFeature.COROUTINES)) features.add(LanguageFeature.COROUTINES)
                 }
             }
         }
-        
+
         return features
     }
-    
+
     /**
      * Detect clusters dynamically using directory structure, build module boundaries, and import density
      * Clusters are derived from the project structure without hardcoding paths
@@ -283,14 +288,14 @@ class SignatureBuilder(
                 log.warn("[SIGNATURE_BUILDER] Failed to use index provider for cluster detection: ${e.message}")
             }
         }
-        
+
         // Otherwise, use the existing file-based detection
         val root = File(projectRoot)
         val clusters = mutableListOf<ClusterInfo>()
-        
+
         // Detect build module boundaries (Gradle, Maven, etc.)
         val buildModules = detectBuildModules(root)
-        
+
         // If build modules detected, use them as clusters
         if (buildModules.isNotEmpty()) {
             for (module in buildModules) {
@@ -302,17 +307,19 @@ class SignatureBuilder(
             }
         } else {
             // Fallback to directory structure clustering
-            val topDirs = root.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.toList() ?: emptyList()
-            
+            val topDirs =
+                root.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.toList() ?: emptyList()
+
             for (dir in topDirs) {
                 // Check if this directory contains source files
                 val sourceFileCount = countSourceFiles(dir)
                 if (sourceFileCount > 0) {
                     clusters.add(ClusterInfo(dir.name, sourceFileCount))
                 }
-                
+
                 // Also check subdirectories for nested clusters
-                val subdirs = dir.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.toList() ?: emptyList()
+                val subdirs =
+                    dir.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.toList() ?: emptyList()
                 for (subdir in subdirs) {
                     val subSourceFileCount = countSourceFiles(subdir)
                     if (subSourceFileCount > 0) {
@@ -322,20 +329,20 @@ class SignatureBuilder(
                 }
             }
         }
-        
+
         return clusters.sortedByDescending { it.fileCount }
     }
-    
+
     /**
      * Detect build modules from build configuration files
      */
     private fun detectBuildModules(root: File): List<String> {
         val modules = mutableListOf<String>()
-        
+
         // Check for Gradle multi-module project
-        val settingsFile = File(root, "settings.gradle.kts").takeIf { it.exists() } 
+        val settingsFile = File(root, "settings.gradle.kts").takeIf { it.exists() }
             ?: File(root, "settings.gradle").takeIf { it.exists() }
-        
+
         if (settingsFile != null) {
             val content = settingsFile.readText()
             // Extract module names from settings.gradle.kts
@@ -348,7 +355,7 @@ class SignatureBuilder(
                 modules.add(directoryPath)
             }
         }
-        
+
         // Check for Maven multi-module project
         val pomFile = File(root, "pom.xml").takeIf { it.exists() }
         if (pomFile != null) {
@@ -360,10 +367,10 @@ class SignatureBuilder(
                 }
             }
         }
-        
+
         return modules
     }
-    
+
     /**
      * Count source files in a directory
      */
@@ -373,7 +380,7 @@ class SignatureBuilder(
             .filter { it.extension in setOf("kt", "java", "scala", "groovy", "py", "js", "ts", "go", "rs") }
             .count()
     }
-    
+
     /**
      * Calculate confidence score for module architecture detection
      * Based on: frameworks detected, design patterns detected, language features detected
@@ -386,29 +393,29 @@ class SignatureBuilder(
     ): Double {
         var confidence = 0.0
         var factors = 0
-        
+
         // Frameworks contribute to confidence
         if (!frameworks.isNullOrEmpty()) {
             confidence += 0.3
             factors++
         }
-        
+
         // Design patterns contribute to confidence
         if (!designPatterns.isNullOrEmpty()) {
             confidence += 0.35
             factors++
         }
-        
+
         // Language features contribute to confidence
         if (!languageFeatures.isNullOrEmpty()) {
             confidence += 0.35
             factors++
         }
-        
+
         // If no factors, return low confidence
         return if (factors == 0) 0.3 else confidence
     }
-    
+
     private fun detectDeploymentPattern(clusters: List<ClusterInfo>): DeploymentPattern {
         val validClusters = clusters.filter { it.fileCount > 0 }
         return when {
@@ -419,7 +426,7 @@ class SignatureBuilder(
             else -> DeploymentPattern.MODULAR_MONOLITH
         }
     }
-    
+
     private fun hasMultipleBuildModules(): Boolean {
         val root = File(projectRoot)
         val hasSettings = File(root, "settings.gradle.kts").exists() || File(root, "settings.gradle").exists()

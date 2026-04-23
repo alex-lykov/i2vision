@@ -22,16 +22,16 @@ class CloudRepositoryManager(
 ) {
     private val httpClient = HttpClient.newHttpClient()
     private var repositories: MutableList<CloudRepository> = mutableListOf()
-    
+
     init {
         loadRepositories()
     }
-    
+
     /**
      * Get all configured repositories
      */
     fun getRepositories(): List<CloudRepository> = repositories.toList()
-    
+
     /**
      * Add a new repository
      */
@@ -43,7 +43,7 @@ class CloudRepositoryManager(
         saveRepositories()
         return true
     }
-    
+
     /**
      * Remove a repository by URL
      */
@@ -54,36 +54,40 @@ class CloudRepositoryManager(
         }
         return removed
     }
-    
+
     /**
      * Update a repository
      */
     fun updateRepository(oldUrl: String, newRepository: CloudRepository): Boolean {
         val index = repositories.indexOfFirst { it.url == oldUrl }
         if (index == -1) return false
-        
+
         repositories[index] = newRepository
         saveRepositories()
         return true
     }
-    
+
     /**
      * Fetch models from a repository URL
      * Returns list of models available at that endpoint
      */
-    suspend fun fetchModelsFromUrl(url: String, apiKey: String? = null, provider: CloudProvider = CloudProvider.GENERIC): List<CloudModelInfo> = withContext(Dispatchers.IO) {
+    suspend fun fetchModelsFromUrl(
+        url: String,
+        apiKey: String? = null,
+        provider: CloudProvider = CloudProvider.GENERIC
+    ): List<CloudModelInfo> = withContext(Dispatchers.IO) {
         try {
             val requestBuilder = HttpRequest.newBuilder()
                 .uri(URI.create("$url/api/tags"))
                 .GET()
-            
+
             apiKey?.let {
                 requestBuilder.header("Authorization", "Bearer $it")
             }
-            
+
             val request = requestBuilder.build()
             val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-            
+
             if (response.statusCode() == 200) {
                 val config = OllamaCloudConfig(
                     apiUrl = url,
@@ -99,13 +103,13 @@ class CloudRepositoryManager(
             emptyList()
         }
     }
-    
+
     /**
      * Update models from all repositories
      */
     suspend fun updateAllRepositories(): Map<String, List<CloudModelInfo>> = withContext(Dispatchers.IO) {
         val results = mutableMapOf<String, List<CloudModelInfo>>()
-        
+
         repositories.forEach { repo ->
             try {
                 val models = fetchModelsFromUrl(repo.url, repo.apiKey, repo.provider)
@@ -115,10 +119,10 @@ class CloudRepositoryManager(
                 results[repo.url] = emptyList()
             }
         }
-        
+
         results
     }
-    
+
     /**
      * Convert repositories to OllamaCloudConfig list for CloudModelRegistry
      */
@@ -135,27 +139,27 @@ class CloudRepositoryManager(
             )
         }
     }
-    
+
     private fun parseCloudModelsResponse(response: String, config: OllamaCloudConfig): List<CloudModelInfo> {
         return try {
             val json = Json { ignoreUnknownKeys = true }
             val jsonObject = json.decodeFromString<JsonObject>(response)
             val modelsArray = jsonObject["models"]?.jsonArray ?: return emptyList()
-            
+
             modelsArray.mapNotNull { modelElement ->
                 val modelObj = modelElement as? JsonObject ?: return@mapNotNull null
                 val name = modelObj["name"]?.jsonPrimitive?.content ?: return@mapNotNull null
-                
+
                 val size = modelObj["size"]?.jsonPrimitive?.content?.toLongOrNull() ?: 0L
                 val digest = modelObj["digest"]?.jsonPrimitive?.content ?: "unknown"
-                
+
                 val parts = name.split(":")
                 val modelName = parts[0]
                 val tag = parts.getOrNull(1) ?: "latest"
                 val modelId = "${config.provider.name.lowercase()}:$name"
-                
+
                 val contextLength = inferContextLength(name)
-                
+
                 CloudModelInfo(
                     id = modelId,
                     name = modelName,
@@ -176,7 +180,7 @@ class CloudRepositoryManager(
             emptyList()
         }
     }
-    
+
     private fun inferContextLength(modelId: String): Int {
         val lower = modelId.lowercase()
         return when {
@@ -199,7 +203,7 @@ class CloudRepositoryManager(
             else -> 4096
         }
     }
-    
+
     private fun loadRepositories() {
         try {
             if (configFile.exists()) {
@@ -213,7 +217,7 @@ class CloudRepositoryManager(
             repositories = mutableListOf()
         }
     }
-    
+
     private fun saveRepositories() {
         try {
             configFile.parentFile?.mkdirs()
@@ -225,7 +229,7 @@ class CloudRepositoryManager(
             println("Failed to save repositories: ${e.message}")
         }
     }
-    
+
     fun close() {
         // HttpClient doesn't need explicit closing in Java 11+
     }
@@ -250,12 +254,15 @@ data class CloudRepository(
 
 object CloudProviderSerializer : kotlinx.serialization.KSerializer<CloudProvider> {
     override val descriptor: kotlinx.serialization.descriptors.SerialDescriptor =
-        kotlinx.serialization.descriptors.PrimitiveSerialDescriptor("CloudProvider", kotlinx.serialization.descriptors.PrimitiveKind.STRING)
-    
+        kotlinx.serialization.descriptors.PrimitiveSerialDescriptor(
+            "CloudProvider",
+            kotlinx.serialization.descriptors.PrimitiveKind.STRING
+        )
+
     override fun serialize(encoder: kotlinx.serialization.encoding.Encoder, value: CloudProvider) {
         encoder.encodeString(value.name)
     }
-    
+
     override fun deserialize(decoder: kotlinx.serialization.encoding.Decoder): CloudProvider {
         val string = decoder.decodeString()
         return CloudProvider.fromString(string)

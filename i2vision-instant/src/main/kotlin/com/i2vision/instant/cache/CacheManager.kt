@@ -12,19 +12,19 @@ import java.util.concurrent.ConcurrentHashMap
 class CacheManager(
     private val defaultExpiryMinutes: Long = 5
 ) {
-    
+
     private val log = LoggerFactory.getLogger(CacheManager::class.java)
     private val cache = ConcurrentHashMap<String, CachedContext>()
-    
+
     data class CachedContext(
         val result: Any,
         val timestamp: LocalDateTime,
         val expiryMinutes: Long = 5
     ) {
-        fun isExpired(): Boolean = 
+        fun isExpired(): Boolean =
             ChronoUnit.MINUTES.between(timestamp, LocalDateTime.now()) > expiryMinutes
     }
-    
+
     /**
      * Get cached value if available and not expired
      */
@@ -38,7 +38,7 @@ class CacheManager(
             null
         }
     }
-    
+
     /**
      * Put value in cache
      */
@@ -50,7 +50,7 @@ class CacheManager(
         )
         log.debug("[CACHE] Cached key: {} with expiry: {} minutes", key, expiryMinutes)
     }
-    
+
     /**
      * Invalidate cache entries matching pattern
      */
@@ -59,7 +59,7 @@ class CacheManager(
         keysToRemove.forEach { cache.remove(it) }
         log.info("[CACHE] Invalidated {} cache entries matching pattern: {}", keysToRemove.size, pattern)
     }
-    
+
     /**
      * Clear expired cache entries
      */
@@ -70,7 +70,7 @@ class CacheManager(
         expiredKeys.forEach { cache.remove(it) }
         log.info("[CACHE] Cleaned {} expired cache entries", expiredKeys.size)
     }
-    
+
     /**
      * Clear all cache entries
      */
@@ -79,7 +79,7 @@ class CacheManager(
         cache.clear()
         log.info("[CACHE] Cleared all {} cache entries", size)
     }
-    
+
     /**
      * Get cache statistics
      */
@@ -91,7 +91,7 @@ class CacheManager(
             validEntries = cache.size - expiredCount
         )
     }
-    
+
     data class CacheStats(
         val totalEntries: Int,
         val expiredEntries: Int,

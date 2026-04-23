@@ -2,20 +2,21 @@
 
 ## Overview
 
-Intents are high-level user goals that guide discovery through the i2vision layered architecture. The Intent system replaces the previous Strategy-based approach with a more flexible, intent-driven framework that adapts to user needs.
+Intents are high-level user goals that guide discovery through the i2vision layered architecture. The Intent system
+replaces the previous Strategy-based approach with a more flexible, intent-driven framework that adapts to user needs.
 
 ---
 
 ## Intent Goals
 
-| Intent Goal | Description | Use Case |
-|-------------|-------------|----------|
+| Intent Goal        | Description                                                                 | Use Case                      |
+|--------------------|-----------------------------------------------------------------------------|-------------------------------|
 | **full_discovery** | Complete discovery of all layers (Code → Flow → Logic → Structure → Vision) | Initial project understanding |
-| **refactoring** | Focus on refactoring opportunities and code quality improvements | Planning refactoring work |
-| **audit** | Audit architecture, dependencies, and identify issues | Quality assessment |
-| **flow_mapping** | Map flows and interactions across the system | Understanding system behavior |
-| **doc_generation** | Generate comprehensive documentation | Documentation projects |
-| **quick_overview** | Quick overview for exploration | Rapid project exploration |
+| **refactoring**    | Focus on refactoring opportunities and code quality improvements            | Planning refactoring work     |
+| **audit**          | Audit architecture, dependencies, and identify issues                       | Quality assessment            |
+| **flow_mapping**   | Map flows and interactions across the system                                | Understanding system behavior |
+| **doc_generation** | Generate comprehensive documentation                                        | Documentation projects        |
+| **quick_overview** | Quick overview for exploration                                              | Rapid project exploration     |
 
 ---
 
@@ -23,28 +24,28 @@ Intents are high-level user goals that guide discovery through the i2vision laye
 
 ### Focus (Layers)
 
-| Focus | Description |
-|-------|-------------|
-| **vision** | Vision layer - requirements, goals, constraints |
-| **structure** | Structure layer - components, dependencies |
-| **logic** | Logic layer - business rules, state machines |
-| **flow** | Flow layer - interactions, sequences |
-| **code** | Code layer - implementation, tests |
+| Focus         | Description                                     |
+|---------------|-------------------------------------------------|
+| **vision**    | Vision layer - requirements, goals, constraints |
+| **structure** | Structure layer - components, dependencies      |
+| **logic**     | Logic layer - business rules, state machines    |
+| **flow**      | Flow layer - interactions, sequences            |
+| **code**      | Code layer - implementation, tests              |
 
 ### Depth
 
-| Depth | Description |
-|-------|-------------|
-| **browse** | Quick scan, minimal analysis |
-| **standard** | Balanced analysis (default) |
-| **deep** | Comprehensive analysis with LLM enhancement |
+| Depth        | Description                                 |
+|--------------|---------------------------------------------|
+| **browse**   | Quick scan, minimal analysis                |
+| **standard** | Balanced analysis (default)                 |
+| **deep**     | Comprehensive analysis with LLM enhancement |
 
 ### Quality
 
-| Quality | Description |
-|---------|-------------|
-| **quality** | High quality, strict filtering |
-| **balanced** | Balanced approach (default) |
+| Quality      | Description                          |
+|--------------|--------------------------------------|
+| **quality**  | High quality, strict filtering       |
+| **balanced** | Balanced approach (default)          |
 | **quantity** | Maximum discovery, minimal filtering |
 
 ---
@@ -60,35 +61,39 @@ cli.StrategyRunner --intent=<goal> [--focus=<layers>] [--depth=<depth>] [--quali
 **Examples:**
 
 Full discovery with standard depth:
+
 ```bash
 cli.StrategyRunner --intent=full_discovery --depth=standard --verbose
 ```
 
 Refactoring focused on code layer:
+
 ```bash
 cli.StrategyRunner --intent=refactoring --focus=code --depth=deep
 ```
 
 Quick overview:
+
 ```bash
 cli.StrategyRunner --intent=quick_overview --depth=browse
 ```
 
 Audit with quality focus:
+
 ```bash
 cli.StrategyRunner --intent=audit --quality=quality
 ```
 
 ### Additional Flags
 
-| Flag | Description |
-|------|-------------|
-| `--project=<path>` | Project root directory |
-| `--module=<module>` | Target module to focus on |
-| `--use-llm` | Enable LLM enhancement |
-| `--export-docs` | Export documentation |
-| `--verbose` | Verbose output |
-| `--no-fail` | Don't fail on health < 50% |
+| Flag                | Description                |
+|---------------------|----------------------------|
+| `--project=<path>`  | Project root directory     |
+| `--module=<module>` | Target module to focus on  |
+| `--use-llm`         | Enable LLM enhancement     |
+| `--export-docs`     | Export documentation       |
+| `--verbose`         | Verbose output             |
+| `--no-fail`         | Don't fail on health < 50% |
 
 ---
 
@@ -101,7 +106,8 @@ Intents are resolved to `DiscoveryStrategy` via `IntentResolutionEngine`:
 3. **Resolve to Strategy** - Map intent to appropriate DiscoveryStrategy configuration
 4. **Execute Discovery** - Run DiscoveryPipeline with resolved strategy
 
-The resolution engine uses mapping rules to convert high-level intents to concrete discovery parameters (max call depth, quality gates, link generation settings, etc.).
+The resolution engine uses mapping rules to convert high-level intents to concrete discovery parameters (max call depth,
+quality gates, link generation settings, etc.).
 
 ---
 
@@ -109,19 +115,20 @@ The resolution engine uses mapping rules to convert high-level intents to concre
 
 Intent system behavior can be controlled via environment variables:
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `I2VISION_INTENT_ENABLED` | Enable Intent system | `true` |
-| `I2VISION_INTENT_LOGGING` | Enable Intent resolution logging | `false` |
-| `I2VISION_INTENT_STRICT` | Enable strict validation | `false` |
-| `I2VISION_INTENT_ONLY` | Only allow Intent-based discovery | `false` |
+| Flag                      | Description                       | Default |
+|---------------------------|-----------------------------------|---------|
+| `I2VISION_INTENT_ENABLED` | Enable Intent system              | `true`  |
+| `I2VISION_INTENT_LOGGING` | Enable Intent resolution logging  | `false` |
+| `I2VISION_INTENT_STRICT`  | Enable strict validation          | `false` |
+| `I2VISION_INTENT_ONLY`    | Only allow Intent-based discovery | `false` |
 
 ---
 
 ## Best Practices
 
 1. **Start with quick_overview** - Get a quick understanding of the project
-2. **Use appropriate depth** - Use `browse` for quick scans, `standard` for routine work, `deep` for comprehensive analysis
+2. **Use appropriate depth** - Use `browse` for quick scans, `standard` for routine work, `deep` for comprehensive
+   analysis
 3. **Focus on relevant layers** - Use `--focus` to target specific layers when you know what you need
 4. **Set quality appropriately** - Use `quality` for production analysis, `quantity` for exploration
 5. **Enable LLM for deep analysis** - Use `--use-llm` with `--depth=deep` for enhanced analysis
@@ -131,27 +138,32 @@ Intent system behavior can be controlled via environment variables:
 ## Common Workflows
 
 ### Initial Project Understanding
+
 ```bash
 cli.StrategyRunner --intent=quick_overview --depth=browse --verbose
 cli.StrategyRunner --intent=full_discovery --depth=standard --verbose
 ```
 
 ### Refactoring Preparation
+
 ```bash
 cli.StrategyRunner --intent=refactoring --focus=code --depth=deep --verbose
 ```
 
 ### Quality Audit
+
 ```bash
 cli.StrategyRunner --intent=audit --quality=quality --depth=standard --verbose
 ```
 
 ### Flow Analysis
+
 ```bash
 cli.StrategyRunner --intent=flow_mapping --focus=flow --depth=deep --verbose
 ```
 
 ### Documentation Generation
+
 ```bash
 cli.StrategyRunner --intent=doc_generation --export-docs --verbose
 ```
@@ -160,13 +172,13 @@ cli.StrategyRunner --intent=doc_generation --export-docs --verbose
 
 ## Intent vs Strategy Comparison
 
-| Aspect | Strategy-based | Intent-based |
-|--------|---------------|--------------|
-| **Configuration** | YAML files with complex parameters | Simple CLI flags |
-| **Flexibility** | Fixed strategies per YAML file | Dynamic intent resolution |
+| Aspect              | Strategy-based                       | Intent-based                |
+|---------------------|--------------------------------------|-----------------------------|
+| **Configuration**   | YAML files with complex parameters   | Simple CLI flags            |
+| **Flexibility**     | Fixed strategies per YAML file       | Dynamic intent resolution   |
 | **User Experience** | Requires knowledge of strategy files | Natural language-like goals |
-| **Adaptability** | Static configuration | Adapts to user needs |
-| **Maintenance** | Multiple YAML files to maintain | Single resolution engine |
+| **Adaptability**    | Static configuration                 | Adapts to user needs        |
+| **Maintenance**     | Multiple YAML files to maintain      | Single resolution engine    |
 
 ---
 

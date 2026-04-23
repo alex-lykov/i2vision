@@ -16,12 +16,12 @@ class StructureBuilder(
     projectRoot: String,
     private val indexProvider: IndexProvider
 ) {
-    
+
     private val log = LoggerFactory.getLogger(StructureBuilder::class.java)
-    
+
     // Normalize projectRoot to absolute path to avoid path normalization issues
     private val projectRoot = File(projectRoot).absolutePath
-    
+
     // Configuration for adaptive dependency detection
     private data class DetectionConfig(
         val fullAnalysisThreshold: Int = 500,      // Full analysis up to 500 symbols
@@ -30,12 +30,12 @@ class StructureBuilder(
         val sampleRate: Double = 0.3,               // 30% sampling for medium sets
         val maxDependenciesPerComponent: Int = 50   // Cap dependencies per component
     )
-    
+
     private val config = DetectionConfig()
-    
+
     // Cache imports per file for performance
     private val importCache = ConcurrentHashMap<File, List<String>>()
-    
+
     /**
      * Build components from source files and symbols.
      * 
@@ -45,12 +45,12 @@ class StructureBuilder(
      */
     fun buildComponents(files: List<File>, symbols: List<SymbolInfo>): List<Component> {
         log.info("[STRUCTURE_BUILDER] Building components from {} files and {} symbols", files.size, symbols.size)
-        
+
         val components = mutableListOf<Component>()
-        
+
         // Group files by package
         val filesByPackage = files.groupBy { extractPackage(it) }
-        
+
         // Build components from packages
         filesByPackage.forEach { (packageName, packageFiles) ->
             val component = buildComponentFromPackage(packageName, packageFiles, symbols)
@@ -58,16 +58,16 @@ class StructureBuilder(
                 components.add(component)
             }
         }
-        
+
         // Build components from clusters (groups of related packages)
         val clusterComponents = buildClusterComponents(filesByPackage, symbols)
         components.addAll(clusterComponents)
-        
+
         log.info("[STRUCTURE_BUILDER] Built {} components", components.size)
-        
+
         return components
     }
-    
+
     /**
      * Extract package name from a file.
      * 
@@ -77,24 +77,24 @@ class StructureBuilder(
     private fun extractPackage(file: File): String {
         try {
             val content = file.readText()
-            
+
             // Try Kotlin-style package declaration
             val kotlinPattern = Regex("""package\s+([\w.]+)""")
             val kotlinMatch = kotlinPattern.find(content)
             if (kotlinMatch != null) {
                 return kotlinMatch.groupValues[1]
             }
-            
+
             // Try Java-style package declaration
             val javaPattern = Regex("""package\s+([\w.]+);""")
             val javaMatch = javaPattern.find(content)
             if (javaMatch != null) {
                 return javaMatch.groupValues[1]
             }
-            
+
             // Fallback: derive package from directory structure
             val relativePath = file.relativeTo(File(projectRoot)).path.replace("\\", "/")
-            
+
             // Support multiple source directory patterns
             val sourcePatterns = listOf(
                 "src/main/kotlin/",
@@ -110,7 +110,7 @@ class StructureBuilder(
                 "java/",
                 "groovy/"
             )
-            
+
             for (pattern in sourcePatterns) {
                 val patternIndex = relativePath.indexOf(pattern)
                 if (patternIndex >= 0) {
@@ -121,7 +121,7 @@ class StructureBuilder(
                     }
                 }
             }
-            
+
             // Last resort: use directory name as package
             val parentDir = file.parentFile?.name ?: "default"
             return parentDir
@@ -130,7 +130,7 @@ class StructureBuilder(
             return "default"
         }
     }
-    
+
     /**
      * Build a component from a package.
      * 
@@ -148,14 +148,15 @@ class StructureBuilder(
         if (files.size < 2 && !isSignificantPackage(packageName)) {
             return null
         }
-        
+
         val packageSymbols = symbols.filter { symbol ->
             files.contains(symbol.file)
         }
-        
-        val classes = packageSymbols.filter { it.kind == "class" || it.kind == "interface" || it.kind == "object" || it.kind == "enum" }
+
+        val classes =
+            packageSymbols.filter { it.kind == "class" || it.kind == "interface" || it.kind == "object" || it.kind == "enum" }
         val functions = packageSymbols.filter { it.kind == "fun" }
-        
+
         return Component(
             id = generateComponentId(packageName),
             name = extractComponentName(packageName),
@@ -167,7 +168,7 @@ class StructureBuilder(
             dependencies = findDependencies(packageSymbols, symbols)
         )
     }
-    
+
     /**
      * Build cluster components from related packages.
      * 
@@ -180,20 +181,20 @@ class StructureBuilder(
         symbols: List<SymbolInfo>
     ): List<Component> {
         val clusterComponents = mutableListOf<Component>()
-        
+
         // Find common package prefixes (e.g., com.i2vision.core.orchestrator)
         val packagePrefixes = filesByPackage.keys
             .map { it.split(".").dropLast(1).joinToString(".") }
             .filter { it.isNotEmpty() }
             .groupBy { it }
             .filter { it.value.size >= 2 }
-        
+
         packagePrefixes.forEach { (prefix, packages) ->
             val clusterFiles = packages.flatMap { filesByPackage[it] ?: emptyList() }
             val clusterSymbols = symbols.filter { symbol ->
                 clusterFiles.contains(symbol.file)
             }
-            
+
             val component = Component(
                 id = generateComponentId(prefix),
                 name = extractComponentName(prefix),
@@ -204,13 +205,13 @@ class StructureBuilder(
                 functions = clusterSymbols.filter { it.kind == "fun" }.map { it.name },
                 dependencies = findDependencies(clusterSymbols, symbols)
             )
-            
+
             clusterComponents.add(component)
         }
-        
+
         return clusterComponents
     }
-    
+
     /**
      * Check if a package is significant (worth creating a component for).
      * 
@@ -224,12 +225,12 @@ class StructureBuilder(
             "repository", "dao", "model", "entity", "dto",
             "controller", "api", "rest", "graphql"
         )
-        
+
         return significantKeywords.any { keyword ->
             packageName.lowercase().contains(keyword)
         }
     }
-    
+
     /**
      * Extract component name from package name.
      * 
@@ -240,7 +241,7 @@ class StructureBuilder(
         val parts = packageName.split(".")
         return parts.lastOrNull()?.replaceFirstChar { it.uppercase() } ?: packageName
     }
-    
+
     /**
      * Determine component type based on package name and contents.
      * 
@@ -249,9 +250,13 @@ class StructureBuilder(
      * @param functions Functions in the component
      * @return Component type
      */
-    private fun determineComponentType(packageName: String, classes: List<SymbolInfo>, functions: List<SymbolInfo>): String {
+    private fun determineComponentType(
+        packageName: String,
+        classes: List<SymbolInfo>,
+        functions: List<SymbolInfo>
+    ): String {
         val lowerPackage = packageName.lowercase()
-        
+
         return when {
             lowerPackage.contains("api") || lowerPackage.contains("controller") || lowerPackage.contains("rest") -> "api"
             lowerPackage.contains("service") || lowerPackage.contains("provider") -> "service"
@@ -263,7 +268,7 @@ class StructureBuilder(
             else -> "module"
         }
     }
-    
+
     /**
      * Find dependencies for a component with adaptive strategy based on symbol count.
      */
@@ -272,26 +277,26 @@ class StructureBuilder(
         allSymbols: List<SymbolInfo>
     ): List<String> {
         val totalSymbols = allSymbols.size
-        
+
         return when {
             totalSymbols <= config.fullAnalysisThreshold -> {
                 // Small project: Full analysis
                 log.debug("[STRUCTURE_BUILDER] Using full analysis for {} symbols", totalSymbols)
                 findDependenciesFull(componentSymbols, allSymbols)
             }
-            
+
             totalSymbols <= config.sampledAnalysisThreshold -> {
                 // Medium project: Sampled analysis
                 log.debug("[STRUCTURE_BUILDER] Using sampled analysis for {} symbols", totalSymbols)
                 findDependenciesSampled(componentSymbols, allSymbols)
             }
-            
+
             totalSymbols <= config.importBasedThreshold -> {
                 // Large project: Import-based analysis
                 log.debug("[STRUCTURE_BUILDER] Using import-based analysis for {} symbols", totalSymbols)
                 findDependenciesFromImports(componentSymbols, allSymbols)
             }
-            
+
             else -> {
                 // Very large project: Index-based only
                 log.debug("[STRUCTURE_BUILDER] Using index-based analysis for {} symbols", totalSymbols)
@@ -299,7 +304,7 @@ class StructureBuilder(
             }
         }
     }
-    
+
     /**
      * Full analysis - suitable for small projects (<500 symbols).
      * Examines all symbol pairs.
@@ -311,16 +316,20 @@ class StructureBuilder(
         val dependencies = mutableSetOf<String>()
         val symbolsByPackage = allSymbols.groupBy { extractPackage(it.file) }
         val fileContentCache = ConcurrentHashMap<File, String>()
-        
+
         // Pre-build package set for component
         val componentPackages = componentSymbols.map { extractPackage(it.file) }.toSet()
-        
+
         componentSymbols.forEach { symbol ->
             val symbolPackage = extractPackage(symbol.file)
             val content = fileContentCache.getOrPut(symbol.file) {
-                try { symbol.file.readText() } catch (e: Exception) { "" }
+                try {
+                    symbol.file.readText()
+                } catch (e: Exception) {
+                    ""
+                }
             }
-            
+
             symbolsByPackage.forEach { (otherPackage, packageSymbols) ->
                 if (otherPackage != symbolPackage && otherPackage !in componentPackages) {
                     val referenced = packageSymbols.any { other ->
@@ -332,10 +341,10 @@ class StructureBuilder(
                 }
             }
         }
-        
+
         return dependencies.take(config.maxDependenciesPerComponent)
     }
-    
+
     /**
      * Sampled analysis - suitable for medium projects (500-2000 symbols).
      * Samples symbols and uses import information.
@@ -347,47 +356,51 @@ class StructureBuilder(
         val dependencies = mutableSetOf<String>()
         val symbolsByPackage = allSymbols.groupBy { extractPackage(it.file) }
         val componentPackages = componentSymbols.map { extractPackage(it.file) }.toSet()
-        
+
         // Sample component symbols
         val sampleSize = (componentSymbols.size * config.sampleRate).toInt().coerceAtLeast(10)
         val sampledSymbols = componentSymbols.shuffled().take(sampleSize)
-        
+
         // Also include significant symbols (classes, public functions)
-        val significantSymbols = componentSymbols.filter { 
+        val significantSymbols = componentSymbols.filter {
             it.kind == "class" || it.kind == "interface" || it.kind == "object" ||
-            (it.kind == "fun" && it.name.startsWith("public"))
+                    (it.kind == "fun" && it.name.startsWith("public"))
         }
-        
+
         val symbolsToAnalyze = (sampledSymbols + significantSymbols).distinct()
-        
+
         val fileContentCache = ConcurrentHashMap<File, String>()
-        
+
         symbolsToAnalyze.forEach { symbol ->
             val symbolPackage = extractPackage(symbol.file)
             val content = fileContentCache.getOrPut(symbol.file) {
-                try { symbol.file.readText() } catch (e: Exception) { "" }
+                try {
+                    symbol.file.readText()
+                } catch (e: Exception) {
+                    ""
+                }
             }
-            
+
             // Extract imports from file (fast!)
             val imports = extractImports(content)
-            
+
             symbolsByPackage.forEach { (otherPackage, _) ->
                 if (otherPackage != symbolPackage && otherPackage !in componentPackages) {
                     // Check if package is imported
-                    val isImported = imports.any { import -> 
+                    val isImported = imports.any { import ->
                         import.startsWith(otherPackage) || otherPackage.startsWith(import)
                     }
-                    
+
                     if (isImported) {
                         dependencies.add(otherPackage)
                     }
                 }
             }
         }
-        
+
         return dependencies.take(config.maxDependenciesPerComponent)
     }
-    
+
     /**
      * Import-based analysis - suitable for large projects (2000-5000 symbols).
      * Only uses import statements (very fast).
@@ -399,25 +412,25 @@ class StructureBuilder(
         val dependencies = mutableSetOf<String>()
         val allPackages = allSymbols.map { extractPackage(it.file) }.toSet()
         val componentPackages = componentSymbols.map { extractPackage(it.file) }.toSet()
-        
+
         // Only analyze one file per package (representative)
         val representativeFiles = componentSymbols
             .groupBy { extractPackage(it.file) }
             .mapValues { it.value.first().file }
             .values
             .distinct()
-        
+
         representativeFiles.forEach { file ->
             try {
                 val content = file.readText()
                 val imports = extractImports(content)
-                
+
                 imports.forEach { import ->
                     // Find which package this import corresponds to
                     val matchingPackage = allPackages.find { pkg ->
                         import.startsWith(pkg) || pkg.startsWith(import)
                     }
-                    
+
                     if (matchingPackage != null && matchingPackage !in componentPackages) {
                         dependencies.add(matchingPackage)
                     }
@@ -426,10 +439,10 @@ class StructureBuilder(
                 // Skip unreadable files
             }
         }
-        
+
         return dependencies.take(config.maxDependenciesPerComponent)
     }
-    
+
     /**
      * Index-based analysis - suitable for very large projects (>5000 symbols).
      * Uses pre-built index from IndexProvider.
@@ -439,7 +452,7 @@ class StructureBuilder(
     ): List<String> {
         val dependencies = mutableSetOf<String>()
         val componentPackages = componentSymbols.map { extractPackage(it.file) }.toSet()
-        
+
         // Use index provider for fast cross-reference lookup via call hierarchy
         componentSymbols.forEach { symbol ->
             try {
@@ -454,31 +467,31 @@ class StructureBuilder(
                 // Skip if index lookup fails
             }
         }
-        
+
         return dependencies.take(config.maxDependenciesPerComponent)
     }
-    
+
     /**
      * Extract import statements from file content.
      */
     private fun extractImports(content: String): List<String> {
         val imports = mutableListOf<String>()
-        
+
         // Kotlin imports
         val kotlinImportPattern = Regex("""import\s+([\w.]+)""")
         kotlinImportPattern.findAll(content).forEach { match ->
             imports.add(match.groupValues[1])
         }
-        
+
         // Java imports
         val javaImportPattern = Regex("""import\s+([\w.]+);""")
         javaImportPattern.findAll(content).forEach { match ->
             imports.add(match.groupValues[1])
         }
-        
+
         return imports
     }
-    
+
     /**
      * Generate a unique component ID.
      * 

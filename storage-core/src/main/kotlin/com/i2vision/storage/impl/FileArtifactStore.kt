@@ -13,29 +13,29 @@ import java.io.File
 class FileArtifactStore(
     private val cacheDir: File
 ) : ArtifactStore {
-    
+
     private val json = Json { ignoreUnknownKeys = true }
-    
+
     override suspend fun putArtifact(ref: ArtifactRef, content: ByteArray, metadata: ArtifactMetadata): PutResult {
         val relativePath = "${ref.module}/${ref.layer.name.lowercase()}/${ref.name}"
-        
+
         // Write content
         val file = File(cacheDir, relativePath)
         file.parentFile?.mkdirs()
         file.writeBytes(content)
-        
+
         // Write metadata
         val metaFile = File(cacheDir, "$relativePath.meta")
         metaFile.writeText(json.encodeToString(metadata))
-        
+
         return PutResult.Success(ref)
     }
-    
+
     override suspend fun getArtifact(ref: ArtifactRef): Artifact? {
         val relativePath = "${ref.module}/${ref.layer.name.lowercase()}/${ref.name}"
         val file = File(cacheDir, relativePath)
         if (!file.exists()) return null
-        
+
         val content = file.readBytes()
         val metadataFile = File(cacheDir, "$relativePath.meta")
         val metadata = if (metadataFile.exists()) {
@@ -47,27 +47,27 @@ class FileArtifactStore(
                 hash = computeHash(content)
             )
         }
-        
+
         return Artifact(ref, content, metadata)
     }
-    
+
     override suspend fun deleteArtifact(ref: ArtifactRef): Boolean {
         val relativePath = "${ref.module}/${ref.layer.name.lowercase()}/${ref.name}"
         val file = File(cacheDir, relativePath)
         val metaFile = File(cacheDir, "$relativePath.meta")
-        
+
         val deleted = file.delete()
         if (metaFile.exists()) {
             metaFile.delete()
         }
-        
+
         return deleted
     }
-    
+
     override suspend fun listModuleArtifacts(module: String): List<ArtifactRef> {
         val artifacts = mutableListOf<ArtifactRef>()
         val moduleDir = File(cacheDir, module)
-        
+
         if (moduleDir.exists()) {
             moduleDir.walkTopDown()
                 .filter { it.isFile && it.extension in setOf("yaml", "json", "sd") }
@@ -85,13 +85,13 @@ class FileArtifactStore(
                     }
                 }
         }
-        
+
         return artifacts
     }
-    
+
     override suspend fun listLayerArtifacts(layer: Layer): List<ArtifactRef> {
         val artifacts = mutableListOf<ArtifactRef>()
-        
+
         if (cacheDir.exists()) {
             cacheDir.walkTopDown()
                 .filter { it.isDirectory }
@@ -105,10 +105,10 @@ class FileArtifactStore(
                         }
                 }
         }
-        
+
         return artifacts
     }
-    
+
     private fun computeHash(content: ByteArray): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         return digest.digest(content).joinToString("") { "%02x".format(it) }

@@ -9,7 +9,7 @@ import java.io.File
  * Validates flow extraction from call graphs.
  */
 class FlowDiscoveryTest {
-    
+
     private fun withTempDir(block: (File) -> Unit) {
         val tempDir = java.nio.file.Files.createTempDirectory("flow-test").toFile()
         try {
@@ -18,15 +18,15 @@ class FlowDiscoveryTest {
             tempDir.deleteRecursively()
         }
     }
-    
+
     @Test
     fun `should create flow discovery instance`() = withTempDir { tempDir ->
         // Given: Project root
         val projectRoot = tempDir.absolutePath
-        
+
         // When: Create FlowDiscovery
         val flowDiscovery = FlowDiscovery(projectRoot)
-        
+
         // Then: Should be created successfully
         assertTrue(true, "FlowDiscovery created successfully")
     }

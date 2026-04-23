@@ -13,10 +13,10 @@ import java.io.OutputStream
 class JsonRpcHandler(
     private val mcpServer: McpServer
 ) {
-    
+
     private val log = LoggerFactory.getLogger(JsonRpcHandler::class.java)
     private val objectMapper: ObjectMapper = jacksonObjectMapper()
-    
+
     /**
      * Handle incoming JSON-RPC request
      */
@@ -36,13 +36,13 @@ class JsonRpcHandler(
             objectMapper.writeValueAsString(errorResponse)
         }
     }
-    
+
     /**
      * Process JSON-RPC request
      */
     private suspend fun processRequest(request: JsonRpcRequest): JsonRpcResponse {
         log.debug("[JSON-RPC] Processing request: method={}, id={}", request.method, request.id)
-        
+
         // Validate request
         if (request.jsonrpc != "2.0") {
             return JsonRpcResponse.error(
@@ -52,12 +52,12 @@ class JsonRpcHandler(
                 data = mapOf("reason" to "jsonrpc version must be 2.0")
             )
         }
-        
+
         // Handle notifications (requests without id)
         if (request.id == null) {
             return processNotification(request)
         }
-        
+
         // Handle method calls
         return when (request.method) {
             "tools/list" -> handleToolsList(request)
@@ -67,32 +67,33 @@ class JsonRpcHandler(
             else -> handleToolMethod(request)
         }
     }
-    
+
     /**
      * Process notification (request without id - no response expected)
      */
     private suspend fun processNotification(request: JsonRpcRequest): JsonRpcResponse {
         log.debug("[JSON-RPC] Processing notification: method={}", request.method)
-        
+
         when (request.method) {
             "notifications/initialized" -> {
                 log.info("[JSON-RPC] Client initialized")
                 // No response for notifications
                 return JsonRpcResponse.empty()
             }
+
             else -> {
                 log.warn("[JSON-RPC] Unknown notification method: {}", request.method)
                 return JsonRpcResponse.empty()
             }
         }
     }
-    
+
     /**
      * Handle tools/list method
      */
     private fun handleToolsList(request: JsonRpcRequest): JsonRpcResponse {
         log.debug("[JSON-RPC] Handling tools/list")
-        
+
         val tools = mcpServer.listTools()
         val result: Map<String, Any> = mapOf(
             "tools" to tools.map { tool ->
@@ -113,16 +114,16 @@ class JsonRpcHandler(
                 )
             }
         )
-        
+
         return JsonRpcResponse.success(request.id, result)
     }
-    
+
     /**
      * Handle tools/call method
      */
     private suspend fun handleToolCall(request: JsonRpcRequest): JsonRpcResponse {
         log.debug("[JSON-RPC] Handling tools/call")
-        
+
         val params = request.params as? Map<*, *>
         if (params == null) {
             return JsonRpcResponse.error(
@@ -132,7 +133,7 @@ class JsonRpcHandler(
                 data = mapOf("reason" to "params must be an object")
             )
         }
-        
+
         val toolName = params["name"] as? String
         if (toolName == null) {
             return JsonRpcResponse.error(
@@ -142,26 +143,30 @@ class JsonRpcHandler(
                 data = mapOf("reason" to "tool name is required")
             )
         }
-        
+
         val arguments = params["arguments"] as? Map<*, *> ?: emptyMap<String, Any>()
         val typedArguments: Map<String, Any> = arguments.mapKeys { it.key as String }.mapValues { it.value as Any }
-        
+
         return try {
             val result = mcpServer.executeTool(toolName, typedArguments)
             if (result.success) {
                 val successResult: Map<String, Any> = mapOf(
-                    "content" to listOf(mapOf(
-                        "type" to "text",
-                        "text" to objectMapper.writeValueAsString(result.data)
-                    )),
+                    "content" to listOf(
+                        mapOf(
+                            "type" to "text",
+                            "text" to objectMapper.writeValueAsString(result.data)
+                        )
+                    ),
                     "isError" to false
                 )
                 JsonRpcResponse.success(request.id, successResult)
             } else {
-                val errorContent: List<Map<String, String>> = listOf(mapOf(
-                    "type" to "text",
-                    "text" to (result.error ?: "Unknown error")
-                ))
+                val errorContent: List<Map<String, String>> = listOf(
+                    mapOf(
+                        "type" to "text",
+                        "text" to (result.error ?: "Unknown error")
+                    )
+                )
                 val errorResult: Map<String, Any> = mapOf(
                     "content" to errorContent,
                     "isError" to true
@@ -178,13 +183,13 @@ class JsonRpcHandler(
             )
         }
     }
-    
+
     /**
      * Handle initialize method
      */
     private fun handleInitialize(request: JsonRpcRequest): JsonRpcResponse {
         log.debug("[JSON-RPC] Handling initialize")
-        
+
         val result = mapOf(
             "protocolVersion" to "2024-11-05",
             "serverInfo" to mapOf(
@@ -201,10 +206,10 @@ class JsonRpcHandler(
                 )
             )
         )
-        
+
         return JsonRpcResponse.success(request.id, result)
     }
-    
+
     /**
      * Handle shutdown method
      */
@@ -213,16 +218,16 @@ class JsonRpcHandler(
         mcpServer.stop()
         return JsonRpcResponse.success(request.id, null)
     }
-    
+
     /**
      * Handle direct tool method calls (for backward compatibility)
      */
     private suspend fun handleToolMethod(request: JsonRpcRequest): JsonRpcResponse {
         log.debug("[JSON-RPC] Handling direct tool method: {}", request.method)
-        
+
         val params = request.params as? Map<*, *> ?: emptyMap<String, Any>()
         val typedParams: Map<String, Any> = params.mapKeys { it.key as String }.mapValues { it.value as Any }
-        
+
         return try {
             val result = mcpServer.executeTool(request.method, typedParams)
             if (result.success) {
@@ -274,14 +279,14 @@ data class JsonRpcResponse(
             error = null,
             id = id
         )
-        
+
         fun error(id: Any?, code: Int, message: String, data: Any? = null) = JsonRpcResponse(
             jsonrpc = "2.0",
             result = null,
             error = JsonRpcError(code, message, data),
             id = id
         )
-        
+
         fun empty() = JsonRpcResponse(
             jsonrpc = "2.0",
             result = null,

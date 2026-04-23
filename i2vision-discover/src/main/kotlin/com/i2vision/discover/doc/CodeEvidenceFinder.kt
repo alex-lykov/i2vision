@@ -38,32 +38,32 @@ class CodeEvidenceFinder(
         layer: VSLFCLayerContracts.Layer
     ): EvidenceResult {
         log.debug("[EVIDENCE] Searching for: ${text.take(50)}...")
-        
+
         val keywords = (extractKeywords(text) + expandSemanticKeywords(text)).distinct()
         if (keywords.isEmpty()) {
             return EvidenceResult(text, emptyList(), 0.0, "No searchable keywords")
         }
-        
+
         val allEvidence = mutableListOf<CodeEvidence>()
-        
+
         // Search for each keyword
         keywords.forEach { keyword ->
             val evidence = searchForKeyword(keyword)
             allEvidence.addAll(evidence)
         }
-        
+
         // Remove duplicates (same file mentioned multiple times)
         val uniqueEvidence = allEvidence.distinctBy { "${it.file}:${it.line}" }
-        
+
         // Calculate confidence boost
         val confidenceMultiplier = when (uniqueEvidence.size) {
             0 -> 0.5      // No evidence - reduce confidence
             1, 2 -> 1.0   // Some evidence - maintain confidence
             else -> 1.2   // Strong evidence - boost confidence
         }
-        
+
         log.info("[EVIDENCE] Found ${uniqueEvidence.size} evidence(s) for '${keywords.joinToString(", ")}'")
-        
+
         return EvidenceResult(
             searchText = text,
             evidence = uniqueEvidence,
@@ -80,7 +80,7 @@ class CodeEvidenceFinder(
         layer: VSLFCLayerContracts.Layer
     ): Map<String, EvidenceResult> {
         log.info("[EVIDENCE] Finding evidence for ${items.size} item(s)")
-        
+
         return items.associate { item ->
             item to findEvidence(item, layer)
         }
@@ -95,22 +95,24 @@ class CodeEvidenceFinder(
      */
     private fun extractKeywords(text: String): List<String> {
         // Remove common words
-        val stopWords = setOf("the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", 
-                               "of", "with", "by", "from", "as", "is", "was", "are", "were", 
-                               "this", "that", "these", "those", "must", "should", "will", "can",
-                               "system", "feature", "provide", "support", "implement", "add")
-        
+        val stopWords = setOf(
+            "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+            "of", "with", "by", "from", "as", "is", "was", "are", "were",
+            "this", "that", "these", "those", "must", "should", "will", "can",
+            "system", "feature", "provide", "support", "implement", "add"
+        )
+
         // Split on non-alphanumeric, filter out stop words and short words
         val words = text.split(Regex("[^a-zA-Z0-9]+"))
             .map { it.trim() }
             .filter { it.length > 3 }
             .filter { it.lowercase() !in stopWords }
             .distinct()
-        
+
         // Prioritize capitalized words (likely class names)
         val capitalizedWords = words.filter { it[0].isUpperCase() }
         val otherWords = words.filter { it[0].isLowerCase() }.take(3) // Limit non-capitalized words
-        
+
         return (capitalizedWords + otherWords).take(5) // Max 5 keywords
     }
 
@@ -119,7 +121,7 @@ class CodeEvidenceFinder(
      */
     private fun searchForKeyword(keyword: String): List<CodeEvidence> {
         val evidence = mutableListOf<CodeEvidence>()
-        
+
         // Search in source roots
         sourceRoots.forEach { sourceRoot ->
             val sourceDir = File(projectRoot, sourceRoot)
@@ -175,6 +177,7 @@ class CodeEvidenceFinder(
 
         return expanded
     }
+
     /**
      * Check if a line matches a regex pattern (for semantic matching).
      */
@@ -199,10 +202,10 @@ class CodeEvidenceFinder(
         maxMatches: Int = 10
     ) {
         if (evidence.size >= maxMatches) return
-        
+
         dir.listFiles()?.forEach { file ->
             if (evidence.size >= maxMatches) return
-            
+
             when {
                 file.isDirectory -> searchInDirectory(file, keyword, evidence, maxMatches)
                 file.isFile && isSourceFile(file) -> searchInFile(file, keyword, evidence, maxMatches)
@@ -258,7 +261,7 @@ class CodeEvidenceFinder(
      */
     private fun determineMatchType(line: String, keyword: String): MatchType {
         val trimmed = line.trim()
-        
+
         return when {
             trimmed.contains("class $keyword") || trimmed.contains("interface $keyword") -> MatchType.CLASS_DEFINITION
             trimmed.contains("fun $keyword") || trimmed.contains("suspend fun $keyword") -> MatchType.METHOD_DEFINITION

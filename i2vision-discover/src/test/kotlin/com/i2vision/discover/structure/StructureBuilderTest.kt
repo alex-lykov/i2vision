@@ -10,7 +10,7 @@ import java.io.File
  * Validates package-to-component mapping.
  */
 class StructureBuilderTest {
-    
+
     private fun withTempDir(block: (File) -> Unit) {
         val tempDir = java.nio.file.Files.createTempDirectory("structure-test").toFile()
         try {
@@ -19,16 +19,16 @@ class StructureBuilderTest {
             tempDir.deleteRecursively()
         }
     }
-    
+
     @Test
     fun `should create structure builder instance`() = withTempDir { tempDir ->
         // Given: Project root and index provider
         val projectRoot = tempDir.absolutePath
         val indexProvider = CustomIndex(projectRoot)
-        
+
         // When: Create StructureBuilder
         val structureBuilder = StructureBuilder(projectRoot, indexProvider)
-        
+
         // Then: Should be created successfully
         assertTrue(true, "StructureBuilder created successfully")
     }

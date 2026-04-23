@@ -23,7 +23,7 @@ class CustomIndex(
 
     private val log = LoggerFactory.getLogger(CustomIndex::class.java)
     private val scanner = ScannerService(projectRoot)
-    
+
     // Cache for file lists to avoid re-scanning across cluster discoveries
     private val fileListCache = mutableMapOf<String, List<SourceFile>>()
     private val fileListCacheLock = Any()
@@ -59,12 +59,12 @@ class CustomIndex(
         val rel = file.relativeTo(File(projectRoot)).path.replace('\\', '/')
         return scanner.extractSymbols(rel).map { sym ->
             SymbolInfo(
-                name          = sym.name,
+                name = sym.name,
                 qualifiedName = "${rel.replace('/', '.')}::${sym.name}",
-                kind          = sym.kind,
-                file          = file,
-                line          = sym.line,
-                language      = file.extension
+                kind = sym.kind,
+                file = file,
+                line = sym.line,
+                language = file.extension
             )
         }
     }
@@ -74,7 +74,7 @@ class CustomIndex(
         synchronized(fileListCacheLock) {
             fileListCache[subPath]?.let { return it }
         }
-        
+
         // First try the provided subPath
         val standardFiles = scanner.listFiles(subPath)
         if (standardFiles.isNotEmpty()) {
@@ -83,12 +83,12 @@ class CustomIndex(
             }
             return standardFiles
         }
-        
+
         // If no files found with provided subPath, search for all configured source directories
         // This handles multi-module projects where each module has its own source directory
         val root = File(projectRoot)
         val allFiles = mutableListOf<SourceFile>()
-        
+
         root.walkTopDown()
             .filter { it.isDirectory && it.name in sourceDirNames }
             .forEach { srcDir ->
@@ -96,7 +96,7 @@ class CustomIndex(
                 val files = scanner.listFiles(relativePath)
                 allFiles.addAll(files)
             }
-        
+
         synchronized(fileListCacheLock) {
             fileListCache[subPath] = allFiles
         }
@@ -170,17 +170,19 @@ class CustomIndex(
             .map { loc ->
                 val f = File(root, loc.filePath)
                 SymbolInfo(
-                    name          = loc.symbolName,
+                    name = loc.symbolName,
                     qualifiedName = "${loc.filePath.replace('/', '.')}::${loc.symbolName}",
-                    kind          = loc.kind,
-                    file          = f,
-                    line          = loc.line,
-                    language      = f.extension
+                    kind = loc.kind,
+                    file = f,
+                    line = loc.line,
+                    language = f.extension
                 )
             }
 
-        log.debug("[CUSTOM_INDEX] callHierarchy({}): {} callees, {} callers",
-            symbol.name, calleeCandidates.size, callerLocations.size)
+        log.debug(
+            "[CUSTOM_INDEX] callHierarchy({}): {} callees, {} callers",
+            symbol.name, calleeCandidates.size, callerLocations.size
+        )
 
         return CallHierarchy(symbol, calleeCandidates, callerLocations)
     }
@@ -189,15 +191,15 @@ class CustomIndex(
 
     override fun getReachableFiles(entry: SymbolInfo, depth: Int): Set<File> {
         val visited = mutableSetOf<String>()
-        val queue   = ArrayDeque<Pair<SymbolInfo, Int>>()
-        val result  = mutableSetOf<File>()
+        val queue = ArrayDeque<Pair<SymbolInfo, Int>>()
+        val result = mutableSetOf<File>()
         queue.add(entry to 0)
 
         while (queue.isNotEmpty()) {
             val (sym, d) = queue.removeFirst()
             if (sym.qualifiedName in visited) continue
             visited += sym.qualifiedName
-            result  += sym.file
+            result += sym.file
 
             if (d < depth) {
                 runCatching {
@@ -232,6 +234,7 @@ class CustomIndex(
                 Regex("""interface\s+\w*Service\b"""),
                 Regex("""suspend\s+fun\s+(process|execute|run|handle)\b""")
             )
+
             else -> listOf(
                 Regex("""fun\s+main\s*\("""),
                 Regex("""@(Controller|RestController|Service|Component|Repository)\b"""),
@@ -246,11 +249,11 @@ class CustomIndex(
         }
 
         val sourcePaths = mutableListOf<String>()
-        
+
         if (File(projectRoot, "src").exists()) {
             sourcePaths.add("src")
         }
-        
+
         File(projectRoot).listFiles()?.forEach { moduleDir ->
             if (moduleDir.isDirectory && !moduleDir.name.startsWith(".") && moduleDir.name != "build") {
                 val moduleSrc = File(moduleDir, "src")
@@ -259,7 +262,7 @@ class CustomIndex(
                 }
             }
         }
-        
+
         val coreDir = File(projectRoot, "core")
         if (coreDir.exists() && coreDir.isDirectory) {
             coreDir.listFiles()?.forEach { submodule ->
@@ -283,12 +286,12 @@ class CustomIndex(
                     if (entryPatterns.any { it.containsMatchIn(line) }) {
                         val sym = symbolsInFile(file).firstOrNull { it.line == idx + 1 }
                             ?: SymbolInfo(
-                                name          = file.nameWithoutExtension,
+                                name = file.nameWithoutExtension,
                                 qualifiedName = "${sf.path.replace('/', '.')}::entry",
-                                kind          = "entry",
-                                file          = file,
-                                line          = idx + 1,
-                                language      = sf.language
+                                kind = "entry",
+                                file = file,
+                                line = idx + 1,
+                                language = sf.language
                             )
                         listOf(sym)
                     } else emptyList()
@@ -305,10 +308,10 @@ class CustomIndex(
                     if (!file.exists()) return@flatMap emptyList()
                     symbolsInFile(file).filter { sym ->
                         (sym.kind == "class" || sym.kind == "interface" || sym.kind == "object") &&
-                            (sym.name.endsWith("Agent") ||
-                                sym.name.endsWith("Orchestrator") ||
-                                sym.name.endsWith("Service") ||
-                                sym.name.contains("Router"))
+                                (sym.name.endsWith("Agent") ||
+                                        sym.name.endsWith("Orchestrator") ||
+                                        sym.name.endsWith("Service") ||
+                                        sym.name.contains("Router"))
                     }
                 }
             }
@@ -336,8 +339,8 @@ class CustomIndex(
         }
 
         return byDir.map { (dir, files) ->
-            val fileObjs   = files.map { File(projectRoot, it.path) }.toSet()
-            val entries    = files.flatMap { sf ->
+            val fileObjs = files.map { File(projectRoot, it.path) }.toSet()
+            val entries = files.flatMap { sf ->
                 symbolsInFile(File(projectRoot, sf.path)).filter {
                     it.kind in setOf("class", "object", "fun")
                 }
@@ -345,32 +348,32 @@ class CustomIndex(
             val cohesion = if (files.size >= 2) 0.7 else 0.4
 
             ClusterSuggestion(
-                name         = dir.substringAfterLast('/').ifBlank { dir },
-                entryPoints  = entries,
-                files        = fileObjs,
-                cohesion     = cohesion
+                name = dir.substringAfterLast('/').ifBlank { dir },
+                entryPoints = entries,
+                files = fileObjs,
+                cohesion = cohesion
             )
         }.filter { it.cohesion >= 0.4 }
-         .also { log.debug("[CUSTOM_INDEX] findClusters: {} suggestions", it.size) }
+            .also { log.debug("[CUSTOM_INDEX] findClusters: {} suggestions", it.size) }
     }
 
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private fun extractBodyLines(lines: List<String>, startLine: Int): List<String> {
         val start = (startLine - 1).coerceAtLeast(0)
-        val end   = (start + 60).coerceAtMost(lines.size)
+        val end = (start + 60).coerceAtMost(lines.size)
         return lines.subList(start, end)
     }
 
     private fun SymbolLocation.toSymbolInfo(): SymbolInfo {
         val f = File(projectRoot, filePath)
         return SymbolInfo(
-            name          = symbolName,
+            name = symbolName,
             qualifiedName = "${filePath.replace('/', '.')}::$symbolName",
-            kind          = kind,
-            file          = f,
-            line          = line,
-            language      = f.extension
+            kind = kind,
+            file = f,
+            line = line,
+            language = f.extension
         )
     }
 }

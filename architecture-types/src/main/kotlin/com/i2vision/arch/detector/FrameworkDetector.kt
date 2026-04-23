@@ -7,7 +7,7 @@ import java.io.File
  * Detects frameworks from project structure
  */
 class FrameworkDetector(private val projectRoot: String) {
-    
+
     /**
      * Detect frameworks from project root
      */
@@ -15,11 +15,12 @@ class FrameworkDetector(private val projectRoot: String) {
         val root = File(projectRoot)
         val frameworks = mutableListOf<Framework>()
         val confidences = mutableMapOf<String, Double>()
-        
+
         // Detect framework-specific files and directories
         val buildFiles = root.listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList()
-        val dirs = root.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.map { it.name } ?: emptyList()
-        
+        val dirs =
+            root.listFiles()?.filter { it.isDirectory && !it.name.startsWith(".") }?.map { it.name } ?: emptyList()
+
         // Kotlin/JVM frameworks
         if (detectKtor(root)) {
             frameworks.add(Framework.KTOR)
@@ -33,7 +34,7 @@ class FrameworkDetector(private val projectRoot: String) {
             frameworks.add(Framework.COMPOSE_DESKTOP)
             confidences["compose_desktop"] = 0.85
         }
-        
+
         // Web frameworks
         if (detectReact(root)) {
             frameworks.add(Framework.REACT)
@@ -47,7 +48,7 @@ class FrameworkDetector(private val projectRoot: String) {
             frameworks.add(Framework.VUE)
             confidences["vue"] = 0.85
         }
-        
+
         // Desktop frameworks
         if (detectSwing(root)) {
             frameworks.add(Framework.SWING)
@@ -57,10 +58,10 @@ class FrameworkDetector(private val projectRoot: String) {
             frameworks.add(Framework.JAVA_FX)
             confidences["javafx"] = 0.75
         }
-        
+
         return Result(frameworks, confidences)
     }
-    
+
     private fun detectKtor(root: File): Boolean {
         val buildFile = File(root, "build.gradle.kts")
         if (buildFile.exists()) {
@@ -69,7 +70,7 @@ class FrameworkDetector(private val projectRoot: String) {
         }
         return false
     }
-    
+
     private fun detectSpringBoot(root: File): Boolean {
         val buildFile = File(root, "build.gradle.kts")
         if (buildFile.exists()) {
@@ -83,7 +84,7 @@ class FrameworkDetector(private val projectRoot: String) {
         }
         return false
     }
-    
+
     private fun detectComposeDesktop(root: File): Boolean {
         val buildFile = File(root, "build.gradle.kts")
         if (buildFile.exists()) {
@@ -92,7 +93,7 @@ class FrameworkDetector(private val projectRoot: String) {
         }
         return false
     }
-    
+
     private fun detectReact(root: File): Boolean {
         val packageFile = File(root, "package.json")
         if (packageFile.exists()) {
@@ -101,7 +102,7 @@ class FrameworkDetector(private val projectRoot: String) {
         }
         return false
     }
-    
+
     private fun detectAngular(root: File): Boolean {
         val packageFile = File(root, "package.json")
         if (packageFile.exists()) {
@@ -110,7 +111,7 @@ class FrameworkDetector(private val projectRoot: String) {
         }
         return false
     }
-    
+
     private fun detectVue(root: File): Boolean {
         val packageFile = File(root, "package.json")
         if (packageFile.exists()) {
@@ -119,7 +120,7 @@ class FrameworkDetector(private val projectRoot: String) {
         }
         return false
     }
-    
+
     private fun detectSwing(root: File): Boolean {
         val srcDirs = listOf(
             File(root, "src/main/java"),
@@ -138,7 +139,7 @@ class FrameworkDetector(private val projectRoot: String) {
         }
         return false
     }
-    
+
     private fun detectJavaFx(root: File): Boolean {
         val srcDirs = listOf(
             File(root, "src/main/java"),
@@ -157,7 +158,7 @@ class FrameworkDetector(private val projectRoot: String) {
         }
         return false
     }
-    
+
     data class Result(
         val frameworks: List<Framework>,
         val confidences: Map<String, Double>

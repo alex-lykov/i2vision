@@ -113,6 +113,7 @@ internal object ToolArguments {
                 '.', '(', ')', '[', ']', '{', '}', '+', '^', '$', '|', '\\' -> {
                     append('\\'); append(ch)
                 }
+
                 else -> append(ch)
             }
         }

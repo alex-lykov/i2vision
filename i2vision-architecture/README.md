@@ -5,6 +5,7 @@ Architecture detection for multi-technology projects with framework and pattern 
 ## Overview
 
 i2vision-architecture provides intelligent detection of project architectures, including:
+
 - Multi-language detection (Kotlin, Java, TypeScript, Python, Go, Rust, Swift, C#)
 - Framework detection (Spring Boot, Ktor, React, Vue, Angular, etc.)
 - Platform detection (Backend, Frontend, CLI, Desktop, Mobile, Infrastructure, Library)
@@ -66,29 +67,35 @@ println("Entry Points: ${result.entryPointPatterns.joinToString()}")
 ### Supported Frameworks
 
 **Backend:**
+
 - Spring Boot
 - Ktor
 - Micronaut
 - Quarkus
 
 **Frontend:**
+
 - React
 - Vue
 - Angular
 
 **CLI:**
+
 - Clikt
 - Picocli
 
 **Desktop:**
+
 - Compose Desktop
 - JavaFX
 
 **Mobile:**
+
 - Android
 - Compose Multiplatform
 
 **Agent/AI:**
+
 - Agent Framework
 
 ### Architecture Patterns

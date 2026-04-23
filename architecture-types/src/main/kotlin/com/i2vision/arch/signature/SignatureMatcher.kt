@@ -6,7 +6,7 @@ import com.i2vision.arch.patterns.Pattern
  * Matches architecture signatures against patterns and provides compatibility checks
  */
 class SignatureMatcher {
-    
+
     /**
      * Check if two signatures are compatible
      */
@@ -15,7 +15,7 @@ class SignatureMatcher {
         if (!areBuildSystemsCompatible(signature1.buildSystem, signature2.buildSystem)) {
             return false
         }
-        
+
         // Frameworks should have some overlap (per-module)
         val allFrameworks1 = signature1.moduleFrameworks.values.flatten()
         val allFrameworks2 = signature2.moduleFrameworks.values.flatten()
@@ -25,23 +25,23 @@ class SignatureMatcher {
                 return false
             }
         }
-        
+
         return true
     }
-    
+
     /**
      * Calculate similarity score between two signatures (0.0 to 1.0)
      */
     fun calculateSimilarity(signature1: ArchitectureSignature, signature2: ArchitectureSignature): Double {
         var score = 0.0
         var weight = 0.0
-        
+
         // Build system weight: 0.2
         weight += 0.2
         if (signature1.buildSystem == signature2.buildSystem) {
             score += 0.2
         }
-        
+
         // Frameworks weight: 0.3 (per-module)
         weight += 0.3
         val allFrameworks1 = signature1.moduleFrameworks.values.flatten()
@@ -53,7 +53,7 @@ class SignatureMatcher {
                 score += 0.3 * (intersection.size.toDouble() / union.size)
             }
         }
-        
+
         // Module patterns weight: 0.3
         weight += 0.3
         if (signature1.modulePatterns.isNotEmpty() && signature2.modulePatterns.isNotEmpty()) {
@@ -63,7 +63,7 @@ class SignatureMatcher {
                 score += 0.3 * (intersection.size.toDouble() / union.size)
             }
         }
-        
+
         // Design patterns weight: 0.1 (per-module)
         weight += 0.1
         val allDesignPatterns1 = signature1.moduleDesignPatterns.values.flatten()
@@ -75,16 +75,16 @@ class SignatureMatcher {
                 score += 0.1 * (intersection.size.toDouble() / union.size)
             }
         }
-        
+
         // Deployment pattern weight: 0.1
         weight += 0.1
         if (signature1.deploymentPattern == signature2.deploymentPattern) {
             score += 0.1
         }
-        
+
         return if (weight > 0) score / weight else 0.0
     }
-    
+
     /**
      * Find best matching pattern from a catalog
      */
@@ -93,36 +93,36 @@ class SignatureMatcher {
             calculatePatternMatch(signature, pattern)
         }
     }
-    
+
     /**
      * Calculate match score between signature and pattern (0.0 to 1.0)
      */
     private fun calculatePatternMatch(signature: ArchitectureSignature, pattern: Pattern): Double {
         var score = 0.0
         var weight = 0.0
-        
+
         // Module pattern match
         weight += 0.5
         if (signature.modulePatterns.values.contains(pattern.modulePattern)) {
             score += 0.5
         }
-        
+
         // Design pattern match (per-module)
         weight += 0.3
         val allDesignPatterns = signature.moduleDesignPatterns.values.flatten()
         if (allDesignPatterns.contains(pattern.designPattern)) {
             score += 0.3
         }
-        
+
         // Deployment pattern match
         weight += 0.2
         if (signature.deploymentPattern == pattern.deploymentPattern) {
             score += 0.2
         }
-        
+
         return if (weight > 0) score / weight else 0.0
     }
-    
+
     private fun areBuildSystemsCompatible(system1: BuildSystem?, system2: BuildSystem?): Boolean {
         if (system1 == null || system2 == null) return true
         if (system1 == BuildSystem.UNKNOWN || system2 == BuildSystem.UNKNOWN) return true

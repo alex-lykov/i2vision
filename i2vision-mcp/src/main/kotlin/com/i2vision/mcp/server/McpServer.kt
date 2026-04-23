@@ -22,49 +22,49 @@ import com.i2vision.mcp.tools.rollout.RolloutTools
 class McpServer(
     private val projectRoot: String
 ) {
-    
+
     private val log = LoggerFactory.getLogger(McpServer::class.java)
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var serverJob: Job? = null
     private val toolRegistry = ToolRegistry()
     private val jsonRpcHandler = JsonRpcHandler(this)
-    
+
     init {
         registerTools()
     }
-    
+
     /**
      * Register all available tools.
      */
     private fun registerTools() {
         log.info("[MCP] Registering tools")
-        
+
         val discoveryTools = DiscoveryTools(projectRoot)
         val contextTools = ContextTools(projectRoot)
         val contractTools = ContractTools(projectRoot)
         val intelligenceTools = IntelligenceTools(projectRoot)
         val rolloutTools = RolloutTools(projectRoot)
-        
+
         // Register discovery tools
         toolRegistry.register("discover_project", discoveryTools::discoverProject)
         toolRegistry.register("analyze_file", discoveryTools::analyzeFile)
-        
+
         // Register context tools
         toolRegistry.register("get_instant_context", contextTools::getInstantContext)
         toolRegistry.register("prefetch_context", contextTools::prefetchContext)
-        
+
         // Register contract tools
         toolRegistry.register("validate_contract", contractTools::validateContract)
         toolRegistry.register("list_contracts", contractTools::listContracts)
-        
+
         // Register rollout tools
         toolRegistry.register("rollout_structure", rolloutTools::rolloutStructure)
         toolRegistry.register("validate_structure", rolloutTools::validateStructure)
         toolRegistry.register("check_rollout_status", rolloutTools::checkRolloutStatus)
-        
+
         log.info("[MCP] Registered {} tools", toolRegistry.size())
     }
-    
+
     /**
      * Start the MCP server.
      */
@@ -73,7 +73,7 @@ class McpServer(
         // TODO: Implement actual MCP protocol server
         log.info("[MCP] MCP server started (mock implementation)")
     }
-    
+
     /**
      * Stop the MCP server.
      */
@@ -82,7 +82,7 @@ class McpServer(
         serverJob?.cancel()
         log.info("[MCP] MCP server stopped")
     }
-    
+
     /**
      * Execute a tool call.
      * 
@@ -92,10 +92,10 @@ class McpServer(
      */
     suspend fun executeTool(toolName: String, parameters: Map<String, Any>): ToolResult {
         log.debug("[MCP] Executing tool: {}", toolName)
-        
+
         val tool = toolRegistry.get(toolName)
             ?: return ToolResult.error("Tool not found: $toolName")
-        
+
         return try {
             tool(parameters)
         } catch (e: Exception) {
@@ -103,7 +103,7 @@ class McpServer(
             ToolResult.error("Tool execution failed: ${e.message}")
         }
     }
-    
+
     /**
      * List all available tools.
      * 
@@ -118,7 +118,7 @@ class McpServer(
             )
         }
     }
-    
+
     /**
      * Handle JSON-RPC request
      */

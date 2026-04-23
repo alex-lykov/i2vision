@@ -32,7 +32,7 @@ class FatService(
     private val dep25: com.example.dep25.Dep25
 ) {
     fun process() {
-        (1..25).forEach { 
+        (1..25).forEach {
             println("Using dependency")
         }
     }

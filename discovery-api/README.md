@@ -3,25 +3,33 @@
 Discovery API interfaces for i2vision - breaks circular dependencies.
 
 ## Purpose
-Defines the contract for discovery pipeline implementations, allowing orchestrator to depend on the interface rather than the concrete implementation.
+
+Defines the contract for discovery pipeline implementations, allowing orchestrator to depend on the interface rather
+than the concrete implementation.
 
 ## Package Structure
+
 `com.i2vision.discover.api` - API interfaces and models
 
 ## Components
 
 ### DiscoveryPipeline Interface
+
 Main entry point for discovery operations:
+
 - `discover(depth, clusterId, contracts)` - Depth-aware discovery
 - `discover(intent, clusterId, contracts)` - Intent-based discovery
 
 ### IntentResolver Interface
+
 Resolves high-level intents to concrete discovery parameters:
+
 - `resolveToParameterSet(intent)` - Resolve intent to parameters
 - `isValid(intent)` - Validate intent
 - `validate(intent)` - Get validation errors
 
 ### Data Models
+
 - `PipelineResult` - Result of discovery pipeline execution
 - `DiscoveryArtifact` - Discovered artifact with layer, path, content, and confidence
 - `DiscoveryDepth` - BROWSE, STANDARD, DEEP
@@ -70,6 +78,7 @@ class MyOrchestrator(
 ```
 
 ## Dependencies
+
 - vslfc-core
 - architecture-types
 - discovery-engine
@@ -77,7 +86,9 @@ class MyOrchestrator(
 - intent-parser
 
 ## License
+
 MIT License
 
 ## Version
+
 1.0.0

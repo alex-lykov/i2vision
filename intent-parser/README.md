@@ -4,7 +4,9 @@ Intent parsing and models for high-level user intent specification.
 
 ## Overview
 
-intent-parser provides a declarative API for specifying discovery intents, abstracting away low-level parameter configuration:
+intent-parser provides a declarative API for specifying discovery intents, abstracting away low-level parameter
+configuration:
+
 - **DiscoveryIntent**: High-level intent specification with goal, focus, depth, and quality preferences
 - **IntentParser**: Parse intents from CLI arguments or configuration
 - **IntentFeatureFlags**: Feature flags for gradual rollout of intent-based systems
@@ -68,6 +70,7 @@ if (!intent.isValid()) {
 ## Features
 
 ### Intent Goals
+
 - **FULL_DISCOVERY**: Complete discovery of all layers
 - **REFACTORING_ANALYSIS**: Focus on refactoring opportunities
 - **ARCHITECTURE_AUDIT**: Audit architecture and dependencies
@@ -76,6 +79,7 @@ if (!intent.isValid()) {
 - **QUICK_OVERVIEW**: Quick overview for exploration
 
 ### Layer Focus
+
 - **VISION**: Vision layer analysis
 - **STRUCTURE**: Structure layer analysis
 - **LOGIC**: Logic layer analysis
@@ -84,11 +88,13 @@ if (!intent.isValid()) {
 - Predefined sets: `ALL`, `CORE`, `ANALYSIS`
 
 ### Depth Levels
+
 - **BROWSE**: Shallow scan for quick overview
 - **STANDARD**: Standard depth for most use cases
 - **DEEP**: Deep analysis with LLM enhancement
 
 ### Quality Focus
+
 - **QUALITY**: Prioritize quality over quantity
 - **BALANCED**: Balanced approach
 - **QUANTITY**: Prioritize maximum discovery

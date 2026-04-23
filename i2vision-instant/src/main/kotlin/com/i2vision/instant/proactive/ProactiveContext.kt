@@ -14,11 +14,11 @@ import java.io.File
 class ProactiveContext(
     private val projectRoot: String
 ) {
-    
+
     private val log = LoggerFactory.getLogger(ProactiveContext::class.java)
     private val indexProvider: IndexProvider by lazy { CustomIndex(projectRoot) }
     private val cache = mutableMapOf<String, Set<String>>()
-    
+
     /**
      * Pre-fetch related files for a given file.
      * 
@@ -28,24 +28,24 @@ class ProactiveContext(
      */
     suspend fun prefetchRelatedFiles(filePath: String, depth: Int = 2): Set<String> {
         log.debug("[PROACTIVE] Prefetching related files for: {}, depth: {}", filePath, depth)
-        
+
         val absolutePath = File(projectRoot, filePath)
         if (!absolutePath.exists()) {
             return emptySet()
         }
-        
+
         // Check cache first
         if (cache.containsKey(filePath)) {
             log.debug("[PROACTIVE] Cache hit for: {}", filePath)
             return cache[filePath]!!
         }
-        
+
         // Get symbols in the file
         val symbols = indexProvider.symbolsInFile(absolutePath)
-        
+
         // Find related files using reachability
         val relatedFiles = mutableSetOf<String>()
-        
+
         symbols.forEach { symbol ->
             try {
                 val reachable = indexProvider.getReachableFiles(symbol, depth)
@@ -58,14 +58,14 @@ class ProactiveContext(
                 log.debug("[PROACTIVE] Failed to get reachable files for ${symbol.name}: ${e.message}")
             }
         }
-        
+
         // Cache the result
         cache[filePath] = relatedFiles
-        
+
         log.debug("[PROACTIVE] Prefetched {} related files for: {}", relatedFiles.size, filePath)
         return relatedFiles
     }
-    
+
     /**
      * Pre-fetch related files for multiple files.
      * 
@@ -75,18 +75,22 @@ class ProactiveContext(
      */
     suspend fun prefetchRelatedFilesForFiles(filePaths: List<String>, depth: Int = 2): Set<String> {
         log.debug("[PROACTIVE] Prefetching related files for {} files, depth: {}", filePaths.size, depth)
-        
+
         val allRelatedFiles = mutableSetOf<String>()
-        
+
         filePaths.forEach { filePath ->
             val related = prefetchRelatedFiles(filePath, depth)
             allRelatedFiles.addAll(related)
         }
-        
-        log.debug("[PROACTIVE] Prefetched {} total related files for {} input files", allRelatedFiles.size, filePaths.size)
+
+        log.debug(
+            "[PROACTIVE] Prefetched {} total related files for {} input files",
+            allRelatedFiles.size,
+            filePaths.size
+        )
         return allRelatedFiles
     }
-    
+
     /**
      * Get cached related files for a file.
      * 
@@ -96,7 +100,7 @@ class ProactiveContext(
     fun getCachedRelatedFiles(filePath: String): Set<String>? {
         return cache[filePath]
     }
-    
+
     /**
      * Clear the cache.
      */
@@ -104,7 +108,7 @@ class ProactiveContext(
         log.debug("[PROACTIVE] Clearing cache ({} entries)", cache.size)
         cache.clear()
     }
-    
+
     /**
      * Get cache statistics.
      * 

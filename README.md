@@ -234,7 +234,7 @@ Total Artifacts: 180
 
 ---
 
-### 2. Get Instant Context
+### Get Instant Context
 
 Use the CLI context command to get instant context for files and directories:
 
@@ -267,7 +267,7 @@ Use the CLI context command to get instant context for files and directories:
 
 ---
 
-### 3. Test with MCP (Beta)
+### Test with MCP (Beta)
 
 The MCP integration is currently in beta. Build the MCP server first:
 
@@ -304,6 +304,40 @@ Then ask Claude: *"Show me the architecture of UserService"* — it gets full co
 ---
 
 **Next:** [Full Documentation](docs/README.md) | [CLI Reference](docs/reference/cli.md) | [MCP Tools](docs/guides/mcp-tools.md)
+
+---
+
+## 📋 TARGET PROJECT .gitignore
+
+```gitignore
+# i²-Vision - only the generated cache stays local
+.semantic-cache/
+```
+
+---
+
+## 🎯 WHAT THE USER DOES
+
+| Action | Why |
+|--------|-----|
+| **Track `.vision-ai/`** | Design-time contracts, intents, presets—team shares these |
+| **Ignore `.semantic-cache/`** | Generated artifacts per developer (and now in OS user home anyway) |
+| **Run `i2vision discover`** | Populates cache locally |
+| **Run `i2vision init`** once | Creates `.vision-ai/` structure (commit this) |
+
+---
+
+## 📋 WHAT'S WHERE
+
+| Location | Contains | Commit? | Shared? |
+|----------|----------|---------|---------|
+| `.vision-ai/` (project) | Contracts, intents, presets | ✅ Yes | Team shares |
+| `.semantic-cache/` (project) | Legacy cache | ❌ No | Local only |
+| `~/.i2vision/cache/` (OS) | Discovery artifacts | ❌ No | Local only |
+
+---
+
+**One line in .gitignore. That's it.**
 
 ---
 

@@ -34,38 +34,6 @@ You're using Claude, Cursor, or Continue.dev to understand and modify code. But 
 
 ---
 
-## 📊 Development Status
-
-i²-Vision is under **active development**.
-
-### ✅ What's Working (Production-Ready)
-- VSLFC discovery pipeline (Code → Vision)
-- Contract validation
-- Architecture detection
-- CLI tool
-- Self-tested on 38 clusters / 1,585 flows
-
-### 🧪 What's in Beta
-- MCP integration (Claude Desktop / Cursor)
-- Instant context API
-- Incremental sync
-
-### 📋 What's Planned (Not Yet Implemented)
-- Development engine (Vision → Code scaffolding)
-- LLM-enhanced discovery
-- Contract remediation (auto-fix suggestions)
-- Team cloud sync
-
-### ⚠️ Important Notes
-- This repository contains the **complete source code** for transparency
-- Some planned features exist as **design documents and tests only**
-- The system successfully analyzes its own codebase (proof of concept)
-- **Production use is at your own risk** during this development phase
-
-[Full Roadmap →](docs/roadmap.md)
-
----
-
 ## 🎯 Core Concepts
 
 ### VSLFC: Five-Layer Contract System
@@ -129,26 +97,26 @@ Top-Down (Greenfield):       Vision → Structure → Logic → Flow → Code
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    MCP CLIENTS                                   │
+│                    MCP CLIENTS                                  │
 │  Claude Desktop │ Cursor │ Continue │ Zed │ Custom              │
 └─────────────────────────────────────────────────────────────────┘
                               ↓ MCP Protocol
 ┌─────────────────────────────────────────────────────────────────┐
-│                    i2vision-mcp (MIT)                            │
+│                    i2vision-mcp (MIT)                           │
 │  • JSON-RPC 2.0 Server  • Stdio/HTTP Transport                  │
 │  • Discovery Tools     • Context Tools      • Contract Tools    │
 │  • Quality Metrics     • Related Files                          │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│                    i2vision-instant (MIT)                        │
+│                    i2vision-instant (MIT)                       │
 │  • Instant Context API  • Proactive Context                     │
 │  • Task-Aware Context   • Strategy Suggestions                  │
 │  • Cache Management                                             │
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│                    i2vision-discover (MIT)                       │
+│                    i2vision-discover (MIT)                      │
 │  • Discovery Pipeline   • Flow Discovery                        │
 │  • Logic Extraction     • Structure Building                    │
 │  • Contract Validation  • Artifact Writing                      │
@@ -156,7 +124,7 @@ Top-Down (Greenfield):       Vision → Structure → Logic → Flow → Code
 └─────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│                    FOUNDATION MODULES (MIT)                      │
+│                    FOUNDATION MODULES (MIT)                     │
 │  vslfc-core │ i2vision-architecture │ architecture-types        │
 │  intent-parser │ storage-core │ conf-agent-core │ llm-client    │
 └─────────────────────────────────────────────────────────────────┘
@@ -183,14 +151,47 @@ Top-Down (Greenfield):       Vision → Structure → Logic → Flow → Code
 
 ## 🚀 Quick Start: Discover + Instant Context
 
-### 1. Run Discovery (2 minutes)
+### ⚡ Try It on i2vision Itself (2 minutes)
+
+Don't have a project handy? Run self-discovery—i2vision analyzing i2vision:
 
 ```bash
 # Clone and build
 git clone https://github.com/i2vision/i2vision.git && cd i2vision
 ./gradlew build
 
-# Analyze your project with intent-driven discovery
+# Run self-discovery (analyzes i2vision with i2vision)
+./gradlew :discovery-validation:run
+```
+
+**What happens:** i2vision analyzes its own 18 modules, detecting architecture patterns, flows, and business rules—the same way it would analyze your project.
+
+**Example output:**
+```
+=== i2vision Self-Discovery Test ===
+Project: D:\proj\AI\i2-vision
+Deployment Pattern: MODULAR_MONOLITH
+Clusters detected: 18
+  - i2vision-instant (274 files)
+  - i2vision-discover (236 files)
+  - vslfc-core (245 files)
+  ...
+
+--- Discovery Results Summary ---
+Total Duration: 68s
+Total Clusters: 18
+Successful: 18/18 (100%)
+Total Artifacts: 180
+
+✅ Discovery pipeline: 18/18 clusters (100.0%)
+```
+
+[View full self-discovery log →](docs/self-discovery.md)
+
+### Then Try It on Your Project
+
+```bash
+# Analyze your own project with intent-driven discovery
 ./gradlew :i2vision-cli:run --args="discover --intent=full_discovery /path/to/your/project"
 ```
 
@@ -356,6 +357,38 @@ Then ask Claude: *"Show me the architecture of UserService"* — it gets full co
 - **Targeted rediscovery** of changed files only
 - **Config snapshot** for design-time changes
 - **Stale detection** for outdated artifacts
+
+---
+
+## 📊 Development Status
+
+i²-Vision is under **active development**.
+
+### ✅ What's Working (Production-Ready)
+- VSLFC discovery pipeline (Code → Vision)
+- Contract validation
+- Architecture detection
+- CLI tool
+- Self-tested on 38 clusters / 1,585 flows
+
+### 🧪 What's in Beta
+- MCP integration (Claude Desktop / Cursor)
+- Instant context API
+- Incremental sync
+
+### 📋 What's Planned (Not Yet Implemented)
+- Development engine (Vision → Code scaffolding)
+- LLM-enhanced discovery
+- Contract remediation (auto-fix suggestions)
+- Team cloud sync
+
+### ⚠️ Important Notes
+- This repository contains the **complete source code** for transparency
+- Some planned features exist as **design documents and tests only**
+- The system successfully analyzes its own codebase (proof of concept)
+- **Production use is at your own risk** during this development phase
+
+[Full Roadmap →](docs/roadmap.md)
 
 ---
 

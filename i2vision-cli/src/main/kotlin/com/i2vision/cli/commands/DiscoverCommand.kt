@@ -18,6 +18,7 @@ import com.i2vision.discover.intent.IntentResolverImpl
 import com.i2vision.cli.output.ConsoleOutput
 import com.i2vision.intent.IntentParser
 import com.i2vision.intent.DiscoveryIntent as ParserDiscoveryIntent
+import com.i2vision.instant.context.ContextProvider
 import java.io.OutputStream
 import java.io.PrintStream
 import java.time.LocalDateTime
@@ -65,6 +66,7 @@ class DiscoverCommand : CliktCommand(
     private val output by option("-o", "--output", help = "Output directory for artifacts")
     private val json by option("--json", help = "Output results as JSON").flag()
     private val yaml by option("--yaml", help = "Output results as YAML").flag()
+    private val validateContext by option("--validate-context", help = "Validate enhanced context availability after discovery").flag()
     
     private val consoleOutput = ConsoleOutput()
     
@@ -192,6 +194,48 @@ class DiscoverCommand : CliktCommand(
         echo("=== Discovery Complete ===")
         echo("Total discovery time: ${discoveryDuration}ms (${discoveryDuration / 1000}s)")
         echo("Ended at: ${LocalDateTime.now()}")
+        
+        // Lightweight context validation if flag is set
+        if (validateContext) {
+            echo("")
+            echo("=== Context Availability ===")
+            val contextProvider = ContextProvider(
+                projectRoot = projectRoot.path,
+                cacheStore = FileCacheStore(projectRoot)
+            )
+            
+            // Get cluster list from cache directories
+            val cacheDir = File(projectRoot, ".semantic-cache")
+            val clusters = cacheDir.listFiles()
+                ?.filter { it.isDirectory }
+                ?.map { it.name }
+                ?: emptyList()
+            
+            if (clusters.isEmpty()) {
+                echo("No clusters found in semantic cache")
+            } else {
+                echo("Checking enhanced context availability for ${clusters.size} clusters...")
+                echo("")
+                
+                clusters.take(10).forEach { cluster ->
+                    val hasCache = contextProvider.hasDiscoveryCache(cluster)
+                    val status = if (hasCache) "[OK]" else "[MISSING]"
+                    echo("$status $cluster")
+                }
+                
+                if (clusters.size > 10) {
+                    echo("... and ${clusters.size - 10} more clusters")
+                }
+                
+                val enhancedClusters = clusters.count { contextProvider.hasDiscoveryCache(it) }
+                echo("")
+                echo("Enhanced context available for $enhancedClusters/${clusters.size} clusters")
+                
+                if (enhancedClusters < clusters.size) {
+                    echo("Run 'i2vision discover --intent=full_discovery' for missing clusters")
+                }
+            }
+        }
     }
     
     /**

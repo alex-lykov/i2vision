@@ -4,6 +4,7 @@ import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.subcommands
 import com.github.ajalt.clikt.parameters.options.help
 import com.i2vision.cli.commands.ContractCommand
+import com.i2vision.cli.commands.ContextCommand
 import com.i2vision.cli.commands.DiscoverCommand
 import com.i2vision.cli.commands.InitCommand
 import com.i2vision.cli.commands.PresetCommand
@@ -31,6 +32,7 @@ class I2VisionCli : CliktCommand(
         echo("  discover  - Run discovery analysis on a project")
         echo("  contract  - Contract validation and management")
         echo("  preset    - Preset management")
+        echo("  context   - Get instant context for files and directories")
         echo("")
         echo("Use 'i2vision <command> --help' for more information")
     }
@@ -40,5 +42,5 @@ class I2VisionCli : CliktCommand(
  * Main function - entry point for CLI application.
  */
 fun main(args: Array<String>) {
-    I2VisionCli().subcommands(InitCommand(), DiscoverCommand(), ContractCommand(), PresetCommand()).main(args)
+    I2VisionCli().subcommands(InitCommand(), DiscoverCommand(), ContractCommand(), PresetCommand(), ContextCommand()).main(args)
 }

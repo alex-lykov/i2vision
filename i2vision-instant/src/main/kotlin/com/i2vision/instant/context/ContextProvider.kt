@@ -271,6 +271,199 @@ class ContextProvider(
     }
     
     /**
+     * Check if discovery cache exists for a module.
+     * 
+     * @param modulePath Module path (e.g., "i2vision-instant")
+     * @return true if discovery cache exists with flow and logic artifacts
+     */
+    fun hasDiscoveryCache(modulePath: String): Boolean {
+        val cacheDir = File(projectRoot, StorageConstants.SEMANTIC_CACHE_DIR)
+        val moduleCache = File(cacheDir, modulePath)
+        
+        return moduleCache.exists() && 
+               File(moduleCache, "flow").exists() && 
+               File(moduleCache, "logic").exists()
+    }
+    
+    /**
+     * Get enhanced context with flows, business rules, and components from discovery cache.
+     * 
+     * @param filePath File path (relative to project root)
+     * @param task Task type for context filtering
+     * @return Enhanced context with flows, rules, and components
+     */
+    suspend fun getEnhancedContext(filePath: String, task: String): InstantContext {
+        val modulePath = extractModulePath(filePath)
+        
+        // Validate cache exists
+        if (!hasDiscoveryCache(modulePath)) {
+            return InstantContext.error("No discovery cache found for module: $modulePath")
+        }
+        
+        // Get basic context first
+        val basic = getContext(filePath, task)
+        if (!basic.success) return basic
+        
+        // Load enhanced data from cache
+        val flows = loadFlows(modulePath, filePath)
+        val rules = loadBusinessRules(modulePath, filePath)
+        val component = loadComponent(modulePath, filePath)
+        val relatedComponents = loadRelatedComponents(modulePath, component?.name)
+        
+        return basic.copy(
+            enhanced = true,
+            flows = flows,
+            businessRules = rules,
+            component = component,
+            relatedComponents = relatedComponents
+        )
+    }
+    
+    /**
+     * Extract module path from file path.
+     */
+    private fun extractModulePath(filePath: String): String {
+        val normalizedPath = filePath.replace("\\", "/")
+        return when {
+            normalizedPath.startsWith("i2vision-") -> normalizedPath.substringBefore("/src/")
+            normalizedPath.startsWith("vslfc-core") -> "vslfc-core"
+            normalizedPath.startsWith("llm-client") -> "llm-client"
+            normalizedPath.startsWith("storage-core") -> "storage-core"
+            normalizedPath.startsWith("discovery-api") -> "discovery-api"
+            normalizedPath.startsWith("discovery-engine") -> "discovery-engine"
+            normalizedPath.startsWith("intent-parser") -> "intent-parser"
+            normalizedPath.startsWith("architecture-types") -> "architecture-types"
+            normalizedPath.startsWith("conf-agent-core") -> "conf-agent-core"
+            normalizedPath.startsWith("contracts") -> "contracts"
+            normalizedPath.startsWith("index-provider") -> "index-provider"
+            normalizedPath.startsWith("link-service") -> "link-service"
+            else -> normalizedPath.substringBefore("/src/").ifEmpty { "root" }
+        }
+    }
+    
+    /**
+     * Load flows from discovery cache.
+     */
+    private fun loadFlows(modulePath: String, filePath: String): List<FlowInfo> {
+        val flowsFile = File(projectRoot, "${StorageConstants.SEMANTIC_CACHE_DIR}/$modulePath/flow/sequences.yaml")
+        if (!flowsFile.exists()) return emptyList()
+        
+        try {
+            val yaml = org.yaml.snakeyaml.Yaml()
+            val data = yaml.load<Map<String, Any>>(flowsFile.readText())
+            val flows = data["flows"] as? List<Map<String, Any>> ?: return emptyList()
+            
+            return flows.filter { flow ->
+                val steps = flow["steps"] as? List<Map<String, Any>> ?: emptyList()
+                steps.any { step ->
+                    val stepFile = step["file"] as? String ?: ""
+                    stepFile.contains(filePath) || filePath.contains(stepFile)
+                }
+            }.map { flow ->
+                FlowInfo(
+                    name = flow["entry"] as? String ?: "unnamed",
+                    steps = (flow["steps"] as? List<Map<String, Any>>)?.mapNotNull { 
+                        it["call"] as? String 
+                    } ?: emptyList(),
+                    participants = (flow["steps"] as? List<Map<String, Any>>)?.mapNotNull {
+                        it["file"] as? String
+                    }?.distinct() ?: emptyList()
+                )
+            }
+        } catch (e: Exception) {
+            log.warn("[ENHANCED] Failed to load flows: ${e.message}")
+            return emptyList()
+        }
+    }
+    
+    /**
+     * Load business rules from discovery cache.
+     */
+    private fun loadBusinessRules(modulePath: String, filePath: String): List<BusinessRuleInfo> {
+        val rulesFile = File(projectRoot, "${StorageConstants.SEMANTIC_CACHE_DIR}/$modulePath/logic/business-rules.yaml")
+        if (!rulesFile.exists()) return emptyList()
+        
+        try {
+            val yaml = org.yaml.snakeyaml.Yaml()
+            val data = yaml.load<Map<String, Any>>(rulesFile.readText())
+            val rules = data["business_rules"] as? List<Map<String, Any>> ?: return emptyList()
+            
+            return rules.filter { rule ->
+                val ruleFile = rule["file"] as? String ?: ""
+                ruleFile == filePath || filePath.endsWith(ruleFile)
+            }.map { rule ->
+                BusinessRuleInfo(
+                    description = rule["snippet"] as? String ?: rule["description"] as? String ?: "",
+                    file = rule["file"] as? String ?: "",
+                    line = (rule["line"] as? Number)?.toInt() ?: 0
+                )
+            }
+        } catch (e: Exception) {
+            log.warn("[ENHANCED] Failed to load business rules: ${e.message}")
+            return emptyList()
+        }
+    }
+    
+    /**
+     * Load component information from discovery cache.
+     */
+    private fun loadComponent(modulePath: String, filePath: String): ComponentInfo? {
+        val componentsFile = File(projectRoot, "${StorageConstants.SEMANTIC_CACHE_DIR}/$modulePath/structure/components.yaml")
+        if (!componentsFile.exists()) return null
+        
+        try {
+            val yaml = org.yaml.snakeyaml.Yaml()
+            val data = yaml.load<Map<String, Any>>(componentsFile.readText())
+            val components = data["components"] as? List<Map<String, Any>> ?: return null
+            
+            return components.find { component ->
+                val files = component["files"] as? List<String> ?: emptyList()
+                files.any { it.contains(filePath) || filePath.endsWith(it) }
+            }?.let { component ->
+                ComponentInfo(
+                    name = component["name"] as? String ?: "unknown",
+                    cohesion = (component["cohesion"] as? Number)?.toDouble() ?: 0.0,
+                    files = component["files"] as? List<String> ?: emptyList()
+                )
+            }
+        } catch (e: Exception) {
+            log.warn("[ENHANCED] Failed to load component: ${e.message}")
+            return null
+        }
+    }
+    
+    /**
+     * Load related components from discovery cache.
+     */
+    private fun loadRelatedComponents(modulePath: String, componentName: String?): List<ComponentDependency> {
+        if (componentName == null) return emptyList()
+        
+        val depsFile = File(projectRoot, "${StorageConstants.SEMANTIC_CACHE_DIR}/$modulePath/structure/dependencies.yaml")
+        if (!depsFile.exists()) return emptyList()
+        
+        try {
+            val yaml = org.yaml.snakeyaml.Yaml()
+            val data = yaml.load<Map<String, Any>>(depsFile.readText())
+            val deps = data["dependencies"] as? List<Map<String, Any>> ?: return emptyList()
+            
+            return deps.filter { dep ->
+                val from = dep["from"] as? String ?: ""
+                val to = dep["to"] as? String ?: ""
+                from == componentName || to == componentName
+            }.map { dep ->
+                ComponentDependency(
+                    from = dep["from"] as? String ?: "",
+                    to = dep["to"] as? String ?: "",
+                    type = dep["type"] as? String ?: "depends_on"
+                )
+            }
+        } catch (e: Exception) {
+            log.warn("[ENHANCED] Failed to load related components: ${e.message}")
+            return emptyList()
+        }
+    }
+    
+    /**
      * Get task-specific context based on the task type.
      */
     private fun getTaskContext(task: String, symbols: List<SymbolInfo>): TaskContext {
@@ -310,7 +503,13 @@ data class InstantContext(
     val strategySuggestions: List<com.i2vision.instant.strategy.StrategyLibrary.StrategySuggestion> = emptyList(),
     val complexityDetails: com.i2vision.instant.analysis.FileAnalyzer.ComplexityDetails? = null,
     val success: Boolean,
-    val error: String? = null
+    val error: String? = null,
+    // Enhanced context fields
+    val enhanced: Boolean = false,
+    val flows: List<FlowInfo> = emptyList(),
+    val businessRules: List<BusinessRuleInfo> = emptyList(),
+    val component: ComponentInfo? = null,
+    val relatedComponents: List<ComponentDependency> = emptyList()
 ) {
     companion object {
         fun error(message: String) = InstantContext(
@@ -326,6 +525,42 @@ data class InstantContext(
         )
     }
 }
+
+/**
+ * Flow information from discovery cache.
+ */
+data class FlowInfo(
+    val name: String,
+    val steps: List<String>,
+    val participants: List<String>
+)
+
+/**
+ * Business rule information from discovery cache.
+ */
+data class BusinessRuleInfo(
+    val description: String,
+    val file: String,
+    val line: Int
+)
+
+/**
+ * Component information from discovery cache.
+ */
+data class ComponentInfo(
+    val name: String,
+    val cohesion: Double,
+    val files: List<String>
+)
+
+/**
+ * Component dependency information from discovery cache.
+ */
+data class ComponentDependency(
+    val from: String,
+    val to: String,
+    val type: String
+)
 
 /**
  * Symbol information.

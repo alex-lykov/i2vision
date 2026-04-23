@@ -234,16 +234,36 @@ git clone https://github.com/i2vision/i2vision.git && cd i2vision
 
 ---
 
-### 2. Get Instant Context (Beta)
+### 2. Get Instant Context
 
-The instant context API is currently in beta. For now, use the CLI to analyze files:
+Use the CLI context command to get instant context for files and directories:
 
 ```bash
-# Analyze a specific module
-./gradlew :i2vision-cli:run --args="discover --cluster=your-module-name /path/to/your/project"
+# Get context for a specific file (basic context - symbols + complexity)
+./gradlew :i2vision-cli:run --args="context file --path=core/orchestrator/AgentOrchestrator.kt --project=/path/to/your/project"
+
+# Get context with task-specific analysis
+./gradlew :i2vision-cli:run --args="context file --path=AuthService.kt --task=debug --project=/path/to/your/project"
+
+# Get context for multiple files
+./gradlew :i2vision-cli:run --args="context files file1.kt file2.kt file3.kt --project=/path/to/your/project"
+
+# Get enhanced context (requires discovery cache - flows, rules, components)
+./gradlew :i2vision-cli:run --args="context enhanced --path=AuthService.kt --project=/path/to/your/project"
+
+# Cache management
+./gradlew :i2vision-cli:run --args="context cache stats --project=/path/to/your/project"
+./gradlew :i2vision-cli:run --args="context cache clean --project=/path/to/your/project"
+./gradlew :i2vision-cli:run --args="context cache invalidate --pattern=*.kt --project=/path/to/your/project"
 ```
 
-**What you get:** Context for the specified cluster including symbols, related files, flows, and business rules.
+**What you get:** Instant context including symbols, related files, task-specific suggestions, artifacts, complexity metrics, and strategy suggestions.
+
+**Context types:**
+- **Basic context** (`context file` / `context files`): Works immediately - symbols, complexity, suggestions
+- **Enhanced context** (`context enhanced`): Requires discovery - adds flows, business rules, components
+
+**Available tasks:** `debug`, `refactor`, `add feature`, `fix bug`, `optimize`, `discovery` (default)
 
 ---
 

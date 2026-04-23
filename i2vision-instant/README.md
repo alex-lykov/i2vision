@@ -78,7 +78,44 @@ data class InstantContext(
 ### Basic Context Request
 ```kotlin
 val contextProvider = ContextProvider(projectRoot)
-val context = contextProvider.getContext(filePath, modulePath)
+val context = contextProvider.getContext(filePath, task)
+```
+
+### CLI Integration
+The ContextProvider is integrated with the i2vision CLI through the `context` command:
+
+**Basic Context (works immediately):**
+```bash
+# Get context for a file
+i2vision context file --path=AuthService.kt --task=debug
+
+# Get context for multiple files
+i2vision context files file1.kt file2.kt file3.kt
+```
+
+**Enhanced Context (requires discovery):**
+```bash
+# Get enhanced context with flows, rules, components
+i2vision context enhanced --path=AuthService.kt
+```
+
+**Cache Management:**
+```bash
+# Check cache status
+i2vision context cache stats
+
+# Clean expired cache
+i2vision context cache clean
+
+# Invalidate specific patterns
+i2vision context cache invalidate --pattern=*.kt
+```
+
+**Cache Detection:**
+The `hasDiscoveryCache()` method checks if discovery artifacts exist for a module:
+```kotlin
+val hasCache = contextProvider.hasDiscoveryCache("i2vision-instant")
+// Returns true if .semantic-cache/i2vision-instant/flow and logic directories exist
 ```
 
 ### Cache Management

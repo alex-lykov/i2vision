@@ -28,6 +28,7 @@ dependencies {
     // Internal dependencies
     implementation(project(":discovery-api"))
     implementation(project(":i2vision-discover"))
+    implementation(project(":i2vision-instant"))
     implementation(project(":vslfc-core"))
     implementation(project(":storage-core"))
     implementation(project(":contracts"))

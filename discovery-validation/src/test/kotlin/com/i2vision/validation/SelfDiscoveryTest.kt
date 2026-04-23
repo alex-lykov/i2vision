@@ -35,6 +35,8 @@ fun main(args: Array<String>) {
     val deep = args.contains("--deep")
     val exportDocs = args.contains("--export-docs")
     val analyzeQuality = args.contains("--analyze-quality")
+    val testContext = args.contains("--test-context")
+    val testCli = args.contains("--test-cli")
     
     val depth = if (deep) DiscoveryDepth.DEEP else DiscoveryDepth.STANDARD
     
@@ -61,12 +63,21 @@ fun main(args: Array<String>) {
     // Tee output to both console and file
     System.setOut(TeePrintStream(originalOut, logStream))
     
+    println("================================================================================")
+    println("                        i2vision Self-Discovery Test Log")
+    println("================================================================================")
+    println("Log file: ${logFile.absolutePath}")
+    println("Created: ${LocalDateTime.now()}")
+    println("================================================================================")
+    println()
     println("=== i2vision Self-Discovery Test ===")
     println("Project: ${projectRoot.canonicalPath}")
     println("Depth: $depth")
     if (purge) println("Purge: ENABLED")
     if (exportDocs) println("Export Docs: ENABLED")
     if (analyzeQuality) println("Analyze Quality: ENABLED")
+    if (testContext) println("Test Context: ENABLED")
+    if (testCli) println("Test CLI: ENABLED")
     println()
     
     // Step 1: Architecture Detection
@@ -193,20 +204,26 @@ fun main(args: Array<String>) {
     }
     
     // Step 7: Instant Context Test
-    if (exportDocs || analyzeQuality) {
+    if (exportDocs || analyzeQuality || testContext) {
         println("--- Instant Context Test ---")
         testInstantContext(projectRoot)
         println()
     }
     
-    // Step 8: Documentation Export
+    // Step 8: CLI Context Command Validation
+    if (testCli) {
+        testCliContextCommands(projectRoot)
+        println()
+    }
+    
+    // Step 9: Documentation Export
     if (exportDocs) {
         println("--- Documentation Export ---")
         exportDocumentation(projectRoot, allResults)
         println()
     }
     
-    // Step 9: Key Findings
+    // Step 10: Key Findings
     println("--- Key Findings ---")
     val successfulClusters = allResults.count { it.result.success }
     val successRate = (successfulClusters * 100.0) / allResults.size
@@ -267,7 +284,8 @@ data class ArtifactQuality(
     val ruleCount: Int,
     val hasComponents: Boolean,
     val componentCount: Int,
-    val hasDocs: Boolean
+    val hasDocs: Boolean,
+    val hasEnhancedContext: Boolean = false
 )
 
 fun purgeSemanticCache(root: File) {
@@ -297,6 +315,10 @@ fun purgeSemanticCache(root: File) {
 fun analyzeArtifactQuality(root: File, results: List<ClusterDiscoveryResult>) {
     val yaml = Yaml()
     val qualities = mutableListOf<ArtifactQuality>()
+    val contextProvider = com.i2vision.instant.context.ContextProvider(
+        projectRoot = root.absolutePath,
+        cacheStore = FileCacheStore(I2VisionPaths.getProjectCacheDir(root.absolutePath))
+    )
     
     results.filter { it.result.success }.forEach { clusterResult ->
         val clusterName = clusterResult.name
@@ -344,6 +366,9 @@ fun analyzeArtifactQuality(root: File, results: List<ClusterDiscoveryResult>) {
             docCount = docsDir.walkTopDown().filter { it.isFile && it.name.endsWith(".yaml") }.count()
         }
         
+        // Check enhanced context availability
+        val hasEnhancedContext = contextProvider.hasDiscoveryCache(clusterName)
+        
         qualities.add(
             ArtifactQuality(
                 clusterName = clusterName,
@@ -355,23 +380,25 @@ fun analyzeArtifactQuality(root: File, results: List<ClusterDiscoveryResult>) {
                 ruleCount = ruleCount,
                 hasComponents = componentCount > 0,
                 componentCount = componentCount,
-                hasDocs = docCount > 0
+                hasDocs = docCount > 0,
+                hasEnhancedContext = hasEnhancedContext
             )
         )
     }
     
-    // Print summary table
+    // Print summary table with enhanced context column
     println()
-    println("Cluster                                    Symbols  Flows  Rules  Comps  Docs")
-    println("-----------------------------------------  -------  -----  -----  -----  ----")
+    println("Cluster                                    Symbols  Flows  Rules  Comps  Docs  Enhanced")
+    println("-----------------------------------------  -------  -----  -----  -----  ----  --------")
     qualities.sortedBy { it.clusterName }.forEach { q ->
         val shortName = if (q.clusterName.length > 40) q.clusterName.take(37) + "..." else q.clusterName.padEnd(40)
         val symbols = if (q.hasSymbols) q.symbolCount.toString().padEnd(7) else "-".padEnd(7)
         val flows = if (q.hasFlows) q.flowCount.toString().padEnd(5) else "-".padEnd(5)
         val rules = if (q.hasRules) q.ruleCount.toString().padEnd(5) else "-".padEnd(5)
         val comps = if (q.hasComponents) q.componentCount.toString().padEnd(5) else "-".padEnd(5)
-        val docs = if (q.hasDocs) "✅" else "-"
-        println("$shortName  $symbols  $flows  $rules  $comps  $docs")
+        val docs = if (q.hasDocs) "✅".padEnd(4) else "-".padEnd(4)
+        val enhanced = if (q.hasEnhancedContext) "✅" else "-"
+        println("$shortName  $symbols  $flows  $rules  $comps  $docs  $enhanced")
     }
     println()
     
@@ -381,6 +408,7 @@ fun analyzeArtifactQuality(root: File, results: List<ClusterDiscoveryResult>) {
     val clustersWithRules = qualities.count { it.hasRules }
     val clustersWithComponents = qualities.count { it.hasComponents }
     val clustersWithDocs = qualities.count { it.hasDocs }
+    val clustersWithEnhanced = qualities.count { it.hasEnhancedContext }
     val totalClusters = qualities.size
     
     println("Statistics:")
@@ -389,6 +417,7 @@ fun analyzeArtifactQuality(root: File, results: List<ClusterDiscoveryResult>) {
     println("  Clusters with rules:      $clustersWithRules/$totalClusters (${clustersWithRules * 100 / totalClusters}%)")
     println("  Clusters with components: $clustersWithComponents/$totalClusters (${clustersWithComponents * 100 / totalClusters}%)")
     println("  Clusters with docs:       $clustersWithDocs/$totalClusters (${clustersWithDocs * 100 / totalClusters}%)")
+    println("  Clusters with enhanced:   $clustersWithEnhanced/$totalClusters (${clustersWithEnhanced * 100 / totalClusters}%)")
     
     // Total counts
     val totalSymbols = qualities.sumOf { it.symbolCount }
@@ -405,8 +434,152 @@ fun analyzeArtifactQuality(root: File, results: List<ClusterDiscoveryResult>) {
 }
 
 fun testInstantContext(root: File) {
-    println("Instant context test not yet implemented - requires i2vision-instant module")
-    // TODO: Implement when i2vision-instant is available
+    println("=== Instant Context Validation ===")
+    
+    val contextProvider = com.i2vision.instant.context.ContextProvider(
+        projectRoot = root.absolutePath,
+        cacheStore = FileCacheStore(I2VisionPaths.getProjectCacheDir(root.absolutePath))
+    )
+    
+    // Test 1: Basic context (should always work)
+    println("\n--- Test 1: Basic Context ---")
+    val testFile = findTestFile(root) ?: return
+    println("Test file: ${testFile.relativeTo(root).path}")
+    
+    runBlocking {
+        val basicContext = contextProvider.getContext(
+            testFile.relativeTo(root).path,
+            "discovery"
+        )
+        
+        if (basicContext.success) {
+            println("✅ Basic context: ${basicContext.symbols.size} symbols")
+        } else {
+            println("❌ Basic context failed: ${basicContext.error}")
+        }
+    }
+    
+    // Test 2: Cache detection
+    println("\n--- Test 2: Cache Detection ---")
+    val clusters = findDiscoveredClusters(root)
+    clusters.take(5).forEach { cluster ->
+        val hasCache = contextProvider.hasDiscoveryCache(cluster)
+        val status = if (hasCache) "✅" else "❌"
+        println("$status $cluster")
+    }
+    
+    // Test 3: Enhanced context (should work for clusters with cache)
+    println("\n--- Test 3: Enhanced Context ---")
+    val clusterWithCache = clusters.firstOrNull { contextProvider.hasDiscoveryCache(it) }
+    
+    if (clusterWithCache != null) {
+        val clusterFile = findFileInCluster(root, clusterWithCache)
+        if (clusterFile != null) {
+            runBlocking {
+                val enhancedContext = contextProvider.getEnhancedContext(
+                    clusterFile.relativeTo(root).path,
+                    "discovery"
+                )
+                
+                if (enhancedContext.success) {
+                    println("✅ Enhanced context for $clusterWithCache:")
+                    println("   - Enhanced: ${enhancedContext.enhanced}")
+                    println("   - Flows: ${enhancedContext.flows.size}")
+                    println("   - Business rules: ${enhancedContext.businessRules.size}")
+                    println("   - Component: ${enhancedContext.component?.name ?: "none"}")
+                    println("   - Related components: ${enhancedContext.relatedComponents.size}")
+                } else {
+                    println("❌ Enhanced context failed: ${enhancedContext.error}")
+                }
+            }
+        }
+    } else {
+        println("⚠️ No clusters with discovery cache found")
+        println("   Run discovery first to populate cache")
+    }
+    
+    // Test 4: Cache statistics
+    println("\n--- Test 4: Cache Statistics ---")
+    val stats = contextProvider.getCacheStats()
+    println("Total entries: ${stats.totalEntries}")
+    println("Valid entries: ${stats.validEntries}")
+    println("Expired entries: ${stats.expiredEntries}")
+}
+
+fun findTestFile(root: File): File? {
+    val candidates = listOf(
+        "i2vision-instant/src/main/kotlin/com/i2vision/instant/context/ContextProvider.kt",
+        "i2vision-discover/src/main/kotlin/com/i2vision/discover/pipeline/DiscoveryPipelineImpl.kt",
+        "vslfc-core/src/main/kotlin/com/i2vision/vslfc/contracts/ContractModels.kt"
+    )
+    
+    return candidates.map { File(root, it) }.firstOrNull { it.exists() }
+}
+
+fun findDiscoveredClusters(root: File): List<String> {
+    val cacheDir = I2VisionPaths.getProjectCacheDir(root.absolutePath)
+    if (!cacheDir.exists()) return emptyList()
+    
+    return cacheDir.listFiles()
+        ?.filter { it.isDirectory && !it.name.startsWith(".") }
+        ?.map { it.name }
+        ?: emptyList()
+}
+
+fun findFileInCluster(root: File, cluster: String): File? {
+    val clusterDir = File(root, cluster)
+    if (!clusterDir.exists()) return null
+    
+    return clusterDir.walkTopDown()
+        .filter { it.isFile && it.extension == "kt" }
+        .firstOrNull()
+}
+
+fun testCliContextCommands(root: File) {
+    println("\n--- CLI Context Command Validation ---")
+    
+    val testFile = findTestFile(root) ?: return
+    val relativePath = testFile.relativeTo(root).path
+    
+    // Test 1: context file
+    println("\nTest: context file --path=$relativePath")
+    runCommand(root, "context", "file", "--path=$relativePath")
+    
+    // Test 2: context enhanced
+    println("\nTest: context enhanced --path=$relativePath")
+    runCommand(root, "context", "enhanced", "--path=$relativePath")
+    
+    // Test 3: context cache stats
+    println("\nTest: context cache stats")
+    runCommand(root, "context", "cache", "stats")
+}
+
+fun runCommand(root: File, vararg args: String) {
+    val process = ProcessBuilder()
+        .directory(root)
+        .command(
+            if (System.getProperty("os.name").lowercase().contains("win")) {
+                listOf("gradlew.bat", ":i2vision-cli:run", "--args=" + args.joinToString(" "))
+            } else {
+                listOf("./gradlew", ":i2vision-cli:run", "--args=" + args.joinToString(" "))
+            }
+        )
+        .redirectErrorStream(true)
+        .start()
+    
+    val output = process.inputStream.bufferedReader().readText()
+    val exitCode = process.waitFor()
+    
+    if (exitCode == 0) {
+        // Show first 20 lines of output
+        output.lines().take(20).forEach { println("  $it") }
+        if (output.lines().size > 20) {
+            println("  ... and ${output.lines().size - 20} more lines")
+        }
+    } else {
+        println("❌ Command failed (exit code: $exitCode)")
+        output.lines().take(5).forEach { println("  $it") }
+    }
 }
 
 fun exportDocumentation(root: File, results: List<ClusterDiscoveryResult>) {

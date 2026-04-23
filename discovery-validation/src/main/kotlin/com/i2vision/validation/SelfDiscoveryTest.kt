@@ -40,6 +40,8 @@ fun main(args: Array<String>) {
     val analyzeQuality = args.contains("--analyze-quality")
     val testContext = args.contains("--test-context")
     val testCli = args.contains("--test-cli")
+    val validateLayers = args.contains("--validate-layers")
+    val validateVision = args.contains("--validate-vision")
     
     // Map --deep flag to intent depth (DEEP for --deep, STANDARD otherwise)
     val intentDepth = if (deep) IntentDepth.DEEP else IntentDepth.STANDARD
@@ -81,6 +83,8 @@ fun main(args: Array<String>) {
     if (analyzeQuality) println("Analyze Quality: ENABLED")
     if (testContext) println("Test Context: ENABLED")
     if (testCli) println("Test CLI: ENABLED")
+    if (validateLayers) println("Validate Layers: ENABLED")
+    if (validateVision) println("Validate Vision: ENABLED")
     println()
     
     // Step 1: Architecture Detection
@@ -238,16 +242,16 @@ fun main(args: Array<String>) {
     println("--- Key Findings ---")
     val successfulClusters = allResults.count { it.result.success }
     val successRate = (successfulClusters * 100.0) / allResults.size
-    
+
     println("✅ Architecture detection: ${signature.deploymentPattern.name} (${clusters.size} clusters)")
     println("✅ Discovery pipeline: $successfulClusters/${allResults.size} clusters (${String.format("%.1f", successRate)}%)")
     println("✅ Semantic cache: .semantic-cache/{clusterId}/{vision|structure|logic|flow|code}/")
-    
+
     if (analyzeQuality) {
         val avgArtifacts = allResults.map { it.result.artifacts.size }.average()
         println("📊 Average artifacts per cluster: ${String.format("%.1f", avgArtifacts)}")
     }
-    
+
     // Report any failures
     val failedClusters = allResults.filter { !it.result.success }
     if (failedClusters.isNotEmpty()) {
@@ -257,7 +261,23 @@ fun main(args: Array<String>) {
             println("  - ${cluster.name}: ${cluster.result.errors.joinToString()}")
         }
     }
-    
+
+    println()
+
+    // Step 11: Layer completeness validation
+    if (validateLayers) {
+        println("--- Layer Completeness Validation ---")
+        validateLayerCompleteness(projectRoot, allResults)
+        println()
+    }
+
+    // Step 12: Vision layer validation
+    if (validateVision) {
+        println("--- Vision Layer Validation ---")
+        validateVisionLayer(projectRoot, allResults)
+        println()
+    }
+
     println()
     println("=== Self-Discovery Complete ===")
     
@@ -688,5 +708,125 @@ class TeePrintStream(vararg streams: PrintStream) : PrintStream(TeeOutputStream(
         override fun close() {
             streams.forEach { it.close() }
         }
+    }
+}
+
+fun validateLayerCompleteness(root: File, results: List<ClusterDiscoveryResult>) {
+    val semanticCacheDir = I2VisionPaths.getProjectCacheDir(root.absolutePath)
+    
+    println("Layer completeness per cluster:")
+    println("Cluster                                    Code  Flow  Logic  Struct  Vision")
+    println("-----------------------------------------  ----  ----  -----  ------  ------")
+    
+    val layers = listOf("code", "flow", "logic", "structure", "vision")
+    val completeness = mutableMapOf<String, MutableMap<String, Boolean>>()
+    
+    results.filter { it.result.success }.forEach { clusterResult ->
+        val clusterName = clusterResult.name
+        val clusterCache = File(semanticCacheDir, clusterName)
+        val layerStatus = mutableMapOf<String, Boolean>()
+        
+        layers.forEach { layer ->
+            val layerDir = File(clusterCache, layer)
+            val hasLayer = layerDir.exists() && layerDir.listFiles()?.isNotEmpty() == true
+            layerStatus[layer] = hasLayer
+        }
+        
+        completeness[clusterName] = layerStatus
+        
+        val shortName = if (clusterName.length > 40) clusterName.take(37) + "..." else clusterName.padEnd(40)
+        val code = if (layerStatus["code"] == true) "✅".padEnd(4) else "❌".padEnd(4)
+        val flow = if (layerStatus["flow"] == true) "✅".padEnd(4) else "❌".padEnd(4)
+        val logic = if (layerStatus["logic"] == true) "✅".padEnd(5) else "❌".padEnd(5)
+        val struct = if (layerStatus["structure"] == true) "✅".padEnd(6) else "❌".padEnd(6)
+        val vision = if (layerStatus["vision"] == true) "✅" else "❌"
+        println("$shortName  $code  $flow  $logic  $struct  $vision")
+    }
+    
+    // Summary
+    val totalClusters = completeness.size
+    val clustersWithAllLayers = completeness.count { it.value.all { layer -> layer.value } }
+    val clustersWithVision = completeness.count { it.value["vision"] == true }
+    val clustersWithCode = completeness.count { it.value["code"] == true }
+    
+    println()
+    println("Summary:")
+    println("  Clusters with ALL 5 layers: $clustersWithAllLayers/$totalClusters")
+    println("  Clusters with Vision layer: $clustersWithVision/$totalClusters")
+    println("  Clusters with Code layer:  $clustersWithCode/$totalClusters")
+    
+    // Show missing layers
+    completeness.forEach { (cluster, layers) ->
+        val missing = layers.filter { !it.value }.keys
+        if (missing.isNotEmpty()) {
+            println("  $cluster: missing ${missing.joinToString(", ")}")
+        }
+    }
+}
+
+fun validateVisionLayer(root: File, results: List<ClusterDiscoveryResult>) {
+    val semanticCacheDir = I2VisionPaths.getProjectCacheDir(root.absolutePath)
+    
+    println("Vision layer artifacts:")
+    println()
+    
+    var totalRequirements = 0
+    var totalConstraints = 0
+    
+    results.filter { it.result.success }.forEach { clusterResult ->
+        val clusterName = clusterResult.name
+        val visionDir = File(File(semanticCacheDir, clusterName), "vision")
+        
+        if (visionDir.exists()) {
+            val reqFiles = visionDir.listFiles()?.filter { it.name.endsWith(".yaml") } ?: emptyList()
+            
+            if (reqFiles.isNotEmpty()) {
+                println("  $clusterName:")
+                reqFiles.forEach { file ->
+                    try {
+                        val yaml = Yaml()
+                        val data = yaml.load<Map<String, Any>>(file.readText())
+                        val id = data["id"] as? String ?: file.nameWithoutExtension
+                        val title = data["title"] as? String ?: "(no title)"
+                        val source = data["source"] as? String ?: "unknown"
+                        val confidence = (data["confidence"] as? Number)?.toDouble() ?: 0.0
+                        
+                        println("    - $id: ${title.take(60)}")
+                        println("      source: $source, confidence: ${"%.2f".format(confidence)}")
+                        
+                        if (data.containsKey("evidence")) {
+                            val evidence = data["evidence"] as? List<*> ?: emptyList<Any>()
+                            if (evidence.isNotEmpty()) {
+                                println("      evidence: ${evidence.size} code references")
+                            } else {
+                                println("      evidence: none (orphaned)")
+                            }
+                        }
+                        
+                        totalRequirements++
+                    } catch (e: Exception) {
+                        println("    - ${file.name}: (parse error)")
+                    }
+                }
+            } else {
+                println("  $clusterName: (no vision artifacts)")
+            }
+        } else {
+            println("  $clusterName: (no vision directory)")
+        }
+    }
+    
+    println()
+    println("Vision layer summary:")
+    println("  Total requirements: $totalRequirements")
+    println("  Total constraints: $totalConstraints")
+    
+    // Check if .vision-ai/ contracts exist
+    val visionContractFile = File(root, ".vision-ai/.vision/contracts/with-docs.yaml")
+    if (visionContractFile.exists()) {
+        println("  ✅ Vision contract exists: ${visionContractFile.relativeTo(root).path}")
+    } else {
+        println("  ❌ Vision contract missing: .vision-ai/.vision/contracts/with-docs.yaml")
+        println("     Run 'i2vision init' to create contract files")
     }
 }

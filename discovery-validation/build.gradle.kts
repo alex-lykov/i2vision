@@ -44,6 +44,9 @@ tasks.register<JavaExec>("runSelfDiscoveryTest") {
     mainClass.set("com.i2vision.validation.SelfDiscoveryTestKt")
     standardOutput = System.out
     errorOutput = System.err
+    if (project.hasProperty("args")) {
+        args = (project.property("args") as String).split("\\s+".toRegex())
+    }
 }
 
 // Alias for convenience

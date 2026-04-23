@@ -38,8 +38,10 @@ note right of Pipeline: === Phase 1: Architecture Detection ===
 
 Pipeline->Pipeline: Detect build system
 Pipeline->Pipeline: Detect clusters (build modules → directory fallback)
-Pipeline->Pipeline: Detect frameworks and patterns
-Pipeline->Pipeline: Calculate architecture signature
+Pipeline->Pipeline: Call ArchitectureDetector.detectStack()
+Pipeline->Pipeline: Detect frameworks and platforms per module
+Pipeline->Pipeline: Detect architecture patterns
+Pipeline->Pipeline: Generate TechnologyStack
 Pipeline->Pipeline: Generate architecture-detection.yaml
 
 note right of Pipeline: === Phase 2: Parallel Cluster Discovery ===

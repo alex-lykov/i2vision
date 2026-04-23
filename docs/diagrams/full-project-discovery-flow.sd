@@ -2,11 +2,8 @@ title Full Project Discovery Flow
 
 participant "Client" as Client
 participant "DiscoveryPipeline" as Pipeline
-participant "SignatureBuilder" as SigBuilder
+participant "ArchitectureDetector" as Detector
 participant "Cluster Detection" as Cluster
-participant "Architecture Detectors" as ArchDetectors
-participant "Confidence Evaluator" as Confidence
-participant "LLM Client" as LLM
 participant "ContractRegistry" as Contracts
 participant "Output Generator" as Output
 
@@ -17,79 +14,47 @@ Pipeline->Pipeline: Extract parameters (useLlm, llmThreshold, llmMode)
 
 note right of Pipeline: Step 1: Architecture Detection\nwith Cluster Detection
 
-Pipeline->SigBuilder: SignatureBuilder(\n  projectRoot,\n  confidenceThreshold,\n  useLlmForLowConfidence,\n  llmClient\n)
-activate SigBuilder
+Pipeline->Detector: detectStack()
+activate Detector
 
-SigBuilder->ArchDetectors: BuildSystemDetector.detect()
-ArchDetectors-->SigBuilder: BuildSystemResult
+Detector->Detector: Discover modules (Gradle/Maven)
+Detector->Detector: Analyze each module for:\n  - Primary language\n  - Frameworks\n  - Platforms
 
-SigBuilder->ArchDetectors: ModulePatternDetector.detect()
-ArchDetectors-->SigBuilder: ModulePatternResult
+note right of Detector: Module detection:\n- settings.gradle.kts\n- pom.xml\n- Directory structure
 
-note right of SigBuilder: Step 2: Cluster Detection
+Detector->Detector: Aggregate technology stack
+Detector->Detector: Determine primary language
+Detector->Detector: Collect secondary languages
+Detector->Detector: Aggregate frameworks (distinct)
+Detector->Detector: Aggregate platforms (distinct)
+Detector->Detector: Detect architecture patterns
+Detector->Detector: Build entry point patterns
+Detector->Detector: Calculate overall confidence
 
-SigBuilder->Cluster: detectBuildModules()
+Detector-->Pipeline: TechnologyStack(\n  primaryLanguage,\n  secondaryLanguages,\n  frameworks,\n  platforms,\n  patterns,\n  modules,\n  entryPointPatterns,\n  confidence\n)
+deactivate Detector
+
+Pipeline->Pipeline: Generate architecture-detection.yaml
+
+note right of Pipeline: Step 2: Cluster Detection
+
+Pipeline->Cluster: detectBuildModules()
+activate Cluster
 Cluster->Cluster: Check settings.gradle.kts
 Cluster->Cluster: Check pom.xml
 
 alt Build modules found
-    Cluster-->SigBuilder: buildModules list
-    SigBuilder->SigBuilder: Use build modules as clusters
+    Cluster-->Pipeline: buildModules list
+    note right of Cluster: Gradle modules:\n- i2vision-discover\n- i2vision-instant\n- i2vision-mcp
 else No build modules
-    SigBuilder->Cluster: Scan directory structure
+    Cluster->Cluster: Scan directory structure
     Cluster->Cluster: Detect source directories
     Cluster->Cluster: Count source files
-    Cluster-->SigBuilder: clusters from directory structure
+    Cluster-->Pipeline: clusters from directory structure
 end
+deactivate Cluster
 
-note right of SigBuilder: Step 3: Per-Cluster Architecture Detection
-
-loop For each cluster
-    SigBuilder->ArchDetectors: FrameworkDetector.detect(modulePath)
-    ArchDetectors-->SigBuilder: FrameworkResult
-    
-    SigBuilder->ArchDetectors: Detect design patterns
-    ArchDetectors-->SigBuilder: DesignPatterns
-    
-    SigBuilder->ArchDetectors: Detect language features
-    ArchDetectors-->SigBuilder: LanguageFeatures
-    
-    SigBuilder->Confidence: calculateModuleConfidence()
-    Confidence-->SigBuilder: confidence score
-    
-    alt confidence >= threshold (0.7)
-        SigBuilder->SigBuilder: Accept heuristic result
-        SigBuilder->SigBuilder: Mark source as "heuristic"
-    else confidence < threshold AND useLlmForLowConfidence = true
-        SigBuilder->LLM: detectWithLLM(cluster, heuristic)
-        activate LLM
-        LLM->LLM: Analyze cluster structure
-        LLM->LLM: Generate architecture analysis
-        LLM-->SigBuilder: LLM result
-        deactivate LLM
-        SigBuilder->SigBuilder: Merge heuristic + LLM results
-        SigBuilder->SigBuilder: Mark source as "heuristic+llm"
-    else confidence < threshold AND LLM disabled
-        SigBuilder->SigBuilder: Mark as low confidence
-        SigBuilder->SigBuilder: Flag for review
-        SigBuilder->SigBuilder: Mark source as "heuristic(low_confidence)"
-    end
-end
-
-SigBuilder->SigBuilder: detectDeploymentPattern(clusters)
-SigBuilder->SigBuilder: Derive deployment pattern from cluster analysis
-note right of SigBuilder: Deployment pattern derived from:\n- cluster count\n- cluster independence\n- build module structure
-
-SigBuilder->SigBuilder: detectBuildTools()
-SigBuilder->SigBuilder: detectLibraries()
-
-SigBuilder->SigBuilder: ArchitectureSignature(\n  buildSystem,\n  moduleFrameworks,\n  modulePatterns,\n  clusters,\n  moduleDesignPatterns,\n  moduleLanguageFeatures,\n  deploymentPattern,\n  confidence\n)
-SigBuilder-->Pipeline: Complete signature
-deactivate SigBuilder
-
-Pipeline->Pipeline: Generate architecture-detection.yaml
-
-note right of Pipeline: Step 4: Discovery Pipeline Execution
+note right of Pipeline: Step 3: Discovery Pipeline Execution
 
 loop For each cluster
     Pipeline->Pipeline: Select cluster
@@ -102,7 +67,7 @@ end
 Pipeline->Contracts: ContractRegistry(registry)
 Contracts-->Pipeline: Registered contracts
 
-note right of Pipeline: Step 5: Output Generation
+note right of Pipeline: Step 4: Output Generation
 
 Pipeline->Output: Generate output files
 activate Output

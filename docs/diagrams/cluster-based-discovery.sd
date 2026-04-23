@@ -5,17 +5,20 @@ participant "File Scanner" as Scanner
 participant "Architecture Detector" as Detector
 participant "Detector Configurator" as Config
 
-Scanner->Detector: Scan project files
+Scanner->Detector: detectStack()
 activate Detector
+Detector->Detector: Discover modules (Gradle/Maven)
 Detector->Detector: Analyze patterns\n(Kotlin classes, package structure)
 Detector->Detector: Detect frameworks\n(Spring, Ktor, etc.)
-Detector-->Scanner: architecture_signature (confidence score)
+Detector->Detector: Detect platforms\n(Backend, Frontend, CLI, etc.)
+Detector->Detector: Detect architecture patterns\n(Layered, Hexagonal, Microservices, etc.)
+Detector-->Scanner: TechnologyStack(\n  primaryLanguage,\n  frameworks,\n  platforms,\n  patterns,\n  modules,\n  confidence\n)
 deactivate Detector
 
 Scanner->Config: Configure for detected architecture
 activate Config
-Config->Config: Generate entry point patterns\n(based on framework)
-Config->Config: Generate cluster boundaries
+Config->Config: Generate entry point patterns\n(based on frameworks/platforms)
+Config->Config: Generate cluster boundaries\n(based on modules)
 Config-->Scanner: Entry patterns, cluster boundaries
 deactivate Config
 

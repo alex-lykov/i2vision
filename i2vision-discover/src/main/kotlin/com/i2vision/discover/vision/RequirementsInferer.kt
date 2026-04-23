@@ -62,7 +62,7 @@ class RequirementsInferer(
                 title = description,
                 description = "Inferred from require() call",
                 priority = "MEDIUM",
-                source = Source.CODE,
+                source = Source.CODE_PATTERN,
                 evidence = listOf(VisionCodeEvidence(
                     file = file,
                     line = lineNumber,
@@ -82,7 +82,7 @@ class RequirementsInferer(
                 title = description,
                 description = "Inferred from check() call",
                 priority = "HIGH",
-                source = Source.CODE,
+                source = Source.CODE_PATTERN,
                 evidence = listOf(VisionCodeEvidence(
                     file = file,
                     line = lineNumber,
@@ -103,7 +103,7 @@ class RequirementsInferer(
                     title = description,
                     description = "Inferred from @$annotation annotation",
                     priority = "MEDIUM",
-                    source = Source.CODE,
+                    source = Source.CODE_PATTERN,
                     evidence = listOf(VisionCodeEvidence(
                         file = file,
                         line = lineNumber,
@@ -125,7 +125,7 @@ class RequirementsInferer(
                 title = description,
                 description = "Inferred from $type $name",
                 priority = "MEDIUM",
-                source = Source.CODE,
+                source = Source.CODE_PATTERN,
                 evidence = listOf(VisionCodeEvidence(
                     file = file,
                     line = lineNumber,

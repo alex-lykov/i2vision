@@ -85,6 +85,27 @@ class RolloutManager {
                         skipped.add(contractFile.path)
                     }
                 }
+
+                // 6. Create requirements directory and template for Vision layer
+                if (layer == "vision") {
+                    val requirementsDir = File(layerDir, "requirements")
+                    if (requirementsDir.mkdirs()) {
+                        created.add(requirementsDir.path)
+                    } else if (!requirementsDir.exists()) {
+                        errors.add("Failed to create requirements directory: ${requirementsDir.path}")
+                    } else {
+                        skipped.add(requirementsDir.path)
+                    }
+
+                    // Create example requirement template
+                    val exampleReq = File(requirementsDir, "REQ-001-example.yaml")
+                    if (!exampleReq.exists()) {
+                        exampleReq.writeText(VslfcStructure.REQUIREMENT_TEMPLATE.replace("{number}", "001"))
+                        created.add(exampleReq.path)
+                    } else {
+                        skipped.add(exampleReq.path)
+                    }
+                }
             }
             
             // Semantic cache is NOT created in project root - it's in user home via I2VisionPaths

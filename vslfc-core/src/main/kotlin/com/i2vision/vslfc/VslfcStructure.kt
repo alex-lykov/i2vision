@@ -20,6 +20,20 @@ object VslfcStructure {
     val LAYERS = listOf("vision", "structure", "logic", "flow", "code")
     
     // Contract templates (must be defined before CONTRACT_TEMPLATES)
+    private val visionRequirementTemplate = """
+id: REQ-{number}
+title: "Requirement Title"
+description: "Describe the requirement in detail"
+priority: MEDIUM
+status: DRAFT
+acceptance_criteria:
+  - "What must be true for this requirement to be satisfied?"
+evidence:
+  - file: ""
+    line: 0
+    confidence: 0.0
+""".trimIndent()
+
     private val visionWithDocsTemplate = """
 contract: vision-documentation
 version: 1.0
@@ -182,6 +196,11 @@ validation:
             "from-flow.yaml" to codeFromFlowTemplate
         )
     )
+
+    /**
+     * Requirement template for human-written requirements
+     */
+    val REQUIREMENT_TEMPLATE = visionRequirementTemplate
     
     /**
      * Default agent config template

@@ -23,6 +23,7 @@ import com.i2vision.vslfc.contracts.ContractValidator
 import com.i2vision.vslfc.DocContractYamlParser
 import com.i2vision.vslfc.VSLFCLayerContracts
 import com.i2vision.vslfc.DocLayerContract
+import com.i2vision.discover.vision.RequirementsInferer
 import org.slf4j.LoggerFactory
 import java.io.File
 
@@ -99,6 +100,7 @@ class DiscoveryPipelineImpl(
     // Vision layer population components
     private val docContractParser by lazy { DocContractYamlParser(File(projectRoot)) }
     private val docLayerImporter by lazy { DocLayerImporter(File(projectRoot)) }
+    private val requirementsInferer by lazy { RequirementsInferer(File(projectRoot)) }
     
     // Batch mode control for LinkService
     fun enableLinkBatchMode() {
@@ -290,9 +292,36 @@ class DiscoveryPipelineImpl(
                             
                             // Write Vision artifacts to semantic cache
                             kotlinx.coroutines.runBlocking {
+                                // Infer requirements from code patterns
+                                val codeInferredRequirements = requirementsInferer.inferRequirements(sourceFiles.map { File(it.path) })
+                                
+                                // Merge documentation-imported and code-inferred requirements
+                                val mergedRequirements = mutableListOf<VisionRequirement>()
+                                mergedRequirements.addAll(visionRequirements)
+                                
+                                // Add code-inferred requirements that don't duplicate documentation ones
+                                codeInferredRequirements.forEach { inferred ->
+                                    val isDuplicate = visionRequirements.any { 
+                                        it.title.equals(inferred.title, ignoreCase = true) 
+                                    }
+                                    if (!isDuplicate) {
+                                        mergedRequirements.add(VisionRequirement(
+                                            id = inferred.id,
+                                            title = inferred.title,
+                                            docRef = "code-inferred",
+                                            confidence = 0.8, // Default confidence for code-inferred
+                                            source = Source.CODE_PATTERN,
+                                            evidence = inferred.evidence
+                                        ))
+                                    }
+                                }
+                                
+                                log.info("[DISCOVERY] Total Vision requirements: {} ({} from docs, {} from code)", 
+                                    mergedRequirements.size, visionRequirements.size, codeInferredRequirements.size)
+                                
                                 val writtenVisionArtifacts = artifactWriter.writeVisionArtifacts(
                                     clusterId ?: "root",
-                                    visionRequirements,
+                                    mergedRequirements,
                                     visionConstraints
                                 )
                                 artifacts.add(DiscoveryArtifact(

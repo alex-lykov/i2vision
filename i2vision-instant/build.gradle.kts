@@ -24,6 +24,8 @@ dependencies {
     // Internal dependencies
     implementation(project(":discovery-api"))
     implementation(project(":i2vision-discover"))
+    implementation(project(":index-provider"))
+    implementation(project(":link-service"))
     implementation(project(":storage-core"))
     
     // Coroutines

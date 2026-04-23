@@ -34,10 +34,14 @@ dependencies {
     implementation(project(":architecture-types"))
     implementation(project(":i2vision-architecture"))
     implementation(project(":llm-client"))
+    implementation(project(":discovery-engine"))
+    implementation(project(":contracts"))
     implementation(project(":intent-parser"))
     implementation(project(":discovery-api"))
     implementation(project(":conf-agent-core"))
     implementation(project(":storage-core"))
+    implementation(project(":index-provider"))
+    implementation(project(":link-service"))
 
     // Testing
     testImplementation(kotlin("test"))

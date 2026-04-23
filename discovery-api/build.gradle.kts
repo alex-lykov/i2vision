@@ -23,6 +23,8 @@ dependencies {
     // Internal dependencies (extracted modules)
     implementation(project(":vslfc-core"))
     implementation(project(":architecture-types"))
+    implementation(project(":discovery-engine"))
+    implementation(project(":contracts"))
     implementation(project(":intent-parser"))
 
     // Testing

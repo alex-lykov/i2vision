@@ -62,16 +62,11 @@ class GradleMultiModuleTest {
 
         // When
         val detector = ArchitectureDetector(tempDir.absolutePath)
-        val result = detector.detect()
+        val result = detector.detectStack()
 
-        // Then: Should detect monolith web or microservices
-        assertTrue(
-            result.type == ArchitectureDetector.ArchitectureType.MONOLITH_WEB ||
-                    result.type == ArchitectureDetector.ArchitectureType.MICROSERVICES ||
-                    result.type == ArchitectureDetector.ArchitectureType.MIXED,
-            "Should detect MONOLITH_WEB, MICROSERVICES, or MIXED, got: ${result.type}"
-        )
-        assertTrue(result.indicators.any { it.contains("multi_module") || it.contains("gradle") })
+        // Then: Should detect multiple modules
+        assertTrue(result.modules.size >= 4, "Should detect at least 4 modules, got: ${result.modules.size}")
+        assertTrue(result.indicators.isNotEmpty())
     }
 
     @Test
@@ -95,13 +90,11 @@ class GradleMultiModuleTest {
 
         // When
         val detector = ArchitectureDetector(tempDir.absolutePath)
-        val result = detector.detect()
+        val result = detector.detectStack()
 
         // Then: Should detect multiple modules
         assertTrue(result.indicators.isNotEmpty(), "Should have indicators")
-        // The detection may not always detect multi_module for simple projects
-        // Just verify it doesn't crash and produces a result
-        assertTrue(result.type != ArchitectureDetector.ArchitectureType.UNKNOWN || result.confidence < 0.5)
+        assertTrue(result.modules.size >= 5, "Should detect at least 5 modules, got: ${result.modules.size}")
     }
 
     @Test
@@ -117,14 +110,11 @@ class GradleMultiModuleTest {
 
         // When
         val detector = ArchitectureDetector(tempDir.absolutePath)
-        val result = detector.detect()
+        val result = detector.detectStack()
 
-        // Then: Should not detect as multi-module
-        assertTrue(
-            result.type != ArchitectureDetector.ArchitectureType.MONOLITH_WEB ||
-                    result.confidence < 0.5,
-            "Single-module project should not be strongly detected as monolith web"
-        )
+        // Then: Should detect as single module (root)
+        assertTrue(result.modules.size == 1, "Should detect 1 module, got: ${result.modules.size}")
+        assertTrue(result.modules[0].name == "root", "Module should be named 'root'")
     }
 
     private fun createFile(tempDir: File, path: String, content: String) {

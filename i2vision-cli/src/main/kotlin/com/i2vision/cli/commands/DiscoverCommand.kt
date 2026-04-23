@@ -435,9 +435,9 @@ class DiscoverCommand : CliktCommand(
 
         // Map intent depth to discovery depth
         val discoveryDepth = when (intent.depth) {
-            IntentDepth.BROWSE -> com.i2vision.discover.api.models.DiscoveryDepth.BROWSE
-            IntentDepth.STANDARD -> com.i2vision.discover.api.models.DiscoveryDepth.STANDARD
-            IntentDepth.DEEP -> com.i2vision.discover.api.models.DiscoveryDepth.DEEP
+            ApiIntentDepth.BROWSE -> com.i2vision.discover.api.models.DiscoveryDepth.BROWSE
+            ApiIntentDepth.STANDARD -> com.i2vision.discover.api.models.DiscoveryDepth.STANDARD
+            ApiIntentDepth.DEEP -> com.i2vision.discover.api.models.DiscoveryDepth.DEEP
         }
         // Use depth-based discovery directly (same as SelfDiscoveryTest) to avoid intent resolution overhead
         val result = pipeline.discover(depth = discoveryDepth, clusterId = clusterId, contracts = emptyList())

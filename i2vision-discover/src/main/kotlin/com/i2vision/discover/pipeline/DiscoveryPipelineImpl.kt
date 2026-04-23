@@ -16,7 +16,6 @@ import com.i2vision.discover.doc.DocLayerImporter
 import com.i2vision.discover.flow.FlowDiscovery
 import com.i2vision.discover.logic.LogicExtractor
 import com.i2vision.discover.structure.StructureBuilder
-import com.i2vision.discover.vision.RequirementsInferer
 import com.i2vision.index.CustomIndex
 import com.i2vision.index.SemanticPathResolver
 import com.i2vision.link.LinkService
@@ -25,6 +24,9 @@ import com.i2vision.storage.impl.RolloutManager
 import com.i2vision.vslfc.DocContractYamlParser
 import com.i2vision.vslfc.VSLFCLayerContracts
 import com.i2vision.vslfc.contracts.ContractValidator
+import com.i2vision.vslfc.DocLayerContract
+import com.i2vision.discover.vision.RequirementsInferer
+import com.i2vision.discover.vision.RequirementsValidator
 import org.slf4j.LoggerFactory
 import java.io.File
 
@@ -102,6 +104,7 @@ class DiscoveryPipelineImpl(
     private val docContractParser by lazy { DocContractYamlParser(File(projectRoot)) }
     private val docLayerImporter by lazy { DocLayerImporter(File(projectRoot)) }
     private val requirementsInferer by lazy { RequirementsInferer(File(projectRoot)) }
+    private val requirementsValidator by lazy { RequirementsValidator(File(projectRoot)) }
 
     // Batch mode control for LinkService
     fun enableLinkBatchMode() {
@@ -352,6 +355,31 @@ class DiscoveryPipelineImpl(
                                         )
                                     }
                                 }
+                                
+                                log.info("[DISCOVERY] Total Vision requirements: {} ({} from docs, {} from code)", 
+                                    mergedRequirements.size, visionRequirements.size, codeInferredRequirements.size)
+
+                                // Perform bidirectional validation
+                                val humanRequirements = requirementsValidator.loadHumanRequirements()
+                                if (humanRequirements.isNotEmpty()) {
+                                    val validationResult = requirementsValidator.validate(humanRequirements, codeInferredRequirements)
+
+                                    log.info("[DISCOVERY] Bidirectional validation: {} implemented, {} missing, {} orphaned",
+                                        validationResult.implemented.size, validationResult.missing.size, validationResult.orphaned.size)
+
+                                    artifacts.add(DiscoveryArtifact(
+                                        layer = "vision",
+                                        path = "bidirectional_validation",
+                                        content = "Bidirectional validation results:\n" +
+                                            "  Human requirements: ${validationResult.totalHuman}\n" +
+                                            "  Code-inferred: ${validationResult.totalCode}\n" +
+                                            "  Implemented: ${validationResult.implemented.size}\n" +
+                                            "  Missing: ${validationResult.missing.size}\n" +
+                                            "  Orphaned: ${validationResult.orphaned.size}\n" +
+                                            validationResult.missing.take(5).joinToString("\n") { "  - ${it.humanTitle}" }
+                                    ))
+                                }
+
 
                                 log.info(
                                     "[DISCOVERY] Total Vision requirements: {} ({} from docs, {} from code)",

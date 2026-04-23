@@ -230,7 +230,7 @@ fun main(args: Array<String>) {
     
     println("✅ Architecture detection: ${signature.deploymentPattern.name} (${clusters.size} clusters)")
     println("✅ Discovery pipeline: $successfulClusters/${allResults.size} clusters (${String.format("%.1f", successRate)}%)")
-    println("✅ Semantic cache: .semantic-cache/{clusterId}/code/")
+    println("✅ Semantic cache: .semantic-cache/{clusterId}/{vision|structure|logic|flow|code}/")
     
     if (analyzeQuality) {
         val avgArtifacts = allResults.map { it.result.artifacts.size }.average()

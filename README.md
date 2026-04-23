@@ -421,6 +421,10 @@ i²-Vision is under **active development**.
 - The system successfully analyzes its own codebase (proof of concept)
 - **Production use is at your own risk** during this development phase
 
+### 🔴 Known Limitations
+- **Vision Layer**: Currently extracts requirements from project-level documentation (README.md), producing the same requirements for all modules. Per-module documentation import is planned for a future release.
+- **Code Layer**: Contains discovery summaries only. Full code artifact analysis is planned for future releases.
+
 [Full Roadmap →](docs/roadmap.md)
 
 ---

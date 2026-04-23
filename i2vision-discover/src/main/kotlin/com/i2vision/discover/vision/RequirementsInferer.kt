@@ -1,7 +1,7 @@
 package com.i2vision.discover.vision
 
-import com.i2vision.discover.doc.VisionCodeEvidence
-import com.i2vision.discover.doc.Source
+import com.i2vision.discover.pipeline.VisionCodeEvidence
+import com.i2vision.discover.pipeline.Source
 import org.slf4j.LoggerFactory
 import java.io.File
 import java.nio.file.Files

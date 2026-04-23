@@ -293,7 +293,18 @@ class DiscoveryPipelineImpl(
                             // Write Vision artifacts to semantic cache
                             kotlinx.coroutines.runBlocking {
                                 // Infer requirements from code patterns
-                                val codeInferredRequirements = requirementsInferer.inferRequirements(sourceFiles.map { File(it.path) })
+                                val normalizedProjectRoot = projectRoot.replace("\\", "/")
+                                val sourceFileList = sourceFiles.map { 
+                                    val file = File(it.path)
+                                    val resolvedFile = if (file.isAbsolute) file else File(projectRoot, it.path)
+                                    // Normalize path to remove duplicated project roots
+                                    val normalizedPath = resolvedFile.absolutePath
+                                        .replace("\\", "/")
+                                        .replace("/./", "/")
+                                        .replace("$normalizedProjectRoot/$normalizedProjectRoot", normalizedProjectRoot)
+                                    File(normalizedPath)
+                                }
+                                val codeInferredRequirements = requirementsInferer.inferRequirements(sourceFileList)
                                 
                                 // Merge documentation-imported and code-inferred requirements
                                 val mergedRequirements = mutableListOf<VisionRequirement>()

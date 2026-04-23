@@ -289,24 +289,25 @@ class ArtifactWriter(
                 name = "${safeId}.yaml"
             )
             
-            val requirementData = mapOf(
-                "id" to requirement.id,
-                "title" to requirement.title,
-                "docRef" to requirement.docRef,
-                "rationaleRef" to requirement.rationaleRef,
-                "acceptanceCriteriaRefs" to requirement.acceptanceCriteriaRefs,
-                "priority" to requirement.priority.name,
-                "source" to requirement.source.name,
-                "confidence" to requirement.confidence,
-                "evidence" to requirement.evidence.map { evidence ->
+            val requirementData = mutableMapOf<String, Any>()
+            requirementData["id"] = requirement.id
+            requirement.title?.let { requirementData["title"] = it }
+            requirement.docRef?.let { requirementData["docRef"] = it }
+            requirement.rationaleRef?.let { requirementData["rationaleRef"] = it }
+            requirement.acceptanceCriteriaRefs?.let { requirementData["acceptanceCriteriaRefs"] = it }
+            requirement.priority?.let { requirementData["priority"] = it.name }
+            requirement.source?.let { requirementData["source"] = it.name }
+            requirement.confidence?.let { requirementData["confidence"] = it }
+            requirement.evidence?.let { evidence ->
+                requirementData["evidence"] = evidence.map { ev ->
                     mapOf(
-                        "file" to evidence.file,
-                        "line" to evidence.line,
-                        "pattern" to evidence.pattern,
-                        "description" to evidence.description
+                        "file" to (ev.file ?: ""),
+                        "line" to (ev.line ?: 0),
+                        "pattern" to (ev.pattern ?: ""),
+                        "description" to (ev.description ?: "")
                     )
                 }
-            )
+            }
             
             try {
                 cacheStore.put(ref, yaml.dump(requirementData).toByteArray())
@@ -326,22 +327,23 @@ class ArtifactWriter(
                 name = "${safeId}.yaml"
             )
             
-            val constraintData = mapOf(
-                "id" to constraint.id,
-                "docRef" to constraint.docRef,
-                "type" to constraint.type.name,
-                "severity" to constraint.severity.name,
-                "confidence" to constraint.confidence,
-                "source" to constraint.source.name,
-                "evidence" to constraint.evidence.map { evidence ->
+            val constraintData = mutableMapOf<String, Any>()
+            constraintData["id"] = constraint.id
+            constraint.docRef?.let { constraintData["docRef"] = it }
+            constraint.type?.let { constraintData["type"] = it.name }
+            constraint.severity?.let { constraintData["severity"] = it.name }
+            constraint.confidence?.let { constraintData["confidence"] = it }
+            constraint.source?.let { constraintData["source"] = it.name }
+            constraint.evidence?.let { evidence ->
+                constraintData["evidence"] = evidence.map { ev ->
                     mapOf(
-                        "file" to evidence.file,
-                        "line" to evidence.line,
-                        "pattern" to evidence.pattern,
-                        "description" to evidence.description
+                        "file" to (ev.file ?: ""),
+                        "line" to (ev.line ?: 0),
+                        "pattern" to (ev.pattern ?: ""),
+                        "description" to (ev.description ?: "")
                     )
                 }
-            )
+            }
             
             try {
                 cacheStore.put(ref, yaml.dump(constraintData).toByteArray())

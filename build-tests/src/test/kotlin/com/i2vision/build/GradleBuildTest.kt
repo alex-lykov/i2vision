@@ -1,8 +1,15 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.build
 
+import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertTrue
-import java.io.File
 
 /**
  * Tests for Gradle Build.

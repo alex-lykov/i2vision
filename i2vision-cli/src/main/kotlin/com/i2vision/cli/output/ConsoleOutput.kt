@@ -1,8 +1,15 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.cli.output
 
 import com.i2vision.discover.api.models.PipelineResult
-import org.yaml.snakeyaml.Yaml
 import org.yaml.snakeyaml.DumperOptions
+import org.yaml.snakeyaml.Yaml
 
 /**
  * ConsoleOutput - Formatted output for CLI.

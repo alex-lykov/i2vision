@@ -1,11 +1,17 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.mcp.tools.discovery
 
-import com.i2vision.discover.pipeline.DiscoveryPipelineImpl
-import com.i2vision.storage.api.CacheStore
-import com.i2vision.storage.impl.FileCacheStore
-import com.i2vision.discover.intent.IntentResolverImpl
 import com.i2vision.discover.api.models.DiscoveryDepth
+import com.i2vision.discover.intent.IntentResolverImpl
+import com.i2vision.discover.pipeline.DiscoveryPipelineImpl
 import com.i2vision.mcp.server.ToolResult
+import com.i2vision.storage.impl.FileCacheStore
 import org.slf4j.LoggerFactory
 import java.io.File
 

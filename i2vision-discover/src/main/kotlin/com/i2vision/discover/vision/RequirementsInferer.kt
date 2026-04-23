@@ -1,11 +1,16 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.discover.vision
 
-import com.i2vision.discover.pipeline.VisionCodeEvidence
 import com.i2vision.discover.pipeline.Source
+import com.i2vision.discover.pipeline.VisionCodeEvidence
 import org.slf4j.LoggerFactory
 import java.io.File
-import java.nio.file.Files
-import java.nio.file.Paths
 
 /**
  * Requirements Inferred from Code

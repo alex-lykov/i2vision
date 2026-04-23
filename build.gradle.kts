@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 // Root build configuration for multi-module project
 plugins {
     kotlin("plugin.serialization") version "2.3.0" apply false

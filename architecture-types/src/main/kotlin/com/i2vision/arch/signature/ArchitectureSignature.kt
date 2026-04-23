@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.arch.signature
 
 import java.time.Instant

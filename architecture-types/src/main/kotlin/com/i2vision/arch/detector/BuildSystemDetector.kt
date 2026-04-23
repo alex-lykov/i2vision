@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.arch.detector
 
 import com.i2vision.arch.signature.BuildSystem
@@ -11,7 +18,7 @@ class BuildSystemDetector(private val projectRoot: String) {
     /**
      * Detect build system from project root
      */
-    fun detect(): BuildSystemDetector.Result {
+    fun detect(): Result {
         val root = File(projectRoot)
 
         val buildFiles = root.listFiles()?.filter { it.isFile }?.map { it.name } ?: emptyList()

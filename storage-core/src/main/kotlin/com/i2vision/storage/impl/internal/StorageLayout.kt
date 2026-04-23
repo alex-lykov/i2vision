@@ -1,7 +1,11 @@
-package com.i2vision.storage.impl.internal
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
 
-import com.i2vision.storage.I2VisionPaths
-import java.io.File
+package com.i2vision.storage.impl.internal
 
 /**
  * INTERNAL ONLY. This file contains all path knowledge.

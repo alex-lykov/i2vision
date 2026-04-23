@@ -1,15 +1,19 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.validation
 
 import com.i2vision.arch.signature.SignatureBuilder
-import com.i2vision.discover.pipeline.DiscoveryPipelineImpl
-import com.i2vision.discover.api.IntentResolver
-import com.i2vision.discover.intent.IntentResolverImpl
 import com.i2vision.discover.api.models.DiscoveryDepth
-import com.i2vision.storage.api.CacheStore
-import com.i2vision.storage.impl.FileCacheStore
+import com.i2vision.discover.intent.IntentResolverImpl
+import com.i2vision.discover.pipeline.DiscoveryPipelineImpl
 import com.i2vision.storage.I2VisionPaths
+import com.i2vision.storage.impl.FileCacheStore
 import com.i2vision.storage.impl.RolloutManager
-import com.i2vision.instant.context.ContextProvider as InstantContextProvider
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
@@ -21,6 +25,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import com.i2vision.instant.context.ContextProvider as InstantContextProvider
 
 /**
  * Extension function to extract the first number from a string

@@ -1,7 +1,14 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.mcp.tools.rollout
 
-import com.i2vision.storage.impl.RolloutManager
 import com.i2vision.mcp.server.ToolResult
+import com.i2vision.storage.impl.RolloutManager
 import org.slf4j.LoggerFactory
 import java.io.File
 

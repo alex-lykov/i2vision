@@ -1,13 +1,16 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.cli
 
 import com.i2vision.discover.api.models.DiscoveryDepth
 import com.i2vision.storage.I2VisionPaths
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertFailsWith
-import kotlin.test.assertFalse
-import kotlin.test.assertTrue
 import java.io.File
+import kotlin.test.*
 
 /**
  * Tests for CLI Depth Parameter.

@@ -1,9 +1,16 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.discover.api
 
-import com.i2vision.discover.api.models.PipelineResult
-import com.i2vision.discover.api.models.DiscoveryDepth
 import com.i2vision.discover.api.models.ContractHint
+import com.i2vision.discover.api.models.DiscoveryDepth
 import com.i2vision.discover.api.models.DiscoveryIntent
+import com.i2vision.discover.api.models.PipelineResult
 
 /**
  * DiscoveryPipeline interface for breaking circular dependencies.

@@ -1,18 +1,25 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.instant.context
 
-import com.i2vision.index.IndexProvider
 import com.i2vision.index.CustomIndex
-import com.i2vision.index.SymbolInfo as IndexSymbolInfo
-import com.i2vision.instant.artifact.GenericArtifactLoader
-import com.i2vision.instant.artifact.ArtifactDiscoveryConfig
-import com.i2vision.instant.strategy.StrategyLibrary
+import com.i2vision.index.IndexProvider
 import com.i2vision.instant.analysis.FileAnalyzer
+import com.i2vision.instant.artifact.ArtifactDiscoveryConfig
+import com.i2vision.instant.artifact.GenericArtifactLoader
 import com.i2vision.instant.cache.CacheManager
+import com.i2vision.instant.strategy.StrategyLibrary
 import com.i2vision.storage.api.CacheStore
 import com.i2vision.storage.impl.FileCacheStore
 import com.i2vision.storage.model.StorageConstants
 import org.slf4j.LoggerFactory
 import java.io.File
+import com.i2vision.index.SymbolInfo as IndexSymbolInfo
 
 /**
  * Instant Context Provider - Provides immediate context for LLMs.
@@ -249,8 +256,7 @@ class ContextProvider(
      * Detect file type from extension
      */
     private fun detectFileType(filePath: String): String {
-        val extension = File(filePath).extension
-        return when (extension) {
+        return when (val extension = File(filePath).extension) {
             "kt", "kts" -> "kotlin"
             "yaml", "yml" -> "yaml"
             "gradle" -> "gradle"
@@ -518,8 +524,8 @@ data class InstantContext(
     val relatedFiles: List<String>,
     val taskContext: TaskContext,
     val artifacts: List<String> = emptyList(),
-    val strategySuggestions: List<com.i2vision.instant.strategy.StrategyLibrary.StrategySuggestion> = emptyList(),
-    val complexityDetails: com.i2vision.instant.analysis.FileAnalyzer.ComplexityDetails? = null,
+    val strategySuggestions: List<StrategyLibrary.StrategySuggestion> = emptyList(),
+    val complexityDetails: FileAnalyzer.ComplexityDetails? = null,
     val success: Boolean,
     val error: String? = null,
     // Enhanced context fields

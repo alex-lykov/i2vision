@@ -1,9 +1,16 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.arch.compatibility
 
 import com.i2vision.arch.signature.ArchitectureSignature
-import com.i2vision.arch.signature.ModulePattern
-import com.i2vision.arch.signature.DesignPattern
 import com.i2vision.arch.signature.DeploymentPattern
+import com.i2vision.arch.signature.DesignPattern
+import com.i2vision.arch.signature.ModulePattern
 
 /**
  * Pattern compatibility checker

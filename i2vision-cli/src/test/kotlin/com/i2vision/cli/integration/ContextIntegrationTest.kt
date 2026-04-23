@@ -1,15 +1,17 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.cli.integration
 
-import com.i2vision.cli.commands.ContextCommand
-import com.i2vision.cli.I2VisionCli
 import com.github.ajalt.clikt.testing.*
-import com.github.ajalt.clikt.core.CliktCommand
+import com.i2vision.cli.I2VisionCli
+import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertTrue
-import kotlin.test.assertFalse
-import kotlin.test.assertEquals
-import kotlin.test.assertNotNull
-import java.io.File
 
 /**
  * Integration tests for CLI Context command.

@@ -1,8 +1,12 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.llm
 
-import com.i2vision.llm.LocalOllamaRepository
-import com.i2vision.llm.OllamaApiClient
-import com.i2vision.llm.OllamaModelMetadata
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext

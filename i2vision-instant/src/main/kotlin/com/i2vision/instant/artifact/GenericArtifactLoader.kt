@@ -1,7 +1,14 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.instant.artifact
 
-import org.yaml.snakeyaml.Yaml
 import org.slf4j.LoggerFactory
+import org.yaml.snakeyaml.Yaml
 import java.io.File
 import java.nio.file.FileSystems
 import java.nio.file.PathMatcher
@@ -63,8 +70,7 @@ class GenericArtifactLoader(
 
                 files.forEach { file ->
                     try {
-                        val content = loadYamlFile(file)
-                        when (content) {
+                        when (val content = loadYamlFile(file)) {
                             is List<*> -> {
                                 @Suppress("UNCHECKED_CAST")
                                 val items = content.filterIsInstance<Map<String, Any>>()
@@ -121,8 +127,7 @@ class GenericArtifactLoader(
                     }
                     if (!alreadyLoaded) {
                         try {
-                            val content = loadYamlFile(file)
-                            when (content) {
+                            when (val content = loadYamlFile(file)) {
                                 is List<*> -> {
                                     @Suppress("UNCHECKED_CAST")
                                     unmatchedArtifacts.addAll(content.filterIsInstance<Map<String, Any>>())

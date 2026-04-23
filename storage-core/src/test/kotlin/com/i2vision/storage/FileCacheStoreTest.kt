@@ -1,13 +1,20 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.storage.impl
 
 import com.i2vision.storage.model.ArtifactRef
 import com.i2vision.storage.model.Layer
 import kotlinx.coroutines.runBlocking
+import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
-import java.io.File
 
 /**
  * Tests for FileCacheStore.

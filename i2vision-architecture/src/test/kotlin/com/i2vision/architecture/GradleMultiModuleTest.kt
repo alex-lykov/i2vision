@@ -1,10 +1,16 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.architecture
 
-import kotlin.test.Test
-import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 import java.io.File
 import java.nio.file.Files
+import kotlin.test.Test
+import kotlin.test.assertTrue
 
 /**
  * Tests for Architecture Detection - Gradle Multi-Module.

@@ -1,21 +1,26 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.discover.artifact
 
 import com.i2vision.discover.flow.Flow
 import com.i2vision.discover.logic.BusinessRule
-import com.i2vision.discover.structure.Component
-import com.i2vision.discover.pipeline.VisionRequirement
 import com.i2vision.discover.pipeline.VisionConstraint
-import com.i2vision.discover.pipeline.VisionCodeEvidence
+import com.i2vision.discover.pipeline.VisionRequirement
+import com.i2vision.discover.structure.Component
 import com.i2vision.storage.api.CacheStore
 import com.i2vision.storage.model.ArtifactRef
 import com.i2vision.storage.model.Layer
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.slf4j.LoggerFactory
 import org.yaml.snakeyaml.DumperOptions
 import org.yaml.snakeyaml.Yaml
-import java.io.File
 import java.util.concurrent.ConcurrentHashMap
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 /**
  * Artifact writer for writing discovered artifacts to semantic cache.

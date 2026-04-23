@@ -1,10 +1,12 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.llm
 
-import com.i2vision.llm.CloudOllamaRepository
-import com.i2vision.llm.CloudRepositoryConfig
-import com.i2vision.llm.RepositoryType
-import com.i2vision.llm.ModelWrapper
-import com.i2vision.llm.PerformanceMonitor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 

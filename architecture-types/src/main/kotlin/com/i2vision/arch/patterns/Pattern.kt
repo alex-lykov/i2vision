@@ -1,6 +1,15 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.arch.patterns
 
-import com.i2vision.arch.signature.*
+import com.i2vision.arch.signature.DeploymentPattern
+import com.i2vision.arch.signature.DesignPattern
+import com.i2vision.arch.signature.ModulePattern
 
 /**
  * Base pattern class for architecture patterns

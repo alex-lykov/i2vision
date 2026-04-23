@@ -1,29 +1,30 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.discover.pipeline
 
+import com.i2vision.architecture.ArchitectureDetector
 import com.i2vision.discover.api.DiscoveryPipeline
 import com.i2vision.discover.api.IntentResolver
-import com.i2vision.discover.api.models.PipelineResult
-import com.i2vision.discover.api.models.DiscoveryDepth
-import com.i2vision.discover.api.models.ContractHint
-import com.i2vision.discover.api.models.DiscoveryIntent
-import com.i2vision.discover.api.models.DiscoveryArtifact
+import com.i2vision.discover.api.models.*
 import com.i2vision.discover.artifact.ArtifactWriter
 import com.i2vision.discover.doc.DocLayerImporter
-import com.i2vision.discover.doc.CodeEvidenceFinder
-import com.i2vision.storage.api.CacheStore
-import com.i2vision.storage.impl.RolloutManager
 import com.i2vision.discover.flow.FlowDiscovery
 import com.i2vision.discover.logic.LogicExtractor
 import com.i2vision.discover.structure.StructureBuilder
-import com.i2vision.architecture.ArchitectureDetector
+import com.i2vision.discover.vision.RequirementsInferer
 import com.i2vision.index.CustomIndex
 import com.i2vision.index.SemanticPathResolver
 import com.i2vision.link.LinkService
-import com.i2vision.vslfc.contracts.ContractValidator
+import com.i2vision.storage.api.CacheStore
+import com.i2vision.storage.impl.RolloutManager
 import com.i2vision.vslfc.DocContractYamlParser
 import com.i2vision.vslfc.VSLFCLayerContracts
-import com.i2vision.vslfc.DocLayerContract
-import com.i2vision.discover.vision.RequirementsInferer
+import com.i2vision.vslfc.contracts.ContractValidator
 import org.slf4j.LoggerFactory
 import java.io.File
 
@@ -615,9 +616,9 @@ class DiscoveryPipelineImpl(
 
         // Map intent depth to discovery depth
         val discoveryDepth = when (intent.depth) {
-            com.i2vision.discover.api.models.IntentDepth.BROWSE -> DiscoveryDepth.BROWSE
-            com.i2vision.discover.api.models.IntentDepth.STANDARD -> DiscoveryDepth.STANDARD
-            com.i2vision.discover.api.models.IntentDepth.DEEP -> DiscoveryDepth.DEEP
+            IntentDepth.BROWSE -> DiscoveryDepth.BROWSE
+            IntentDepth.STANDARD -> DiscoveryDepth.STANDARD
+            IntentDepth.DEEP -> DiscoveryDepth.DEEP
         }
 
         // Execute discovery with resolved parameters

@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 pluginManagement {
     repositories {
         google()
@@ -25,7 +32,6 @@ include("discovery-engine")
 include("contracts")
 include("discovery-api")
 
-// Public modules - MIT+Commercial
 include("i2vision-discover")
 include("i2vision-cli")
 include("i2vision-instant")

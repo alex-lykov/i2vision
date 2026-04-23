@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.arch.detector
 
 import com.i2vision.arch.signature.ModulePattern
@@ -12,7 +19,7 @@ class ModulePatternDetector(private val projectRoot: String) {
     /**
      * Detect module patterns across the project
      */
-    fun detect(): ModulePatternDetector.Result {
+    fun detect(): Result {
         val root = File(projectRoot)
         val modulePatterns = mutableMapOf<String, ModulePattern>()
         val confidences = mutableMapOf<String, Double>()

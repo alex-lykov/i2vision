@@ -1,38 +1,43 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.cli.commands
 
 import com.github.ajalt.clikt.core.CliktCommand
-import com.github.ajalt.clikt.parameters.options.option
-import com.github.ajalt.clikt.parameters.options.flag
 import com.github.ajalt.clikt.parameters.arguments.argument
-import com.i2vision.discover.api.models.DiscoveryDepth
-import com.i2vision.discover.api.models.DiscoveryIntent as ApiDiscoveryIntent
+import com.github.ajalt.clikt.parameters.options.flag
+import com.github.ajalt.clikt.parameters.options.option
+import com.i2vision.arch.signature.SignatureBuilder
+import com.i2vision.cli.output.ConsoleOutput
 import com.i2vision.discover.api.models.DiscoveryGoal
-import com.i2vision.discover.api.models.IntentDepth as ApiIntentDepth
 import com.i2vision.discover.api.models.DiscoveryQuality
 import com.i2vision.discover.api.models.PipelineResult
-import com.i2vision.discover.pipeline.DiscoveryPipelineImpl
-import com.i2vision.storage.api.CacheStore
-import com.i2vision.storage.impl.FileCacheStore
-import com.i2vision.storage.I2VisionPaths
 import com.i2vision.discover.intent.IntentResolverImpl
-import com.i2vision.cli.output.ConsoleOutput
-import com.i2vision.intent.IntentParser
-import com.i2vision.intent.DiscoveryIntent as ParserDiscoveryIntent
+import com.i2vision.discover.pipeline.DiscoveryPipelineImpl
 import com.i2vision.instant.context.ContextProvider
+import com.i2vision.intent.IntentGoal
+import com.i2vision.intent.IntentParser
+import com.i2vision.intent.QualityFocus
+import com.i2vision.storage.I2VisionPaths
+import com.i2vision.storage.impl.FileCacheStore
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.runBlocking
+import org.slf4j.LoggerFactory
+import java.io.File
 import java.io.OutputStream
 import java.io.PrintStream
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
-import com.i2vision.intent.IntentGoal
+import com.i2vision.discover.api.models.DiscoveryIntent as ApiDiscoveryIntent
+import com.i2vision.discover.api.models.IntentDepth as ApiIntentDepth
+import com.i2vision.intent.DiscoveryIntent as ParserDiscoveryIntent
 import com.i2vision.intent.IntentDepth as ParserIntentDepth
-import com.i2vision.intent.QualityFocus
-import com.i2vision.arch.signature.SignatureBuilder
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
-import org.slf4j.LoggerFactory
-import java.io.File
 
 /**
  * Discover Command - Runs discovery on a project.
@@ -430,9 +435,9 @@ class DiscoverCommand : CliktCommand(
 
         // Map intent depth to discovery depth
         val discoveryDepth = when (intent.depth) {
-            com.i2vision.discover.api.models.IntentDepth.BROWSE -> com.i2vision.discover.api.models.DiscoveryDepth.BROWSE
-            com.i2vision.discover.api.models.IntentDepth.STANDARD -> com.i2vision.discover.api.models.DiscoveryDepth.STANDARD
-            com.i2vision.discover.api.models.IntentDepth.DEEP -> com.i2vision.discover.api.models.DiscoveryDepth.DEEP
+            IntentDepth.BROWSE -> com.i2vision.discover.api.models.DiscoveryDepth.BROWSE
+            IntentDepth.STANDARD -> com.i2vision.discover.api.models.DiscoveryDepth.STANDARD
+            IntentDepth.DEEP -> com.i2vision.discover.api.models.DiscoveryDepth.DEEP
         }
         // Use depth-based discovery directly (same as SelfDiscoveryTest) to avoid intent resolution overhead
         val result = pipeline.discover(depth = discoveryDepth, clusterId = clusterId, contracts = emptyList())

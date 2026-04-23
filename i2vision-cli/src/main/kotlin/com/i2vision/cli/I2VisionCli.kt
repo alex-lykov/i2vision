@@ -1,13 +1,15 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.cli
 
 import com.github.ajalt.clikt.core.CliktCommand
 import com.github.ajalt.clikt.core.subcommands
-import com.github.ajalt.clikt.parameters.options.help
-import com.i2vision.cli.commands.ContractCommand
-import com.i2vision.cli.commands.ContextCommand
-import com.i2vision.cli.commands.DiscoverCommand
-import com.i2vision.cli.commands.InitCommand
-import com.i2vision.cli.commands.PresetCommand
+import com.i2vision.cli.commands.*
 import org.slf4j.LoggerFactory
 
 /**

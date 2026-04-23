@@ -1,26 +1,28 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.validation
 
 import com.i2vision.arch.signature.SignatureBuilder
-import com.i2vision.discover.pipeline.DiscoveryPipelineImpl
-import com.i2vision.discover.api.models.PipelineResult
-import com.i2vision.discover.api.models.DiscoveryIntent
-import com.i2vision.discover.api.models.DiscoveryGoal
-import com.i2vision.discover.api.models.IntentDepth
-import com.i2vision.discover.api.models.DiscoveryQuality
-import com.i2vision.storage.api.CacheStore
-import com.i2vision.storage.impl.FileCacheStore
-import com.i2vision.storage.I2VisionPaths
-import com.i2vision.discover.api.IntentResolver
+import com.i2vision.discover.api.models.*
 import com.i2vision.discover.intent.IntentResolverImpl
+import com.i2vision.discover.pipeline.DiscoveryPipelineImpl
 import com.i2vision.intent.IntentParser
-import com.i2vision.storage.impl.RolloutManager
-import kotlinx.coroutines.*
+import com.i2vision.storage.I2VisionPaths
+import com.i2vision.storage.impl.FileCacheStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.runBlocking
 import org.yaml.snakeyaml.Yaml
 import java.io.File
 import java.io.PrintStream
 import java.time.Instant
 import java.time.LocalDateTime
-import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 
 fun main(args: Array<String>) {
@@ -308,7 +310,7 @@ data class ClusterDiscoveryResult(
  */
 data class SharedDiscoveryContext(
     val projectRoot: String,
-    val allSourceFiles: List<java.io.File>,
+    val allSourceFiles: List<File>,
     val architectureSignature: com.i2vision.arch.signature.ArchitectureSignature
 )
 

@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.discover.flow
 
 import com.i2vision.index.CustomIndex
@@ -180,9 +187,7 @@ class FlowDiscovery(
 
         // Check if it's a local variable (simple heuristic)
         val localVarPattern = Regex("""val\s+$functionName\s*=""")
-        if (localVarPattern.containsMatchIn(content)) return false
-
-        return true
+        return !localVarPattern.containsMatchIn(content)
     }
 
     /**

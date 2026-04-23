@@ -1,16 +1,23 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.mcp.server
 
-import org.slf4j.LoggerFactory
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.Job
-import com.i2vision.mcp.tools.discovery.DiscoveryTools
+import com.i2vision.mcp.tools.ToolRegistry
 import com.i2vision.mcp.tools.context.ContextTools
 import com.i2vision.mcp.tools.contract.ContractTools
-import com.i2vision.mcp.tools.ToolRegistry
+import com.i2vision.mcp.tools.discovery.DiscoveryTools
 import com.i2vision.mcp.tools.intelligence.IntelligenceTools
 import com.i2vision.mcp.tools.rollout.RolloutTools
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import org.slf4j.LoggerFactory
 
 /**
  * MCP Server - Exposes i2vision tools via MCP protocol.

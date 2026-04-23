@@ -1,7 +1,13 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.discover.logic
 
 import com.i2vision.index.IndexProvider
-import com.i2vision.index.SymbolInfo
 import org.slf4j.LoggerFactory
 import java.io.File
 

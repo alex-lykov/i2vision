@@ -1,8 +1,15 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.storage
 
+import org.slf4j.LoggerFactory
 import java.io.File
 import java.security.MessageDigest
-import org.slf4j.LoggerFactory
 
 /**
  * OS-agnostic path resolution for i2vision user data.

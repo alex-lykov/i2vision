@@ -1,11 +1,14 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.discover.intent
 
 import com.i2vision.discover.api.IntentResolver
-import com.i2vision.discover.api.models.DiscoveryIntent
-import com.i2vision.discover.api.models.ModifiableParameterSet
-import com.i2vision.discover.api.models.DiscoveryGoal
-import com.i2vision.discover.api.models.IntentDepth
-import com.i2vision.discover.api.models.DiscoveryQuality
+import com.i2vision.discover.api.models.*
 import kotlinx.serialization.json.JsonPrimitive
 import org.slf4j.LoggerFactory
 

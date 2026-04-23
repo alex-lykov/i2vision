@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 package com.i2vision.arch.detector
 
 import com.i2vision.arch.signature.Framework
@@ -11,7 +18,7 @@ class FrameworkDetector(private val projectRoot: String) {
     /**
      * Detect frameworks from project root
      */
-    fun detect(): FrameworkDetector.Result {
+    fun detect(): Result {
         val root = File(projectRoot)
         val frameworks = mutableListOf<Framework>()
         val confidences = mutableMapOf<String, Double>()

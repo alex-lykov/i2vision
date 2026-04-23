@@ -289,13 +289,6 @@ data class ArtifactQuality(
 )
 
 fun purgeSemanticCache(root: File) {
-    // Migrate legacy cache to user home directory before purging
-    val rolloutManager = RolloutManager()
-    val migrated = rolloutManager.migrateFromLegacyCache(root)
-    if (migrated) {
-        println("Migrated legacy cache to user home directory")
-    }
-    
     val semanticCacheDir = I2VisionPaths.getProjectCacheDir(root.absolutePath)
     if (semanticCacheDir.exists()) {
         val deleted = semanticCacheDir.deleteRecursively()

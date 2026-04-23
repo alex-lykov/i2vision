@@ -18,7 +18,6 @@ import kotlinx.coroutines.sync.withLock
  * Artifact writer for writing discovered artifacts to semantic cache.
  * 
  * Writes flows, business rules, and components as YAML files using storage-core API.
- * Migrated from direct file path knowledge to storage abstraction layer.
  * 
  * Thread-safety: Uses cluster-level locking to prevent concurrent write corruption
  * when multiple clusters write artifacts simultaneously.

@@ -64,7 +64,6 @@ Individual module documentation:
 ## Internal Documentation
 
 Developer-facing documentation is located in [`../dev-docs/`](../dev-docs/):
-- Migration plans
 - Test plans
 - Cleanup documentation
 - Refactoring strategies

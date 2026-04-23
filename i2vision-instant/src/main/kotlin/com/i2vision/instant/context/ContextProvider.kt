@@ -20,8 +20,6 @@ import java.io.File
  * This API allows LLMs to quickly get relevant context about a file or task
  * without running a full discovery pipeline. It's designed for low-latency
  * context retrieval suitable for real-time LLM interactions.
- * 
- * Migrated to use storage-core API for artifact storage.
  */
 class ContextProvider(
     private val projectRoot: String,

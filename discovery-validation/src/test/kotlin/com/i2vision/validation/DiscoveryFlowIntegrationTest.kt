@@ -32,7 +32,7 @@ private fun String.extractNumber(): Int {
 }
 
 /**
- * Phased Discovery Flow Integration Tests (Migrated to New Modular Structure)
+ * Phased Discovery Flow Integration Tests
  *
  * Tests the complete discovery flow preserving the original test logic:
  * - Phase 0: Test Setup/Inits
@@ -809,7 +809,7 @@ class DiscoveryFlowIntegrationTest {
         
         return AnalysisResult(
             artifactCount = artifactCount,
-            contractRegistry = null  // Contract registry not yet migrated
+            contractRegistry = null
         )
     }
 
@@ -959,7 +959,7 @@ class DiscoveryFlowIntegrationTest {
 
     data class AnalysisResult(
         val artifactCount: Int,
-        val contractRegistry: Any?  // Contract registry not yet migrated
+        val contractRegistry: Any?
     )
 
     data class ArtifactValidation(

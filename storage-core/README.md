@@ -118,26 +118,6 @@ val registry = contractStore.getRegistry()
 println("Health score: ${registry.summary.healthScore}")
 ```
 
-## Migration from core/config
-
-### Old (Direct Path Knowledge - DEPRECATED)
-```kotlin
-import com.alyk.ai.koog.config.VslfcPaths
-
-val flowDir = File(projectRoot, VslfcPaths.layerDir(projectRoot, cluster, "flow").path)
-val file = File(flowDir, "sequences.yaml")
-```
-
-### New (Storage Abstraction)
-```kotlin
-import com.i2vision.storage.api.CacheStore
-import com.i2vision.storage.model.*
-
-val cacheStore = FileCacheStore(File(projectRoot))
-val ref = ArtifactRef(module = cluster, layer = Layer.FLOW, name = "sequences.yaml")
-val artifact = cacheStore.get(ref)
-```
-
 ## Protection Against Path Leakage
 
 ### Module Visibility

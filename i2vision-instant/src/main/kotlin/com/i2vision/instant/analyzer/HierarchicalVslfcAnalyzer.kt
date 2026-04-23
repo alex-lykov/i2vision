@@ -50,7 +50,6 @@ enum class EntryPointType {
 
 /**
  * Enhanced analyzer with hierarchical support.
- * Migrated to use storage-core API.
  */
 class HierarchicalVslfcAnalyzer(
     private val artifactLoader: GenericArtifactLoader,

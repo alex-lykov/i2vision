@@ -118,20 +118,6 @@ Intent system behavior can be controlled via environment variables:
 
 ---
 
-## Migration from Strategies
-
-The Intent system replaces the previous Strategy-based approach:
-
-| Old Strategy-based Command | New Intent-based Command |
-|---------------------------|--------------------------|
-| `--strategyFile=vlsfc-discovery.yaml --scope=project --depth=deep` | `--intent=full_discovery --depth=deep` |
-| `--strategyFile=vlsfc-discovery.yaml --scope=module --module_path=core/orchestrator` | `--intent=full_discovery --module=core/orchestrator` |
-| `--strategyFile=vlsfc-discovery.yaml --depth=browse` | `--intent=quick_overview --depth=browse` |
-
-See [Intent Migration Guide](./intent-migration-guide.md) for detailed migration instructions.
-
----
-
 ## Best Practices
 
 1. **Start with quick_overview** - Get a quick understanding of the project

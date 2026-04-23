@@ -21,7 +21,6 @@ object VslfcStructure {
     
     // Contract templates (must be defined before CONTRACT_TEMPLATES)
     private val visionWithDocsTemplate = """
----
 contract: vision-documentation
 version: 1.0
 layer: VISION

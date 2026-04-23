@@ -20,6 +20,52 @@ object VslfcStructure {
     val LAYERS = listOf("vision", "structure", "logic", "flow", "code")
     
     // Contract templates (must be defined before CONTRACT_TEMPLATES)
+    private val visionWithDocsTemplate = """
+---
+contract: vision-documentation
+version: 1.0
+layer: VISION
+direction: bidirectional
+
+documentation:
+  primary: "README.md"
+  secondary: []
+
+mappings:
+  - doc_section: "## Purpose"
+    layer_field: "requirements"
+    parser: "free_text"
+    confidence: 0.9
+  
+  - doc_section: "## Requirements"
+    layer_field: "requirements"
+    parser: "markdown_list"
+    confidence: 0.95
+  
+  - doc_section: "## Constraints"
+    layer_field: "constraints"
+    parser: "markdown_list"
+    confidence: 0.9
+
+sync_rules:
+  on_doc_change: "reimport"
+  on_layer_change: "suggest_update"
+  conflict_resolution:
+    default: "manual_review"
+  freshness:
+    warning_days: 90
+    critical_days: 180
+    action_on_stale: "revalidate_with_lower_confidence"
+
+validation:
+  - rule: "every_doc_requirement_has_code_evidence"
+    severity: "warning"
+  - rule: "confidence_decay"
+    formula: "confidence * (0.95 ^ months_since_update)"
+    threshold: 0.7
+    action: "revalidate"
+""".trimIndent()
+
     private val visionToStructureTemplate = """
         version: "1.0"
         contract: vision-to-structure
@@ -116,6 +162,7 @@ object VslfcStructure {
      */
     val CONTRACT_TEMPLATES = mapOf(
         "vision" to listOf(
+            "with-docs.yaml" to visionWithDocsTemplate,
             "to-structure.yaml" to visionToStructureTemplate,
             "to-code.yaml" to visionToCodeTemplate
         ),

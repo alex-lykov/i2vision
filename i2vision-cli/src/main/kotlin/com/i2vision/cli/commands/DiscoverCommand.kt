@@ -48,20 +48,18 @@ class DiscoverCommand : CliktCommand(
     
     private val projectPath by argument("project-path", help = "Path to project directory")
     
-    // NEW: Intent-based (primary)
+    // Intent-based (primary)
     private val intent by option(
         "--intent",
         help = "Discovery intent: full_discovery, refactoring_analysis, quick_overview, architecture_audit, flow_mapping, documentation_generation"
     )
     
-    // NEW: Preset-based (placeholder for future implementation)
+    // Preset-based (placeholder for future implementation)
     private val preset by option(
         "--preset",
         help = "Preset name (future: kotlin-agent, spring-boot, conservative, permissive)"
     )
     
-    // LEGACY: Keep for backward compatibility
-    private val depth by option("-d", "--depth", help = "[DEPRECATED] Use --intent instead. Discovery depth (BROWSE, STANDARD, DEEP)")
     private val cluster by option("--cluster", help = "Cluster ID for focused discovery")
     private val output by option("-o", "--output", help = "Output directory for artifacts")
     private val json by option("--json", help = "Output results as JSON").flag()
@@ -171,13 +169,6 @@ class DiscoverCommand : CliktCommand(
                     echo("Intent: $intent")
                     val discoveryIntent = parseIntent(intent!!)
                     runWithIntent(pipeline, discoveryIntent, cluster, projectRoot.path)
-                }
-                
-                // PATH 3: Legacy depth-based
-                depth != null -> {
-                    echo("[WARNING] --depth is deprecated. Use --intent instead.")
-                    val discoveryDepth = parseDepth(depth!!)
-                    runWithDepth(pipeline, discoveryDepth, cluster, projectRoot.path)
                 }
                 
                 // DEFAULT: Full discovery intent
@@ -337,18 +328,6 @@ class DiscoverCommand : CliktCommand(
     }
     
     /**
-     * Parse depth string to DiscoveryDepth
-     */
-    private fun parseDepth(depthStr: String): DiscoveryDepth {
-        return try {
-            DiscoveryDepth.valueOf(depthStr.uppercase())
-        } catch (e: IllegalArgumentException) {
-            echo("Error: Invalid depth '$depthStr'. Valid options: BROWSE, STANDARD, DEEP", err = true)
-            throw IllegalArgumentException("Invalid depth: $depthStr")
-        }
-    }
-    
-    /**
      * Run discovery with intent (includes cluster detection and parallel execution)
      */
     private suspend fun runWithIntent(
@@ -387,88 +366,6 @@ class DiscoverCommand : CliktCommand(
                     async {
                         echo("  Discovering cluster: $cluster")
                         val (result, clusterDuration) = runSingleDiscovery(pipeline, intent, cluster)
-                        echo("  Cluster $cluster completed in ${clusterDuration}ms")
-                        Pair(result, clusterDuration)
-                    }
-                }.awaitAll()
-            }
-            val duration = System.currentTimeMillis() - startTime
-            
-            echo("")
-            echo("Parallel discovery completed in ${duration}ms")
-            
-            // Flush all buffered links to disk in a single operation (same as SelfDiscoveryTest)
-            pipeline.flushLinkBatch()
-            echo("Flushed all links to disk")
-            
-            // Aggregate results
-            val results = clusterTimings.map { it.first }
-            val allArtifacts = results.flatMap { result -> result.artifacts }
-            val allErrors = results.flatMap { result -> result.errors }
-            val success = results.all { result -> result.success }
-            
-            // Log summary statistics
-            echo("")
-            echo("=== Discovery Summary ===")
-            echo("Total duration: ${duration}ms (${duration / 1000}s)")
-            echo("Clusters discovered: ${clusterTimings.size}")
-            echo("Cluster timings:")
-            clusterTimings.forEach { (result, clusterDuration) ->
-                echo("  - ${result.metadata["clusterId"] ?: "unknown"}: ${clusterDuration}ms")
-            }
-            echo("Total artifacts: ${allArtifacts.size}")
-            echo("Total errors: ${allErrors.size}")
-            echo("Success: $success")
-            echo("")
-            
-            displayResults(
-                PipelineResult(
-                    success = success,
-                    artifacts = allArtifacts,
-                    errors = allErrors,
-                    metadata = mapOf("duration_ms" to duration.toString(), "clusters" to clusters.size.toString())
-                )
-            )
-        }
-    }
-    
-    /**
-     * Run discovery with depth (legacy path)
-     */
-    private suspend fun runWithDepth(
-        pipeline: DiscoveryPipelineImpl,
-        depth: DiscoveryDepth,
-        clusterId: String?,
-        projectRoot: String
-    ) {
-        echo("Depth: $depth")
-        
-        // Auto-detect clusters if not specified
-        val clusters = if (clusterId != null) {
-            listOf(clusterId)
-        } else {
-            detectClusters(projectRoot)
-        }
-        
-        echo("")
-        echo("Clusters: ${clusters.size}")
-        if (clusters.isEmpty()) {
-            echo("[WARNING] No clusters detected, running single-cluster discovery")
-            val result = pipeline.discover(depth = depth, clusterId = null, contracts = emptyList())
-            displayResults(result)
-        } else {
-            echo("Detected clusters: ${clusters.joinToString(", ")}")
-            echo("")
-            echo("Running parallel cluster discovery...")
-            
-            val startTime = System.currentTimeMillis()
-            val clusterTimings = coroutineScope {
-                clusters.map { cluster ->
-                    async {
-                        echo("  Discovering cluster: $cluster")
-                        val clusterStartTime = System.currentTimeMillis()
-                        val result = pipeline.discover(depth = depth, clusterId = cluster, contracts = emptyList())
-                        val clusterDuration = System.currentTimeMillis() - clusterStartTime
                         echo("  Cluster $cluster completed in ${clusterDuration}ms")
                         Pair(result, clusterDuration)
                     }

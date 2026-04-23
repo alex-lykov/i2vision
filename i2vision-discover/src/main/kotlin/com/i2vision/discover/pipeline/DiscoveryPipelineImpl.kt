@@ -8,6 +8,8 @@ import com.i2vision.discover.api.models.ContractHint
 import com.i2vision.discover.api.models.DiscoveryIntent
 import com.i2vision.discover.api.models.DiscoveryArtifact
 import com.i2vision.discover.artifact.ArtifactWriter
+import com.i2vision.discover.doc.DocLayerImporter
+import com.i2vision.discover.doc.CodeEvidenceFinder
 import com.i2vision.storage.api.CacheStore
 import com.i2vision.storage.impl.RolloutManager
 import com.i2vision.discover.flow.FlowDiscovery
@@ -18,8 +20,48 @@ import com.i2vision.index.CustomIndex
 import com.i2vision.index.SemanticPathResolver
 import com.i2vision.link.LinkService
 import com.i2vision.vslfc.contracts.ContractValidator
+import com.i2vision.vslfc.DocContractYamlParser
+import com.i2vision.vslfc.VSLFCLayerContracts
+import com.i2vision.vslfc.DocLayerContract
 import org.slf4j.LoggerFactory
 import java.io.File
+
+// Vision layer data classes
+
+data class VisionRequirement(
+    val id: String,
+    val title: String,
+    val docRef: String,
+    val rationaleRef: String? = null,
+    val acceptanceCriteriaRefs: List<String> = emptyList(),
+    val priority: Priority = Priority.P2,
+    val source: Source,
+    val confidence: Double,
+    val evidence: List<VisionCodeEvidence> = emptyList()
+)
+
+enum class Priority { P0, P1, P2 }
+enum class Source { USER_INPUT, DOCUMENTATION, LLM_INFERENCE, CODE_PATTERN }
+
+data class VisionConstraint(
+    val id: String,
+    val docRef: String,
+    val type: ConstraintType,
+    val severity: Severity,
+    val confidence: Double,
+    val source: Source,
+    val evidence: List<VisionCodeEvidence> = emptyList()
+)
+
+enum class ConstraintType { BUSINESS, TECHNICAL, PERFORMANCE, SECURITY, OPERATIONAL }
+enum class Severity { HARD, SOFT }
+
+data class VisionCodeEvidence(
+    val file: String,
+    val line: Int? = null,
+    val pattern: String,
+    val description: String
+)
 
 /**
  * Implementation of DiscoveryPipeline interface.
@@ -53,6 +95,10 @@ class DiscoveryPipelineImpl(
     private val artifactWriter by lazy { ArtifactWriter(projectRoot, cacheStore) }
     private val contractValidator by lazy { ContractValidator() }
     private val architectureDetector by lazy { ArchitectureDetector(projectRoot) }
+    
+    // Vision layer population components
+    private val docContractParser by lazy { DocContractYamlParser(File(projectRoot)) }
+    private val docLayerImporter by lazy { DocLayerImporter(File(projectRoot)) }
     
     // Batch mode control for LinkService
     fun enableLinkBatchMode() {
@@ -180,6 +226,95 @@ class DiscoveryPipelineImpl(
                 }
             }
             
+            // Step 6.5: Vision layer population from documentation
+            if (depth == DiscoveryDepth.STANDARD || depth == DiscoveryDepth.DEEP) {
+                log.info("[DISCOVERY] Step 6.5: Populating Vision layer from documentation")
+                try {
+                    // Load Vision contract
+                    val visionContractPath = VSLFCLayerContracts.contractPath(VSLFCLayerContracts.Layer.VISION)
+                    val visionContractFile = File(projectRoot, visionContractPath)
+                    
+                    if (visionContractFile.exists()) {
+                        val visionContract = docContractParser.parse(visionContractFile)
+                        log.info("[DISCOVERY] Loaded Vision contract: {}", visionContract.contractId)
+                        
+                        // Import from documentation
+                        val importResult = docLayerImporter.importFromDocs(visionContract)
+                        
+                        if (importResult.success) {
+                            log.info("[DISCOVERY] Imported {} Vision items from documentation", importResult.totalItems)
+                            
+                            // Convert imported items to Vision artifacts
+                            val visionRequirements = mutableListOf<VisionRequirement>()
+                            val visionConstraints = mutableListOf<VisionConstraint>()
+                            
+                            importResult.artifacts.values.flatten().forEach { item ->
+                                when (item.layerField) {
+                                    "requirements" -> {
+                                        visionRequirements.add(VisionRequirement(
+                                            id = sanitizeRequirementId(item.title),
+                                            title = item.title,
+                                            docRef = "${item.sourceDoc}#${item.sectionHeader}",
+                                            confidence = item.finalConfidence,
+                                            source = Source.DOCUMENTATION,
+                                            evidence = item.codeEvidence.map { evidence ->
+                                                VisionCodeEvidence(
+                                                    file = evidence.file,
+                                                    line = evidence.line,
+                                                    pattern = evidence.content,
+                                                    description = evidence.matchType.name
+                                                )
+                                            }
+                                        ))
+                                    }
+                                    "constraints" -> {
+                                        visionConstraints.add(VisionConstraint(
+                                            id = sanitizeRequirementId(item.title),
+                                            docRef = "${item.sourceDoc}#${item.sectionHeader}",
+                                            type = ConstraintType.BUSINESS,
+                                            severity = Severity.HARD,
+                                            confidence = item.finalConfidence,
+                                            source = Source.DOCUMENTATION,
+                                            evidence = item.codeEvidence.map { evidence ->
+                                                VisionCodeEvidence(
+                                                    file = evidence.file,
+                                                    line = evidence.line,
+                                                    pattern = evidence.content,
+                                                    description = evidence.matchType.name
+                                                )
+                                            }
+                                        ))
+                                    }
+                                }
+                            }
+                            
+                            // Write Vision artifacts to semantic cache
+                            kotlinx.coroutines.runBlocking {
+                                val writtenVisionArtifacts = artifactWriter.writeVisionArtifacts(
+                                    clusterId ?: "root",
+                                    visionRequirements,
+                                    visionConstraints
+                                )
+                                artifacts.add(DiscoveryArtifact(
+                                    layer = "vision",
+                                    path = "vision_artifacts",
+                                    content = "Wrote ${writtenVisionArtifacts.size} Vision artifacts to semantic cache:\n${writtenVisionArtifacts.take(10).joinToString("\n") { "- ${it.layer}/${it.name}" }}"
+                                ))
+                                log.info("[DISCOVERY] Wrote {} Vision artifacts", writtenVisionArtifacts.size)
+                            }
+                        } else {
+                            log.warn("[DISCOVERY] Vision import failed: {}", importResult.errors.joinToString(", "))
+                            errors.addAll(importResult.errors)
+                        }
+                    } else {
+                        log.info("[DISCOVERY] Vision contract not found at {}, skipping Vision layer population", visionContractPath)
+                    }
+                } catch (e: Exception) {
+                    log.warn("[DISCOVERY] Vision layer population failed: {}", e.message)
+                    errors.add("Vision layer population failed: ${e.message}")
+                }
+            }
+            
             // Step 7: Flow discovery using FlowDiscovery
             if (depth == DiscoveryDepth.STANDARD || depth == DiscoveryDepth.DEEP) {
                 log.info("[DISCOVERY] Step 7: Discovering flows using call graph")
@@ -299,6 +434,7 @@ class DiscoveryPipelineImpl(
             val componentCount = artifacts.count { it.layer == "structure" && it.path == "components" }
             val artifactFileCount = artifacts.count { it.layer == "code" && it.path == "artifact_files" }
             val contractValidationCount = artifacts.count { it.layer == "vision" && it.path == "contract_validation" }
+            val visionArtifactsCount = artifacts.count { it.layer == "vision" && it.path == "vision_artifacts" }
             val generatedLinksCount = artifacts.find { it.layer == "logic" && it.path == "generated_links" }
                 ?.content?.extractInt() ?: 0
             return PipelineResult(
@@ -320,6 +456,7 @@ class DiscoveryPipelineImpl(
                     "components" to componentCount.toString(),
                     "artifact_files" to artifactFileCount.toString(),
                     "contract_validation" to contractValidationCount.toString(),
+                    "vision_artifacts" to visionArtifactsCount.toString(),
                     "generated_links" to generatedLinksCount.toString()
                 )
             )
@@ -479,5 +616,17 @@ class DiscoveryPipelineImpl(
     private fun String.extractInt(): Int {
         val regex = Regex("\\d+")
         return regex.find(this)?.value?.toIntOrNull() ?: 0
+    }
+    
+    /**
+     * Sanitize a requirement title for use as an ID.
+     * Removes special characters and normalizes to lowercase with hyphens.
+     */
+    private fun sanitizeRequirementId(title: String): String {
+        return title
+            .lowercase()
+            .replace(Regex("[^a-z0-9]+"), "-")
+            .trim('-')
+            .take(80)
     }
 }

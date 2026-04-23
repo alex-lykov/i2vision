@@ -1,8 +1,8 @@
 package com.i2vision.cli.integration
 
-import com.i2vision.cli.ContextCommand
+import com.i2vision.cli.commands.ContextCommand
 import com.i2vision.cli.I2VisionCli
-import com.github.ajalt.clikt.testing.testing
+import com.github.ajalt.clikt.testing.*
 import com.github.ajalt.clikt.core.CliktCommand
 import kotlin.test.Test
 import kotlin.test.assertTrue

@@ -3,7 +3,10 @@ package com.i2vision.validation
 import com.i2vision.arch.signature.SignatureBuilder
 import com.i2vision.discover.pipeline.DiscoveryPipelineImpl
 import com.i2vision.discover.api.models.PipelineResult
-import com.i2vision.discover.api.models.DiscoveryDepth
+import com.i2vision.discover.api.models.DiscoveryIntent
+import com.i2vision.discover.api.models.DiscoveryGoal
+import com.i2vision.discover.api.models.IntentDepth
+import com.i2vision.discover.api.models.DiscoveryQuality
 import com.i2vision.storage.api.CacheStore
 import com.i2vision.storage.impl.FileCacheStore
 import com.i2vision.storage.I2VisionPaths
@@ -32,13 +35,14 @@ fun main(args: Array<String>) {
     }
 
     val purge = args.contains("--purge")
-    val deep = args.contains("--deep")
+    val deep = args.contains("--deep")  // Internal test flag (not related to deprecated CLI --depth)
     val exportDocs = args.contains("--export-docs")
     val analyzeQuality = args.contains("--analyze-quality")
     val testContext = args.contains("--test-context")
     val testCli = args.contains("--test-cli")
     
-    val depth = if (deep) DiscoveryDepth.DEEP else DiscoveryDepth.STANDARD
+    // Map --deep flag to intent depth (DEEP for --deep, STANDARD otherwise)
+    val intentDepth = if (deep) IntentDepth.DEEP else IntentDepth.STANDARD
     
     // Setup file logging
     val logDir = File(projectRoot, ".vision-ai/logs")
@@ -70,9 +74,8 @@ fun main(args: Array<String>) {
     println("Created: ${LocalDateTime.now()}")
     println("================================================================================")
     println()
-    println("=== i2vision Self-Discovery Test ===")
     println("Project: ${projectRoot.canonicalPath}")
-    println("Depth: $depth")
+    println("Intent Depth: $intentDepth")
     if (purge) println("Purge: ENABLED")
     if (exportDocs) println("Export Docs: ENABLED")
     if (analyzeQuality) println("Analyze Quality: ENABLED")
@@ -118,7 +121,7 @@ fun main(args: Array<String>) {
     }
     
     // Step 4: Discovery Pipeline
-    println("--- Discovery Pipeline Execution (Depth: $depth) ---")
+    println("--- Discovery Pipeline Execution (Intent Depth: $intentDepth) ---")
     val intentResolver = IntentResolverImpl()
     val cacheDir = I2VisionPaths.getProjectCacheDir(projectRoot.absolutePath)
     val cacheStore = FileCacheStore(cacheDir)
@@ -162,8 +165,16 @@ fun main(args: Array<String>) {
                 val startTime = System.currentTimeMillis()
                 print("Discovering ${cluster.name}... ")
                 
+                // Create intent for this cluster
+                val intent = DiscoveryIntent(
+                    goal = DiscoveryGoal.UNDERSTAND,
+                    depth = intentDepth,
+                    quality = DiscoveryQuality.BALANCED,
+                    layerFocus = listOf("vision", "structure", "logic", "flow", "code")
+                )
+                
                 val result = discovery.discover(
-                    depth = depth,
+                    intent = intent,
                     clusterId = cluster.name,
                     contracts = emptyList()
                 )

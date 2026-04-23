@@ -207,7 +207,6 @@ Total Artifacts: 180
   - `documentation_generation` - Generate documentation
 - `--preset` - Preset name (future: kotlin-agent, spring-boot, conservative, permissive)
 - `--cluster` - Cluster ID for focused discovery
-- `--depth` - [DEPRECATED] Use --intent instead (BROWSE, STANDARD, DEEP)
 - `-o, --output` - Output directory for artifacts
 - `--json` - Output results as JSON
 - `--yaml` - Output results as YAML

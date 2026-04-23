@@ -3,6 +3,9 @@ package com.i2vision.discover.artifact
 import com.i2vision.discover.flow.Flow
 import com.i2vision.discover.logic.BusinessRule
 import com.i2vision.discover.structure.Component
+import com.i2vision.discover.pipeline.VisionRequirement
+import com.i2vision.discover.pipeline.VisionConstraint
+import com.i2vision.discover.pipeline.VisionCodeEvidence
 import com.i2vision.storage.api.CacheStore
 import com.i2vision.storage.model.ArtifactRef
 import com.i2vision.storage.model.Layer
@@ -257,5 +260,123 @@ class ArtifactWriter(
         log.debug("[ARTIFACT_WRITER] Wrote discovery summary: {}", ref.name)
         
         return ref
+    }
+    
+    /**
+     * Write Vision layer artifacts to the semantic cache using CacheStore.
+     * 
+     * @param moduleName Module name (cluster ID)
+     * @param requirements List of vision requirements
+     * @param constraints List of vision constraints
+     * @return List of written artifact references
+     */
+    suspend fun writeVisionArtifacts(
+        moduleName: String,
+        requirements: List<VisionRequirement>,
+        constraints: List<VisionConstraint>
+    ): List<ArtifactRef> {
+        log.info("[ARTIFACT_WRITER] Writing {} requirements, {} constraints to vision layer", 
+            requirements.size, constraints.size)
+        
+        val writtenArtifacts = mutableListOf<ArtifactRef>()
+        
+        // Write requirements
+        requirements.forEach { requirement ->
+            val safeId = sanitizeFilename(requirement.id)
+            val ref = ArtifactRef(
+                module = moduleName,
+                layer = Layer.VISION,
+                name = "${safeId}.yaml"
+            )
+            
+            val requirementData = mapOf(
+                "id" to requirement.id,
+                "title" to requirement.title,
+                "docRef" to requirement.docRef,
+                "rationaleRef" to requirement.rationaleRef,
+                "acceptanceCriteriaRefs" to requirement.acceptanceCriteriaRefs,
+                "priority" to requirement.priority.name,
+                "source" to requirement.source.name,
+                "confidence" to requirement.confidence,
+                "evidence" to requirement.evidence.map { evidence ->
+                    mapOf(
+                        "file" to evidence.file,
+                        "line" to evidence.line,
+                        "pattern" to evidence.pattern,
+                        "description" to evidence.description
+                    )
+                }
+            )
+            
+            try {
+                cacheStore.put(ref, yaml.dump(requirementData).toByteArray())
+                log.debug("[ARTIFACT_WRITER] Wrote vision requirement: {}", ref.name)
+                writtenArtifacts.add(ref)
+            } catch (e: Exception) {
+                log.error("[ARTIFACT_WRITER] Failed to write vision requirement: {}", ref.name, e)
+            }
+        }
+        
+        // Write constraints
+        constraints.forEach { constraint ->
+            val safeId = sanitizeFilename(constraint.id)
+            val ref = ArtifactRef(
+                module = moduleName,
+                layer = Layer.VISION,
+                name = "${safeId}.yaml"
+            )
+            
+            val constraintData = mapOf(
+                "id" to constraint.id,
+                "docRef" to constraint.docRef,
+                "type" to constraint.type.name,
+                "severity" to constraint.severity.name,
+                "confidence" to constraint.confidence,
+                "source" to constraint.source.name,
+                "evidence" to constraint.evidence.map { evidence ->
+                    mapOf(
+                        "file" to evidence.file,
+                        "line" to evidence.line,
+                        "pattern" to evidence.pattern,
+                        "description" to evidence.description
+                    )
+                }
+            )
+            
+            try {
+                cacheStore.put(ref, yaml.dump(constraintData).toByteArray())
+                log.debug("[ARTIFACT_WRITER] Wrote vision constraint: {}", ref.name)
+                writtenArtifacts.add(ref)
+            } catch (e: Exception) {
+                log.error("[ARTIFACT_WRITER] Failed to write vision constraint: {}", ref.name, e)
+            }
+        }
+        
+        log.info("[ARTIFACT_WRITER] Wrote {} vision artifact files", writtenArtifacts.size)
+        return writtenArtifacts
+    }
+    
+    /**
+     * Sanitize a string for use as a filename.
+     * Removes or replaces characters that are invalid in filesystem paths.
+     */
+    private fun sanitizeFilename(name: String): String {
+        return name
+            .replace("\"", "")           // Remove double quotes
+            .replace("'", "")            // Remove single quotes
+            .replace(",", "")            // Remove commas
+            .replace(":", "-")           // Replace colons with hyphens
+            .replace("/", "-")           // Replace slashes with hyphens
+            .replace("\\", "-")          // Replace backslashes with hyphens
+            .replace("*", "")            // Remove asterisks
+            .replace("?", "")            // Remove question marks
+            .replace("<", "")            // Remove less than
+            .replace(">", "")            // Remove greater than
+            .replace("|", "")            // Remove pipe
+            .replace(Regex("\\s+"), "-") // Replace whitespace with hyphens
+            .replace(Regex("-+"), "-")   // Collapse multiple hyphens
+            .trim('-')                   // Remove leading/trailing hyphens
+            .lowercase()                 // Lowercase for consistency
+            .take(100)                   // Limit filename length
     }
 }

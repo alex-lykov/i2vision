@@ -3,6 +3,7 @@ package com.i2vision.storage.impl
 import com.i2vision.storage.I2VisionPaths
 import com.i2vision.storage.model.StorageConstants
 import com.i2vision.vslfc.VslfcStructure
+import kotlinx.coroutines.runBlocking
 import java.io.File
 
 /**
@@ -86,15 +87,9 @@ class RolloutManager {
                 }
             }
             
-            // 6. Create semantic cache root
-            val semanticCache = File(projectRoot, StorageConstants.SEMANTIC_CACHE_DIR)
-            if (semanticCache.mkdirs()) {
-                created.add(semanticCache.path)
-            } else {
-                skipped.add(semanticCache.path)
-            }
+            // Semantic cache is NOT created in project root - it's in user home via I2VisionPaths
             
-            // 7. Create control-plane directories
+            // 6. Create control-plane directories
             val configDir = File(visionAiDir, "config")
             if (configDir.mkdirs()) created.add(configDir.path) else skipped.add(configDir.path)
             
@@ -175,11 +170,7 @@ class RolloutManager {
             }
         }
         
-        // Check semantic cache
-        val semanticCache = File(projectRoot, StorageConstants.SEMANTIC_CACHE_DIR)
-        if (!semanticCache.exists()) {
-            missing.add(semanticCache.path)
-        }
+        // Semantic cache is NOT in project root - it's in user home via I2VisionPaths
         
         return RolloutValidationResult(
             valid = missing.isEmpty() && invalid.isEmpty(),
@@ -197,7 +188,17 @@ class RolloutManager {
      */
     fun needsRollout(projectRoot: File): Boolean {
         val visionAiDir = File(projectRoot, StorageConstants.VISION_AI_DIR)
-        return !visionAiDir.exists()
+        if (!visionAiDir.exists()) {
+            return true
+        }
+        
+        // Check if structure is complete by validating it
+        val validationResult = runBlocking {
+            validate(projectRoot)
+        }
+        
+        // Rollout is needed if validation fails (missing items)
+        return !validationResult.valid
     }
     
     /**

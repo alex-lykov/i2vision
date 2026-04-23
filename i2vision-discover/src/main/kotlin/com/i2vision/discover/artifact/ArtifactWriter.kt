@@ -308,7 +308,7 @@ class ArtifactWriter(
             )
 
             val requirementData = mutableMapOf<String, Any>()
-            requirementData["id"] = requirement.id
+            requirement.id?.let { requirementData["id"] = it }
             requirement.title?.let { requirementData["title"] = it }
             requirement.docRef?.let { requirementData["docRef"] = it }
             requirement.rationaleRef?.let { requirementData["rationaleRef"] = it }
@@ -317,7 +317,8 @@ class ArtifactWriter(
             requirement.source?.let { requirementData["source"] = it.name }
             requirement.confidence?.let { requirementData["confidence"] = it }
             requirement.evidence?.let { evidence ->
-                requirementData["evidence"] = evidence.map { ev ->
+                val filteredEvidence = evidence.mapNotNull { ev ->
+                    if (ev == null) return@mapNotNull null
                     mapOf(
                         "file" to (ev.file ?: ""),
                         "line" to (ev.line ?: 0),
@@ -325,12 +326,32 @@ class ArtifactWriter(
                         "description" to (ev.description ?: "")
                     )
                 }
+                if (filteredEvidence.isNotEmpty()) {
+                    requirementData["evidence"] = filteredEvidence
+                }
             }
 
             try {
-                cacheStore.put(ref, yaml.dump(requirementData).toByteArray())
-                log.debug("[ARTIFACT_WRITER] Wrote vision requirement: {}", ref.name)
-                writtenArtifacts.add(ref)
+                // Filter out null values and empty collections before YAML serialization
+                val filteredData = requirementData.filterValues { it != null && it != "" && it != 0 }
+                // Also filter out empty lists
+                val cleanedData = filteredData.filterValues { 
+                    when (it) {
+                        is List<*> -> it.isNotEmpty()
+                        is Map<*, *> -> it.isNotEmpty()
+                        else -> true
+                    }
+                }
+                if (cleanedData.isNotEmpty()) {
+                    // Recursively clean nested structures to remove any nulls
+                    val deepCleaned = cleanNestedData(cleanedData)
+                    val yamlString = yaml.dump(deepCleaned)
+                    cacheStore.put(ref, yamlString.toByteArray())
+                    log.debug("[ARTIFACT_WRITER] Wrote vision requirement: {}", ref.name)
+                    writtenArtifacts.add(ref)
+                } else {
+                    log.warn("[ARTIFACT_WRITER] Skipping vision requirement with no data: {}", ref.name)
+                }
             } catch (e: Exception) {
                 log.error("[ARTIFACT_WRITER] Failed to write vision requirement: {}", ref.name, e)
             }
@@ -346,14 +367,15 @@ class ArtifactWriter(
             )
 
             val constraintData = mutableMapOf<String, Any>()
-            constraintData["id"] = constraint.id
+            constraint.id?.let { constraintData["id"] = it }
             constraint.docRef?.let { constraintData["docRef"] = it }
             constraint.type?.let { constraintData["type"] = it.name }
             constraint.severity?.let { constraintData["severity"] = it.name }
             constraint.confidence?.let { constraintData["confidence"] = it }
             constraint.source?.let { constraintData["source"] = it.name }
             constraint.evidence?.let { evidence ->
-                constraintData["evidence"] = evidence.map { ev ->
+                val filteredEvidence = evidence.mapNotNull { ev ->
+                    if (ev == null) return@mapNotNull null
                     mapOf(
                         "file" to (ev.file ?: ""),
                         "line" to (ev.line ?: 0),
@@ -361,12 +383,22 @@ class ArtifactWriter(
                         "description" to (ev.description ?: "")
                     )
                 }
+                if (filteredEvidence.isNotEmpty()) {
+                    constraintData["evidence"] = filteredEvidence
+                }
             }
 
             try {
-                cacheStore.put(ref, yaml.dump(constraintData).toByteArray())
-                log.debug("[ARTIFACT_WRITER] Wrote vision constraint: {}", ref.name)
-                writtenArtifacts.add(ref)
+                if (constraintData.isNotEmpty()) {
+                    // Recursively clean nested structures to remove any nulls
+                    val deepCleaned = cleanNestedData(constraintData)
+                    val yamlString = yaml.dump(deepCleaned)
+                    cacheStore.put(ref, yamlString.toByteArray())
+                    log.debug("[ARTIFACT_WRITER] Wrote vision constraint: {}", ref.name)
+                    writtenArtifacts.add(ref)
+                } else {
+                    log.warn("[ARTIFACT_WRITER] Skipping vision constraint with no data: {}", ref.name)
+                }
             } catch (e: Exception) {
                 log.error("[ARTIFACT_WRITER] Failed to write vision constraint: {}", ref.name, e)
             }
@@ -398,5 +430,28 @@ class ArtifactWriter(
             .trim('-')                   // Remove leading/trailing hyphens
             .lowercase()                 // Lowercase for consistency
             .take(100)                   // Limit filename length
+    }
+
+    /**
+     * Recursively clean nested data structures to remove null values.
+     * This prevents SnakeYAML from encountering null values during serialization.
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun cleanNestedData(data: Any): Any {
+        return when (data) {
+            is Map<*, *> -> {
+                data.entries
+                    .filter { it.key != null && it.value != null }
+                    .associate { (key, value) ->
+                        key as String to cleanNestedData(value!!)
+                    }
+            }
+            is List<*> -> {
+                data
+                    .filterNotNull()
+                    .map { cleanNestedData(it!!) }
+            }
+            else -> data
+        }
     }
 }

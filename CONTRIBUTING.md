@@ -23,7 +23,7 @@ When you open your first PR, a bot will ask you to click "I Agree." That's it. O
 ## Development Setup
 
 ```bash
-git clone https://github.com/i2vision/i2vision.git
+git clone https://github.com/alex-lykov/i2vision/i2vision.git
 cd i2vision
 ./gradlew build
 ```
@@ -37,4 +37,4 @@ cd i2vision
 
 ## Questions?
 
-Open a [Discussion](https://github.com/i2vision/i2vision/discussions) or issue.
+Open a [Discussion](https://github.com/alex-lykov/i2vision/i2vision/discussions) or issue.

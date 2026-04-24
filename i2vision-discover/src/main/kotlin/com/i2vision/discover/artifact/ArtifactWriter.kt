@@ -345,10 +345,22 @@ class ArtifactWriter(
                 if (cleanedData.isNotEmpty()) {
                     // Recursively clean nested structures to remove any nulls
                     val deepCleaned = cleanNestedData(cleanedData)
-                    val yamlString = yaml.dump(deepCleaned)
-                    cacheStore.put(ref, yamlString.toByteArray())
-                    log.debug("[ARTIFACT_WRITER] Wrote vision requirement: {}", ref.name)
-                    writtenArtifacts.add(ref)
+                    
+                    // Check if deep cleaning resulted in empty structure
+                    val hasValidData = when (deepCleaned) {
+                        is Map<*, *> -> deepCleaned.isNotEmpty()
+                        is List<*> -> deepCleaned.isNotEmpty()
+                        else -> true
+                    }
+                    
+                    if (hasValidData) {
+                        val yamlString = yaml.dump(deepCleaned)
+                        cacheStore.put(ref, yamlString.toByteArray())
+                        log.debug("[ARTIFACT_WRITER] Wrote vision requirement: {}", ref.name)
+                        writtenArtifacts.add(ref)
+                    } else {
+                        log.warn("[ARTIFACT_WRITER] Skipping vision requirement with no data after cleaning: {}", ref.name)
+                    }
                 } else {
                     log.warn("[ARTIFACT_WRITER] Skipping vision requirement with no data: {}", ref.name)
                 }

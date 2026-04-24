@@ -72,8 +72,8 @@ publishing {
                 }
 
                 scm {
-                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/llm-client.git")
-                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/llm-client.git")
+                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/llm-client")
+                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/llm-client")
                     url.set("https://github.com/alex-lykov/i2vision/llm-client")
                 }
             }

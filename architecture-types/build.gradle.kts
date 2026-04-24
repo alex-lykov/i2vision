@@ -62,8 +62,8 @@ publishing {
                 }
 
                 scm {
-                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/architecture-types.git")
-                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/architecture-types.git")
+                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/architecture-types")
+                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/architecture-types")
                     url.set("https://github.com/alex-lykov/i2vision/architecture-types")
                 }
             }

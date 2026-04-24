@@ -72,8 +72,8 @@ publishing {
                 }
 
                 scm {
-                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/storage-core.git")
-                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/storage-core.git")
+                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/storage-core")
+                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/storage-core")
                     url.set("https://github.com/alex-lykov/i2vision/storage-core")
                 }
             }

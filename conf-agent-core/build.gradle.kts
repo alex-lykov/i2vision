@@ -75,8 +75,8 @@ publishing {
                 }
 
                 scm {
-                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/conf-agent-core.git")
-                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/conf-agent-core.git")
+                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/conf-agent-core")
+                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/conf-agent-core")
                     url.set("https://github.com/alex-lykov/i2vision/conf-agent-core")
                 }
             }

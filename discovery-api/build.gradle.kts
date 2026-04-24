@@ -67,8 +67,8 @@ publishing {
                 }
 
                 scm {
-                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/discovery-api.git")
-                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/discovery-api.git")
+                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/discovery-api")
+                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/discovery-api")
                     url.set("https://github.com/alex-lykov/i2vision/discovery-api")
                 }
             }

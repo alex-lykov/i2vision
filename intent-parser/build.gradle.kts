@@ -62,8 +62,8 @@ publishing {
                 }
 
                 scm {
-                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/intent-parser.git")
-                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/intent-parser.git")
+                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/intent-parser")
+                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/intent-parser")
                     url.set("https://github.com/alex-lykov/i2vision/intent-parser")
                 }
             }

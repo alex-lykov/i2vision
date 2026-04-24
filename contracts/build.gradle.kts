@@ -72,8 +72,8 @@ publishing {
                 }
 
                 scm {
-                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/contracts.git")
-                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/contracts.git")
+                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/contracts")
+                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/contracts")
                     url.set("https://github.com/alex-lykov/i2vision/contracts")
                 }
             }

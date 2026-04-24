@@ -84,8 +84,8 @@ publishing {
                 }
 
                 scm {
-                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/i2vision-discover.git")
-                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/i2vision-discover.git")
+                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/i2vision-discover")
+                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/i2vision-discover")
                     url.set("https://github.com/alex-lykov/i2vision/i2vision-discover")
                 }
             }

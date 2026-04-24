@@ -74,8 +74,8 @@ publishing {
                 }
 
                 scm {
-                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/discovery-engine.git")
-                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/discovery-engine.git")
+                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/discovery-engine")
+                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/discovery-engine")
                     url.set("https://github.com/alex-lykov/i2vision/discovery-engine")
                 }
             }

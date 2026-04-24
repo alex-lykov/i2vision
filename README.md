@@ -166,7 +166,7 @@ Don't have a project handy? Run self-discovery—i2vision analyzing i2vision:
 
 ```bash
 # Clone and build
-git clone https://github.com/alex-lykov/i2vision/i2vision.git && cd i2vision
+git clone https://github.com/alex-lykov/i2vision && cd i2vision
 ./gradlew build
 
 # Run self-discovery (analyzes i2vision with i2vision)

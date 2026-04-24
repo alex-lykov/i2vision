@@ -74,4 +74,4 @@ when you open your first PR.
 
 ---
 
-**Questions?** Open a [Discussion](https://github.com/alex-lykov/i2vision.git/discussions).
+**Questions?** Open a [Discussion](https://github.com/alex-lykov/i2vision/discussions).

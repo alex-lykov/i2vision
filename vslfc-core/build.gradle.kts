@@ -68,8 +68,8 @@ publishing {
                 }
 
                 scm {
-                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/vslfc-core.git")
-                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/vslfc-core.git")
+                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/vslfc-core")
+                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/vslfc-core")
                     url.set("https://github.com/alex-lykov/i2vision/vslfc-core")
                 }
             }

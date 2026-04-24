@@ -7,6 +7,9 @@
 
 package com.i2vision.storage.impl.internal
 
+import com.i2vision.storage.I2VisionPaths
+import java.io.File
+
 /**
  * INTERNAL ONLY. This file contains all path knowledge.
  * NO OTHER MODULE SHOULD IMPORT THIS.
@@ -16,35 +19,8 @@ package com.i2vision.storage.impl.internal
  */
 internal object StorageLayout {
 
-    // Semantic cache paths - now in user home directory
-    // Note: SEMANTIC_CACHE is deprecated - use I2VisionPaths.getProjectCacheDir(projectPath) instead
-    @Deprecated("Use I2VisionPaths.getProjectCacheDir(projectPath) instead")
-    val SEMANTIC_CACHE: String = ".semantic-cache"
-    private val TOOLS_DIR: String get() = "$SEMANTIC_CACHE/.tools"
-
     // Vision AI paths (contract definitions)
     const val VISION_AI = ".vision-ai"
-
-    // Contract paths
-    private val CONTRACT_REGISTRY: String get() = "$SEMANTIC_CACHE/contracts/registry.yaml"
-    private val CONTRACT_ARTIFACTS: String get() = "$SEMANTIC_CACHE/contracts"
-
-    /**
-     * Get the cache directory for a module.
-     */
-    fun moduleCacheDir(module: String): String = "$SEMANTIC_CACHE/$module"
-
-    /**
-     * Get the layer directory for a module.
-     */
-    fun layerDir(module: String, layer: String): String =
-        "$SEMANTIC_CACHE/$module/${layer.lowercase()}"
-
-    /**
-     * Get the artifact path for a module/layer/name.
-     */
-    fun artifactPath(module: String, layer: String, name: String): String =
-        "${layerDir(module, layer)}/$name"
 
     /**
      * Get the contract definitions directory for a layer.
@@ -60,33 +36,10 @@ internal object StorageLayout {
 
     /**
      * Get the contract artifacts directory for a layer.
+     * Uses I2VisionPaths for project-specific cache location.
      */
-    fun contractArtifactsDir(layer: String): String =
-        "$CONTRACT_ARTIFACTS/${layer.lowercase()}"
-
-    /**
-     * Get cross-module flows path.
-     */
-    fun crossModuleFlowsPath(): String = "$TOOLS_DIR/cross-module-flows.yaml"
-
-    /**
-     * Get cross-module imports path.
-     */
-    fun crossModuleImportsPath(): String = "$TOOLS_DIR/cross-module-imports.yaml"
-
-    /**
-     * Get complexity artifact path for a module.
-     */
-    fun complexityPath(module: String): String =
-        "${layerDir(module, "code")}/complexity.yaml"
-
-    /**
-     * Get docs directory for a module.
-     */
-    fun docsDir(module: String): String = "$SEMANTIC_CACHE/$module/docs"
-
-    /**
-     * Get metadata file path for an artifact.
-     */
-    fun metadataPath(artifactPath: String): String = "$artifactPath.meta"
+    fun contractArtifactsDir(projectRoot: File, layer: String): File {
+        val cacheDir = I2VisionPaths.getProjectCacheDir(projectRoot.absolutePath)
+        return File(cacheDir, "contracts/${layer.lowercase()}").apply { mkdirs() }
+    }
 }

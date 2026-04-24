@@ -70,19 +70,16 @@ class FileContractStore(
     }
 
     override suspend fun putValidation(contractId: ContractId, result: ValidationResult): PutResult {
-        val relativePath =
-            "${StorageLayout.contractArtifactsDir(contractId.sourceLayer.name.lowercase())}/${contractId.name}-validation.yaml"
-        val file = File(projectRoot, relativePath)
-        file.parentFile?.mkdirs()
+        val artifactsDir = StorageLayout.contractArtifactsDir(projectRoot, contractId.sourceLayer.name.lowercase())
+        val file = File(artifactsDir, "${contractId.name}-validation.yaml")
         file.writeText(json.encodeToString(result))
 
         return PutResult.Success(contractId)
     }
 
     override suspend fun getValidation(contractId: ContractId): ValidationResult? {
-        val relativePath =
-            "${StorageLayout.contractArtifactsDir(contractId.sourceLayer.name.lowercase())}/${contractId.name}-validation.yaml"
-        val file = File(projectRoot, relativePath)
+        val artifactsDir = StorageLayout.contractArtifactsDir(projectRoot, contractId.sourceLayer.name.lowercase())
+        val file = File(artifactsDir, "${contractId.name}-validation.yaml")
         if (!file.exists()) return null
 
         return json.decodeFromString<ValidationResult>(file.readText())

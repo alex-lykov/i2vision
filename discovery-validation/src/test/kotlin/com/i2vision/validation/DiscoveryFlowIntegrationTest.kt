@@ -27,14 +27,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import com.i2vision.instant.context.ContextProvider as InstantContextProvider
 
-/**
- * Extension function to extract the first number from a string
- */
-private fun String.extractNumber(): Int {
-    val regex = Regex("\\d+")
-    val match = regex.find(this)
-    return match?.value?.toIntOrNull() ?: 0
-}
+// Extension function to extract the first number from a string (currently unused but kept for future utility)
 
 /**
  * Phased Discovery Flow Integration Tests
@@ -378,7 +371,7 @@ class DiscoveryFlowIntegrationTest {
                 val discoveryResult = phase2_2_runDiscovery(root, depth = DiscoveryDepth.STANDARD)
 
                 // Phase 3.3: Validate artifact content
-                val validation = phase3_3_validateArtifactContent(root, discoveryResult)
+                val validation = phase3_3_validateArtifactContent(root)
 
                 // Verify validation
                 assertNotNull(validation, "Validation should complete")
@@ -432,14 +425,14 @@ class DiscoveryFlowIntegrationTest {
 
     // ========== PHASE 4: Learning Feedback ==========
 
-    @Test
+     @Test
     fun `phase4 learning feedback records results for pattern improvement`() {
         runBlocking {
             val root = phase0_setupTestProject()
 
             try {
                 phase1_rolloutStructure(root)
-                val discoveryResult = phase2_2_runDiscovery(root, depth = DiscoveryDepth.STANDARD)
+                phase2_2_runDiscovery(root, depth = DiscoveryDepth.STANDARD)
                 val analysisResult = phase3_2_analyzeResults(root)
 
                 // Phase 4: Learning feedback
@@ -466,14 +459,14 @@ class DiscoveryFlowIntegrationTest {
 
     // ========== PHASE 5: Incremental Sync ==========
 
-    @Test
+     @Test
     fun `phase5 incremental sync updates only changed artifacts`() {
         runBlocking {
             val root = phase0_setupTestProject()
 
             try {
                 phase1_rolloutStructure(root)
-                val firstRun = phase2_2_runDiscovery(root, depth = DiscoveryDepth.STANDARD)
+                phase2_2_runDiscovery(root, depth = DiscoveryDepth.STANDARD)
 
                 // Modify a single file (use module-a file from sketch folder)
                 val moduleAFile = File(root, "module-a/src/Main.kt")
@@ -628,7 +621,7 @@ class DiscoveryFlowIntegrationTest {
                 val analysisResult = phase3_2_analyzeResults(root)
                 assertTrue(analysisResult.artifactCount >= 0, "Artifacts should be counted")
 
-                val validation = phase3_3_validateArtifactContent(root, discoveryResult)
+                val validation = phase3_3_validateArtifactContent(root)
                 assertNotNull(validation, "Artifact validation should complete")
 
                 // Strict validation - make it optional
@@ -666,7 +659,7 @@ class DiscoveryFlowIntegrationTest {
      * Phase 0: Test Setup/Inits
      * Copies real sketch folder to temporary directory for testing
      */
-    private suspend fun phase0_setupTestProject(): File {
+    private fun phase0_setupTestProject(): File {
         val root = Files.createTempDirectory("discovery-phase-").toFile()
         tempDirs.add(root) // Register for cleanup
         println("[Setup] Created temp directory: ${root.absolutePath}")
@@ -737,7 +730,7 @@ class DiscoveryFlowIntegrationTest {
      * Phase 2.0: Architecture Detection
      * Detects architecture with cluster detection
      */
-    private suspend fun phase2_0_detectArchitecture(root: File, useLlm: Boolean): ArchitectureDetectionResult {
+    private fun phase2_0_detectArchitecture(root: File, useLlm: Boolean): ArchitectureDetectionResult {
         val signatureBuilder = SignatureBuilder(
             projectRoot = root.path,
             confidenceThreshold = 0.7,
@@ -760,7 +753,7 @@ class DiscoveryFlowIntegrationTest {
      * Phase 2.1: Purge Artifacts
      * Clears existing semantic cache artifacts
      */
-    private suspend fun phase2_1_purgeArtifacts(root: File) {
+    private fun phase2_1_purgeArtifacts(root: File) {
         val semanticCache = I2VisionPaths.getProjectCacheDir(root.absolutePath)
         if (semanticCache.exists()) {
             semanticCache.deleteRecursively()
@@ -852,7 +845,7 @@ class DiscoveryFlowIntegrationTest {
      * Phase 3.3: Validate Artifact Content
      * Validates that artifact files exist
      */
-    private fun phase3_3_validateArtifactContent(root: File, discoveryResult: DiscoveryResult): ArtifactValidation {
+    private fun phase3_3_validateArtifactContent(root: File): ArtifactValidation {
         val semanticCache = I2VisionPaths.getProjectCacheDir(root.absolutePath)
         val allArtifactsExist = if (semanticCache.exists()) {
             semanticCache.walkTopDown()
@@ -892,7 +885,7 @@ class DiscoveryFlowIntegrationTest {
      * Records learning feedback for pattern improvement
      * Stores feedback in a simple JSON file for testing purposes
      */
-    private suspend fun phase4_recordFeedback(
+    private fun phase4_recordFeedback(
         runId: String,
         signature: ArchitectureDetectionResult,
         depth: DiscoveryDepth,
@@ -928,7 +921,7 @@ class DiscoveryFlowIntegrationTest {
      * Phase 5: Incremental Sync
      * Updates only changed artifacts based on file hash tracking
      */
-    private suspend fun phase5_incrementalSync(root: File, changedFile: File): SyncResult {
+    private fun phase5_incrementalSync(root: File, changedFile: File): SyncResult {
         // Calculate hash of changed file
         val currentHash = changedFile.readText().hashCode()
 
@@ -1079,17 +1072,11 @@ class DiscoveryFlowIntegrationTest {
 
         // Check cycles (if specified)
         val expectedCycles = expected["cycles"] as? Int
-        if (expectedCycles != null) {
-            // For now, we can't easily check cycles, so we'll skip this validation
-            // failures.add("Cycle validation not implemented yet")
-        }
+        // Cycle validation not yet implemented - reserved for future enhancements
 
         // Check violations (if specified)
         val expectedViolations = expected["violations"] as? Int
-        if (expectedViolations != null) {
-            // For now, we can't easily check violations, so we'll skip this validation
-            // failures.add("Violation validation not implemented yet")
-        }
+        // Violation validation not yet implemented - reserved for future enhancements
 
         // Check components count
         val expectedComponents = expected["components"] as? Int
@@ -1323,7 +1310,7 @@ class DiscoveryFlowIntegrationTest {
             try {
                 val content = yamlFile.readText()
                 content.isNotBlank() && !content.contains("null") && !content.contains("undefined")
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 false
             }
         }

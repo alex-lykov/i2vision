@@ -28,20 +28,19 @@ Technical reference material:
 
 ## Diagrams
 
-Visual documentation:
+Visual documentation (click to view in browser):
 
-- [Architecture Detection Flow](diagrams/architecture-detection-flow.sd) - Build system, cluster, and pattern detection
-- [CLI Flow](diagrams/cli-flow.sd) - Command parsing and execution
-- [Cluster-Based Discovery](diagrams/cluster-based-discovery.sd) - Multi-cluster discovery pipeline
-- [Contract Lifecycle](diagrams/contract-lifecycle.sd) - Contract definition and validation flow
-- [Discovery Flow](diagrams/discovery-flow.sd) - Unified framework discovery pipeline
-- [Full Project Discovery](diagrams/full-project-discovery-flow.sd) - End-to-end discovery with architecture detection
-- [Incremental Sync Flow](diagrams/incremental-sync-flow.sd) - File change detection and targeted rediscovery
-- [Instant Context Flow](diagrams/instant-context-flow.sd) - Task-aware context optimization
-- [MCP Server Flow](diagrams/mcp-server-flow.sd) - MCP tool registration and execution
-- [Parallel Discovery Concurrency](diagrams/parallel-discovery-concurrency.sd) - Concurrent cluster processing
-  techniques
-- [Quality Metrics Flow](diagrams/quality-metrics-flow.sd) - Cohesion, coupling, and complexity analysis
+- **[Architecture Detection Flow](diagrams/html/architecture-detection-flow.html)** - Build system, cluster, and pattern detection
+- **[CLI Flow](diagrams/html/cli-flow.html)** - Command parsing and execution
+- **[Cluster-Based Discovery](diagrams/html/cluster-based-discovery.html)** - Multi-cluster discovery pipeline
+- **[Contract Lifecycle](diagrams/html/contract-lifecycle.html)** - Contract definition and validation flow
+- **[Discovery Flow](diagrams/html/discovery-flow.html)** - Unified framework discovery pipeline
+- **[Full Project Discovery](diagrams/html/full-project-discovery-flow.html)** - End-to-end discovery with architecture detection
+- **[Incremental Sync Flow](diagrams/html/incremental-sync-flow.html)** - File change detection and targeted rediscovery
+- **[Instant Context Flow](diagrams/html/instant-context-flow.html)** - Task-aware context optimization
+- **[MCP Server Flow](diagrams/html/mcp-server-flow.html)** - MCP tool registration and execution
+- **[Parallel Discovery Concurrency](diagrams/html/parallel-discovery-concurrency.html)** - Concurrent cluster processing techniques
+- **[Quality Metrics Flow](diagrams/html/quality-metrics-flow.html)** - Cohesion, coupling, and complexity analysis
 
 ## Module Documentation
 

@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-package com.i2vision.discovery.api.models
+package com.i2vision.discover.api.models
 
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json

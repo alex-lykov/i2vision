@@ -39,8 +39,5 @@ include("i2vision-mcp")
 include("index-provider")
 include("link-service")
 
-// Build tests
-include("build-tests")
-
 // Internal validation module (not published)
 include("discovery-validation")

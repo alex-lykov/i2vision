@@ -72,4 +72,4 @@ import ai.koog.agents.core.tools.ToolRegistry
 
 - [MCP Tools Guide](mcp-tools.md) - Detailed MCP tool reference
 - [Instant Context Guide](instant-context.md) - Task-aware context optimization
-- **[MCP Server Flow Diagram](../diagrams/html/mcp-server-flow.html)** - MCP server architecture
+- **[MCP Server Flow Diagram](../diagrams/links/mcp-server-flow.md)** - MCP server architecture

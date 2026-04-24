@@ -167,7 +167,7 @@ All VSLFC artifacts are stored in the OS user directory for portability across p
 
 ### Contract Lifecycle
 
-See **[Contract Lifecycle Flow](../diagrams/html/contract-lifecycle.html)** for a detailed sequence diagram showing the complete
+See **[Contract Lifecycle Flow](../diagrams/links/contract-lifecycle.md)** for a detailed sequence diagram showing the complete
 contract lifecycle from definition to validation.
 
 ---

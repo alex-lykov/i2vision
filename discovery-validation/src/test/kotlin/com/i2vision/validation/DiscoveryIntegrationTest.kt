@@ -14,7 +14,7 @@ import com.i2vision.discover.pipeline.DiscoveryPipelineImpl
 import com.i2vision.intent.IntentParser
 import com.i2vision.storage.I2VisionPaths
 import com.i2vision.storage.impl.FileCacheStore
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import org.yaml.snakeyaml.Yaml
 import java.io.File
@@ -87,7 +87,7 @@ class DiscoveryIntegrationTest {
     // ========== PHASE 0: Architecture Detection ==========
 
     @Test
-    fun `phase0 architecture detection identifies project structure`() = runBlocking {
+    fun `phase0 architecture detection identifies project structure`() = runTest {
         val projectRoot = getSketchRoot()
         val signatureBuilder = SignatureBuilder(projectRoot.path)
         val signature = signatureBuilder.build()
@@ -98,7 +98,7 @@ class DiscoveryIntegrationTest {
     }
 
     @Test
-    fun `phase0 architecture detection provides cluster information`() = runBlocking {
+    fun `phase0 architecture detection provides cluster information`() = runTest {
         val projectRoot = getSketchRoot()
         val signatureBuilder = SignatureBuilder(projectRoot.path)
         val signature = signatureBuilder.build()
@@ -132,62 +132,56 @@ class DiscoveryIntegrationTest {
     // ========== PHASE 2: Discovery Pipeline ==========
 
     @Test
-    fun `phase2 discovery pipeline executes with standard depth`() {
-        runBlocking {
-            val projectRoot = getSketchRoot()
-            val (discovery, _, _) = setupDiscovery(projectRoot)
+    fun `phase2 discovery pipeline executes with standard depth`() = runTest {
+        val projectRoot = getSketchRoot()
+        val (discovery, _, _) = setupDiscovery(projectRoot)
 
+        val result = discovery.discover(
+            depth = DiscoveryDepth.STANDARD,
+            clusterId = null,
+            contracts = emptyList()
+        )
+
+        assertNotNull(result, "Discovery result should not be null")
+    }
+
+    @Test
+    fun `phase2 discovery pipeline executes with quick depth`() = runTest {
+        val projectRoot = getSketchRoot()
+        val (discovery, _, _) = setupDiscovery(projectRoot)
+
+        val result = discovery.discover(
+            depth = DiscoveryDepth.BROWSE,
+            clusterId = null,
+            contracts = emptyList()
+        )
+
+        assertNotNull(result, "Discovery result should not be null")
+    }
+
+    @Test
+    fun `phase2 discovery pipeline with specific cluster`() = runTest {
+        val projectRoot = getSketchRoot()
+        val signatureBuilder = SignatureBuilder(projectRoot.path)
+        val signature = signatureBuilder.build()
+        val targetCluster = signature.clusters.firstOrNull()?.name
+
+        if (targetCluster != null) {
+            val (discovery, _, _) = setupDiscovery(projectRoot)
             val result = discovery.discover(
                 depth = DiscoveryDepth.STANDARD,
-                clusterId = null,
+                clusterId = targetCluster,
                 contracts = emptyList()
             )
 
-            assertNotNull(result, "Discovery result should not be null")
-        }
-    }
-
-    @Test
-    fun `phase2 discovery pipeline executes with quick depth`() {
-        runBlocking {
-            val projectRoot = getSketchRoot()
-            val (discovery, _, _) = setupDiscovery(projectRoot)
-
-            val result = discovery.discover(
-                depth = DiscoveryDepth.BROWSE,
-                clusterId = null,
-                contracts = emptyList()
-            )
-
-            assertNotNull(result, "Discovery result should not be null")
-        }
-    }
-
-    @Test
-    fun `phase2 discovery pipeline with specific cluster`() {
-        runBlocking {
-            val projectRoot = getSketchRoot()
-            val signatureBuilder = SignatureBuilder(projectRoot.path)
-            val signature = signatureBuilder.build()
-            val targetCluster = signature.clusters.firstOrNull()?.name
-
-            if (targetCluster != null) {
-                val (discovery, _, _) = setupDiscovery(projectRoot)
-                val result = discovery.discover(
-                    depth = DiscoveryDepth.STANDARD,
-                    clusterId = targetCluster,
-                    contracts = emptyList()
-                )
-
-                assertNotNull(result, "Cluster-specific discovery should complete")
-            }
+            assertNotNull(result, "Cluster-specific discovery should complete")
         }
     }
 
     // ========== PHASE 3: Artifact Validation ==========
 
     @Test
-    fun `phase3 semantic cache structure is created`() = runBlocking {
+    fun `phase3 semantic cache structure is created`() = runTest {
         val projectRoot = getSketchRoot()
         val (discovery, _, _) = setupDiscovery(projectRoot)
 
@@ -202,7 +196,7 @@ class DiscoveryIntegrationTest {
     }
 
     @Test
-    fun `phase3 artifact files are written to cache`() = runBlocking {
+    fun `phase3 artifact files are written to cache`() = runTest {
         val projectRoot = getSketchRoot()
         val signatureBuilder = SignatureBuilder(projectRoot.path)
         val signature = signatureBuilder.build()
@@ -227,54 +221,50 @@ class DiscoveryIntegrationTest {
     // ========== INTEGRATION: End-to-End Flow ==========
 
     @Test
-    fun `end to end discovery flow from architecture to artifacts`() {
-        runBlocking {
-            val projectRoot = getSketchRoot()
+    fun `end to end discovery flow from architecture to artifacts`() = runTest {
+        val projectRoot = getSketchRoot()
 
-            // Step 1: Architecture detection
-            val signatureBuilder = SignatureBuilder(projectRoot.path)
-            val signature = signatureBuilder.build()
-            assertTrue(signature.clusters.isNotEmpty(), "Architecture should be detected")
+        // Step 1: Architecture detection
+        val signatureBuilder = SignatureBuilder(projectRoot.path)
+        val signature = signatureBuilder.build()
+        assertTrue(signature.clusters.isNotEmpty(), "Architecture should be detected")
 
-            // Step 2: Intent resolution
-            val intentParser = IntentParser
-            val intent = intentParser.parse(mapOf("intent" to "full_discovery"))
-            assertNotNull(intent, "Intent should be resolved")
+        // Step 2: Intent resolution
+        val intentParser = IntentParser
+        val intent = intentParser.parse(mapOf("intent" to "full_discovery"))
+        assertNotNull(intent, "Intent should be resolved")
 
-            // Step 3: Discovery pipeline
-            val (discovery, _, _) = setupDiscovery(projectRoot)
-            val result = discovery.discover(
-                depth = DiscoveryDepth.STANDARD,
-                clusterId = signature.clusters.firstOrNull()?.name,
-                contracts = emptyList()
-            )
+        // Step 3: Discovery pipeline
+        val (discovery, _, _) = setupDiscovery(projectRoot)
+        val result = discovery.discover(
+            depth = DiscoveryDepth.STANDARD,
+            clusterId = signature.clusters.firstOrNull()?.name,
+            contracts = emptyList()
+        )
 
-            // Step 4: Verify results
-            assertNotNull(result, "Discovery should complete")
-        }
+        // Step 4: Verify results
+        assertNotNull(result, "Discovery should complete")
     }
 
     @Test
-    fun `end to end discovery with cluster specific target`() {
-        runBlocking {
-            val projectRoot = getSketchRoot()
+    fun `end to end discovery with cluster specific target`() = runTest {
+        val projectRoot = getSketchRoot()
 
-            // Detect architecture
-            val signatureBuilder = SignatureBuilder(projectRoot.path)
-            val signature = signatureBuilder.build()
+        // Detect architecture
+        val signatureBuilder = SignatureBuilder(projectRoot.path)
+        val signature = signatureBuilder.build()
 
-            val targetCluster = signature.clusters.firstOrNull()
-            if (targetCluster != null) {
-                // Run discovery for specific cluster
-                val (discovery, _, _) = setupDiscovery(projectRoot)
-                val result = discovery.discover(
-                    depth = DiscoveryDepth.STANDARD,
-                    clusterId = targetCluster.name,
-                    contracts = emptyList()
-                )
+        val targetCluster = signature.clusters.firstOrNull()
+        if (targetCluster != null) {
+            // Run discovery for specific cluster
+            val (discovery, _, _) = setupDiscovery(projectRoot)
+            val result = discovery.discover(
+                depth = DiscoveryDepth.STANDARD,
+                clusterId = targetCluster.name,
+                contracts = emptyList()
+            )
 
-                assertNotNull(result, "Cluster-specific discovery should complete")
-            }
+            assertNotNull(result, "Cluster-specific discovery should complete")
         }
     }
 

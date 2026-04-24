@@ -11,7 +11,7 @@ import com.i2vision.discover.pipeline.Priority
 import com.i2vision.discover.pipeline.Source
 import com.i2vision.discover.pipeline.VisionRequirement
 import com.i2vision.storage.impl.FileCacheStore
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import org.junit.Test
 import kotlin.test.assertTrue
 import java.io.File
@@ -22,7 +22,7 @@ import java.io.File
 class ArtifactWriterTest {
 
     @Test
-    fun `should handle vision requirements with null data`() = runBlocking {
+    fun `should handle vision requirements with null data`() = runTest {
         // Given: A temporary cache directory
         val tempDir = java.nio.file.Files.createTempDirectory("artifact-writer-test").toFile()
         try {
@@ -57,7 +57,7 @@ class ArtifactWriterTest {
     }
 
     @Test
-    fun `should handle vision requirements with empty nested structures`() = runBlocking {
+    fun `should handle vision requirements with empty nested structures`() = runTest {
         // Given: A temporary cache directory
         val tempDir = java.nio.file.Files.createTempDirectory("artifact-writer-test").toFile()
         try {

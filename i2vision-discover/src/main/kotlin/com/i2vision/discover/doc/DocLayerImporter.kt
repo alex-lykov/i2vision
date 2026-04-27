@@ -42,7 +42,7 @@ import java.time.Instant
  * val importer = DocLayerImporter(projectRoot)
  * 
  * // Import STRUCTURE layer from docs/architecture.md
- * val contract = parser.parse(File(".vision-ai/.structure/contracts/with-docs.yaml"))
+ * val contract = parser.parse(File(".vision-ai/.structure/contract.yaml"))
  * val result = importer.importFromDocs(contract)
  * 
  * // Result contains:

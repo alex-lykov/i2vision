@@ -53,6 +53,81 @@ contracts.forEach { contract ->
 
 ## Features
 
+### VSLFC Layer Contracts
+
+VSLFC (Vision-Structure-Logic-Flow-Code) layers use a simplified contract structure:
+
+```
+.vision-ai/
+├── .vision/
+│   ├── agent-config.yaml
+│   └── contract.yaml          # All Vision contracts
+├── .structure/
+│   ├── agent-config.yaml
+│   └── contract.yaml          # All Structure contracts
+├── .logic/
+│   ├── agent-config.yaml
+│   └── contract.yaml          # All Logic contracts
+├── .flow/
+│   ├── agent-config.yaml
+│   └── contract.yaml          # All Flow contracts
+└── .code/
+    ├── agent-config.yaml
+    └── contract.yaml          # All Code contracts
+```
+
+Each `contract.yaml` contains all contracts for that layer:
+- Documentation contracts (mapping doc sections to layer fields)
+- Inter-layer contracts (incoming/outgoing between layers)
+- Validation rules
+
+#### Example contract.yaml
+
+```yaml
+# Vision Layer Contracts
+version: "1.0"
+layer: VISION
+
+documentation:
+  primary: "README.md"
+  secondary: []
+
+contracts:
+  - id: "vision-documentation"
+    name: "Vision Documentation Contract"
+    mappings:
+      - doc_section: "## Purpose"
+        layer_field: "requirements"
+        parser: "free_text"
+        confidence: 0.9
+
+  - id: "vision-to-structure"
+    name: "Vision to Structure Contract"
+    direction: "outgoing"
+    mappings:
+      - requirement_pattern: "REQ-.*"
+        component_pattern: ".*Service"
+
+validation:
+  - rule: "every_doc_requirement_has_code_evidence"
+    severity: "warning"
+```
+
+#### Loading VSLFC Layer Contracts
+
+```kotlin
+import com.i2vision.vslfc.DocContractYamlParser
+import com.i2vision.vslfc.VSLFCLayerContracts
+
+val parser = DocContractYamlParser(projectRoot)
+val visionContracts = parser.parseAllContractsForLayer(VSLFCLayerContracts.Layer.VISION)
+
+visionContracts.forEach { contract ->
+    println("Contract: ${contract.contractId}")
+    println("Layer: ${contract.layer}")
+}
+```
+
 ### Component Categories
 
 - **SOURCE**: Primary source code

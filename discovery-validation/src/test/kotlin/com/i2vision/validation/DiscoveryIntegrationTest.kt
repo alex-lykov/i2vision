@@ -49,6 +49,17 @@ class DiscoveryIntegrationTest {
     }
 
     /**
+     * Get all available sketches for testing
+     */
+    private fun getAllSketches(): List<String> {
+        val sketchesDir = File(javaClass.classLoader.getResource("sketches").toURI())
+        return sketchesDir.listFiles()
+            ?.filter { it.isDirectory }
+            ?.map { it.name }
+            ?.sorted() ?: emptyList()
+    }
+
+    /**
      * Setup discovery pipeline with standard configuration
      */
     private fun setupDiscovery(projectRoot: File): Triple<DiscoveryPipelineImpl, FileCacheStore, File> {
@@ -244,6 +255,38 @@ class DiscoveryIntegrationTest {
 
         // Step 4: Verify results
         assertNotNull(result, "Discovery should complete")
+    }
+
+    @Test
+    fun `end to end discovery over all sketches`() = runTest {
+        val sketches = getAllSketches()
+        assertTrue(sketches.isNotEmpty(), "Should have sketches to test")
+
+        sketches.forEach { sketchName ->
+            println("[Test] Running discovery for sketch: $sketchName")
+            
+            try {
+                val projectRoot = getSketchRoot(sketchName)
+
+                // Architecture detection
+                val signatureBuilder = SignatureBuilder(projectRoot.path)
+                val signature = signatureBuilder.build()
+                
+                // Discovery pipeline
+                val (discovery, _, _) = setupDiscovery(projectRoot)
+                val result = discovery.discover(
+                    depth = DiscoveryDepth.STANDARD,
+                    clusterId = signature.clusters.firstOrNull()?.name,
+                    contracts = emptyList()
+                )
+
+                assertNotNull(result, "Discovery should complete for sketch: $sketchName")
+                println("[Test] ✓ Discovery completed for sketch: $sketchName")
+            } catch (e: Exception) {
+                println("[Test] ✗ Discovery failed for sketch: $sketchName - ${e.message}")
+                throw e
+            }
+        }
     }
 
     @Test

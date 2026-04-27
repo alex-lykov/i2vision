@@ -8,6 +8,7 @@
 package com.i2vision.discover.pipeline
 
 import com.i2vision.architecture.ArchitectureDetector
+import com.i2vision.arch.signature.SignatureBuilder
 import com.i2vision.discover.api.DiscoveryPipeline
 import com.i2vision.discover.api.IntentResolver
 import com.i2vision.discover.api.models.*
@@ -193,9 +194,17 @@ class DiscoveryPipelineImpl(
             )
             log.info("[DISCOVERY] Found {} entry points", entryPoints.size)
 
-            // Step 4: Cluster suggestions using index-provider
+            // Step 4: Cluster suggestions using architecture detection (SignatureBuilder)
             log.info("[DISCOVERY] Step 4: Generating cluster suggestions")
-            val clusters = indexProvider.findClusters()
+            val signature = SignatureBuilder(projectRoot).build()
+            val clusters = signature.clusters.map { cluster ->
+                com.i2vision.index.ClusterSuggestion(
+                    name = cluster.name,
+                    entryPoints = emptyList(),
+                    files = emptySet(),
+                    cohesion = 1.0
+                )
+            }
 
             artifacts.add(
                 DiscoveryArtifact(

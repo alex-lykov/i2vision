@@ -68,6 +68,7 @@ class DocContractYamlParser(
 
     /**
      * Parse a contract file for a specific VSLFC layer.
+     * Handles both old format (single contract with 'contract' field) and new format (contracts array).
      */
     fun parse(contractFile: File): DocLayerContract {
         log.info("[PARSER] Parsing contract: ${contractFile.path}")
@@ -81,6 +82,17 @@ class DocContractYamlParser(
             if (data == null) {
                 throw ContractParseException("Failed to parse contract ${contractFile.name}: YAML parser returned null (file may be empty or invalid)")
             }
+
+            // Check if this is the new simplified format with contracts array
+            val contractsData = data["contracts"] as? List<Map<String, Any>>
+            if (contractsData != null && contractsData.isNotEmpty()) {
+                // New format: contracts array in single file - parse the first contract
+                val layer = parseLayerFromData(data)
+                val contractData = contractsData[0]
+                return parseContractFromMap(contractData, layer, contractFile)
+            }
+
+            // Old format: single contract per file with 'contract' field
             return parseContract(data, contractFile)
         } catch (e: Exception) {
             val errorMessage = e.message ?: "Unknown error"
@@ -89,32 +101,123 @@ class DocContractYamlParser(
     }
 
     /**
-     * Parse all contracts for all VSLFC layers.
+     * Parse layer from data (for new format where layer is at top level).
      */
-    fun parseAll(): Map<Layer, DocLayerContract> {
-        log.info("[PARSER] Parsing all VSLFC layer contracts")
+    private fun parseLayerFromData(data: Map<String, Any>): VSLFCLayerContracts.Layer {
+        val layerStr = data["layer"] as? String ?: throw ContractParseException("Missing 'layer' field")
+        return when (layerStr.uppercase()) {
+            "VISION" -> VSLFCLayerContracts.Layer.VISION
+            "STRUCTURE" -> VSLFCLayerContracts.Layer.STRUCTURE
+            "LOGIC" -> VSLFCLayerContracts.Layer.LOGIC
+            "FLOW" -> VSLFCLayerContracts.Layer.FLOW
+            "CODE" -> VSLFCLayerContracts.Layer.CODE
+            else -> throw ContractParseException("Invalid layer: $layerStr")
+        }
+    }
 
-        val contracts = mutableMapOf<Layer, DocLayerContract>()
+    /**
+     * Parse all contracts for a specific layer from a single contract.yaml file.
+     * The simplified structure has all contracts for a layer in one file.
+     */
+    fun parseAllContractsForLayer(layer: Layer): List<DocLayerContract> {
+        log.info("[PARSER] Parsing all contracts for ${layer.name} layer")
 
-        Layer.values().forEach { layer ->
-            val contractPath = VSLFCLayerContracts.contractPath(layer)
-            val contractFile = File(projectRoot, contractPath)
+        val contractPath = VSLFCLayerContracts.contractPath(layer)
+        val contractFile = File(projectRoot, contractPath)
 
-            if (contractFile.exists()) {
-                try {
-                    val contract = parse(contractFile)
-                    contracts[layer] = contract
-                    log.info("[PARSER] Loaded contract for ${layer.name}")
-                } catch (e: ContractParseException) {
-                    log.error("[PARSER] Failed to parse ${layer.name} contract: ${e.message}")
-                }
-            } else {
-                log.warn("[PARSER] Contract not found for ${layer.name}: $contractPath")
-            }
+        if (!contractFile.exists()) {
+            log.warn("[PARSER] Contract file not found for ${layer.name}: $contractPath")
+            return emptyList()
         }
 
-        log.info("[PARSER] Loaded ${contracts.size}/${Layer.values().size} contracts")
-        return contracts
+        return try {
+            val data = yaml.load<Map<String, Any>>(contractFile.reader())
+            if (data == null) {
+                log.error("[PARSER] Failed to parse contract file: YAML parser returned null")
+                return emptyList()
+            }
+
+            // Check if this is the new simplified format with contracts array
+            val contractsData = data["contracts"] as? List<Map<String, Any>>
+            if (contractsData != null) {
+                // New format: contracts array in single file
+                contractsData.mapNotNull { contractData ->
+                    try {
+                        parseContractFromMap(contractData, layer, contractFile)
+                    } catch (e: Exception) {
+                        log.error("[PARSER] Failed to parse contract in array: ${e.message}")
+                        null
+                    }
+                }
+            } else {
+                // Old format: single contract per file (backward compatibility)
+                try {
+                    listOf(parseContract(data, contractFile))
+                } catch (e: Exception) {
+                    log.error("[PARSER] Failed to parse contract: ${e.message}")
+                    emptyList()
+                }
+            }
+        } catch (e: Exception) {
+            log.error("[PARSER] Failed to parse contract file ${contractFile.name}: ${e.message}")
+            emptyList()
+        }
+    }
+
+    /**
+     * Parse a contract from a map (for the new simplified format).
+     */
+    private fun parseContractFromMap(
+        data: Map<String, Any>,
+        layer: Layer,
+        sourceFile: File
+    ): DocLayerContract {
+        val contractId = data["id"] as? String
+            ?: throw ContractParseException("Missing 'id' field in contract")
+
+        val version = data["version"]?.toString() ?: "1.0"
+
+        val directionStr = data["direction"] as? String ?: "bidirectional"
+        val direction = parseDirection(directionStr)
+
+        // Extract documentation from the top-level data or contract-specific data
+        val docData = (data["documentation"] as? Map<String, Any>) ?: emptyMap()
+        val documentation = parseDocumentation(docData)
+
+        val mappings = parseMappings(data["mappings"] as? List<Map<String, Any>> ?: emptyList())
+
+        // Use default sync rules if not specified
+        val syncRules = parseSyncRules(data["sync_rules"] as? Map<String, Any> ?: emptyMap())
+
+        // Handle validation - can be either a list (old) or a map with rules (new)
+        val validationData = data["validation"]
+        val validationRules = if (validationData is Map<*, *>) {
+            // New format: validation: rules: [...]
+            parseValidationRules((validationData["rules"] as? List<Map<String, Any>>) ?: emptyList())
+        } else {
+            // Old format: validation: - rule: ... (backward compatibility)
+            parseValidationRules(validationData as? List<Map<String, Any>> ?: emptyList())
+        }
+
+        val llmRequirements = parseLLMRequirements(data["llm_requirements"] as? Map<String, Any>)
+
+        val removalGates = parseRemovalGates(data["description_removal_gates"] as? List<Map<String, Any>>)
+
+        log.debug("[PARSER] Parsed contract: $contractId for layer $layer")
+
+        return DocLayerContract(
+            contractId = contractId,
+            layer = parseLayer(layer.name),
+            version = version,
+            direction = direction,
+            primaryDoc = documentation.primary,
+            secondaryDocs = documentation.secondary,
+            mappings = mappings,
+            syncRules = syncRules,
+            validationRules = validationRules,
+            llmRequirements = llmRequirements,
+            descriptionRemovalGates = removalGates
+        )
     }
 
     /**
@@ -184,7 +287,15 @@ class DocContractYamlParser(
 
         val syncRules = parseSyncRules(data["sync_rules"] as? Map<String, Any> ?: emptyMap())
 
-        val validationRules = parseValidationRules(data["validation"] as? List<Map<String, Any>> ?: emptyList())
+        // Handle validation - can be either a list (old) or a map with rules (new)
+        val validationData = data["validation"]
+        val validationRules = if (validationData is Map<*, *>) {
+            // New format: validation: rules: [...]
+            parseValidationRules((validationData["rules"] as? List<Map<String, Any>>) ?: emptyList())
+        } else {
+            // Old format: validation: - rule: ... (backward compatibility)
+            parseValidationRules(validationData as? List<Map<String, Any>> ?: emptyList())
+        }
 
         val llmRequirements = parseLLMRequirements(data["llm_requirements"] as? Map<String, Any>)
 
@@ -235,19 +346,22 @@ class DocContractYamlParser(
     }
 
     private fun parseMappings(data: List<Map<String, Any>>): List<DocLayerContract.DocMapping> {
-        return data.map { mapping ->
+        return data.mapNotNull { mapping ->
+            // Handle standard doc-to-layer mappings
             val docSection = mapping["doc_section"] as? String
-                ?: throw ContractParseException("Mapping missing 'doc_section'")
-
             val layerField = mapping["layer_field"] as? String
-                ?: throw ContractParseException("Mapping missing 'layer_field'")
-
-            val parserStr = mapping["parser"] as? String ?: "free_text"
-            val parser = parseParserType(parserStr)
-
-            val confidence = (mapping["confidence"] as? Number)?.toDouble() ?: 0.8
-
-            DocLayerContract.DocMapping(docSection, layerField, parser, confidence)
+            
+            if (docSection != null && layerField != null) {
+                val parserStr = mapping["parser"] as? String ?: "free_text"
+                val parser = parseParserType(parserStr)
+                val confidence = (mapping["confidence"] as? Number)?.toDouble() ?: 0.8
+                return@mapNotNull DocLayerContract.DocMapping(docSection, layerField, parser, confidence)
+            }
+            
+            // Handle pattern-based mappings (skip them for now as they're not doc-to-layer)
+            // These are used for cross-layer validation, not doc extraction
+            log.debug("[PARSER] Skipping pattern-based mapping: ${mapping.keys}")
+            null
         }
     }
 

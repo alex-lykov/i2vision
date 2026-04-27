@@ -61,17 +61,7 @@ class RolloutManager {
                     skipped.add(layerDir.path)
                 }
 
-                // 3. Create contracts directory
-                val contractsDir = File(layerDir, VslfcStructure.contractsDirName())
-                if (contractsDir.mkdirs()) {
-                    created.add(contractsDir.path)
-                } else if (!contractsDir.exists()) {
-                    errors.add("Failed to create contracts directory: ${contractsDir.path}")
-                } else {
-                    skipped.add(contractsDir.path)
-                }
-
-                // 4. Create agent config
+                // 3. Create agent config
                 val agentConfig = File(layerDir, VslfcStructure.agentConfigFileName(layer))
                 if (!agentConfig.exists()) {
                     agentConfig.writeText(
@@ -82,9 +72,9 @@ class RolloutManager {
                     skipped.add(agentConfig.path)
                 }
 
-                // 5. Create contract templates
-                VslfcStructure.CONTRACT_TEMPLATES[layer]?.forEach { (name, template) ->
-                    val contractFile = File(contractsDir, name)
+                // 4. Create contract template (simplified - single contract.yaml)
+                VslfcStructure.CONTRACT_TEMPLATES[layer]?.let { template ->
+                    val contractFile = File(layerDir, VslfcStructure.contractFileName())
                     if (!contractFile.exists()) {
                         contractFile.writeText(template)
                         created.add(contractFile.path)
@@ -192,9 +182,9 @@ class RolloutManager {
                 missing.add(agentConfig.path)
             }
 
-            val contractsDir = File(layerDir, VslfcStructure.contractsDirName())
-            if (!contractsDir.exists()) {
-                missing.add(contractsDir.path)
+            val contractFile = File(layerDir, VslfcStructure.contractFileName())
+            if (!contractFile.exists()) {
+                missing.add(contractFile.path)
             }
         }
 

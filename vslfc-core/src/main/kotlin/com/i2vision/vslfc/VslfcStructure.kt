@@ -26,7 +26,7 @@ object VslfcStructure {
      */
     val LAYERS = listOf("vision", "structure", "logic", "flow", "code")
 
-    // Contract templates (must be defined before CONTRACT_TEMPLATES)
+    // Contract templates (simplified - single contract.yaml per layer)
     private val visionRequirementTemplate = """
 id: REQ-{number}
 title: "Requirement Title"
@@ -41,167 +41,242 @@ evidence:
     confidence: 0.0
 """.trimIndent()
 
-    private val visionWithDocsTemplate = """
-contract: vision-documentation
-version: 1.0
+    private val visionContractTemplate = """
+# Vision Layer Contracts
+# All contracts for the Vision layer
+
+version: "1.0"
 layer: VISION
-direction: bidirectional
 
 documentation:
   primary: "README.md"
   secondary: []
 
-mappings:
-  - doc_section: "## Purpose"
-    layer_field: "requirements"
-    parser: "free_text"
-    confidence: 0.9
-  
-  - doc_section: "## Requirements"
-    layer_field: "requirements"
-    parser: "markdown_list"
-    confidence: 0.95
-  
-  - doc_section: "## Constraints"
-    layer_field: "constraints"
-    parser: "markdown_list"
-    confidence: 0.9
+contracts:
+  - id: "vision-documentation"
+    name: "Vision Documentation Contract"
+    mappings:
+      - doc_section: "## Purpose"
+        layer_field: "requirements"
+        parser: "free_text"
+        confidence: 0.9
+      
+      - doc_section: "## Requirements"
+        layer_field: "requirements"
+        parser: "markdown_list"
+        confidence: 0.95
+      
+      - doc_section: "## Constraints"
+        layer_field: "constraints"
+        parser: "markdown_list"
+        confidence: 0.9
 
-sync_rules:
-  on_doc_change: "reimport"
-  on_layer_change: "suggest_update"
-  conflict_resolution:
-    default: "manual_review"
-  freshness:
-    warning_days: 90
-    critical_days: 180
-    action_on_stale: "revalidate_with_lower_confidence"
+  - id: "vision-to-structure"
+    name: "Vision to Structure Contract"
+    direction: "outgoing"
+    mappings:
+      - requirement_pattern: "REQ-.*"
+        component_pattern: ".*Service|.*Orchestrator"
+      
+      - requirement_pattern: ".*Discovery.*"
+        component_pattern: "i2vision-discover"
 
 validation:
-  - rule: "every_doc_requirement_has_code_evidence"
-    severity: "warning"
-  - rule: "confidence_decay"
-    formula: "confidence * (0.95 ^ months_since_update)"
-    threshold: 0.7
-    action: "revalidate"
+  rules:
+    - rule: "every_doc_requirement_has_code_evidence"
+      severity: "warning"
 """.trimIndent()
 
-    private val visionToStructureTemplate = """
-        version: "1.0"
-        contract: vision-to-structure
-        description: Defines expected structure artifacts from vision layer
-        expectations:
-          - component-diagrams
-          - architecture-overview
-    """.trimIndent()
+    private val structureContractTemplate = """
+# Structure Layer Contracts
+# All contracts for the Structure layer
 
-    private val visionToCodeTemplate = """
-        version: "1.0"
-        contract: vision-to-code
-        description: Defines expected code artifacts from vision layer
-        expectations:
-          - coding-standards
-          - naming-conventions
-    """.trimIndent()
+version: "1.0"
+layer: STRUCTURE
 
-    private val structureFromVisionTemplate = """
-        version: "1.0"
-        contract: structure-from-vision
-        description: Defines how structure layer consumes vision artifacts
-        expectations:
-          - component-definitions
-          - dependency-graphs
-    """.trimIndent()
+documentation:
+  primary: "docs/concepts/project-structure.md"
+  secondary:
+    - "docs/concepts/architecture.md"
+    - "README.md"
 
-    private val structureToLogicTemplate = """
-        version: "1.0"
-        contract: structure-to-logic
-        description: Defines expected logic artifacts from structure layer
-        expectations:
-          - business-rules
-          - entity-definitions
-    """.trimIndent()
+contracts:
+  - id: "structure-documentation"
+    name: "Structure Documentation Contract"
+    mappings:
+      - doc_section: "## Module List"
+        layer_field: "components"
+        parser: "markdown_table"
+        confidence: 0.95
+      
+      - doc_section: "## Architecture"
+        layer_field: "architecture_patterns"
+        parser: "markdown_list"
+        confidence: 0.9
 
-    private val logicFromStructureTemplate = """
-        version: "1.0"
-        contract: logic-from-structure
-        description: Defines how logic layer consumes structure artifacts
-        expectations:
-          - rule-implementations
-          - state-machines
-    """.trimIndent()
+  - id: "structure-from-vision"
+    name: "Structure from Vision Contract"
+    direction: "incoming"
+    expectations:
+      - component-definitions
+      - dependency-graphs
 
-    private val logicToFlowTemplate = """
-        version: "1.0"
-        contract: logic-to-flow
-        description: Defines expected flow artifacts from logic layer
-        expectations:
-          - interaction-flows
-          - sequence-diagrams
-    """.trimIndent()
+  - id: "structure-to-logic"
+    name: "Structure to Logic Contract"
+    direction: "outgoing"
+    mappings:
+      - component_pattern: ".*Service"
+        logic_pattern: "business_rules"
 
-    private val flowFromLogicTemplate = """
-        version: "1.0"
-        contract: flow-from-logic
-        description: Defines how flow layer consumes logic artifacts
-        expectations:
-          - flow-implementations
-          - call-graphs
-    """.trimIndent()
+validation:
+  rules:
+    - rule: "every_doc_component_has_code_evidence"
+      severity: "warning"
+""".trimIndent()
 
-    private val flowToCodeTemplate = """
-        version: "1.0"
-        contract: flow-to-code
-        description: Defines expected code artifacts from flow layer
-        expectations:
-          - function-signatures
-          - class-structures
-    """.trimIndent()
+    private val logicContractTemplate = """
+# Logic Layer Contracts
+# All contracts for the Logic layer
 
-    private val codeFromVisionTemplate = """
-        version: "1.0"
-        contract: code-from-vision
-        description: Defines how code layer consumes vision artifacts
-        expectations:
-          - coding-standards
-          - architecture-constraints
-    """.trimIndent()
+version: "1.0"
+layer: LOGIC
 
-    private val codeFromFlowTemplate = """
-        version: "1.0"
-        contract: code-from-flow
-        description: Defines how code layer consumes flow artifacts
-        expectations:
-          - function-implementations
-          - class-implementations
-    """.trimIndent()
+documentation:
+  primary: "docs/concepts/contracts.md"
+  secondary:
+    - "docs/concepts/vslfc-layers.md"
+
+contracts:
+  - id: "logic-documentation"
+    name: "Logic Documentation Contract"
+    mappings:
+      - doc_section: "## Contract System"
+        layer_field: "business_rules"
+        parser: "markdown_list"
+        confidence: 0.95
+      
+      - doc_section: "## Validation Rules"
+        layer_field: "validation_rules"
+        parser: "markdown_list"
+        confidence: 0.9
+
+  - id: "logic-from-structure"
+    name: "Logic from Structure Contract"
+    direction: "incoming"
+    expectations:
+      - component-definitions
+      - business-rules
+
+  - id: "logic-to-flow"
+    name: "Logic to Flow Contract"
+    direction: "outgoing"
+    mappings:
+      - rule_pattern: ".*validate.*"
+        flow_pattern: "validation_sequence"
+
+validation:
+  rules:
+    - rule: "every_doc_rule_has_code_evidence"
+      severity: "warning"
+""".trimIndent()
+
+    private val flowContractTemplate = """
+# Flow Layer Contracts
+# All contracts for the Flow layer
+
+version: "1.0"
+layer: FLOW
+
+documentation:
+  primary: "docs/diagrams/"
+  secondary:
+    - "docs/reference/api.md"
+    - "docs/guides/mcp-tools.md"
+
+contracts:
+  - id: "flow-documentation"
+    name: "Flow Documentation Contract"
+    mappings:
+      - doc_section: "## Diagrams"
+        layer_field: "sequences"
+        parser: "markdown_list"
+        confidence: 0.95
+      
+      - doc_section: "## API Reference"
+        layer_field: "api_endpoints"
+        parser: "markdown_list"
+        confidence: 0.9
+
+  - id: "flow-from-logic"
+    name: "Flow from Logic Contract"
+    direction: "incoming"
+    expectations:
+      - business-rules
+      - validation-sequences
+
+  - id: "flow-to-code"
+    name: "Flow to Code Contract"
+    direction: "outgoing"
+    mappings:
+      - sequence_pattern: ".*authenticate.*"
+        code_pattern: "AuthService.kt"
+
+validation:
+  rules:
+    - rule: "every_doc_sequence_has_code_evidence"
+      severity: "warning"
+""".trimIndent()
+
+    private val codeContractTemplate = """
+# Code Layer Contracts
+# All contracts for the Code layer
+
+version: "1.0"
+layer: CODE
+
+documentation:
+  primary: "docs/reference/api.md"
+  secondary:
+    - "docs/guides/deployment.md"
+    - "README.md"
+
+contracts:
+  - id: "code-documentation"
+    name: "Code Documentation Contract"
+    mappings:
+      - doc_section: "## API Reference"
+        layer_field: "implementations"
+        parser: "markdown_list"
+        confidence: 0.95
+      
+      - doc_section: "## Deployment"
+        layer_field: "deployment_config"
+        parser: "markdown_list"
+        confidence: 0.9
+
+  - id: "code-from-flow"
+    name: "Code from Flow Contract"
+    direction: "incoming"
+    expectations:
+      - api-endpoints
+      - call-sequences
+
+validation:
+  rules:
+    - rule: "every_doc_implementation_has_code_evidence"
+      severity: "warning"
+""".trimIndent()
 
     /**
-     * Contract templates per layer
-     * Maps layer name to list of (contract filename, template content)
+     * Contract templates per layer (simplified - single contract.yaml per layer)
+     * Maps layer name to contract template content
      */
     val CONTRACT_TEMPLATES = mapOf(
-        "vision" to listOf(
-            "with-docs.yaml" to visionWithDocsTemplate,
-            "to-structure.yaml" to visionToStructureTemplate,
-            "to-code.yaml" to visionToCodeTemplate
-        ),
-        "structure" to listOf(
-            "from-vision.yaml" to structureFromVisionTemplate,
-            "to-logic.yaml" to structureToLogicTemplate
-        ),
-        "logic" to listOf(
-            "from-structure.yaml" to logicFromStructureTemplate,
-            "to-flow.yaml" to logicToFlowTemplate
-        ),
-        "flow" to listOf(
-            "from-logic.yaml" to flowFromLogicTemplate,
-            "to-code.yaml" to flowToCodeTemplate
-        ),
-        "code" to listOf(
-            "from-vision.yaml" to codeFromVisionTemplate,
-            "from-flow.yaml" to codeFromFlowTemplate
-        )
+        "vision" to visionContractTemplate,
+        "structure" to structureContractTemplate,
+        "logic" to logicContractTemplate,
+        "flow" to flowContractTemplate,
+        "code" to codeContractTemplate
     )
 
     /**
@@ -243,7 +318,7 @@ validation:
     fun agentConfigFileName(layer: String): String = "agent-config.yaml"
 
     /**
-     * Get the contracts directory name
+     * Get the contract filename for a layer (simplified - single contract.yaml)
      */
-    fun contractsDirName(): String = "contracts"
+    fun contractFileName(): String = "contract.yaml"
 }

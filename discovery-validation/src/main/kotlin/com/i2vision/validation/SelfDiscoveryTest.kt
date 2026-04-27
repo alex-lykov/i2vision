@@ -834,12 +834,12 @@ fun validateVisionLayer(root: File, results: List<ClusterDiscoveryResult>) {
     println("  Total requirements: $totalRequirements")
     println("  Total constraints: $totalConstraints")
 
-    // Check if .vision-ai/ contracts exist
-    val visionContractFile = File(root, ".vision-ai/.vision/contracts/with-docs.yaml")
+    // Check if .vision-ai/ contract exists (simplified structure)
+    val visionContractFile = File(root, ".vision-ai/.vision/contract.yaml")
     if (visionContractFile.exists()) {
         println("  ✅ Vision contract exists: ${visionContractFile.relativeTo(root).path}")
     } else {
-        println("  ❌ Vision contract missing: .vision-ai/.vision/contracts/with-docs.yaml")
+        println("  ❌ Vision contract missing: .vision-ai/.vision/contract.yaml")
         println("     Run 'i2vision init' to create contract files")
     }
 }

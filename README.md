@@ -353,7 +353,8 @@ Then ask Claude: *"Show me the architecture of UserService"* — it gets full co
 
 | Location                     | Contains                    | Commit? | Shared?     |
 |------------------------------|-----------------------------|---------|-------------|
-| `.vision-ai/` (project)      | Contracts, intents, presets | ✅ Yes   | Team shares |
+| `.vision-ai/` (user project) | Contracts, intents, presets | ✅ Yes   | Team shares |
+| `.vision-ai/` (i2vision repo) | Self-discovery artifacts    | ❌ No    | Local only  |
 | `.semantic-cache/` (project) | Legacy cache                | ❌ No    | Local only  |
 | `~/.i2vision/cache/` (OS)    | Discovery artifacts         | ❌ No    | Local only  |
 

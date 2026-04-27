@@ -62,25 +62,20 @@ package com.i2vision.vslfc
  * 
  * ## Contract Registry
  * 
- * Contracts are stored in `.vision-ai/.<layer>/contracts/with-docs.yaml`
+ * Contracts are stored in `.vision-ai/.<layer>/contract.yaml` (simplified structure)
  * 
  * ```
  * .vision-ai/
  *   .vision/
- *     contracts/
- *       with-docs.yaml          # Vision ↔ docs contract
+ *     contract.yaml              # All Vision contracts
  *   .structure/
- *     contracts/
- *       with-docs.yaml          # Structure ↔ docs contract
+ *     contract.yaml              # All Structure contracts
  *   .logic/
- *     contracts/
- *       with-docs.yaml          # Logic ↔ docs contract
+ *     contract.yaml              # All Logic contracts
  *   .flow/
- *     contracts/
- *       with-docs.yaml          # Flow ↔ docs contract
+ *     contract.yaml              # All Flow contracts
  *   .code/
- *     contracts/
- *       with-docs.yaml          # Code ↔ docs contract
+ *     contract.yaml              # All Code contracts
  * ```
  * 
  * ## Benefits
@@ -132,14 +127,14 @@ object VSLFCLayerContracts {
     }
 
     /**
-     * Standard contract locations for each layer.
+     * Standard contract locations for each layer (simplified structure).
      */
     fun contractPath(layer: Layer): String = when (layer) {
-        Layer.VISION -> ".vision-ai/.vision/contracts/with-docs.yaml"
-        Layer.STRUCTURE -> ".vision-ai/.structure/contracts/with-docs.yaml"
-        Layer.LOGIC -> ".vision-ai/.logic/contracts/with-docs.yaml"
-        Layer.FLOW -> ".vision-ai/.flow/contracts/with-docs.yaml"
-        Layer.CODE -> ".vision-ai/.code/contracts/with-docs.yaml"
+        Layer.VISION -> ".vision-ai/.vision/contract.yaml"
+        Layer.STRUCTURE -> ".vision-ai/.structure/contract.yaml"
+        Layer.LOGIC -> ".vision-ai/.logic/contract.yaml"
+        Layer.FLOW -> ".vision-ai/.flow/contract.yaml"
+        Layer.CODE -> ".vision-ai/.code/contract.yaml"
     }
 
     /**

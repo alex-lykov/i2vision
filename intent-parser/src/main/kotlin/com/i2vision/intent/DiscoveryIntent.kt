@@ -7,6 +7,8 @@
 
 package com.i2vision.intent
 
+import com.i2vision.vslfc.VerbalizationStrategy
+
 /**
  * DiscoveryIntent - High-level user intent for discovery operations.
  * 
@@ -24,6 +26,7 @@ data class DiscoveryIntent(
     val focus: Set<LayerFocus> = LayerFocus.ALL,
     val depth: IntentDepth = IntentDepth.STANDARD,
     val quality: QualityFocus = QualityFocus.BALANCED,
+    val verbalization: VerbalizationConfig = VerbalizationConfig.DISABLED,
     val constraints: Map<String, Any> = emptyMap()
 ) {
     /**
@@ -128,6 +131,41 @@ enum class QualityFocus {
 }
 
 /**
+ * Verbalization configuration for discovery intents.
+ * Controls how code symbols are described in natural language.
+ */
+data class VerbalizationConfig(
+    val enabled: Boolean = false,
+    val strategy: VerbalizationStrategy = VerbalizationStrategy.INCREMENTAL,
+    val customPatternsPath: String? = null,
+    val feedbackEnabled: Boolean = false
+) {
+    companion object {
+        /** Verbalization disabled */
+        val DISABLED = VerbalizationConfig(enabled = false)
+
+        /** Basic verbalization with incremental strategy */
+        val BASIC = VerbalizationConfig(
+            enabled = true,
+            strategy = VerbalizationStrategy.INCREMENTAL
+        )
+
+        /** High-quality verbalization with multi-pass strategy */
+        val QUALITY = VerbalizationConfig(
+            enabled = true,
+            strategy = VerbalizationStrategy.MULTI_PASS
+        )
+
+        /** Learning verbalization with LLM and feedback */
+        val LEARNING = VerbalizationConfig(
+            enabled = true,
+            strategy = VerbalizationStrategy.LEARNING,
+            feedbackEnabled = true
+        )
+    }
+}
+
+/**
  * Parse intent from CLI arguments.
  */
 object IntentParser {
@@ -139,6 +177,10 @@ object IntentParser {
      * --focus=<layers> (comma-separated: vision,structure,logic,flow,code)
      * --depth=<depth> (browse, standard, deep)
      * --quality=<quality> (quality, balanced, quantity)
+     * --verbalize=<mode> (disabled, basic, quality, learning)
+     * --verbalization-strategy=<strategy> (incremental, multi_pass, learning)
+     * --verbalization-patterns=<path> (path to custom patterns file)
+     * --verbalization-feedback=<bool> (enable feedback collection)
      */
     fun parse(args: Map<String, String>): DiscoveryIntent? {
         val goalStr = args["intent"] ?: return null
@@ -183,9 +225,16 @@ object IntentParser {
             QualityFocus.BALANCED
         }
 
-        // Parse additional constraints
+        // Parse verbalization configuration
+        val verbalization = if (IntentFeatureFlags.VERBALIZATION_ENABLED) {
+            parseVerbalizationConfig(args)
+        } else {
+            VerbalizationConfig.DISABLED
+        }
+
+        // Parse additional constraints (exclude known arguments)
         val constraints = args.filterKeys {
-            it !in listOf("intent", "focus", "depth", "quality")
+            it !in listOf("intent", "focus", "depth", "quality", "verbalize", "verbalization-strategy", "verbalization-patterns", "verbalization-feedback")
         }
 
         return DiscoveryIntent(
@@ -193,7 +242,59 @@ object IntentParser {
             focus = focus,
             depth = depth,
             quality = quality,
+            verbalization = verbalization,
             constraints = constraints
         )
+    }
+
+    /**
+     * Parse verbalization configuration from arguments.
+     */
+    private fun parseVerbalizationConfig(args: Map<String, String>): VerbalizationConfig {
+        // Check for simple verbalize flag
+        val verbalizeStr = args["verbalize"]
+        if (verbalizeStr != null) {
+            return when (verbalizeStr.lowercase()) {
+                "disabled", "false", "off" -> VerbalizationConfig.DISABLED
+                "basic", "simple", "incremental" -> VerbalizationConfig.BASIC
+                "quality", "multi_pass", "multipass" -> VerbalizationConfig.QUALITY
+                "learning", "llm", "advanced" -> VerbalizationConfig.LEARNING
+                else -> VerbalizationConfig.BASIC // Default fallback
+            }
+        }
+
+        // Parse detailed verbalization settings
+        val strategyStr = args["verbalization-strategy"]
+        val strategy = if (strategyStr != null) {
+            try {
+                when (strategyStr.lowercase()) {
+                    "incremental" -> VerbalizationStrategy.INCREMENTAL
+                    "multi_pass", "multipass" -> VerbalizationStrategy.MULTI_PASS
+                    "learning" -> VerbalizationStrategy.LEARNING
+                    else -> VerbalizationStrategy.INCREMENTAL
+                }
+            } catch (e: IllegalArgumentException) {
+                VerbalizationStrategy.INCREMENTAL
+            }
+        } else {
+            VerbalizationStrategy.INCREMENTAL
+        }
+
+        val customPatternsPath = args["verbalization-patterns"]
+        val feedbackEnabled = args["verbalization-feedback"]?.toBoolean() ?: false
+
+        // If any verbalization argument is present, enable verbalization
+        val hasVerbalizationArgs = strategyStr != null || customPatternsPath != null || args["verbalization-feedback"] != null
+
+        return if (hasVerbalizationArgs) {
+            VerbalizationConfig(
+                enabled = true,
+                strategy = strategy,
+                customPatternsPath = customPatternsPath,
+                feedbackEnabled = feedbackEnabled
+            )
+        } else {
+            VerbalizationConfig.DISABLED
+        }
     }
 }

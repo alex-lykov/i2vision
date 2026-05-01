@@ -16,18 +16,21 @@ This document outlines the mandatory test suite for the current release.
 | 6  | Logic Extraction - Business Rules             | Logic        | Unit        | Ensures pattern-based rule extraction works (require, check, validate)     |
 | 7  | Structure Building - Components Mapped        | Structure    | Unit        | Validates package-to-component mapping (182 components expected)           |
 | 8  | Contract Validation - Layer Consistency       | Contracts    | Integration | Ensures Vision↔Structure↔Logic↔Flow↔Code contracts are validated           |
-| 9  | Incremental Sync - File Hash Change Detection | Storage      | Unit        | Validates changed files trigger targeted rediscovery                       |
-| 10 | Batch Link Flush - Single Disk Write          | Storage      | Integration | Ensures links are buffered and written once (no concurrent corruption)     |
-| 11 | CLI - Intent Parsing                          | CLI          | Unit        | Validates `--intent=full_discovery` resolves correctly                     |
-| 12 | CLI - Depth Parameter                         | CLI          | Unit        | Ensures BROWSE/STANDARD/DEEP modes apply correct parameters                |
-| 13 | MCP Server - Stdio Transport                  | MCP          | Integration | Validates MCP server starts and accepts JSON-RPC requests                  |
-| 14 | MCP Server - Tool Listing                     | MCP          | Unit        | Ensures all registered tools are discoverable                              |
-| 15 | Instant Context - File Context Retrieval      | Context      | Integration | Validates context API returns symbols, flows, related files                |
-| 16 | Quality Metrics - Cohesion Calculation        | Metrics      | Unit        | Ensures internal/external dependency ratio is correct                      |
-| 17 | Quality Metrics - Complexity Scoring          | Metrics      | Unit        | Validates cyclomatic/cognitive complexity calculation                      |
-| 18 | Semantic Cache - OS User Directory            | Storage      | Integration | Ensures cache is written to `~/.i2vision/` not project root                |
-| 19 | License Headers - All Modules                 | Build        | Unit        | Validates MIT license header in all source files                           |
-| 20 | Gradle Build - All Modules                    | Build        | Integration | Ensures `./gradlew build` succeeds on clean checkout                       |
+| 9  | Verbalization - Symbol to Natural Language    | Verbalization| Integration | Validates code symbols are converted to natural language descriptions      |
+| 10 | Verbalization - Storage and Retrieval         | Verbalization| Integration | Ensures verbalization results are correctly stored and retrieved           |
+| 11 | Verbalization - Multi-Strategy Support        | Verbalization| Unit        | Validates INCREMENTAL, MULTI_PASS, and LEARNING strategies work            |
+| 12 | Incremental Sync - File Hash Change Detection | Storage      | Unit        | Validates changed files trigger targeted rediscovery                       |
+| 13 | Batch Link Flush - Single Disk Write          | Storage      | Integration | Ensures links are buffered and written once (no concurrent corruption)     |
+| 14 | CLI - Intent Parsing                          | CLI          | Unit        | Validates `--intent=full_discovery` resolves correctly                     |
+| 15 | CLI - Depth Parameter                         | CLI          | Unit        | Ensures BROWSE/STANDARD/DEEP modes apply correct parameters                |
+| 16 | MCP Server - Stdio Transport                  | MCP          | Integration | Validates MCP server starts and accepts JSON-RPC requests                  |
+| 17 | MCP Server - Tool Listing                     | MCP          | Unit        | Ensures all registered tools are discoverable                              |
+| 18 | Instant Context - File Context Retrieval      | Context      | Integration | Validates context API returns symbols, flows, related files                |
+| 19 | Quality Metrics - Cohesion Calculation        | Metrics      | Unit        | Ensures internal/external dependency ratio is correct                      |
+| 20 | Quality Metrics - Complexity Scoring          | Metrics      | Unit        | Validates cyclomatic/cognitive complexity calculation                      |
+| 21 | Semantic Cache - OS User Directory            | Storage      | Integration | Ensures cache is written to `~/.i2vision/` not project root                |
+| 22 | License Headers - All Modules                 | Build        | Unit        | Validates MIT license header in all source files                           |
+| 23 | Gradle Build - All Modules                    | Build        | Integration | Ensures `./gradlew build` succeeds on clean checkout                       |
 
 ---
 

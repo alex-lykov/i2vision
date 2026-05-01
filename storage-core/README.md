@@ -130,7 +130,7 @@ println("Health score: ${registry.summary.healthScore}")
 ### Architectural Rules
 
 - Only `storage-core/impl/internal/StorageLayout.kt` contains physical path knowledge
-- No other module should import from `com.i2vision.storage.impl.internal`
+- No other module should import from `com.i2vision.storage.impl/internal`
 - All application modules must use public interfaces only
 
 ## Features
@@ -167,6 +167,13 @@ println("Health score: ${registry.summary.healthScore}")
 - Project list management
 - Active project tracking
 - Simple CRUD operations
+
+### VerbalizationStore
+
+- Store/retrieve verbalization results by cluster
+- Hash-based change tracking for incremental verbalization
+- Get verbalizations for specific symbols
+- Clear verbalization data by cluster
 
 ## Installation
 

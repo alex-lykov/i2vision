@@ -10,7 +10,7 @@ package com.i2vision.storage.api
 import com.i2vision.storage.model.Artifact
 import com.i2vision.storage.model.ArtifactRef
 import com.i2vision.storage.model.Layer
-import com.i2vision.storage.model.PutResult
+import com.i2vision.vslfc.PutResult
 import kotlin.time.Duration
 
 /**

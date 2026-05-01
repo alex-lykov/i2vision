@@ -19,6 +19,7 @@ dependencies {
     implementation(project(":i2vision-instant"))
     implementation(project(":i2vision-architecture"))
     implementation(project(":vslfc-core"))
+    implementation(project(":verbalization-core"))
     implementation(project(":llm-client"))
     implementation(project(":storage-core"))
     implementation(project(":index-provider"))

@@ -7,7 +7,11 @@
 
 package com.i2vision.storage.api
 
-import com.i2vision.storage.model.*
+import com.i2vision.storage.model.Artifact
+import com.i2vision.storage.model.ArtifactMetadata
+import com.i2vision.storage.model.ArtifactRef
+import com.i2vision.storage.model.Layer
+import com.i2vision.vslfc.PutResult
 
 /**
  * Public API for VSLFC artifact operations.

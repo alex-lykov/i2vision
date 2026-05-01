@@ -11,6 +11,7 @@ import com.i2vision.discover.pipeline.Source
 import com.i2vision.discover.pipeline.VisionCodeEvidence
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.nio.file.Files
 
 /**
  * Requirements Inferred from Code
@@ -27,14 +28,21 @@ class RequirementsInferer(
 
     /**
      * Infer requirements from source code patterns.
+     * Uses thread-safe file reading with error handling for concurrent access.
      */
     fun inferRequirements(sourceFiles: List<File>): List<InferredRequirement> {
         val requirements = mutableListOf<InferredRequirement>()
 
         sourceFiles.forEach { file ->
             try {
-                val lines = file.readLines()
-                val relativePath = file.relativeTo(projectRoot).path
+                // Use NIO for thread-safe file reading on Windows
+                val lines = Files.readAllLines(file.toPath())
+                val relativePath = try {
+                    file.relativeTo(projectRoot).path
+                } catch (e: IllegalArgumentException) {
+                    // File is not relative to projectRoot, use absolute path
+                    file.absolutePath
+                }
 
                 lines.forEachIndexed { index, line ->
                     val inferred = inferFromLine(line, relativePath, index + 1)

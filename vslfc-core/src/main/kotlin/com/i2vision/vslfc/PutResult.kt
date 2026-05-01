@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-package com.i2vision.storage.model
+package com.i2vision.vslfc
 
 /**
  * Result of a put operation.

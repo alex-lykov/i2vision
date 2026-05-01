@@ -23,6 +23,7 @@ rootProject.name = "i2vision"
 // Public modules - MIT-licensed standalone libraries
 include("architecture-types")
 include("vslfc-core")
+include("verbalization-core")
 include("i2vision-architecture")
 include("llm-client")
 include("conf-agent-core")

@@ -36,6 +36,8 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import com.i2vision.discover.api.models.DiscoveryIntent as ApiDiscoveryIntent
 import com.i2vision.discover.api.models.IntentDepth as ApiIntentDepth
+import com.i2vision.discover.api.models.VerbalizationConfig as ApiVerbalizationConfig
+import com.i2vision.discover.api.models.DiscoveryDepth
 import com.i2vision.intent.DiscoveryIntent as ParserDiscoveryIntent
 import com.i2vision.intent.IntentDepth as ParserIntentDepth
 
@@ -72,6 +74,24 @@ class DiscoverCommand : CliktCommand(
     private val validateContext by option(
         "--validate-context",
         help = "Validate enhanced context availability after discovery"
+    ).flag()
+
+    // Verbalization options
+    private val verbalize by option(
+        "--verbalize",
+        help = "Enable verbalization: disabled, basic, quality, learning"
+    )
+    private val verbalizationStrategy by option(
+        "--verbalization-strategy",
+        help = "Verbalization strategy: incremental, multi_pass, learning"
+    )
+    private val verbalizationPatterns by option(
+        "--verbalization-patterns",
+        help = "Path to custom verbalization patterns file"
+    )
+    private val verbalizationFeedback by option(
+        "--verbalization-feedback",
+        help = "Enable verbalization feedback collection"
     ).flag()
 
     private val consoleOutput = ConsoleOutput()
@@ -241,8 +261,19 @@ class DiscoverCommand : CliktCommand(
      * Parse intent string and convert to discovery-api DiscoveryIntent
      */
     private fun parseIntent(intentStr: String): ApiDiscoveryIntent {
+        // Build args map including verbalization options
+        val args = mutableMapOf<String, String>()
+        args["intent"] = intentStr
+
+        // Add verbalization arguments if provided
+        verbalize?.let { args["verbalize"] = it }
+        verbalizationStrategy?.let { args["verbalization-strategy"] = it }
+        verbalizationPatterns?.let { args["verbalization-patterns"] = it }
+        if (verbalizationFeedback) {
+            args["verbalization-feedback"] = "true"
+        }
+
         // Use IntentParser to parse the intent string
-        val args = mapOf("intent" to intentStr)
         val parserIntent = IntentParser.parse(args)
             ?: error("Invalid intent: $intentStr")
 
@@ -259,7 +290,16 @@ class DiscoverCommand : CliktCommand(
             depth = mapIntentDepth(parserIntent.depth),
             quality = mapQualityFocus(parserIntent.quality),
             layerFocus = parserIntent.focus.map { it.name.lowercase() },
-            customParameters = parserIntent.constraints.mapKeys { it.key }.mapValues { it.value.toString() }
+            customParameters = parserIntent.constraints.mapKeys { it.key }.mapValues { it.value.toString() },
+            verbalization = ApiVerbalizationConfig(
+                enabled = parserIntent.verbalization.enabled,
+                verbosityLevel = when (parserIntent.verbalization.strategy) {
+                    com.i2vision.vslfc.VerbalizationStrategy.INCREMENTAL -> 1
+                    com.i2vision.vslfc.VerbalizationStrategy.MULTI_PASS -> 2
+                    com.i2vision.vslfc.VerbalizationStrategy.LEARNING -> 3
+                },
+                includeExamples = parserIntent.verbalization.feedbackEnabled
+            )
         )
     }
 
@@ -423,8 +463,7 @@ class DiscoverCommand : CliktCommand(
 
     /**
      * Run single cluster discovery with timing
-     * Use depth-based discovery directly to match SelfDiscoveryTest approach
-     * Intent-based discovery adds overhead (validation + resolution) per cluster
+     * Use intent-based discovery to support verbalization
      */
     private suspend fun runSingleDiscovery(
         pipeline: DiscoveryPipelineImpl,
@@ -433,14 +472,15 @@ class DiscoverCommand : CliktCommand(
     ): Pair<PipelineResult, Long> {
         val startTime = System.currentTimeMillis()
 
-        // Map intent depth to discovery depth
-        val discoveryDepth = when (intent.depth) {
-            ApiIntentDepth.BROWSE -> com.i2vision.discover.api.models.DiscoveryDepth.BROWSE
-            ApiIntentDepth.STANDARD -> com.i2vision.discover.api.models.DiscoveryDepth.STANDARD
-            ApiIntentDepth.DEEP -> com.i2vision.discover.api.models.DiscoveryDepth.DEEP
-        }
-        // Use depth-based discovery directly (same as SelfDiscoveryTest) to avoid intent resolution overhead
-        val result = pipeline.discover(depth = discoveryDepth, clusterId = clusterId, contracts = emptyList())
+        // Create parser intent from API intent and verbalization config
+        val parserIntent = createParserIntent(intent)
+
+        // Use intent-based discovery to support verbalization
+        val result = pipeline.discover(
+            depth = parserIntent.depth.toDiscoveryDepth(),
+            clusterId = clusterId,
+            contracts = emptyList()
+        )
 
         val duration = System.currentTimeMillis() - startTime
         return Pair(result, duration)
@@ -524,6 +564,74 @@ class DiscoverCommand : CliktCommand(
             echo(consoleOutput.formatDiscoveryResult(result, "yaml"))
         }
     }
+
+    /**
+     * Create parser intent from API intent and verbalization config
+     */
+    private fun createParserIntent(intent: ApiDiscoveryIntent): ParserDiscoveryIntent {
+        // Map back from API intent to parser intent
+        val goal = when (intent.goal) {
+            DiscoveryGoal.UNDERSTAND -> IntentGoal.FULL_DISCOVERY
+            DiscoveryGoal.REFACTOR -> IntentGoal.REFACTORING_ANALYSIS
+            DiscoveryGoal.ANALYZE -> IntentGoal.ARCHITECTURE_AUDIT
+            DiscoveryGoal.GENERATE -> IntentGoal.DOCUMENTATION_GENERATION
+            DiscoveryGoal.VALIDATE -> IntentGoal.ARCHITECTURE_AUDIT
+        }
+
+        val depth = when (intent.depth) {
+            ApiIntentDepth.BROWSE -> ParserIntentDepth.BROWSE
+            ApiIntentDepth.STANDARD -> ParserIntentDepth.STANDARD
+            ApiIntentDepth.DEEP -> ParserIntentDepth.DEEP
+        }
+
+        val quality = when (intent.quality) {
+            DiscoveryQuality.THOROUGH -> QualityFocus.QUALITY
+            DiscoveryQuality.BALANCED -> QualityFocus.BALANCED
+            DiscoveryQuality.FAST -> QualityFocus.QUANTITY
+        }
+
+        val focus = intent.layerFocus.mapNotNull { layer ->
+            try {
+                com.i2vision.intent.LayerFocus.valueOf(layer.uppercase())
+            } catch (e: IllegalArgumentException) {
+                null
+            }
+        }.toSet()
+
+        // Create verbalization config from CLI options
+        val verbalization = if (verbalize != null || verbalizationStrategy != null || verbalizationPatterns != null || verbalizationFeedback) {
+            com.i2vision.intent.VerbalizationConfig(
+                enabled = verbalize != "disabled",
+                strategy = when (verbalizationStrategy?.lowercase()) {
+                    "multi_pass", "multipass" -> com.i2vision.vslfc.VerbalizationStrategy.MULTI_PASS
+                    "learning" -> com.i2vision.vslfc.VerbalizationStrategy.LEARNING
+                    else -> com.i2vision.vslfc.VerbalizationStrategy.INCREMENTAL
+                },
+                customPatternsPath = verbalizationPatterns,
+                feedbackEnabled = verbalizationFeedback
+            )
+        } else {
+            com.i2vision.intent.VerbalizationConfig.DISABLED
+        }
+
+        return ParserDiscoveryIntent(
+            goal = goal,
+            focus = focus,
+            depth = depth,
+            quality = quality,
+            verbalization = verbalization,
+            constraints = intent.customParameters
+        )
+    }
+}
+
+/**
+ * Extension function to convert ParserIntentDepth to DiscoveryDepth
+ */
+private fun ParserIntentDepth.toDiscoveryDepth(): DiscoveryDepth = when (this) {
+    ParserIntentDepth.BROWSE -> DiscoveryDepth.BROWSE
+    ParserIntentDepth.STANDARD -> DiscoveryDepth.STANDARD
+    ParserIntentDepth.DEEP -> DiscoveryDepth.DEEP
 }
 
 /**

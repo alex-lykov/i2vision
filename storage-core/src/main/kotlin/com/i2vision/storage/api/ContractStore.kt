@@ -7,7 +7,11 @@
 
 package com.i2vision.storage.api
 
-import com.i2vision.storage.model.*
+import com.i2vision.storage.model.ContractDefinition
+import com.i2vision.storage.model.ContractId
+import com.i2vision.storage.model.ContractRegistry
+import com.i2vision.storage.model.ValidationResult
+import com.i2vision.vslfc.PutResult
 
 /**
  * Public API for contract storage and validation.

@@ -8,10 +8,15 @@
 package com.i2vision.storage.impl
 
 import com.i2vision.storage.api.CacheStore
-import com.i2vision.storage.model.*
+import com.i2vision.storage.model.Artifact
+import com.i2vision.storage.model.ArtifactMetadata
+import com.i2vision.storage.model.ArtifactRef
+import com.i2vision.storage.model.Layer
+import com.i2vision.vslfc.PutResult
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.nio.file.Files
 import java.security.MessageDigest
 import java.time.Instant
 import kotlin.time.Duration
@@ -20,6 +25,8 @@ import kotlin.time.Duration.Companion.milliseconds
 /**
  * File-based implementation of CacheStore.
  * INTERNAL - knows the physical storage layout.
+ * 
+ * Uses NIO file operations for thread-safe concurrent access on Windows.
  */
 class FileCacheStore(
     private val cacheDir: File
@@ -31,7 +38,9 @@ class FileCacheStore(
         val relativePath = "${ref.module}/${ref.layer.name.lowercase()}/${ref.name}"
         val file = File(cacheDir, relativePath)
         file.parentFile?.mkdirs()
-        file.writeBytes(content)
+        
+        // Use NIO for thread-safe file writing on Windows
+        Files.write(file.toPath(), content)
 
         val hash = computeHash(content)
         val metadata = ArtifactMetadata(
@@ -40,11 +49,9 @@ class FileCacheStore(
             hash = hash
         )
 
-        // Store metadata
+        // Store metadata using NIO
         val metaFile = File(cacheDir, "$relativePath.meta")
-        metaFile.writeText(
-            json.encodeToString(metadata)
-        )
+        Files.writeString(metaFile.toPath(), json.encodeToString(metadata))
 
         return PutResult.Success(ref)
     }
@@ -54,10 +61,11 @@ class FileCacheStore(
         val file = File(cacheDir, relativePath)
         if (!file.exists()) return null
 
-        val content = file.readBytes()
+        // Use NIO for thread-safe file reading on Windows
+        val content = Files.readAllBytes(file.toPath())
         val metadataFile = File(cacheDir, "$relativePath.meta")
         val metadata = if (metadataFile.exists()) {
-            json.decodeFromString<ArtifactMetadata>(metadataFile.readText())
+            json.decodeFromString(Files.readString(metadataFile.toPath()))
         } else {
             ArtifactMetadata(
                 createdAt = Instant.now().toEpochMilli(),
@@ -88,14 +96,16 @@ class FileCacheStore(
     override suspend fun getAffected(changedFiles: List<String>): List<ArtifactRef> {
         val affected = mutableListOf<ArtifactRef>()
 
-        cacheDir.walkTopDown()
-            .filter { it.isFile && it.name.endsWith(".meta") }
-            .forEach { metaFile ->
+        // Use NIO for thread-safe directory traversal on Windows
+        Files.walk(cacheDir.toPath())
+            .filter { path -> path.toString().endsWith(".meta") && Files.isRegularFile(path) }
+            .forEach { metaPath ->
                 try {
-                    val metadata = json.decodeFromString<ArtifactMetadata>(metaFile.readText())
+                    val metadataText = Files.readString(metaPath)
+                    val metadata = json.decodeFromString<ArtifactMetadata>(metadataText)
                     val hasChanged = metadata.sourceFiles.any { it in changedFiles }
                     if (hasChanged) {
-                        val ref = pathToRef(metaFile.path.removeSuffix(".meta"))
+                        val ref = pathToRef(metaPath.toString())
                         if (ref != null) {
                             affected.add(ref)
                         }

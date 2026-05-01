@@ -10,6 +10,7 @@ package com.i2vision.discover.doc
 import com.i2vision.vslfc.VSLFCLayerContracts
 import org.slf4j.LoggerFactory
 import java.io.File
+import java.nio.file.Files
 
 /**
  * Code Evidence Finder
@@ -162,7 +163,7 @@ class CodeEvidenceFinder(
         if (lower.contains("version")) {
             expanded += listOf("version", "kotlinVersion", "plugin")
         }
-        // NEW: Result/Return type patterns
+        // Result/Return type patterns
         if (lower.contains("return") && (lower.contains("result") || lower.contains("typed"))) {
             expanded += listOf(
                 "sealed class",           // sealed class Result
@@ -172,7 +173,7 @@ class CodeEvidenceFinder(
                 "fun.*:.*Result"          // Function returning Result
             )
         }
-        // NEW: SnakeYAML evidence (was failing)
+        // SnakeYAML evidence
         if (lower.contains("snakeyaml") || lower.contains("yaml")) {
             expanded += listOf(
                 "import org.yaml.snakeyaml",
@@ -201,6 +202,7 @@ class CodeEvidenceFinder(
 
     /**
      * Recursively search a directory for keyword matches.
+     * All exceptions are caught and handled to prevent propagation.
      */
     private fun searchInDirectory(
         dir: File,
@@ -210,13 +212,36 @@ class CodeEvidenceFinder(
     ) {
         if (evidence.size >= maxMatches) return
 
-        dir.listFiles()?.forEach { file ->
-            if (evidence.size >= maxMatches) return
+        try {
+            try {
+                val files = dir.listFiles() ?: return
+                files.forEach { file ->
+                    if (evidence.size >= maxMatches) return
 
-            when {
-                file.isDirectory -> searchInDirectory(file, keyword, evidence, maxMatches)
-                file.isFile && isSourceFile(file) -> searchInFile(file, keyword, evidence, maxMatches)
+                    try {
+                        when {
+                            file.isDirectory -> searchInDirectory(file, keyword, evidence, maxMatches)
+                            file.isFile && isSourceFile(file) -> searchInFile(file, keyword, evidence, maxMatches)
+                        }
+                    } catch (e: SecurityException) {
+                        // Skip files we don't have access to
+                        log.trace("[EVIDENCE] Access denied to file: ${file.path}")
+                    } catch (e: Exception) {
+                        // Skip any other file-level errors
+                        log.trace("[EVIDENCE] Error processing ${file.path}: ${e.message}")
+                    }
+                }
+            } catch (e: SecurityException) {
+                // Skip directories we don't have access to (common on Windows)
+                // Don't log at DEBUG to avoid filling logs with access denied messages
+                log.trace("[EVIDENCE] Access denied to directory: ${dir.path}")
+            } catch (e: Exception) {
+                // Log but don't fail on directory listing errors
+                log.trace("[EVIDENCE] Error listing directory ${dir.path}: ${e.message}")
             }
+        } catch (e: Throwable) {
+            // Catch any unexpected Throwable to ensure complete isolation
+            log.trace("[EVIDENCE] Unexpected error in directory search for ${dir.path}")
         }
     }
 
@@ -239,68 +264,73 @@ class CodeEvidenceFinder(
     ) {
         if (evidence.size >= maxMatches) return
         try {
-            val lines = file.readLines()
+            // Use NIO for thread-safe file reading on Windows
+            val lines = Files.readAllLines(file.toPath())
             // Always treat expanded/semantic keywords as patterns
             lines.forEachIndexed { index, line ->
                 if (evidence.size >= maxMatches) return
 
-                val matches = matchesPattern(line, listOf(keyword))
-
-                if (matches) {
-                    val relativePath = file.relativeTo(projectRoot).path
-                    evidence.add(
-                        CodeEvidence(
-                            file = relativePath,
-                            line = index + 1,
-                            content = line.trim().take(100),
-                            matchType = determineMatchType(line, keyword)
+                try {
+                    val matches = matchesPattern(line, listOf(keyword))
+                    if (matches) {
+                        val matchType = determineMatchType(line, keyword)
+                        evidence.add(
+                            CodeEvidence(
+                                file = file.absolutePath,
+                                line = index + 1,
+                                content = line.trim(),
+                                matchType = matchType
+                            )
                         )
-                    )
+                        log.debug("[EVIDENCE] Found evidence in ${file.name}:${index + 1}")
+                    }
+                } catch (e: Exception) {
+                    log.trace("[EVIDENCE] Error matching pattern in ${file.name}:${index + 1}")
                 }
             }
         } catch (e: Exception) {
-            log.debug("[EVIDENCE] Error reading ${file.name}: ${e.message}")
+            log.trace("[EVIDENCE] Error reading file ${file.path}: ${e.message}")
         }
     }
 
     /**
-     * Determine what type of match this is (class, method, variable, comment, etc.)
+     * Determine the type of match for a keyword in a line.
      */
-    private fun determineMatchType(line: String, keyword: String): MatchType {
+    private fun determineMatchType(line: String, keyword: String): CodeEvidence.MatchType {
         val trimmed = line.trim()
-
         return when {
-            trimmed.contains("class $keyword") || trimmed.contains("interface $keyword") -> MatchType.CLASS_DEFINITION
-            trimmed.contains("fun $keyword") || trimmed.contains("suspend fun $keyword") -> MatchType.METHOD_DEFINITION
-            trimmed.contains("val $keyword") || trimmed.contains("var $keyword") -> MatchType.VARIABLE
-            trimmed.startsWith("//") || trimmed.startsWith("/*") || trimmed.startsWith("*") -> MatchType.COMMENT
-            trimmed.contains("import") && trimmed.contains(keyword) -> MatchType.IMPORT
-            else -> MatchType.USAGE
+            trimmed.startsWith("package") -> CodeEvidence.MatchType.PACKAGE
+            trimmed.startsWith("import") -> CodeEvidence.MatchType.IMPORT
+            trimmed.contains("class ") || trimmed.contains("interface ") -> CodeEvidence.MatchType.CLASS
+            trimmed.contains("fun ") -> CodeEvidence.MatchType.METHOD
+            trimmed.contains("val ") || trimmed.contains("var ") -> CodeEvidence.MatchType.FIELD
+            else -> CodeEvidence.MatchType.OTHER
         }
     }
 
     // Data classes
 
+    /**
+     * Evidence found in the codebase.
+     */
+    data class CodeEvidence(
+        val file: String,
+        val line: Int,
+        val content: String,
+        val matchType: MatchType = MatchType.OTHER
+    ) {
+        enum class MatchType {
+            PACKAGE, CLASS, METHOD, FIELD, IMPORT, OTHER
+        }
+    }
+
+    /**
+     * Result of evidence search.
+     */
     data class EvidenceResult(
         val searchText: String,
         val evidence: List<CodeEvidence>,
         val confidenceMultiplier: Double,
         val message: String
     )
-
-    data class CodeEvidence(
-        val file: String,
-        val line: Int,
-        val content: String,
-        val matchType: MatchType
-    )
-
-    enum class MatchType {
-        CLASS_DEFINITION,      // class DiscoveryPipeline
-        METHOD_DEFINITION,     // fun discover()
-        VARIABLE,              // val pipeline = ...
-        IMPORT,                // import com...DiscoveryPipeline
-        USAGE,                 // General usage in code
-        COMMENT                // Mention in comment
-    }
 }

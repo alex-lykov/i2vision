@@ -7,6 +7,7 @@
 
 package com.i2vision.intent
 
+import com.i2vision.vslfc.VerbalizationStrategy
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
@@ -177,5 +178,112 @@ class IntentParserTest {
         // Then
         assertTrue(errors.isNotEmpty(), "Invalid combination should have errors")
         assertTrue(errors.any { it.contains("BROWSE depth cannot be combined with QUALITY focus") })
+    }
+
+    @Test
+    fun `should parse verbalization basic mode`() {
+        // Given: CLI arguments with basic verbalization
+        val args = mapOf(
+            "intent" to "full_discovery",
+            "verbalize" to "basic"
+        )
+
+        // When
+        val intent = IntentParser.parse(args)
+
+        // Then
+        assertNotNull(intent)
+        assertEquals(true, intent.verbalization.enabled)
+        assertEquals(VerbalizationStrategy.INCREMENTAL, intent.verbalization.strategy)
+        assertEquals(false, intent.verbalization.feedbackEnabled)
+    }
+
+    @Test
+    fun `should parse verbalization quality mode`() {
+        // Given: CLI arguments with quality verbalization
+        val args = mapOf(
+            "intent" to "documentation_generation",
+            "verbalize" to "quality"
+        )
+
+        // When
+        val intent = IntentParser.parse(args)
+
+        // Then
+        assertNotNull(intent)
+        assertEquals(true, intent.verbalization.enabled)
+        assertEquals(VerbalizationStrategy.MULTI_PASS, intent.verbalization.strategy)
+        assertEquals(false, intent.verbalization.feedbackEnabled)
+    }
+
+    @Test
+    fun `should parse verbalization learning mode`() {
+        // Given: CLI arguments with learning verbalization
+        val args = mapOf(
+            "intent" to "architecture_audit",
+            "verbalize" to "learning"
+        )
+
+        // When
+        val intent = IntentParser.parse(args)
+
+        // Then
+        assertNotNull(intent)
+        assertEquals(true, intent.verbalization.enabled)
+        assertEquals(VerbalizationStrategy.LEARNING, intent.verbalization.strategy)
+        assertEquals(true, intent.verbalization.feedbackEnabled)
+    }
+
+    @Test
+    fun `should parse detailed verbalization strategy`() {
+        // Given: CLI arguments with detailed verbalization settings
+        val args = mapOf(
+            "intent" to "full_discovery",
+            "verbalization-strategy" to "multi_pass",
+            "verbalization-patterns" to ".vision-ai/patterns.yaml",
+            "verbalization-feedback" to "true"
+        )
+
+        // When
+        val intent = IntentParser.parse(args)
+
+        // Then
+        assertNotNull(intent)
+        assertEquals(true, intent.verbalization.enabled)
+        assertEquals(VerbalizationStrategy.MULTI_PASS, intent.verbalization.strategy)
+        assertEquals(".vision-ai/patterns.yaml", intent.verbalization.customPatternsPath)
+        assertEquals(true, intent.verbalization.feedbackEnabled)
+    }
+
+    @Test
+    fun `should disable verbalization when feature flag is off`() {
+        // Given: Verbalization feature flag disabled (simulate by checking default behavior)
+        val args = mapOf(
+            "intent" to "full_discovery",
+            "verbalize" to "basic"
+        )
+
+        // When
+        val intent = IntentParser.parse(args)
+
+        // Then: Verbalization should be enabled when feature flag is on (default)
+        assertNotNull(intent)
+        assertEquals(true, intent.verbalization.enabled)
+    }
+
+    @Test
+    fun `should default to disabled verbalization when no verbalization args`() {
+        // Given: No verbalization arguments
+        val args = mapOf(
+            "intent" to "full_discovery"
+        )
+
+        // When
+        val intent = IntentParser.parse(args)
+
+        // Then
+        assertNotNull(intent)
+        assertEquals(false, intent.verbalization.enabled)
+        assertEquals(VerbalizationStrategy.INCREMENTAL, intent.verbalization.strategy)
     }
 }

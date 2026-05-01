@@ -99,6 +99,49 @@ if (!intent.isValid()) {
 - **BALANCED**: Balanced approach
 - **QUANTITY**: Prioritize maximum discovery
 
+### Verbalization Configuration
+
+Control how code symbols are described in natural language:
+
+```kotlin
+import com.i2vision.intent.VerbalizationConfig
+import com.i2vision.vslfc.VerbalizationStrategy
+
+val intent = DiscoveryIntent(
+    goal = IntentGoal.DOCUMENTATION_GENERATION,
+    verbalization = VerbalizationConfig.BASIC // Incremental strategy
+)
+
+// Or with custom settings
+val customVerbalization = VerbalizationConfig(
+    enabled = true,
+    strategy = VerbalizationStrategy.MULTI_PASS,
+    customPatternsPath = ".vision-ai/patterns.yaml",
+    feedbackEnabled = true
+)
+```
+
+#### Verbalization Modes
+
+- **DISABLED**: No verbalization (default)
+- **BASIC**: Incremental verbalization for speed
+- **QUALITY**: Multi-pass verbalization for accuracy
+- **LEARNING**: LLM-enhanced with user feedback
+
+#### CLI Arguments
+
+```bash
+# Simple verbalization modes
+--verbalize=basic      # Incremental strategy
+--verbalize=quality    # Multi-pass strategy  
+--verbalize=learning   # Learning strategy with feedback
+
+# Detailed configuration
+--verbalization-strategy=multi_pass
+--verbalization-patterns=.vision-ai/patterns.yaml
+--verbalization-feedback=true
+```
+
 ## Feature Flags
 
 Control intent system behavior via environment variables:
@@ -115,6 +158,12 @@ export I2VISION_INTENT_STRICT=true
 
 # Enable intent-only mode (disable strategy system)
 export I2VISION_INTENT_ONLY=false
+
+# Enable verbalization features
+export I2VISION_VERBALIZATION_ENABLED=true
+
+# Enable verbalization feedback collection
+export I2VISION_VERBALIZATION_FEEDBACK=false
 ```
 
 ## License

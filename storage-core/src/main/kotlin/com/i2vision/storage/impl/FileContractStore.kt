@@ -10,13 +10,17 @@ package com.i2vision.storage.impl
 import com.i2vision.storage.api.ContractStore
 import com.i2vision.storage.impl.internal.StorageLayout
 import com.i2vision.storage.model.*
+import com.i2vision.vslfc.PutResult
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.nio.file.Files
 
 /**
  * File-based implementation of ContractStore.
  * INTERNAL - knows the physical storage layout.
+ * 
+ * Uses NIO file operations for thread-safe concurrent access on Windows.
  */
 class FileContractStore(
     private val projectRoot: File
@@ -31,7 +35,8 @@ class FileContractStore(
         )
         val file = File(projectRoot, relativePath)
         file.parentFile?.mkdirs()
-        file.writeText(json.encodeToString(contract))
+        // Use NIO for thread-safe file writing on Windows
+        Files.writeString(file.toPath(), json.encodeToString(contract))
 
         return PutResult.Success(contract.id)
     }
@@ -44,7 +49,8 @@ class FileContractStore(
         val file = File(projectRoot, relativePath)
         if (!file.exists()) return null
 
-        return json.decodeFromString<ContractDefinition>(file.readText())
+        // Use NIO for thread-safe file reading on Windows
+        return json.decodeFromString(Files.readString(file.toPath()))
     }
 
     override suspend fun listDefinitions(): List<ContractDefinition> {
@@ -53,11 +59,12 @@ class FileContractStore(
         Layer.entries.forEach { layer ->
             val dir = File(projectRoot, StorageLayout.contractDefinitionsDir(layer.name.lowercase()))
             if (dir.exists()) {
-                dir.listFiles()
-                    ?.filter { it.extension == "yaml" }
-                    ?.forEach { file ->
+                // Use NIO for thread-safe directory traversal on Windows
+                Files.list(dir.toPath())
+                    .filter { path -> Files.isRegularFile(path) && path.toString().endsWith(".yaml") }
+                    .forEach { path ->
                         try {
-                            val contract = json.decodeFromString<ContractDefinition>(file.readText())
+                            val contract = json.decodeFromString<ContractDefinition>(Files.readString(path))
                             definitions.add(contract)
                         } catch (e: Exception) {
                             // Skip corrupted files
@@ -72,7 +79,8 @@ class FileContractStore(
     override suspend fun putValidation(contractId: ContractId, result: ValidationResult): PutResult {
         val artifactsDir = StorageLayout.contractArtifactsDir(projectRoot, contractId.sourceLayer.name.lowercase())
         val file = File(artifactsDir, "${contractId.name}-validation.yaml")
-        file.writeText(json.encodeToString(result))
+        // Use NIO for thread-safe file writing on Windows
+        Files.writeString(file.toPath(), json.encodeToString(result))
 
         return PutResult.Success(contractId)
     }
@@ -82,7 +90,8 @@ class FileContractStore(
         val file = File(artifactsDir, "${contractId.name}-validation.yaml")
         if (!file.exists()) return null
 
-        return json.decodeFromString<ValidationResult>(file.readText())
+        // Use NIO for thread-safe file reading on Windows
+        return json.decodeFromString(Files.readString(file.toPath()))
     }
 
     override suspend fun getRegistry(): ContractRegistry {

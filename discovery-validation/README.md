@@ -22,7 +22,8 @@ discovery-validation/
 │   │   ├── validation/
 │   │   │   ├── SelfDiscoveryTest.kt
 │   │   │   ├── DiscoveryIntegrationTest.kt
-│   │   │   └── DiscoveryFlowIntegrationTest.kt
+│   │   │   ├── DiscoveryFlowIntegrationTest.kt
+│   │   │   └── VerbalizationIntegrationTest.kt
 │   │   └── cli/
 │   │       └── integration/
 │   │           └── ContextIntegrationTest.kt
@@ -44,6 +45,36 @@ discovery-validation/
 
 ```bash
 ./gradlew :discovery-validation:test
+```
+
+To run specific test classes:
+
+```bash
+# Run only verbalization tests
+./gradlew :discovery-validation:test --tests VerbalizationIntegrationTest
+
+# Run only discovery flow tests
+./gradlew :discovery-validation:test --tests DiscoveryFlowIntegrationTest
+
+# Run only integration tests
+./gradlew :discovery-validation:test --tests DiscoveryIntegrationTest
+```
+
+## Verbalization Testing
+
+The `VerbalizationIntegrationTest` suite validates the new verbalization engine that transforms code symbols into natural language descriptions. Tests cover:
+
+- **Symbol Verbalization**: Converts code symbols (classes, functions, interfaces, etc.) into descriptive text
+- **Storage & Retrieval**: Verifies verbalization results are correctly stored in the semantic cache
+- **Strategies**: Tests INCREMENTAL (hash-based), MULTI_PASS (context-aware), and LEARNING (LLM-based) strategies
+- **Pattern Recognition**: Validates custom pattern registration and matching
+- **Change Detection**: Tests hash-based detection of modified symbols for incremental updates
+- **Discovery Integration**: Validates verbalization works with discovered architecture symbols
+
+### Running Verbalization Tests Only
+
+```bash
+./gradlew :discovery-validation:test --tests VerbalizationIntegrationTest
 ```
 
 ## Test Helper Methods
@@ -68,8 +99,48 @@ Architecture sketches are test projects with known structures used to validate a
 - **kotlin-multi-module**: Kotlin multi-module structure
 - **spring-boot**: Spring Boot framework structure
 
+## Test Suites
+
+### DiscoveryIntegrationTest
+Tests the core discovery pipeline:
+- Architecture detection and cluster identification
+- Intent resolution for different discovery modes
+- Discovery pipeline execution with various depths
+- Artifact generation and validation
+- End-to-end discovery flow
+
+### DiscoveryFlowIntegrationTest
+Comprehensive phased discovery flow tests:
+- **Phase 0**: Test setup and project structure creation
+- **Phase 1**: Roll-out and VSLFC layer initialization
+- **Phase 2**: Architecture detection, artifact purging, and discovery execution
+- **Phase 3**: Artifact analysis, validation, and VSLFC structure verification
+- **Phase 4**: Learning feedback recording for pattern improvement
+- **Phase 5**: Incremental sync for changed files
+- **Sketch validation**: Tests against architectural patterns
+- **Parallel discovery**: Validates correctness under concurrent execution
+
+### VerbalizationIntegrationTest (NEW)
+Tests the verbalization engine for transforming code into natural language:
+- **Phase 1**: Basic symbol verbalization with various code constructs
+- **Phase 2**: Verbalization storage and retrieval mechanisms
+- **Phase 3**: Different verbalization strategies (INCREMENTAL, MULTI_PASS, LEARNING)
+- **Phase 4**: Custom pattern recognition and registration
+- **Phase 5**: Hash-based change detection for incremental updates
+- **Phase 6**: Integration with discovery pipeline output
+
+### ContextIntegrationTest
+Tests CLI context command integration:
+- Enhanced context retrieval for discovered symbols
+- File-specific and project-level context operations
+- Cache integration with discovery results
+
 ## Recent Changes
 
+- Added comprehensive `VerbalizationIntegrationTest` suite for the new verbalization engine
+- Implemented tests for verbalization strategies: INCREMENTAL, MULTI_PASS, LEARNING
+- Added tests for symbol storage, retrieval, and hash-based change detection
+- Enhanced discovery validation to track verbalization integration
 - Moved ContextIntegrationTest from i2vision-cli to discovery-validation for centralized testing
 - Updated tests to use architecture sketches instead of temporary test files
 - Fixed path duplication bug by using canonical paths in project root resolution
@@ -83,4 +154,6 @@ This module depends on ALL production modules for comprehensive integration test
 - i2vision-discover
 - i2vision-instant
 - i2vision-mcp
+- verbalization-core (for verbalization engine testing)
+- vslfc-core (for VSLFC types and structures)
 - All other production modules

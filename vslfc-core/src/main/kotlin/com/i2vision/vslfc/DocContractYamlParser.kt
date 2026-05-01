@@ -11,6 +11,7 @@ import com.i2vision.vslfc.VSLFCLayerContracts.Layer
 import org.slf4j.LoggerFactory
 import org.yaml.snakeyaml.Yaml
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * YAML Contract Parser
@@ -66,11 +67,26 @@ class DocContractYamlParser(
     private val log = LoggerFactory.getLogger(javaClass)
     private val yaml = Yaml()
 
+    // Thread-safe cache for parsed contracts to avoid concurrent file access on Windows
+    private val contractCache = ConcurrentHashMap<String, DocLayerContract>()
+
+    // Cache for all contracts per layer
+    private val layerContractsCache = ConcurrentHashMap<Layer, List<DocLayerContract>>()
+
     /**
      * Parse a contract file for a specific VSLFC layer.
      * Handles both old format (single contract with 'contract' field) and new format (contracts array).
+     * Results are cached to avoid concurrent file access on Windows.
      */
     fun parse(contractFile: File): DocLayerContract {
+        val cacheKey = contractFile.absolutePath
+
+        // Return cached result if available
+        contractCache[cacheKey]?.let { cachedContract ->
+            log.debug("[PARSER] Using cached contract: ${contractFile.path}")
+            return cachedContract
+        }
+
         log.info("[PARSER] Parsing contract: ${contractFile.path}")
 
         if (!contractFile.exists()) {
@@ -85,15 +101,21 @@ class DocContractYamlParser(
 
             // Check if this is the new simplified format with contracts array
             val contractsData = data["contracts"] as? List<Map<String, Any>>
-            if (contractsData != null && contractsData.isNotEmpty()) {
+            val contract = if (contractsData != null && contractsData.isNotEmpty()) {
                 // New format: contracts array in single file - parse the first contract
                 val layer = parseLayerFromData(data)
                 val contractData = contractsData[0]
-                return parseContractFromMap(contractData, layer, contractFile)
+                // Pass file-level documentation as fallback for individual contracts
+                val fileLevelDocData = (data["documentation"] as? Map<String, Any>) ?: emptyMap<String, Any>()
+                parseContractFromMap(contractData, layer, contractFile, fileLevelDocData)
+            } else {
+                // Old format: single contract per file with 'contract' field
+                parseContract(data, contractFile)
             }
 
-            // Old format: single contract per file with 'contract' field
-            return parseContract(data, contractFile)
+            // Cache the result for future calls
+            contractCache[cacheKey] = contract
+            return contract
         } catch (e: Exception) {
             val errorMessage = e.message ?: "Unknown error"
             throw ContractParseException("Failed to parse contract ${contractFile.name}: $errorMessage", e)
@@ -118,8 +140,15 @@ class DocContractYamlParser(
     /**
      * Parse all contracts for a specific layer from a single contract.yaml file.
      * The simplified structure has all contracts for a layer in one file.
+     * Results are cached to avoid concurrent file access on Windows.
      */
     fun parseAllContractsForLayer(layer: Layer): List<DocLayerContract> {
+        // Return cached result if available
+        layerContractsCache[layer]?.let { cachedContracts ->
+            log.debug("[PARSER] Using cached contracts for layer: ${layer.name}")
+            return cachedContracts
+        }
+
         log.info("[PARSER] Parsing all contracts for ${layer.name} layer")
 
         val contractPath = VSLFCLayerContracts.contractPath(layer)
@@ -130,7 +159,7 @@ class DocContractYamlParser(
             return emptyList()
         }
 
-        return try {
+        val contracts = try {
             val data = yaml.load<Map<String, Any>>(contractFile.reader())
             if (data == null) {
                 log.error("[PARSER] Failed to parse contract file: YAML parser returned null")
@@ -141,9 +170,11 @@ class DocContractYamlParser(
             val contractsData = data["contracts"] as? List<Map<String, Any>>
             if (contractsData != null) {
                 // New format: contracts array in single file
+                // Get file-level documentation for fallback in individual contracts
+                val fileLevelDocData = (data["documentation"] as? Map<String, Any>) ?: emptyMap<String, Any>()
                 contractsData.mapNotNull { contractData ->
                     try {
-                        parseContractFromMap(contractData, layer, contractFile)
+                        parseContractFromMap(contractData, layer, contractFile, fileLevelDocData)
                     } catch (e: Exception) {
                         log.error("[PARSER] Failed to parse contract in array: ${e.message}")
                         null
@@ -162,15 +193,27 @@ class DocContractYamlParser(
             log.error("[PARSER] Failed to parse contract file ${contractFile.name}: ${e.message}")
             emptyList()
         }
+
+        // Cache the result
+        if (contracts.isNotEmpty()) {
+            layerContractsCache[layer] = contracts
+        }
+
+        return contracts
     }
 
     /**
      * Parse a contract from a map (for the new simplified format).
+     * @param data The contract data from the contracts array
+     * @param layer The VSLFC layer
+     * @param sourceFile The source contract.yaml file
+     * @param fileLevelDocData File-level documentation (for fallback when contract doesn't have its own documentation)
      */
     private fun parseContractFromMap(
         data: Map<String, Any>,
         layer: Layer,
-        sourceFile: File
+        sourceFile: File,
+        fileLevelDocData: Map<String, Any> = emptyMap()
     ): DocLayerContract {
         val contractId = data["id"] as? String
             ?: throw ContractParseException("Missing 'id' field in contract")
@@ -180,8 +223,14 @@ class DocContractYamlParser(
         val directionStr = data["direction"] as? String ?: "bidirectional"
         val direction = parseDirection(directionStr)
 
-        // Extract documentation from the top-level data or contract-specific data
-        val docData = (data["documentation"] as? Map<String, Any>) ?: emptyMap()
+        // Extract documentation - prefer contract-specific, fall back to file-level
+        val contractDocData = (data["documentation"] as? Map<String, Any>) ?: emptyMap()
+        val docData = if (contractDocData.isNotEmpty()) {
+            contractDocData
+        } else {
+            // Use file-level documentation as fallback for individual contracts
+            fileLevelDocData
+        }
         val documentation = parseDocumentation(docData)
 
         val mappings = parseMappings(data["mappings"] as? List<Map<String, Any>> ?: emptyList())

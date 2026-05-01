@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2026. Oleksii Lykov.
  *
  * Licensed under the MIT License.
@@ -11,17 +11,17 @@ import org.slf4j.LoggerFactory
 import java.io.File
 
 /**
- * CustomIndex — regex/grep-based [IndexProvider].
+ * CustomIndex â€” regex/grep-based [IndexProvider].
  *
  * This is the "always available" fallback that requires no external tools.
  * It wraps [ScannerService] for file/symbol enumeration and adds
  * grep-approximate call hierarchy and entry-point detection on top.
  *
  * Accuracy:
- *   - `findSymbol` / `symbolsInFile` / `listSourceFiles` → exact
- *   - `getCallHierarchy` / `getReachableFiles`           → approximate (grep-based)
- *   - `findEntryPoints`                                   → heuristic
- *   - `findClusters`                                      → directory-cohesion
+ *   - `findSymbol` / `symbolsInFile` / `listSourceFiles` â†’ exact
+ *   - `getCallHierarchy` / `getReachableFiles`           â†’ approximate (grep-based)
+ *   - `findEntryPoints`                                   â†’ heuristic
+ *   - `findClusters`                                      â†’ directory-cohesion
  */
 class CustomIndex(
     private val projectRoot: String,
@@ -54,7 +54,7 @@ class CustomIndex(
         )
     }
 
-    // ── Symbol resolution ─────────────────────────────────────────────────────
+    // â”€â”€ Symbol resolution â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     override fun findSymbol(name: String): SymbolInfo? =
         scanner.findSymbol(name).firstOrNull()?.toSymbolInfo()
@@ -96,13 +96,25 @@ class CustomIndex(
         val root = File(projectRoot)
         val allFiles = mutableListOf<SourceFile>()
 
-        root.walkTopDown()
-            .filter { it.isDirectory && it.name in sourceDirNames }
-            .forEach { srcDir ->
-                val relativePath = srcDir.relativeTo(root).path.replace('\\', '/')
-                val files = scanner.listFiles(relativePath)
-                allFiles.addAll(files)
-            }
+        try {
+            root.walkTopDown()
+                .filter { it.isDirectory && it.name in sourceDirNames }
+                .forEach { srcDir ->
+                    try {
+                        val relativePath = srcDir.relativeTo(root).path.replace('\\', '/')
+                        val files = scanner.listFiles(relativePath)
+                        allFiles.addAll(files)
+                    } catch (e: SecurityException) {
+                        log.trace("[CUSTOM_INDEX] Access denied to directory: ${'$'}{srcDir.path}")
+                    } catch (e: Exception) {
+                        log.trace("[CUSTOM_INDEX] Error processing directory ${'$'}{srcDir.path}: ${'$'}{e.message}")
+                    }
+                }
+        } catch (e: SecurityException) {
+            log.trace("[CUSTOM_INDEX] Access denied to project root directory")
+        } catch (e: Exception) {
+            log.trace("[CUSTOM_INDEX] Error scanning project root: ${'$'}{e.message}")
+        }
 
         synchronized(fileListCacheLock) {
             fileListCache[subPath] = allFiles
@@ -110,7 +122,7 @@ class CustomIndex(
         return allFiles
     }
 
-    // ── Call hierarchy (grep-approximate) ─────────────────────────────────────
+    // â”€â”€ Call hierarchy (grep-approximate) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     override fun getCallHierarchy(symbol: SymbolInfo): CallHierarchy {
         val root = File(projectRoot)
@@ -194,7 +206,7 @@ class CustomIndex(
         return CallHierarchy(symbol, calleeCandidates, callerLocations)
     }
 
-    // ── Reachability (BFS via grep-approximate call hierarchy) ────────────────
+    // â”€â”€ Reachability (BFS via grep-approximate call hierarchy) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     override fun getReachableFiles(entry: SymbolInfo, depth: Int): Set<File> {
         val visited = mutableSetOf<String>()
@@ -220,7 +232,7 @@ class CustomIndex(
         return result
     }
 
-    // ── Entry-point detection ─────────────────────────────────────────────────
+    // â”€â”€ Entry-point detection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     override fun findEntryPoints(): List<SymbolInfo> = findAllEntryPoints("unknown")
 
@@ -261,24 +273,34 @@ class CustomIndex(
             sourcePaths.add("src")
         }
 
-        File(projectRoot).listFiles()?.forEach { moduleDir ->
-            if (moduleDir.isDirectory && !moduleDir.name.startsWith(".") && moduleDir.name != "build") {
-                val moduleSrc = File(moduleDir, "src")
-                if (moduleSrc.exists() && moduleSrc.isDirectory) {
-                    sourcePaths.add("${moduleDir.name}/src")
+        try {
+            File(projectRoot).listFiles()?.forEach { moduleDir ->
+                if (moduleDir.isDirectory && !moduleDir.name.startsWith(".") && moduleDir.name != "build") {
+                    val moduleSrc = File(moduleDir, "src")
+                    if (moduleSrc.exists() && moduleSrc.isDirectory) {
+                        sourcePaths.add("${moduleDir.name}/src")
+                    }
                 }
             }
+        } catch (e: SecurityException) {
+            // Skip directory listing if access denied (common on Windows with locked/protected dirs)
+            log.trace("[CUSTOM_INDEX] Access denied to project root directory")
         }
 
         val coreDir = File(projectRoot, "core")
         if (coreDir.exists() && coreDir.isDirectory) {
-            coreDir.listFiles()?.forEach { submodule ->
-                if (submodule.isDirectory) {
-                    val submoduleSrc = File(submodule, "src")
-                    if (submoduleSrc.exists() && submoduleSrc.isDirectory) {
-                        sourcePaths.add("core/${submodule.name}/src")
+            try {
+                coreDir.listFiles()?.forEach { submodule ->
+                    if (submodule.isDirectory) {
+                        val submoduleSrc = File(submodule, "src")
+                        if (submoduleSrc.exists() && submoduleSrc.isDirectory) {
+                            sourcePaths.add("core/${submodule.name}/src")
+                        }
                     }
                 }
+            } catch (e: SecurityException) {
+                // Skip core directory if access denied
+                log.trace("[CUSTOM_INDEX] Access denied to core directory")
             }
         }
 
@@ -338,7 +360,7 @@ class CustomIndex(
             }
     }
 
-    // ── Cluster suggestion (directory-cohesion) ───────────────────────────────
+    // â”€â”€ Cluster suggestion (directory-cohesion) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     override fun findClusters(subPath: String): List<ClusterSuggestion> {
         val byDir = scanner.listFiles(subPath).groupBy { sf ->
@@ -364,7 +386,7 @@ class CustomIndex(
             .also { log.debug("[CUSTOM_INDEX] findClusters: {} suggestions", it.size) }
     }
 
-    // ── Private helpers ───────────────────────────────────────────────────────
+    // â”€â”€ Private helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     private fun extractBodyLines(lines: List<String>, startLine: Int): List<String> {
         val start = (startLine - 1).coerceAtLeast(0)
@@ -384,3 +406,5 @@ class CustomIndex(
         )
     }
 }
+
+

@@ -49,6 +49,7 @@ dependencies {
     implementation(project(":storage-core"))
     implementation(project(":index-provider"))
     implementation(project(":link-service"))
+    implementation(project(":verbalization-core"))
 
     // Testing
     testImplementation(kotlin("test"))

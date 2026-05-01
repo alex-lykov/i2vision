@@ -7,7 +7,6 @@
 
 plugins {
     kotlin("jvm")
-    kotlin("plugin.serialization")
     `maven-publish`
 }
 
@@ -28,14 +27,24 @@ dependencies {
     // Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
 
-    // Logging
-    implementation("org.slf4j:slf4j-api:2.0.7")
+    // YAML parsing
+    implementation("org.yaml:snakeyaml:2.0")
 
-    // VSLFC structure
+    // VSLFC core models
     implementation(project(":vslfc-core"))
 
-    // Architecture detection for roll-out
-    implementation(project(":i2vision-architecture"))
+    // Storage abstraction
+    implementation(project(":storage-core"))
+
+    // Intent parsing
+    implementation(project(":intent-parser"))
+
+    // LLM client for enhanced verbalization
+    implementation(project(":llm-client"))
+
+    // Testing
+    testImplementation(kotlin("test"))
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
 }
 
 tasks.test {
@@ -52,9 +61,9 @@ publishing {
             from(components["java"])
 
             pom {
-                name.set("storage-core")
-                description.set("Core storage abstractions for sessions, cache, projects, and other persistence needs")
-                url.set("https://github.com/alex-lykov/i2vision/storage-core")
+                name.set("verbalization-core")
+                description.set("Core verbalization engine for transforming code patterns into natural language descriptions")
+                url.set("https://github.com/alex-lykov/i2vision/verbalization-core")
 
                 licenses {
                     license {
@@ -71,9 +80,9 @@ publishing {
                 }
 
                 scm {
-                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/storage-core")
-                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/storage-core")
-                    url.set("https://github.com/alex-lykov/i2vision/storage-core")
+                    connection.set("scm:git:git://github.com/alex-lykov/i2vision/verbalization-core")
+                    developerConnection.set("scm:git:ssh://github.com/alex-lykov/i2vision/verbalization-core")
+                    url.set("https://github.com/alex-lykov/i2vision/verbalization-core")
                 }
             }
         }

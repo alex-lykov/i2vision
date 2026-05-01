@@ -97,7 +97,7 @@ class InitCommand : CliktCommand(
             echo("")
 
             val result = runBlocking {
-                rolloutManager.initialize(projectFile)
+                rolloutManager.initialize(projectFile, force)
             }
 
             if (result.success) {

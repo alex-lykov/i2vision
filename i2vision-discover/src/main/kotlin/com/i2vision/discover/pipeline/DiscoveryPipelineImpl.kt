@@ -7,27 +7,31 @@
 
 package com.i2vision.discover.pipeline
 
-import com.i2vision.architecture.ArchitectureDetector
 import com.i2vision.arch.signature.SignatureBuilder
+import com.i2vision.architecture.ArchitectureDetector
 import com.i2vision.discover.api.DiscoveryPipeline
 import com.i2vision.discover.api.IntentResolver
-import com.i2vision.discover.api.models.*
+import com.i2vision.discover.api.models.ContractHint
+import com.i2vision.discover.api.models.DiscoveryArtifact
+import com.i2vision.discover.api.models.DiscoveryDepth
+import com.i2vision.discover.api.models.PipelineResult
 import com.i2vision.discover.artifact.ArtifactWriter
 import com.i2vision.discover.doc.DocLayerImporter
 import com.i2vision.discover.flow.FlowDiscovery
 import com.i2vision.discover.logic.LogicExtractor
 import com.i2vision.discover.structure.StructureBuilder
+import com.i2vision.discover.vision.RequirementsInferer
+import com.i2vision.discover.vision.RequirementsValidator
 import com.i2vision.index.CustomIndex
 import com.i2vision.index.SemanticPathResolver
 import com.i2vision.link.LinkService
 import com.i2vision.storage.api.CacheStore
+import com.i2vision.storage.impl.FileVerbalizationStore
 import com.i2vision.storage.impl.RolloutManager
+import com.i2vision.verbalization.DefaultVerbalizationEngine
 import com.i2vision.vslfc.DocContractYamlParser
 import com.i2vision.vslfc.VSLFCLayerContracts
 import com.i2vision.vslfc.contracts.ContractValidator
-import com.i2vision.vslfc.DocLayerContract
-import com.i2vision.discover.vision.RequirementsInferer
-import com.i2vision.discover.vision.RequirementsValidator
 import org.slf4j.LoggerFactory
 import java.io.File
 
@@ -107,6 +111,14 @@ class DiscoveryPipelineImpl(
     private val requirementsInferer by lazy { RequirementsInferer(File(projectRoot)) }
     private val requirementsValidator by lazy { RequirementsValidator(File(projectRoot)) }
 
+    // Verbalization components
+    private val verbalizationStore: FileVerbalizationStore by lazy {
+        FileVerbalizationStore(cacheStore)
+    }
+    private val verbalizationEngine: DefaultVerbalizationEngine by lazy {
+        DefaultVerbalizationEngine(verbalizationStore)
+    }
+
     // Batch mode control for LinkService
     fun enableLinkBatchMode() {
         linkService.enableBatchMode()
@@ -121,7 +133,20 @@ class DiscoveryPipelineImpl(
         clusterId: String?,
         contracts: List<ContractHint>
     ): PipelineResult {
-        log.info("[DISCOVERY] Starting {} discovery for cluster '{}'", depth, clusterId ?: "unknown")
+        // Call internal method with disabled verbalization for depth-based discovery
+        return discover(depth, clusterId, contracts, com.i2vision.intent.VerbalizationConfig.DISABLED)
+    }
+
+    /**
+     * Internal discovery method with verbalization support.
+     */
+    private suspend fun discover(
+        depth: DiscoveryDepth,
+        clusterId: String?,
+        contracts: List<ContractHint>,
+        verbalization: com.i2vision.intent.VerbalizationConfig
+    ): PipelineResult {
+        log.info("[DISCOVERY] Starting {} discovery for cluster '{}' with verbalization", depth, clusterId ?: "unknown")
 
         // Auto-rollout if needed
         if (rolloutManager.needsRollout(File(projectRoot))) {
@@ -181,6 +206,70 @@ class DiscoveryPipelineImpl(
                 )
             )
             log.info("[DISCOVERY] Extracted {} symbols", symbols.size)
+
+            // Step 2.5: Verbalization using VerbalizationEngine
+            if (verbalization.enabled && (depth == DiscoveryDepth.STANDARD || depth == DiscoveryDepth.DEEP)) {
+                log.info("[DISCOVERY] Step 2.5: Running verbalization with strategy '{}'", verbalization.strategy)
+                try {
+                    // Convert index-provider symbols to verbalization symbols
+                    val verbalizationSymbols = symbols.map { symbol ->
+                        com.i2vision.vslfc.Symbol(
+                            name = symbol.name,
+                            kind = when (symbol.kind.lowercase()) {
+                                "class" -> com.i2vision.vslfc.SymbolKind.CLASS
+                                "interface" -> com.i2vision.vslfc.SymbolKind.INTERFACE
+                                "function", "fun" -> com.i2vision.vslfc.SymbolKind.FUNCTION
+                                "property", "val", "var" -> com.i2vision.vslfc.SymbolKind.PROPERTY
+                                "variable" -> com.i2vision.vslfc.SymbolKind.VARIABLE
+                                "annotation" -> com.i2vision.vslfc.SymbolKind.ANNOTATION
+                                "enum" -> com.i2vision.vslfc.SymbolKind.ENUM
+                                "object" -> com.i2vision.vslfc.SymbolKind.OBJECT
+                                "type_alias" -> com.i2vision.vslfc.SymbolKind.TYPE_ALIAS
+                                else -> com.i2vision.vslfc.SymbolKind.UNKNOWN
+                            },
+                            filePath = symbol.file.absolutePath,
+                            lineNumber = symbol.line,
+                            content = "", // TODO: Read actual content from file
+                            metadata = mapOf(
+                                "qualifiedName" to symbol.qualifiedName,
+                                "language" to symbol.language
+                            )
+                        )
+                    }
+
+                    // Create intent for verbalization engine
+                    val verbalizationIntent = com.i2vision.intent.DiscoveryIntent(
+                        goal = com.i2vision.intent.IntentGoal.FULL_DISCOVERY,
+                        focus = com.i2vision.intent.LayerFocus.ALL,
+                        depth = com.i2vision.intent.IntentDepth.STANDARD,
+                        quality = com.i2vision.intent.QualityFocus.BALANCED,
+                        verbalization = verbalization,
+                        constraints = emptyMap()
+                    )
+
+                    // Run verbalization
+                    val verbalizationResults = verbalizationEngine.verbalize(
+                        clusterId = clusterId ?: "root",
+                        symbols = verbalizationSymbols,
+                        strategy = verbalization.strategy,
+                        intent = verbalizationIntent
+                    )
+
+                    artifacts.add(
+                        DiscoveryArtifact(
+                            layer = "code",
+                            path = "verbalization",
+                            content = "Verbalized ${verbalizationResults.size} symbols using ${verbalization.strategy} strategy:\n${
+                                verbalizationResults.take(10).joinToString("\n") { result -> "- ${result.symbol.name}: ${result.description.take(100)}..." }
+                            }"
+                        )
+                    )
+                    log.info("[DISCOVERY] Verbalized {} symbols", verbalizationResults.size)
+                } catch (e: Exception) {
+                    log.warn("[DISCOVERY] Verbalization failed: {}", e.message)
+                    errors.add("Verbalization failed: ${e.message}")
+                }
+            }
 
             // Step 3: Entry point detection using index-provider
             log.info("[DISCOVERY] Step 3: Detecting entry points")
@@ -364,8 +453,8 @@ class DiscoveryPipelineImpl(
                                         )
                                     }
                                 }
-                                
-                                log.info("[DISCOVERY] Total Vision requirements: {} ({} from docs, {} from code)", 
+
+                                log.info("[DISCOVERY] Total Vision requirements: {} ({} from docs, {} from code)",
                                     mergedRequirements.size, visionRequirements.size, codeInferredRequirements.size)
 
                                 // Perform bidirectional validation
@@ -587,6 +676,10 @@ class DiscoveryPipelineImpl(
             val visionArtifactsCount = artifacts.count { it.layer == "vision" && it.path == "vision_artifacts" }
             val generatedLinksCount = artifacts.find { it.layer == "logic" && it.path == "generated_links" }
                 ?.content?.extractInt() ?: 0
+            val verbalizationCount = if (verbalization.enabled) {
+                artifacts.find { it.layer == "code" && it.path == "verbalization" }
+                    ?.content?.let { Regex("Verbalized (\\d+) symbols").find(it)?.groupValues?.get(1)?.toInt() } ?: 0
+            } else 0
             return PipelineResult(
                 success = errors.isEmpty(),
                 artifacts = artifacts,
@@ -607,7 +700,8 @@ class DiscoveryPipelineImpl(
                     "artifact_files" to artifactFileCount.toString(),
                     "contract_validation" to contractValidationCount.toString(),
                     "vision_artifacts" to visionArtifactsCount.toString(),
-                    "generated_links" to generatedLinksCount.toString()
+                    "generated_links" to generatedLinksCount.toString(),
+                    "verbalization_symbols" to verbalizationCount.toString()
                 )
             )
         } catch (e: Exception) {
@@ -626,13 +720,13 @@ class DiscoveryPipelineImpl(
     }
 
     override suspend fun discover(
-        intent: DiscoveryIntent,
+        intent: com.i2vision.discover.api.models.DiscoveryIntent,
         clusterId: String?,
         contracts: List<ContractHint>
     ): PipelineResult {
         log.info(
-            "[DISCOVERY] Starting intent-based discovery: goal={}, depth={}",
-            intent.goal, intent.depth
+            "[DISCOVERY] Starting intent-based discovery: goal={}, depth={}, verbalization={}",
+            intent.goal, intent.depth, if (intent.verbalization.enabled) "enabled" else "disabled"
         )
 
         // Validate intent
@@ -653,13 +747,24 @@ class DiscoveryPipelineImpl(
 
         // Map intent depth to discovery depth
         val discoveryDepth = when (intent.depth) {
-            IntentDepth.BROWSE -> DiscoveryDepth.BROWSE
-            IntentDepth.STANDARD -> DiscoveryDepth.STANDARD
-            IntentDepth.DEEP -> DiscoveryDepth.DEEP
+            com.i2vision.discover.api.models.IntentDepth.BROWSE -> DiscoveryDepth.BROWSE
+            com.i2vision.discover.api.models.IntentDepth.STANDARD -> DiscoveryDepth.STANDARD
+            com.i2vision.discover.api.models.IntentDepth.DEEP -> DiscoveryDepth.DEEP
         }
 
-        // Execute discovery with resolved parameters
-        return discover(discoveryDepth, clusterId, contracts)
+        // Execute discovery with resolved parameters and verbalization config
+        val verbalizationConfig = com.i2vision.intent.VerbalizationConfig(
+            enabled = intent.verbalization.enabled,
+            strategy = when (intent.verbalization.verbosityLevel) {
+                1 -> com.i2vision.vslfc.VerbalizationStrategy.INCREMENTAL
+                2 -> com.i2vision.vslfc.VerbalizationStrategy.MULTI_PASS
+                3 -> com.i2vision.vslfc.VerbalizationStrategy.LEARNING
+                else -> com.i2vision.vslfc.VerbalizationStrategy.INCREMENTAL
+            },
+            customPatternsPath = null,
+            feedbackEnabled = intent.verbalization.includeExamples
+        )
+        return discover(discoveryDepth, clusterId, contracts, verbalizationConfig)
     }
 
     /**

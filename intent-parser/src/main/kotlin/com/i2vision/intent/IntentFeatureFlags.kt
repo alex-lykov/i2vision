@@ -63,6 +63,30 @@ object IntentFeatureFlags {
         System.getenv("I2VISION_INTENT_ONLY")?.toBoolean() ?: false
 
     /**
+     * Enable verbalization in discovery intents.
+     *
+     * When enabled, users can specify verbalization settings in intents.
+     * When disabled, verbalization arguments are ignored.
+     *
+     * Environment variable: I2VISION_VERBALIZATION_ENABLED
+     * Default: true
+     */
+    val VERBALIZATION_ENABLED: Boolean =
+        System.getenv("I2VISION_VERBALIZATION_ENABLED")?.toBoolean() ?: true
+
+    /**
+     * Enable verbalization feedback collection.
+     *
+     * When enabled, verbalization feedback is collected for learning.
+     * When disabled, feedback collection is skipped.
+     *
+     * Environment variable: I2VISION_VERBALIZATION_FEEDBACK
+     * Default: false
+     */
+    val VERBALIZATION_FEEDBACK: Boolean =
+        System.getenv("I2VISION_VERBALIZATION_FEEDBACK")?.toBoolean() ?: false
+
+    /**
      * Check if Intent system is available.
      */
     fun isIntentSystemAvailable(): Boolean = INTENT_ENABLED

@@ -8,14 +8,22 @@
 package com.i2vision.storage.impl
 
 import com.i2vision.storage.api.ArtifactStore
-import com.i2vision.storage.model.*
+import com.i2vision.storage.model.Artifact
+import com.i2vision.storage.model.ArtifactMetadata
+import com.i2vision.storage.model.ArtifactRef
+import com.i2vision.storage.model.Layer
+import com.i2vision.vslfc.PutResult
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.nio.file.Files
+import java.security.MessageDigest
 
 /**
  * File-based implementation of ArtifactStore.
  * INTERNAL - knows the physical storage layout.
+ * 
+ * Uses NIO file operations for thread-safe concurrent access on Windows.
  */
 class FileArtifactStore(
     private val cacheDir: File
@@ -26,14 +34,14 @@ class FileArtifactStore(
     override suspend fun putArtifact(ref: ArtifactRef, content: ByteArray, metadata: ArtifactMetadata): PutResult {
         val relativePath = "${ref.module}/${ref.layer.name.lowercase()}/${ref.name}"
 
-        // Write content
+        // Write content using NIO for thread-safe file writing on Windows
         val file = File(cacheDir, relativePath)
         file.parentFile?.mkdirs()
-        file.writeBytes(content)
+        Files.write(file.toPath(), content)
 
-        // Write metadata
+        // Write metadata using NIO
         val metaFile = File(cacheDir, "$relativePath.meta")
-        metaFile.writeText(json.encodeToString(metadata))
+        Files.writeString(metaFile.toPath(), json.encodeToString(metadata))
 
         return PutResult.Success(ref)
     }
@@ -43,10 +51,11 @@ class FileArtifactStore(
         val file = File(cacheDir, relativePath)
         if (!file.exists()) return null
 
-        val content = file.readBytes()
+        // Use NIO for thread-safe file reading on Windows
+        val content = Files.readAllBytes(file.toPath())
         val metadataFile = File(cacheDir, "$relativePath.meta")
         val metadata = if (metadataFile.exists()) {
-            json.decodeFromString<ArtifactMetadata>(metadataFile.readText())
+            json.decodeFromString(Files.readString(metadataFile.toPath()))
         } else {
             ArtifactMetadata(
                 createdAt = java.time.Instant.now().toEpochMilli(),
@@ -76,10 +85,11 @@ class FileArtifactStore(
         val moduleDir = File(cacheDir, module)
 
         if (moduleDir.exists()) {
-            moduleDir.walkTopDown()
-                .filter { it.isFile && it.extension in setOf("yaml", "json", "sd") }
-                .forEach { file ->
-                    val relativePath = file.path.removePrefix(moduleDir.path + "/")
+            // Use NIO for thread-safe directory traversal on Windows
+            Files.walk(moduleDir.toPath())
+                .filter { path -> Files.isRegularFile(path) && isArtifactFile(path) }
+                .forEach { path ->
+                    val relativePath = path.toString().removePrefix(moduleDir.path + "/")
                     val parts = relativePath.split("/")
                     if (parts.size >= 2) {
                         val layer = try {
@@ -100,13 +110,13 @@ class FileArtifactStore(
         val artifacts = mutableListOf<ArtifactRef>()
 
         if (cacheDir.exists()) {
-            cacheDir.walkTopDown()
-                .filter { it.isDirectory }
-                .filter { it.name == layer.name.lowercase() }
+            // Use NIO for thread-safe directory traversal on Windows
+            Files.walk(cacheDir.toPath())
+                .filter { path -> Files.isDirectory(path) && path.fileName.toString() == layer.name.lowercase() }
                 .forEach { layerDir ->
-                    val module = layerDir.parentFile?.name ?: return@forEach
-                    layerDir.listFiles()
-                        ?.filter { it.isFile && it.extension in setOf("yaml", "json", "sd") }
+                    val module = layerDir.parent?.fileName?.toString() ?: return@forEach
+                    layerDir.toFile().listFiles()
+                        ?.filter { isArtifactFile(it.toPath()) }
                         ?.forEach { file ->
                             artifacts.add(ArtifactRef(module, layer, file.name))
                         }
@@ -116,8 +126,13 @@ class FileArtifactStore(
         return artifacts
     }
 
+    private fun isArtifactFile(path: java.nio.file.Path): Boolean {
+        val ext = path.fileName.toString().substringAfterLast('.', "")
+        return ext in setOf("yaml", "json", "sd")
+    }
+
     private fun computeHash(content: ByteArray): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val digest = MessageDigest.getInstance("SHA-256")
         return digest.digest(content).joinToString("") { "%02x".format(it) }
     }
 }

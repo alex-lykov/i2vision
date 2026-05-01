@@ -60,7 +60,8 @@ data class DiscoveryIntent(
     val depth: IntentDepth,
     val quality: DiscoveryQuality,
     val layerFocus: List<String> = emptyList(),
-    val customParameters: Map<String, String> = emptyMap()
+    val customParameters: Map<String, String> = emptyMap(),
+    val verbalization: VerbalizationConfig = VerbalizationConfig()
 )
 
 /**
@@ -101,4 +102,14 @@ data class ModifiableParameterSet(
     val name: String,
     val description: String,
     val parameters: Map<String, JsonElement> = emptyMap()
+)
+
+/**
+ * Verbalization configuration for DiscoveryIntent.
+ */
+@Serializable
+data class VerbalizationConfig(
+    val enabled: Boolean = false,
+    val verbosityLevel: Int = 1,
+    val includeExamples: Boolean = false
 )

@@ -11,6 +11,7 @@ import com.i2vision.discover.pipeline.VisionCodeEvidence
 import org.slf4j.LoggerFactory
 import org.yaml.snakeyaml.Yaml
 import java.io.File
+import java.nio.file.Files
 
 data class HumanRequirement(
     val id: String,
@@ -59,7 +60,7 @@ class RequirementsValidator(
         humanRequirements: List<HumanRequirement>,
         codeRequirements: List<InferredRequirement>
     ): ValidationResult {
-        log.info("[VALIDATOR] Validating {} human requirements against {} code-inferred requirements", 
+        log.info("[VALIDATOR] Validating {} human requirements against {} code-inferred requirements",
             humanRequirements.size, codeRequirements.size)
 
         val implemented = mutableListOf<RequirementMatch>()
@@ -117,31 +118,44 @@ class RequirementsValidator(
         }
 
         val requirements = mutableListOf<HumanRequirement>()
-        requirementsDir.listFiles { _, name -> name.endsWith(".yaml") }?.forEach { file ->
-            try {
-                val data = yaml.load<Map<String, Any>>(file.readText())
-                val req = HumanRequirement(
-                    id = data["id"] as? String ?: file.nameWithoutExtension,
-                    title = data["title"] as? String ?: "(no title)",
-                    description = data["description"] as? String,
-                    priority = data["priority"] as? String ?: "MEDIUM",
-                    status = data["status"] as? String ?: "DRAFT",
-                    acceptanceCriteria = data["acceptance_criteria"] as? List<String> ?: emptyList(),
-                    evidence = (data["evidence"] as? List<*>)?.mapNotNull { evidence ->
-                        val evidenceMap = evidence as? Map<*, *>
-                        if (evidenceMap != null) {
-                            RequirementEvidence(
-                                file = evidenceMap["file"] as? String ?: "",
-                                line = (evidenceMap["line"] as? Number)?.toInt() ?: 0,
-                                confidence = (evidenceMap["confidence"] as? Number)?.toDouble() ?: 0.0
-                            )
-                        } else null
-                    } ?: emptyList()
-                )
-                requirements.add(req)
-            } catch (e: Exception) {
-                log.warn("[VALIDATOR] Error loading requirement from {}: {}", file.name, e.message)
+        try {
+            val files = try {
+                requirementsDir.listFiles { _, name -> name.endsWith(".yaml") }
+            } catch (e: SecurityException) {
+                // Skip directory if access denied (common on Windows)
+                log.trace("[VALIDATOR] Access denied to requirements directory: {}", requirementsDir.path)
+                null
             }
+            files?.forEach { file ->
+                try {
+                    // Use NIO for thread-safe file reading on Windows
+                    val yamlContent = String(Files.readAllBytes(file.toPath()), Charsets.UTF_8)
+                    val data = yaml.load<Map<String, Any>>(yamlContent)
+                    val req = HumanRequirement(
+                        id = data["id"] as? String ?: file.nameWithoutExtension,
+                        title = data["title"] as? String ?: "(no title)",
+                        description = data["description"] as? String,
+                        priority = data["priority"] as? String ?: "MEDIUM",
+                        status = data["status"] as? String ?: "DRAFT",
+                        acceptanceCriteria = data["acceptance_criteria"] as? List<String> ?: emptyList(),
+                        evidence = (data["evidence"] as? List<*>)?.mapNotNull { evidence ->
+                            val evidenceMap = evidence as? Map<*, *>
+                            if (evidenceMap != null) {
+                                RequirementEvidence(
+                                    file = evidenceMap["file"] as? String ?: "",
+                                    line = (evidenceMap["line"] as? Number)?.toInt() ?: 0,
+                                    confidence = (evidenceMap["confidence"] as? Number)?.toDouble() ?: 0.0
+                                )
+                            } else null
+                        } ?: emptyList()
+                    )
+                    requirements.add(req)
+                } catch (e: Exception) {
+                    log.warn("[VALIDATOR] Error loading requirement from {}: {}", file.name, e.message)
+                }
+            }
+        } catch (e: SecurityException) {
+            log.trace("[VALIDATOR] Access denied to requirements directory: {}", requirementsDir.path)
         }
 
         log.info("[VALIDATOR] Loaded {} human requirements from {}", requirements.size, requirementsDir.path)
@@ -162,8 +176,8 @@ class RequirementsValidator(
     }
 
     private fun extractKeywords(text: String): Set<String> {
-        val stopWords = setOf("the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", 
-                               "of", "with", "by", "from", "as", "is", "was", "are", "were", 
+        val stopWords = setOf("the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
+                               "of", "with", "by", "from", "as", "is", "was", "are", "were",
                                "this", "that", "these", "those", "must", "should", "will", "can",
                                "system", "feature", "provide", "support", "implement", "add")
         return text.split(Regex("[^a-zA-Z0-9]+"))

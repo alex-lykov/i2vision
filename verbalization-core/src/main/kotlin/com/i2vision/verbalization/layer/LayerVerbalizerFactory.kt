@@ -7,8 +7,8 @@
 
 package com.i2vision.verbalization.layer
 
+import com.i2vision.arch.signature.EnrichedSymbol
 import com.i2vision.intent.DiscoveryIntent
-import com.i2vision.vslfc.Symbol
 import com.i2vision.vslfc.VerbalizationResult
 
 /**
@@ -71,7 +71,7 @@ class MultiLayerVerbalizer(
      * @return List of verbalization results from all applicable layers
      */
     suspend fun verbalize(
-        symbols: List<Symbol>,
+        symbols: List<EnrichedSymbol>,
         intent: DiscoveryIntent
     ): List<VerbalizationResult> {
         val results = mutableListOf<VerbalizationResult>()
@@ -102,7 +102,7 @@ class MultiLayerVerbalizer(
      * Verbalize symbols for a specific layer only.
      */
     suspend fun verbalizeForLayer(
-        symbols: List<Symbol>,
+        symbols: List<EnrichedSymbol>,
         layer: VSLFCLayer,
         intent: DiscoveryIntent
     ): List<VerbalizationResult> {
@@ -116,7 +116,7 @@ class MultiLayerVerbalizer(
      * Get verbalization results grouped by layer.
      */
     suspend fun verbalizeGroupedByLayer(
-        symbols: List<Symbol>,
+        symbols: List<EnrichedSymbol>,
         intent: DiscoveryIntent
     ): Map<String, List<VerbalizationResult>> {
         val results = verbalize(symbols, intent)
@@ -125,3 +125,4 @@ class MultiLayerVerbalizer(
         }
     }
 }
+

@@ -7,10 +7,12 @@
 
 package com.i2vision.verbalization.layer
 
+import com.i2vision.arch.signature.EnrichedSymbol
+import com.i2vision.arch.signature.toEnriched
 import com.i2vision.intent.DiscoveryIntent
-import com.i2vision.vslfc.Symbol
 import com.i2vision.vslfc.SymbolKind
 import com.i2vision.vslfc.VerbalizationResult
+import com.i2vision.verbalization.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -19,39 +21,47 @@ import kotlinx.coroutines.withContext
  * 
  * This verbalizer extracts high-level purpose, requirements, and constraints
  * from documentation files and maps them to the Vision layer context.
+ * 
+ * REFACTORED: Uses structured detection where applicable, minimal changes needed.
  */
 class VisionVerbalizer : LayerVerbalizer {
     
     override val layerName: String = "Vision"
     
-    override fun canHandle(symbol: Symbol): Boolean {
+    override fun canHandle(symbol: EnrichedSymbol): Boolean {
         // Vision layer handles documentation-related symbols
-        return symbol.filePath.endsWith(".md") || 
-               symbol.filePath.contains("/docs/") ||
-               symbol.filePath.endsWith("README.md") ||
-               symbol.kind == SymbolKind.OBJECT && symbol.name.contains("Config")
+        return symbol.symbol.filePath.endsWith(".md") || 
+               symbol.symbol.filePath.contains("/docs/") ||
+               symbol.symbol.filePath.endsWith("README.md") ||
+               symbol.symbol.kind == SymbolKind.OBJECT && symbol.symbol.name.contains("Config")
     }
     
     override suspend fun verbalize(
-        symbol: Symbol,
+        symbol: EnrichedSymbol,
         context: LayerVerbalizationContext,
         intent: DiscoveryIntent
     ): VerbalizationResult = withContext(Dispatchers.Default) {
         val purposeStatement = extractPurposeStatement(symbol)
         val requirements = extractRequirements(symbol)
         val constraints = extractConstraints(symbol)
+        val technicalDecisions = extractTechnicalDecisions(symbol)
+        val tradeoffs = extractTradeoffs(symbol)
+        val architectureStyle = extractArchitectureStyle(symbol)
         
         val visionContext = VisionContext(
-            purposeStatement = purposeStatement,
-            requirements = requirements,
-            constraints = constraints,
-            stakeholders = extractStakeholders(symbol)
+            architectureStyle = architectureStyle,
+            qualityAttributes = requirements,
+            technicalDecisions = technicalDecisions,
+            tradeoffs = tradeoffs,
+            structureContext = StructureContext(),
+            logicContext = LogicContext(),
+            flowContext = FlowContext()
         )
         
-        val description = generateVisionDescription(visionContext)
+        val description = generateVisionDescription(visionContext, purposeStatement)
         
         VerbalizationResult(
-            symbol = symbol,
+            symbol = symbol.symbol,
             description = description,
             confidence = calculateConfidence(symbol, visionContext),
             strategy = intent.verbalization.strategy,
@@ -65,7 +75,7 @@ class VisionVerbalizer : LayerVerbalizer {
     }
     
     override suspend fun verbalizeAll(
-        symbols: List<Symbol>,
+        symbols: List<EnrichedSymbol>,
         context: LayerVerbalizationContext,
         intent: DiscoveryIntent
     ): List<VerbalizationResult> {
@@ -75,11 +85,19 @@ class VisionVerbalizer : LayerVerbalizer {
     
     /**
      * Extract purpose statement from documentation or symbol metadata.
+     * 
+     * REFACTORED: Can use structured metadata if available.
      */
-    private fun extractPurposeStatement(symbol: Symbol): String {
+    private fun extractPurposeStatement(enriched: EnrichedSymbol): String {
+        // Try to extract from structured metadata first
+        val metadataPurpose = enriched.symbol.metadata["purpose"]
+        if (metadataPurpose != null && metadataPurpose.toString().isNotEmpty()) {
+            return metadataPurpose.toString()
+        }
+        
         // Try to extract from first paragraph of markdown
         val markdownPurposeRegex = Regex("""^#\s*(.+?)\n""", setOf(RegexOption.MULTILINE))
-        val match = markdownPurposeRegex.find(symbol.content)
+        val match = markdownPurposeRegex.find(enriched.symbol.content)
         
         if (match != null) {
             return match.groupValues[1].trim()
@@ -87,24 +105,35 @@ class VisionVerbalizer : LayerVerbalizer {
         
         // Try to extract from class/object documentation
         val docRegex = Regex("""/\*\*\s*\n\s*\*([^*]*)""")
-        val docMatch = docRegex.find(symbol.content)
+        val docMatch = docRegex.find(enriched.symbol.content)
         if (docMatch != null) {
-            return docMatch.groupValues[1].trim().split("\n").firstOrNull()?.trim() ?: "No purpose statement found"
+            return docMatch.groupValues[1].trim().split("\n").firstOrNull()?.trim() 
+                ?: "No purpose statement found"
         }
         
         // Fallback to symbol name with context
-        return "Provides ${symbol.name} functionality for the system"
+        return "Provides ${enriched.symbol.name} functionality for the system"
     }
     
     /**
      * Extract requirements from documentation.
+     * 
+     * REFACTORED: Can use structured metadata if available.
      */
-    private fun extractRequirements(symbol: Symbol): List<String> {
+    private fun extractRequirements(enriched: EnrichedSymbol): List<String> {
+        // Try structured metadata first
+        val metadataReqs = enriched.symbol.metadata["requirements"]
+        if (metadataReqs is List<*>) {
+            return metadataReqs.filterIsInstance<String>().ifEmpty { 
+                listOf("System should fulfill its intended purpose") 
+            }
+        }
+        
         val requirements = mutableListOf<String>()
         
         // Look for "## Requirements" or "## Features" sections
         val sectionRegex = Regex("""##\s*(?:Requirements|Features|Goals)\s*\n((?:[-*]\s*.+\n?)+)""", RegexOption.MULTILINE)
-        val sectionMatch = sectionRegex.find(symbol.content)
+        val sectionMatch = sectionRegex.find(enriched.symbol.content)
         
         if (sectionMatch != null) {
             val items = sectionMatch.groupValues[1]
@@ -116,7 +145,7 @@ class VisionVerbalizer : LayerVerbalizer {
         
         // Also look for numbered requirements
         val numberedRegex = Regex("""\d+\.\s*([A-Z].+?)(?=\n\d+\.|\n\n|$)""", RegexOption.MULTILINE)
-        numberedRegex.findAll(symbol.content)
+        numberedRegex.findAll(enriched.symbol.content)
             .map { it.groupValues[1].trim() }
             .forEach { requirements.add(it) }
         
@@ -125,13 +154,21 @@ class VisionVerbalizer : LayerVerbalizer {
     
     /**
      * Extract constraints from documentation.
+     * 
+     * REFACTORED: Can use structured metadata if available.
      */
-    private fun extractConstraints(symbol: Symbol): List<String> {
+    private fun extractConstraints(enriched: EnrichedSymbol): List<String> {
+        // Try structured metadata first
+        val metadataConstraints = enriched.symbol.metadata["constraints"]
+        if (metadataConstraints is List<*>) {
+            return metadataConstraints.filterIsInstance<String>()
+        }
+        
         val constraints = mutableListOf<String>()
         
         // Look for "## Constraints" or "## Non-functional Requirements" sections
         val sectionRegex = Regex("""##\s*(?:Constraints|Non-functional Requirements|Limitations)\s*\n((?:[-*]\s*.+\n?)+)""", RegexOption.MULTILINE)
-        val sectionMatch = sectionRegex.find(symbol.content)
+        val sectionMatch = sectionRegex.find(enriched.symbol.content)
         
         if (sectionMatch != null) {
             val items = sectionMatch.groupValues[1]
@@ -149,54 +186,98 @@ class VisionVerbalizer : LayerVerbalizer {
         )
         
         constraintPatterns.forEach { pattern ->
-            pattern.findAll(symbol.content)
+            pattern.findAll(enriched.symbol.content)
                 .map { it.groupValues[2].trim() }
                 .forEach { constraints.add(it) }
         }
         
-        return constraints.ifEmpty { emptyList() }
+        return constraints
     }
     
     /**
-     * Extract stakeholders from documentation.
+     * Extract technical decisions from documentation.
      */
-    private fun extractStakeholders(symbol: Symbol): List<String> {
-        val stakeholders = mutableListOf<String>()
+    private fun extractTechnicalDecisions(enriched: EnrichedSymbol): List<String> {
+        val decisions = mutableListOf<String>()
         
-        // Look for stakeholder sections
-        val stakeholderRegex = Regex("""##\s*(?:Stakeholders|Users|Roles)\s*\n((?:[-*]\s*.+\n?)+)""", RegexOption.MULTILINE)
-        val match = stakeholderRegex.find(symbol.content)
+        // Look for "## Technical Decisions" or "## Architecture Decisions" sections
+        val sectionRegex = Regex("""##\s*(?:Technical Decisions|Architecture Decisions|ADRs)\s*\n((?:[-*]\s*.+\n?)+)""", RegexOption.MULTILINE)
+        val sectionMatch = sectionRegex.find(enriched.symbol.content)
         
-        if (match != null) {
-            val items = match.groupValues[1]
+        if (sectionMatch != null) {
+            val items = sectionMatch.groupValues[1]
                 .split(Regex("""\n(?=[-*])"""))
                 .map { it.trim().removePrefix("- ").removePrefix("* ").trim() }
                 .filter { it.isNotEmpty() }
-                .map { it.split(":").firstOrNull()?.trim() ?: it }
-            stakeholders.addAll(items)
+            decisions.addAll(items)
         }
         
-        return stakeholders.ifEmpty { listOf("System Users", "Developers") }
+        return decisions.ifEmpty { listOf("Uses appropriate technology stack") }
+    }
+    
+    /**
+     * Extract tradeoffs from documentation.
+     */
+    private fun extractTradeoffs(enriched: EnrichedSymbol): List<String> {
+        val tradeoffs = mutableListOf<String>()
+        
+        // Look for "## Tradeoffs" or "## Considerations" sections
+        val sectionRegex = Regex("""##\s*(?:Tradeoffs|Considerations|Pros and Cons)\s*\n((?:[-*]\s*.+\n?)+)""", RegexOption.MULTILINE)
+        val sectionMatch = sectionRegex.find(enriched.symbol.content)
+        
+        if (sectionMatch != null) {
+            val items = sectionMatch.groupValues[1]
+                .split(Regex("""\n(?=[-*])"""))
+                .map { it.trim().removePrefix("- ").removePrefix("* ").trim() }
+                .filter { it.isNotEmpty() }
+            tradeoffs.addAll(items)
+        }
+        
+        return tradeoffs
+    }
+    
+    /**
+     * Extract architecture style from documentation.
+     */
+    private fun extractArchitectureStyle(enriched: EnrichedSymbol): String {
+        // Look for architecture style mentions
+        val stylePatterns = listOf(
+            "microservices" to "Microservices",
+            "monolithic" to "Monolithic",
+            "layered" to "Layered",
+            "event-driven" to "Event-Driven",
+            "hexagonal" to "Hexagonal",
+            "clean architecture" to "Clean Architecture",
+            "domain-driven" to "Domain-Driven Design"
+        )
+        
+        stylePatterns.forEach { (pattern, style) ->
+            if (Regex("""\b$pattern\b""", RegexOption.IGNORE_CASE).containsMatchIn(enriched.symbol.content)) {
+                return style
+            }
+        }
+        
+        return "Not specified"
     }
     
     /**
      * Generate natural language description from vision context.
      */
-    private fun generateVisionDescription(context: VisionContext): String {
+    private fun generateVisionDescription(context: VisionContext, purposeStatement: String): String {
         val sb = StringBuilder()
         
-        sb.append("Purpose: ${context.purposeStatement}. ")
+        sb.append("$purposeStatement. ")
         
-        if (context.requirements.isNotEmpty()) {
-            sb.append("Key requirements include: ${context.requirements.take(3).joinToString(", ")}. ")
+        if (context.architectureStyle != "Not specified") {
+            sb.append("Uses ${context.architectureStyle} architecture. ")
         }
         
-        if (context.constraints.isNotEmpty()) {
-            sb.append("Constraints: ${context.constraints.take(2).joinToString(", ")}. ")
+        if (context.qualityAttributes.isNotEmpty()) {
+            sb.append("Key requirements: ${context.qualityAttributes.take(3).joinToString(", ")}. ")
         }
         
-        if (context.stakeholders.isNotEmpty()) {
-            sb.append("Primary stakeholders: ${context.stakeholders.take(3).joinToString(", ")}.")
+        if (context.technicalDecisions.isNotEmpty()) {
+            sb.append("Technical decisions: ${context.technicalDecisions.take(2).joinToString(", ")}. ")
         }
         
         return sb.toString().trim()
@@ -205,24 +286,18 @@ class VisionVerbalizer : LayerVerbalizer {
     /**
      * Calculate confidence based on documentation quality.
      */
-    private fun calculateConfidence(symbol: Symbol, context: VisionContext): Double {
-        var confidence = 0.5
+    private fun calculateConfidence(enriched: EnrichedSymbol, context: VisionContext): Double {
+        var confidence = 0.5 // Base confidence for documentation
         
-        // Higher confidence if we found a purpose statement
-        if (context.purposeStatement.isNotEmpty() && context.purposeStatement.length > 10) {
-            confidence += 0.2
-        }
+        // Higher confidence if purpose statement is clear
+        if (enriched.symbol.metadata["purpose"] != null) confidence += 0.2
         
-        // Higher confidence if we found requirements
-        if (context.requirements.isNotEmpty()) {
-            confidence += 0.15
-        }
+        // Higher confidence if requirements are documented
+        if (context.qualityAttributes.isNotEmpty()) confidence += 0.15
         
-        // Higher confidence for actual documentation files
-        if (symbol.filePath.endsWith(".md")) {
-            confidence += 0.15
-        }
+        // Higher confidence if architecture is specified
+        if (context.architectureStyle != "Not specified") confidence += 0.15
         
-        return minOf(confidence, 0.95)
+        return confidence.coerceAtMost(0.95)
     }
 }

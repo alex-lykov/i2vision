@@ -19,6 +19,12 @@ repositories {
 
 dependencies {
     implementation(kotlin("stdlib"))
+    
+    // VSLFC core models for Symbol type
+    implementation(project(":vslfc-core"))
+    
+    // Kotlin PSI for AST analysis (Kotlin compiler embedded)
+    implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:1.9.21")
 }
 
 kotlin {

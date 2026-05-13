@@ -7,12 +7,15 @@
 
 package com.i2vision.verbalization.llm
 
+import com.i2vision.arch.signature.EnrichedSymbol
 import com.i2vision.vslfc.Symbol
 import com.i2vision.vslfc.SymbolKind
 
 /**
  * Client for generating verbalization descriptions using LLM.
  * Provides context-aware description generation with feedback integration.
+ * 
+ * REFACTORED: Now supports EnrichedSymbol for structured detection.
  */
 interface LlmVerbalizationClient {
     /**
@@ -36,9 +39,17 @@ interface LlmVerbalizationClient {
 
 /**
  * Request for LLM verbalization generation.
+ * 
+ * @param symbol The base symbol to verbalize
+ * @param enrichedSymbol Optional enriched symbol with structured facts (NEW)
+ * @param heuristicDescription Existing heuristic description
+ * @param context Context about the symbol
+ * @param feedbackHistory User feedback history
+ * @param promptTemplate Template for LLM prompt
  */
 data class LlmVerbalizationRequest(
     val symbol: Symbol,
+    val enrichedSymbol: EnrichedSymbol? = null,  // NEW: Structured enrichment data
     val heuristicDescription: String?,
     val context: SymbolVerbalizationContext,
     val feedbackHistory: List<FeedbackHistoryEntry> = emptyList(),
@@ -151,4 +162,38 @@ Given the Kotlin code symbol below, produce a concise, accurate description.
 4. Keep to 1-2 sentences
 
 Output only the description:
+"""
+
+/**
+ * Extended prompt template with structured enrichment data.
+ */
+const val ENRICHED_TEMPLATE = """
+You are an expert software architect creating documentation for code symbols.
+Given the following structured information, produce a concise, accurate description.
+
+## Symbol Information
+- Name: {symbolName}
+- Kind: {symbolKind}
+- File: {symbolFile}
+
+## Structured Modifiers Detected
+{modifiers}
+
+## Architectural Role
+{structuralRole}
+
+## Technical Context
+{technicalContext}
+
+## Heuristic Description
+{heuristicDescription}
+
+## Task
+Write a description that:
+1. Incorporates the structured modifiers naturally
+2. Mentions architectural role if relevant
+3. Includes technical context (database, external calls, etc.)
+4. Is 1-2 sentences maximum
+
+Output only the description, no markdown.
 """

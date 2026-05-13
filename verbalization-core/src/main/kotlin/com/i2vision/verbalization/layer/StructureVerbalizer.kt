@@ -7,10 +7,13 @@
 
 package com.i2vision.verbalization.layer
 
+import com.i2vision.arch.signature.EnrichedSymbol
+import com.i2vision.arch.signature.ModifierKind
+import com.i2vision.arch.signature.StructuralRole
 import com.i2vision.intent.DiscoveryIntent
-import com.i2vision.vslfc.Symbol
 import com.i2vision.vslfc.SymbolKind
 import com.i2vision.vslfc.VerbalizationResult
+import com.i2vision.verbalization.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -19,40 +22,41 @@ import kotlinx.coroutines.withContext
  * 
  * This verbalizer analyzes code structure to identify components, their relationships,
  * and architectural patterns, producing a component graph description.
+ * 
+ * REFACTORED: Uses structured detection from EnrichedSymbol. No fallback.
  */
 class StructureVerbalizer : LayerVerbalizer {
     
     override val layerName: String = "Structure"
     
-    override fun canHandle(symbol: Symbol): Boolean {
-        // Structure layer handles architectural components
-        return symbol.kind in listOf(SymbolKind.CLASS, SymbolKind.INTERFACE, SymbolKind.OBJECT, SymbolKind.ENUM) ||
-               symbol.filePath.contains("/module/") ||
-               symbol.filePath.contains("/component/") ||
-               symbol.filePath.contains("/architecture/")
+    override fun canHandle(symbol: EnrichedSymbol): Boolean {
+        return symbol.symbol.kind in listOf(SymbolKind.CLASS, SymbolKind.INTERFACE, SymbolKind.OBJECT, SymbolKind.ENUM) ||
+               symbol.symbol.filePath.contains("/module/") ||
+               symbol.symbol.filePath.contains("/component/") ||
+               symbol.symbol.filePath.contains("/architecture/")
     }
     
     override suspend fun verbalize(
-        symbol: Symbol,
+        symbol: EnrichedSymbol,
         context: LayerVerbalizationContext,
         intent: DiscoveryIntent
     ): VerbalizationResult = withContext(Dispatchers.Default) {
         val components = extractComponents(symbol)
         val dependencies = extractDependencies(symbol)
-        val architecturePattern = detectArchitecturePattern(symbol)
-        val modules = extractModules(symbol)
+        val patterns = extractPatterns(symbol)
+        val layers = extractLayers(symbol)
         
         val structureContext = StructureContext(
             components = components,
             dependencies = dependencies,
-            architecturePattern = architecturePattern,
-            modules = modules
+            patterns = patterns,
+            layers = layers
         )
         
         val description = generateStructureDescription(structureContext)
         
         VerbalizationResult(
-            symbol = symbol,
+            symbol = symbol.symbol,
             description = description,
             confidence = calculateConfidence(symbol, structureContext),
             strategy = intent.verbalization.strategy,
@@ -60,14 +64,15 @@ class StructureVerbalizer : LayerVerbalizer {
                 "layer" to "STRUCTURE",
                 "components_count" to components.size.toString(),
                 "dependencies_count" to dependencies.size.toString(),
-                "architecture_pattern" to architecturePattern,
-                "modules_count" to modules.size.toString()
+                "patterns_count" to patterns.size.toString(),
+                "layers_count" to layers.size.toString(),
+                "structural_role" to (symbol.structuralRole?.name ?: "UNKNOWN")
             )
         )
     }
     
     override suspend fun verbalizeAll(
-        symbols: List<Symbol>,
+        symbols: List<EnrichedSymbol>,
         context: LayerVerbalizationContext,
         intent: DiscoveryIntent
     ): List<VerbalizationResult> {
@@ -75,233 +80,159 @@ class StructureVerbalizer : LayerVerbalizer {
             .map { verbalize(it, context, intent) }
     }
     
-    /**
-     * Extract component information from symbol.
-     */
-    private fun extractComponents(symbol: Symbol): List<ComponentInfo> {
-        val components = mutableListOf<ComponentInfo>()
-        
-        // Extract class/component definitions
-        val classRegex = Regex("""(?:class|interface|object|enum class)\s+(\w+)""")
-        classRegex.findAll(symbol.content)
-            .forEach { match ->
-                val name = match.groupValues[1]
-                val type = when {
-                    match.value.startsWith("interface") -> "INTERFACE"
-                    match.value.startsWith("object") -> "OBJECT"
-                    match.value.startsWith("enum") -> "ENUM"
+    private fun extractComponents(enriched: EnrichedSymbol): List<ComponentInfo> {
+        val type = when (enriched.symbol.kind) {
+            SymbolKind.INTERFACE -> "INTERFACE"
+            SymbolKind.OBJECT -> "OBJECT"
+            SymbolKind.ENUM -> "ENUM"
+            SymbolKind.CLASS -> {
+                when {
+                    enriched.hasModifier(ModifierKind.DATA_CLASS) -> "DATA_CLASS"
+                    enriched.hasModifier(ModifierKind.SEALED_CLASS) -> "SEALED_CLASS"
+                    enriched.hasModifier(ModifierKind.VALUE_CLASS) -> "VALUE_CLASS"
                     else -> "CLASS"
                 }
-                
-                val responsibilities = extractResponsibilities(symbol.content, name)
-                
-                components.add(
-                    ComponentInfo(
-                        name = name,
-                        type = type,
-                        responsibilities = responsibilities,
-                        filePath = symbol.filePath
-                    )
-                )
             }
-        
-        // If no components found, create one from the symbol itself
-        if (components.isEmpty()) {
-            components.add(
-                ComponentInfo(
-                    name = symbol.name,
-                    type = symbol.kind.name,
-                    responsibilities = extractResponsibilities(symbol.content, symbol.name),
-                    filePath = symbol.filePath
-                )
-            )
+            else -> "CLASS"
         }
         
-        return components
+        val responsibilities = extractResponsibilities(enriched)
+        
+        return listOf(
+            ComponentInfo(
+                name = enriched.symbol.name,
+                type = type,
+                role = enriched.structuralRole,
+                modifiers = enriched.modifiers.map { it.kind.name },
+                description = responsibilities.joinToString(". ")
+            )
+        )
     }
     
-    /**
-     * Extract responsibilities from documentation or naming patterns.
-     */
-    private fun extractResponsibilities(content: String, componentName: String): List<String> {
+    private fun extractResponsibilities(enriched: EnrichedSymbol): List<String> {
         val responsibilities = mutableListOf<String>()
         
-        // Look for @responsibility or @purpose tags
-        val tagRegex = Regex("""@(?:responsibility|purpose)\s+(.+)""")
-        tagRegex.findAll(content)
-            .map { it.groupValues[1].trim() }
-            .forEach { responsibilities.add(it) }
+        enriched.structuralRole?.let { role ->
+            responsibilities.add(role.toResponsibility())
+        }
         
-        // Infer from method names
-        val methodRegex = Regex("""fun\s+(\w+)\s*\(""")
-        methodRegex.findAll(content)
-            .map { it.groupValues[1] }
-            .filter { it.length > 3 }
-            .take(3)
-            .forEach { methodName ->
-                responsibilities.add(inferResponsibilityFromMethodName(methodName))
-            }
+        when {
+            enriched.hasModifier(ModifierKind.REPOSITORY) -> 
+                responsibilities.add("Manages data access operations")
+            enriched.hasModifier(ModifierKind.CONTROLLER) -> 
+                responsibilities.add("Handles HTTP requests and responses")
+            enriched.hasModifier(ModifierKind.SERVICE) -> 
+                responsibilities.add("Implements business logic")
+            enriched.hasModifier(ModifierKind.FACTORY) -> 
+                responsibilities.add("Creates object instances")
+            enriched.hasModifier(ModifierKind.BUILDER) -> 
+                responsibilities.add("Constructs complex objects")
+            enriched.hasModifier(ModifierKind.VALIDATION) -> 
+                responsibilities.add("Validates input data")
+            enriched.hasModifier(ModifierKind.BUSINESS_RULE) -> 
+                responsibilities.add("Enforces business rules")
+        }
         
-        return responsibilities.ifEmpty { listOf("Manages $componentName operations") }.distinct()
+        return responsibilities.ifEmpty { 
+            listOf("Manages ${enriched.symbol.name} operations") 
+        }.distinct()
     }
     
-    /**
-     * Infer responsibility from method name.
-     */
-    private fun inferResponsibilityFromMethodName(methodName: String): String {
-        return when {
-            methodName.startsWith("get") || methodName.startsWith("fetch") -> "Retrieves data"
-            methodName.startsWith("set") || methodName.startsWith("update") -> "Updates state"
-            methodName.startsWith("create") || methodName.startsWith("build") -> "Creates instances"
-            methodName.startsWith("delete") || methodName.startsWith("remove") -> "Removes entities"
-            methodName.startsWith("validate") || methodName.startsWith("check") -> "Validates data"
-            methodName.startsWith("process") || methodName.startsWith("handle") -> "Processes requests"
-            methodName.startsWith("initialize") || methodName.startsWith("init") -> "Initializes components"
-            else -> "Performs ${methodName.lowercase().replaceFirstChar { it.uppercase() }} operation"
+    private fun StructuralRole.toResponsibility(): String {
+        return when (this) {
+            StructuralRole.CONTROLLER -> "Handles HTTP requests and responses"
+            StructuralRole.SERVICE -> "Implements business logic"
+            StructuralRole.REPOSITORY -> "Manages data access and persistence"
+            StructuralRole.ENTITY -> "Represents domain model"
+            StructuralRole.DTO -> "Transfers data between layers"
+            StructuralRole.VALIDATOR -> "Validates input data"
+            StructuralRole.FACTORY -> "Creates object instances"
+            StructuralRole.BUILDER -> "Constructs complex objects step-by-step"
+            StructuralRole.ORCHESTRATOR -> "Coordinates multiple services"
+            StructuralRole.DISPATCHER -> "Routes requests to handlers"
+            StructuralRole.TRANSFORMER -> "Transforms data between formats"
+            StructuralRole.AGGREGATOR -> "Aggregates data from multiple sources"
+            StructuralRole.EVENT_PRODUCER -> "Publishes domain events"
+            StructuralRole.EVENT_CONSUMER -> "Consumes and processes events"
+            StructuralRole.EVENT_HANDLER -> "Handles specific event types"
+            StructuralRole.UTIL -> "Provides utility functions"
+            StructuralRole.CONFIG -> "Manages configuration"
+            StructuralRole.UNKNOWN -> "Performs operations"
         }
     }
     
-    /**
-     * Extract dependency information from imports and usage.
-     */
-    private fun extractDependencies(symbol: Symbol): List<DependencyInfo> {
-        val dependencies = mutableListOf<DependencyInfo>()
-        
-        // Extract import statements
-        val importRegex = Regex("""import\s+([\w.]+)""")
-        val imports = importRegex.findAll(symbol.content)
-            .map { it.groupValues[1] }
-            .filter { !it.startsWith("kotlin") && !it.startsWith("java") }
-            .distinct()
-        
-        imports.forEach { import ->
-            val strength = when {
-                import.contains("core") || import.contains("api") -> DependencyStrength.STRONG
-                import.contains("util") || import.contains("helper") -> DependencyStrength.WEAK
-                else -> DependencyStrength.WEAK
-            }
-            
-            dependencies.add(
-                DependencyInfo(
-                    from = symbol.name,
-                    to = import.substringAfterLast("."),
-                    type = "IMPORT",
-                    strength = strength
-                )
+    private fun extractDependencies(enriched: EnrichedSymbol): List<DependencyInfo> {
+        return enriched.dependencies.map { dep ->
+            DependencyInfo(
+                from = enriched.symbol.name,
+                to = dep,
+                type = "INJECTED",
+                strength = DependencyStrength.STRONG
             )
         }
-        
-        // Extract constructor parameters and property types
-        val usageRegex = Regex(""":\s*(\w+)(?:\s*[,)]|\s*=\s*)""")
-        usageRegex.findAll(symbol.content)
-            .map { it.groupValues[1] }
-            .filter { it.first().isUpperCase() && it !in imports.map { imp -> imp.substringAfterLast(".") } }
-            .distinct()
-            .take(5)
-            .forEach { type ->
-                dependencies.add(
-                    DependencyInfo(
-                        from = symbol.name,
-                        to = type,
-                        type = "TYPE_REFERENCE",
-                        strength = DependencyStrength.STRONG
-                    )
-                )
-            }
-        
-        return dependencies
     }
     
-    /**
-     * Detect architecture pattern from code structure.
-     */
-    private fun detectArchitecturePattern(symbol: Symbol): String {
-        val content = symbol.content.lowercase()
+    private fun extractPatterns(enriched: EnrichedSymbol): List<String> {
+        val patterns = mutableListOf<String>()
         
-        return when {
-            content.contains("@controller") || content.contains("@restcontroller") -> "MVC"
-            content.contains("@service") && content.contains("@repository") -> "Layered"
-            content.contains("interface") && content.contains("implementation") -> "Interface-based"
-            content.contains("observer") || content.contains("listener") -> "Event-driven"
-            content.contains("command") || content.contains("query") -> "CQRS"
-            content.contains("factory") || content.contains("builder") -> "Builder Pattern"
-            content.contains("singleton") || content.contains("object ") -> "Singleton"
-            content.contains("strategy") -> "Strategy Pattern"
-            else -> "Unknown"
+        when {
+            enriched.hasModifier(ModifierKind.CONTROLLER) -> patterns.add("MVC")
+            enriched.hasModifier(ModifierKind.SERVICE) && enriched.hasModifier(ModifierKind.REPOSITORY) -> patterns.add("Layered")
+            enriched.hasModifier(ModifierKind.OBSERVER) -> patterns.add("Event-driven")
+            enriched.hasModifier(ModifierKind.FACTORY) && enriched.hasModifier(ModifierKind.BUILDER) -> patterns.add("Builder Pattern")
+            enriched.hasModifier(ModifierKind.SINGLETON) -> patterns.add("Singleton")
+            enriched.hasModifier(ModifierKind.STRATEGY) -> patterns.add("Strategy Pattern")
+            enriched.symbol.kind == SymbolKind.INTERFACE -> patterns.add("Interface-based")
         }
+        
+        return patterns
     }
     
-    /**
-     * Extract module names from file path and content.
-     */
-    private fun extractModules(symbol: Symbol): List<String> {
-        val modules = mutableListOf<String>()
+    private fun extractLayers(enriched: EnrichedSymbol): List<String> {
+        val layers = mutableListOf<String>()
+        val pathParts = enriched.symbol.filePath.split("/")
         
-        // Extract from file path
-        val pathParts = symbol.filePath.split("/")
         if (pathParts.size >= 2) {
-            modules.add(pathParts[0])
+            layers.add(pathParts[0])
             if (pathParts.size >= 3) {
-                modules.add("${pathParts[0]}/${pathParts[1]}")
+                layers.add("${pathParts[0]}/${pathParts[1]}")
             }
         }
         
-        // Extract package declarations
-        val packageRegex = Regex("""package\s+([\w.]+)""")
-        val packageMatch = packageRegex.find(symbol.content)
-        if (packageMatch != null) {
-            val packageName = packageMatch.groupValues[1]
-            modules.add(packageName.split(".").joinToString("/"))
-        }
-        
-        return modules.distinct().ifEmpty { listOf("default") }
+        return layers.distinct()
     }
     
-    /**
-     * Generate natural language description from structure context.
-     */
     private fun generateStructureDescription(context: StructureContext): String {
         val sb = StringBuilder()
         
-        sb.append("Architecture: ${context.architecturePattern}. ")
-        sb.append("Components: ${context.components.map { it.name }.joinToString(", ")}. ")
+        if (context.components.isNotEmpty()) {
+            val component = context.components.first()
+            sb.append("${component.type.lowercase().replace("_", " ")} ")
+            sb.append(component.name)
+            
+            if (component.description.isNotEmpty()) {
+                sb.append(" - ${component.description}")
+            }
+        }
+        
+        if (context.patterns.isNotEmpty()) {
+            sb.append(". Follows ${context.patterns.joinToString(", ")} pattern(s)")
+        }
         
         if (context.dependencies.isNotEmpty()) {
-            val depSummary = context.dependencies
-                .groupBy { it.from }
-                .mapValues { it.value.size }
-                .map { "${it.key}(${it.value} deps)" }
-            sb.append("Dependencies: ${depSummary.joinToString(", ")}. ")
+            sb.append(". Depends on ${context.dependencies.size} component(s)")
         }
         
-        if (context.modules.isNotEmpty()) {
-            sb.append("Modules: ${context.modules.joinToString(", ")}.")
-        }
-        
-        return sb.toString().trim()
+        return sb.toString()
     }
     
-    /**
-     * Calculate confidence based on structural analysis quality.
-     */
-    private fun calculateConfidence(symbol: Symbol, context: StructureContext): Double {
-        var confidence = 0.5
+    private fun calculateConfidence(enriched: EnrichedSymbol, context: StructureContext): Double {
+        var confidence = 0.6
         
-        // Higher confidence if we found components
-        if (context.components.isNotEmpty()) {
-            confidence += 0.2
-        }
+        if (enriched.modifiers.isNotEmpty()) confidence += 0.15
+        if (enriched.structuralRole != null && enriched.structuralRole != StructuralRole.UNKNOWN) confidence += 0.15
+        if (context.patterns.isNotEmpty()) confidence += 0.1
         
-        // Higher confidence if we found dependencies
-        if (context.dependencies.isNotEmpty()) {
-            confidence += 0.15
-        }
-        
-        // Higher confidence if architecture pattern detected
-        if (context.architecturePattern != "Unknown") {
-            confidence += 0.15
-        }
-        
-        return minOf(confidence, 0.95)
+        return confidence.coerceAtMost(1.0)
     }
 }

@@ -7,8 +7,12 @@
 
 package com.i2vision.verbalization.llm
 
+import com.i2vision.arch.signature.EnrichedSymbol
 import com.i2vision.vslfc.Symbol
 import com.i2vision.vslfc.SymbolKind
+import com.i2vision.verbalization.modifier.KotlinModifierVerbalizer
+import com.i2vision.verbalization.modifier.ModifierVerbalizer
+import com.i2vision.verbalization.modifier.verbalizeWithContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -17,9 +21,12 @@ import java.util.Properties
 /**
  * Default implementation of LlmVerbalizationClient.
  * Provides configurable LLM integration with fallback to heuristic descriptions.
+ * 
+ * REFACTORED: Uses structured modifier detection instead of regex-based detection.
  */
 class DefaultLlmVerbalizationClient(
-    private val config: LlmClientConfig = LlmClientConfig()
+    private val config: LlmClientConfig = LlmClientConfig(),
+    private val modifierVerbalizer: ModifierVerbalizer = KotlinModifierVerbalizer()
 ) : LlmVerbalizationClient {
 
     // Placeholder for actual LLM integration - would use llm-client module
@@ -96,8 +103,98 @@ class DefaultLlmVerbalizationClient(
         // Apply feedback improvements if available
         val fromFeedback = applyFeedbackImprovements(heuristic, request.feedbackHistory)
 
-        // Add Kotlin-specific terminology
-        return addKotlinTerminology(fromFeedback, symbol)
+        // REFACTORED: Use structured enrichment if available, otherwise use legacy approach
+        return if (request.enrichedSymbol != null) {
+            // New structured approach
+            enhanceWithStructuredData(request.enrichedSymbol, fromFeedback)
+        } else {
+            // Legacy approach (to be removed after migration)
+            addKotlinTerminology(fromFeedback, symbol)
+        }
+    }
+
+    /**
+     * REFACTORED: Enhance description using structured data from EnrichedSymbol.
+     * This replaces the regex-based addKotlinTerminology() function.
+     */
+    private fun enhanceWithStructuredData(
+        enriched: EnrichedSymbol,
+        baseDescription: String
+    ): String {
+        // Use the ModifierVerbalizer to convert structured facts to natural language
+        return modifierVerbalizer.verbalizeWithContext(
+            com.i2vision.verbalization.modifier.VerbalizationContext(
+                baseDescription = baseDescription,
+                enrichedSymbol = enriched,
+                includeModifiers = true,
+                includeRole = true,
+                includeTechnicalContext = true
+            )
+        )
+    }
+
+    /**
+     * LEGACY: Regex-based terminology enhancement.
+     * 
+     * DEPRECATED: This function uses fragile regex matching on raw source code.
+     * It will be removed after all callers migrate to structured detection.
+     * 
+     * @see enhanceWithStructuredData
+     */
+    @Deprecated(
+        "Use enhanceWithStructuredData() with EnrichedSymbol instead",
+        ReplaceWith(
+            "enhanceWithStructuredData(symbol.enrich { /* extraction logic */ }, description)",
+            "com.i2vision.arch.signature.enrich"
+        )
+    )
+    private fun addKotlinTerminology(description: String, symbol: Symbol): String {
+        val content = symbol.content
+        val lowerContent = content.lowercase()
+        var result = description
+
+        // Check for suspend functions
+        if (lowerContent.contains("suspend ")) {
+            // Replace async terminology with suspend (case-insensitive)
+            result = result.replace(Regex("asynchronous", RegexOption.IGNORE_CASE)) { match ->
+                // Preserve case: if original was capitalized, capitalize result
+                if (match.value.first().isUpperCase()) "Suspend" else "suspend"
+            }
+            result = result.replace(Regex("async", RegexOption.IGNORE_CASE)) { match ->
+                if (match.value.first().isUpperCase()) "Suspend" else "suspend"
+            }
+            // If description doesn't already mention suspend (case-insensitive), prepend it
+            if (!result.contains("suspend", ignoreCase = true)) {
+                result = "suspend $result"
+            }
+        }
+
+        // Check for data classes
+        if (lowerContent.contains("data class") || lowerContent.contains("data ")) {
+            result = result.replace(Regex("\\bclass\\b", RegexOption.IGNORE_CASE), "data class")
+        }
+
+        // Check for inline classes
+        if (lowerContent.contains("inline class")) {
+            result = result.replace(Regex("wrapper", RegexOption.IGNORE_CASE), "inline type wrapper")
+        }
+
+        // Check for sealed classes
+        if (lowerContent.contains("sealed class")) {
+            result = result.replace(Regex("hierarchy", RegexOption.IGNORE_CASE), "sealed hierarchy")
+        }
+
+        // Check for companion objects
+        if (lowerContent.contains("companion object") && !result.contains("companion", ignoreCase = true)) {
+            result = "$result (companion)"
+        }
+
+        // Check for delegation
+        if (lowerContent.contains("by ") && !result.contains("delegate", ignoreCase = true)) {
+            result = "$result (delegate)"
+        }
+
+        return result
     }
 
     private fun describeFromContent(symbol: Symbol): String {
@@ -171,55 +268,6 @@ class DefaultLlmVerbalizationClient(
         }
     }
 
-    private fun addKotlinTerminology(description: String, symbol: Symbol): String {
-        val content = symbol.content
-        val lowerContent = content.lowercase()
-        var result = description
-
-        // Check for suspend functions
-        if (lowerContent.contains("suspend ")) {
-            // Replace async terminology with suspend (case-insensitive)
-            result = result.replace(Regex("asynchronous", RegexOption.IGNORE_CASE)) { match ->
-                // Preserve case: if original was capitalized, capitalize result
-                if (match.value.first().isUpperCase()) "Suspend" else "suspend"
-            }
-            result = result.replace(Regex("async", RegexOption.IGNORE_CASE)) { match ->
-                if (match.value.first().isUpperCase()) "Suspend" else "suspend"
-            }
-            // If description doesn't already mention suspend (case-insensitive), prepend it
-            if (!result.contains("suspend", ignoreCase = true)) {
-                result = "suspend $result"
-            }
-        }
-
-        // Check for data classes
-        if (lowerContent.contains("data class") || lowerContent.contains("data ")) {
-            result = result.replace(Regex("\\bclass\\b", RegexOption.IGNORE_CASE), "data class")
-        }
-
-        // Check for inline classes
-        if (lowerContent.contains("inline class")) {
-            result = result.replace(Regex("wrapper", RegexOption.IGNORE_CASE), "inline type wrapper")
-        }
-
-        // Check for sealed classes
-        if (lowerContent.contains("sealed class")) {
-            result = result.replace(Regex("hierarchy", RegexOption.IGNORE_CASE), "sealed hierarchy")
-        }
-
-        // Check for companion objects
-        if (lowerContent.contains("companion object") && !result.contains("companion", ignoreCase = true)) {
-            result = "$result (companion)"
-        }
-
-        // Check for delegation
-        if (lowerContent.contains("by ") && !result.contains("delegate", ignoreCase = true)) {
-            result = "$result (delegate)"
-        }
-
-        return result
-    }
-
     private fun estimateTokens(text: String): Int {
         // Rough estimate: ~4 characters per token
         return (text.length / 4).toInt()
@@ -251,33 +299,9 @@ data class LlmClientConfig(
                 model = props.getProperty("model", "gpt-4"),
                 temperature = props.getProperty("temperature", "0.3").toDoubleOrNull() ?: 0.3,
                 maxTokens = props.getProperty("maxTokens", "500").toIntOrNull() ?: 500,
-                allowMockFallback = props.getProperty("allowMockFallback", "true").toBooleanStrictOrNull() ?: true,
+                allowMockFallback = props.getProperty("allowMockFallback", "true").toBoolean(),
                 timeoutMs = props.getProperty("timeoutMs", "30000").toIntOrNull() ?: 30000
             )
-        }
-    }
-}
-
-/**
- * Factory for creating LLM clients based on configuration.
- */
-object LlmClientFactory {
-    fun create(config: LlmClientConfig = LlmClientConfig()): LlmVerbalizationClient {
-        return DefaultLlmVerbalizationClient(config)
-    }
-
-    fun createFromConfigFile(configPath: String): LlmVerbalizationClient {
-        val configFile = File(configPath)
-        return if (configFile.exists()) {
-            try {
-                val props = Properties()
-                configFile.inputStream().use { props.load(it) }
-                DefaultLlmVerbalizationClient(LlmClientConfig.fromProperties(props))
-            } catch (e: Exception) {
-                DefaultLlmVerbalizationClient()
-            }
-        } else {
-            DefaultLlmVerbalizationClient()
         }
     }
 }

@@ -7,10 +7,11 @@
 
 package com.i2vision.verbalization.layer
 
+import com.i2vision.arch.signature.EnrichedSymbol
 import com.i2vision.intent.DiscoveryIntent
-import com.i2vision.vslfc.Symbol
 import com.i2vision.vslfc.SymbolKind
 import com.i2vision.vslfc.VerbalizationResult
+import com.i2vision.verbalization.CodeContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -24,22 +25,22 @@ class CodeVerbalizer : LayerVerbalizer {
     
     override val layerName: String = "Code"
     
-    override fun canHandle(symbol: Symbol): Boolean {
+    override fun canHandle(symbol: EnrichedSymbol): Boolean {
         // Code layer handles all code symbols
         return true
     }
     
     override suspend fun verbalize(
-        symbol: Symbol,
+        symbol: EnrichedSymbol,
         context: LayerVerbalizationContext,
         intent: DiscoveryIntent
     ): VerbalizationResult = withContext(Dispatchers.Default) {
-        val signature = extractSignature(symbol)
-        val documentation = extractDocumentation(symbol)
-        val implementations = findImplementations(symbol)
+        val signature = extractSignature(symbol.symbol)
+        val documentation = extractDocumentation(symbol.symbol)
+        val implementations = findImplementations(symbol.symbol)
         
         val codeContext = CodeContext(
-            symbol = symbol,
+            symbol = symbol.symbol,
             signature = signature,
             documentation = documentation,
             implementations = implementations
@@ -48,13 +49,13 @@ class CodeVerbalizer : LayerVerbalizer {
         val description = generateCodeDescription(codeContext)
         
         VerbalizationResult(
-            symbol = symbol,
+            symbol = symbol.symbol,
             description = description,
-            confidence = calculateConfidence(symbol, codeContext),
+            confidence = calculateConfidence(symbol.symbol, codeContext),
             strategy = intent.verbalization.strategy,
             metadata = mapOf(
                 "layer" to "CODE",
-                "symbol_kind" to symbol.kind.name,
+                "symbol_kind" to symbol.symbol.kind.name,
                 "has_documentation" to (documentation != null).toString(),
                 "implementations_count" to implementations.size.toString(),
                 "signature_length" to signature.length.toString()
@@ -63,7 +64,7 @@ class CodeVerbalizer : LayerVerbalizer {
     }
     
     override suspend fun verbalizeAll(
-        symbols: List<Symbol>,
+        symbols: List<EnrichedSymbol>,
         context: LayerVerbalizationContext,
         intent: DiscoveryIntent
     ): List<VerbalizationResult> {
@@ -74,7 +75,7 @@ class CodeVerbalizer : LayerVerbalizer {
     /**
      * Extract signature from symbol.
      */
-    private fun extractSignature(symbol: Symbol): String {
+    private fun extractSignature(symbol: com.i2vision.vslfc.Symbol): String {
         return when (symbol.kind) {
             SymbolKind.CLASS, SymbolKind.INTERFACE, SymbolKind.ENUM, SymbolKind.OBJECT -> {
                 val modifiers = extractModifiers(symbol.content)
@@ -155,7 +156,7 @@ class CodeVerbalizer : LayerVerbalizer {
     /**
      * Extract documentation from symbol.
      */
-    private fun extractDocumentation(symbol: Symbol): String? {
+    private fun extractDocumentation(symbol: com.i2vision.vslfc.Symbol): String? {
         // Look for KDoc comments
         val kdocRegex = Regex("""/\*\*\s*\n((?:\s*\*[^\n]*\n)+)\s*\*/""", RegexOption.MULTILINE)
         val match = kdocRegex.find(symbol.content)
@@ -185,7 +186,7 @@ class CodeVerbalizer : LayerVerbalizer {
     /**
      * Find implementations (for interfaces/abstract classes).
      */
-    private fun findImplementations(symbol: Symbol): List<String> {
+    private fun findImplementations(symbol: com.i2vision.vslfc.Symbol): List<String> {
         val implementations = mutableListOf<String>()
         
         if (symbol.kind == SymbolKind.INTERFACE) {
@@ -262,7 +263,7 @@ class CodeVerbalizer : LayerVerbalizer {
     /**
      * Calculate confidence based on code analysis quality.
      */
-    private fun calculateConfidence(symbol: Symbol, context: CodeContext): Double {
+    private fun calculateConfidence(symbol: com.i2vision.vslfc.Symbol, context: CodeContext): Double {
         var confidence = 0.6 // Base confidence for code symbols
         
         // Higher confidence if documentation exists
@@ -275,11 +276,11 @@ class CodeVerbalizer : LayerVerbalizer {
             confidence += 0.1
         }
         
-        // Higher confidence if implementations found for interfaces
-        if (symbol.kind == SymbolKind.INTERFACE && context.implementations.isNotEmpty()) {
+        // Higher confidence if implementations found
+        if (context.implementations.isNotEmpty()) {
             confidence += 0.1
         }
         
-        return minOf(confidence, 0.95)
+        return confidence.coerceAtMost(1.0)
     }
 }

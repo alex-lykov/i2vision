@@ -7,9 +7,11 @@
 
 package com.i2vision.verbalization.layer
 
+import com.i2vision.arch.signature.EnrichedSymbol
 import com.i2vision.intent.DiscoveryIntent
 import com.i2vision.vslfc.Symbol
 import com.i2vision.vslfc.VerbalizationResult
+import com.i2vision.verbalization.*
 
 /**
  * Base interface for all layer verbalizers.
@@ -32,7 +34,7 @@ interface LayerVerbalizer {
      * @return Verbalization result for this layer
      */
     suspend fun verbalize(
-        symbol: Symbol,
+        symbol: EnrichedSymbol,
         context: LayerVerbalizationContext,
         intent: DiscoveryIntent
     ): VerbalizationResult
@@ -46,7 +48,7 @@ interface LayerVerbalizer {
      * @return List of verbalization results
      */
     suspend fun verbalizeAll(
-        symbols: List<Symbol>,
+        symbols: List<EnrichedSymbol>,
         context: LayerVerbalizationContext,
         intent: DiscoveryIntent
     ): List<VerbalizationResult>
@@ -57,7 +59,7 @@ interface LayerVerbalizer {
      * @param symbol The symbol to check
      * @return true if this verbalizer can handle the symbol
      */
-    fun canHandle(symbol: Symbol): Boolean
+    fun canHandle(symbol: EnrichedSymbol): Boolean
 }
 
 /**
@@ -73,157 +75,3 @@ data class LayerVerbalizationContext(
     val clusterId: String = ""
 )
 
-/**
- * Vision layer context - purpose and requirements.
- */
-data class VisionContext(
-    val purposeStatement: String,
-    val requirements: List<String>,
-    val constraints: List<String>,
-    val stakeholders: List<String> = emptyList()
-)
-
-/**
- * Structure layer context - module dependencies and components.
- */
-data class StructureContext(
-    val components: List<ComponentInfo>,
-    val dependencies: List<DependencyInfo>,
-    val architecturePattern: String,
-    val modules: List<String>
-)
-
-/**
- * Component information for structure verbalization.
- */
-data class ComponentInfo(
-    val name: String,
-    val type: String,
-    val responsibilities: List<String>,
-    val filePath: String
-)
-
-/**
- * Dependency information for structure verbalization.
- */
-data class DependencyInfo(
-    val from: String,
-    val to: String,
-    val type: String,
-    val strength: DependencyStrength
-)
-
-enum class DependencyStrength {
-    STRONG, WEAK, TRANSITIVE
-}
-
-/**
- * Logic layer context - invariants and business rules.
- */
-data class LogicContext(
-    val invariants: List<InvariantInfo>,
-    val rules: List<RuleInfo>,
-    val stateMachines: List<StateMachineInfo>
-)
-
-/**
- * Invariant information for logic verbalization.
- */
-data class InvariantInfo(
-    val condition: String,
-    val description: String,
-    val severity: InvariantSeverity
-)
-
-enum class InvariantSeverity {
-    MANDATORY, RECOMMENDED, OPTIONAL
-}
-
-/**
- * Rule information for logic verbalization.
- */
-data class RuleInfo(
-    val name: String,
-    val condition: String,
-    val action: String,
-    val priority: Int
-)
-
-/**
- * State machine information for logic verbalization.
- */
-data class StateMachineInfo(
-    val name: String,
-    val states: List<String>,
-    val transitions: List<TransitionInfo>
-)
-
-data class TransitionInfo(
-    val from: String,
-    val to: String,
-    val trigger: String,
-    val guard: String?
-)
-
-/**
- * Flow layer context - call graphs and sequences.
- */
-data class FlowContext(
-    val sequences: List<SequenceInfo>,
-    val apiEndpoints: List<ApiEndpointInfo>,
-    val interactions: List<InteractionInfo>
-)
-
-/**
- * Sequence information for flow verbalization.
- */
-data class SequenceInfo(
-    val name: String,
-    val steps: List<SequenceStep>,
-    val participants: List<String>,
-    val description: String
-)
-
-/**
- * Step in a sequence diagram.
- */
-data class SequenceStep(
-    val order: Int,
-    val from: String,
-    val to: String,
-    val action: String,
-    val type: StepType
-)
-
-enum class StepType {
-    SYNCHRONOUS, ASYNCHRONOUS, RETURN, CREATE, DELETE
-}
-
-/**
- * API endpoint information for flow verbalization.
- */
-data class ApiEndpointInfo(
-    val method: String,
-    val path: String,
-    val handler: String,
-    val description: String
-)
-
-/**
- * Interaction information for flow verbalization.
- */
-data class InteractionInfo(
-    val type: String,
-    val participants: List<String>,
-    val description: String
-)
-
-/**
- * Code layer context - symbol details.
- */
-data class CodeContext(
-    val symbol: Symbol,
-    val signature: String,
-    val documentation: String?,
-    val implementations: List<String>
-)

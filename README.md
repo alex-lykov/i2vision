@@ -36,6 +36,9 @@ your codebase.
    authentication work?", the LLM gets the complete picture: related components, call sequences, business rules, and
    architectural constraints.
 
+4. **💬 Verbalization:** Transforms code symbols into meaningful architectural descriptions using intelligent strategies
+   (INCREMENTAL, MULTI_PASS, LEARNING) selected based on Cluster Context Neediness Score (CNS).
+
 **The same semantic context serves both you and your AI assistants.**
 
 ---
@@ -86,6 +89,22 @@ Top-Down (Greenfield):       Vision → Structure → Logic → Flow → Code
 **Contracts are the invariant.** Whether discovering existing code or scaffolding new features, contracts validate that
 layers remain consistent.
 
+### 💬 Verbalization
+
+**Transforms code symbols into architectural descriptions with context-aware strategy selection.**
+
+| Strategy | CNS Range | Use Case | Latency |
+|----------|-----------|----------|---------|
+| **INCREMENTAL** | 0-30 | Hash-based, low need | < 50ms |
+| **MULTI_PASS** | 31-60 | Context refinement | < 200ms |
+| **LEARNING** | 61-100 | LLM + feedback loop | < 5s |
+
+**CNS Formula:** `SymbolAmbiguity(35) + StructuralComplexity(25) + ArchitecturalSensitivity(20) + FeedbackDiscrepancy(20)`
+
+All 5 VSLFC layers have dedicated verbalizers with Kotlin-aware terminology (suspend, data class, sealed class, etc.).
+
+[Full Verbalization Docs →](verbalization-core/README.md)
+
 ---
 
 ## 🎯 Why i2vision?
@@ -102,7 +121,7 @@ layers remain consistent.
 
 ## 🏗️ Architecture
 
-### Module Ecosystem (12 Public Modules)
+### Module Ecosystem (13 Public Modules)
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -136,6 +155,7 @@ layers remain consistent.
 │                    FOUNDATION MODULES (MIT)                     │
 │  vslfc-core │ i2vision-architecture │ architecture-types        │
 │  intent-parser │ storage-core │ conf-agent-core │ llm-client    │
+│  verbalization-core                                               │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -150,6 +170,7 @@ layers remain consistent.
 | `storage-core`          | Semantic cache with incremental detection    | MIT     |
 | `conf-agent-core`       | YAML-configurable LLM agent framework        | MIT     |
 | `llm-client`            | Unified LLM client (OpenAI/Anthropic/Ollama) | MIT     |
+| `verbalization-core`    | Multi-layer verbalization with CNS strategies| MIT     |
 | `discovery-api`         | Discovery interfaces                         | MIT     |
 | `i2vision-discover`     | Discovery engine                             | MIT     |
 | `i2vision-cli`          | CLI entry point                              | MIT     |
@@ -324,8 +345,7 @@ Then ask Claude: *"Show me the architecture of UserService"* — it gets full co
 
 ---
 
-**Next:
-** [Full Documentation](docs/README.md) | [CLI Reference](docs/reference/cli.md) | [MCP Tools](docs/guides/mcp-tools.md)
+**Next:** [Full Documentation](docs/README.md) | [CLI Reference](docs/reference/cli.md) | [MCP Tools](docs/guides/mcp-tools.md)
 
 ---
 
@@ -479,6 +499,7 @@ i²-Vision is under **active development**.
 | [Deployment](docs/guides/DEPLOYMENT.md)                 | Deployment guide                                  |
 | [API Reference](docs/reference/api.md)                  | HTTP endpoints                                    |
 | [Strategies](docs/reference/strategies.md)              | Discovery strategy definitions                    |
+| [Verbalization](verbalization-core/README.md)           | Multi-layer verbalization engine                  |
 | [Diagrams](docs/diagrams/)                              | Sequence diagrams and architecture visualizations |
 
 [Full Documentation →](docs/README.md)

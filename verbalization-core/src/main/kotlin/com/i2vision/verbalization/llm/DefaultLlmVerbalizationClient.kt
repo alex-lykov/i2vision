@@ -142,6 +142,10 @@ class DefaultLlmVerbalizationClient(
             content.contains("execute") -> "executes"
             content.contains("build") -> "builds"
             content.contains("parse") -> "parses"
+            content.contains("fetch") || content.contains("get") || content.contains("retrieve") -> "fetches"
+            content.contains("create") || content.contains("new") -> "creates"
+            content.contains("update") || content.contains("modify") -> "updates"
+            content.contains("delete") || content.contains("remove") -> "deletes"
             else -> "operates on"
         }
     }
@@ -169,22 +173,51 @@ class DefaultLlmVerbalizationClient(
 
     private fun addKotlinTerminology(description: String, symbol: Symbol): String {
         val content = symbol.content
+        val lowerContent = content.lowercase()
+        var result = description
 
-        return when {
-            content.contains("suspend ") -> description.replace("asynchronous", "suspend")
-                .replace("async", "suspend")
-            content.contains("data class") || content.contains("data ") ->
-                description.replace("class", "data class")
-            content.contains("inline class") ->
-                description.replace("wrapper", "inline type wrapper")
-            content.contains("sealed class") ->
-                description.replace("hierarchy", "sealed hierarchy")
-            content.contains("companion object") ->
-                if (!description.contains("companion")) "$description (companion)" else description
-            content.contains("by ") ->
-                if (!description.contains("delegate")) "$description (delegate)" else description
-            else -> description
+        // Check for suspend functions
+        if (lowerContent.contains("suspend ")) {
+            // Replace async terminology with suspend (case-insensitive)
+            result = result.replace(Regex("asynchronous", RegexOption.IGNORE_CASE)) { match ->
+                // Preserve case: if original was capitalized, capitalize result
+                if (match.value.first().isUpperCase()) "Suspend" else "suspend"
+            }
+            result = result.replace(Regex("async", RegexOption.IGNORE_CASE)) { match ->
+                if (match.value.first().isUpperCase()) "Suspend" else "suspend"
+            }
+            // If description doesn't already mention suspend (case-insensitive), prepend it
+            if (!result.contains("suspend", ignoreCase = true)) {
+                result = "suspend $result"
+            }
         }
+
+        // Check for data classes
+        if (lowerContent.contains("data class") || lowerContent.contains("data ")) {
+            result = result.replace(Regex("\\bclass\\b", RegexOption.IGNORE_CASE), "data class")
+        }
+
+        // Check for inline classes
+        if (lowerContent.contains("inline class")) {
+            result = result.replace(Regex("wrapper", RegexOption.IGNORE_CASE), "inline type wrapper")
+        }
+
+        // Check for sealed classes
+        if (lowerContent.contains("sealed class")) {
+            result = result.replace(Regex("hierarchy", RegexOption.IGNORE_CASE), "sealed hierarchy")
+        }
+
+        // Check for companion objects
+        if (lowerContent.contains("companion object") && !result.contains("companion", ignoreCase = true)) {
+            result = "$result (companion)"
+        }
+
+        // Check for delegation
+        if (lowerContent.contains("by ") && !result.contains("delegate", ignoreCase = true)) {
+            result = "$result (delegate)"
+        }
+
+        return result
     }
 
     private fun estimateTokens(text: String): Int {

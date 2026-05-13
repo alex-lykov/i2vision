@@ -325,17 +325,17 @@ class ContextNeedinessCalculator(
         return when {
             total < 25 -> StrategyRecommendation(
                 strategy = VerbalizationStrategy.INCREMENTAL,
-                reason = "Low CNS indicates stable, well-understood codebase",
+                reason = "Low need; heuristic verbalization is adequate",
                 expectedBenefit = "Minimal verbalization needed"
             )
             total < 50 -> StrategyRecommendation(
                 strategy = VerbalizationStrategy.MULTI_PASS,
-                reason = "Medium CNS suggests benefit from context-aware refinement",
+                reason = "Moderate need for context-aware refinement",
                 expectedBenefit = "Improved accuracy through multi-pass processing"
             )
             else -> StrategyRecommendation(
                 strategy = VerbalizationStrategy.LEARNING,
-                reason = "High CNS indicates complex code with significant feedback",
+                reason = "High need; learning from feedback recommended",
                 expectedBenefit = "Maximum improvement through learning from feedback"
             )
         }

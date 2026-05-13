@@ -256,11 +256,28 @@ class ContextNeedinessCalculatorTest {
     fun `test strategy recommendation for high CNS`() = runBlocking {
         // Create symbols with complex cross-cutting patterns
         val symbolsWithCrossCutting = (1..5).map { idx ->
-            createSymbol("process$idx", SymbolKind.FUNCTION, "core/domain/Service$idx.kt")
+            val sym = createSymbol("process$idx", SymbolKind.FUNCTION, "core/service/Service$idx.kt")
+            sym.copy(content = """
+                fun process$idx(data: Data): Result {
+                    if (!authenticate()) throw UnauthorizedException()
+                    if (!authorize()) throw ForbiddenException()
+                    try {
+                        val validated = validate(data)
+                        val cached = cache.get(validated.id)
+                        if (cached != null) return cached
+                        val result = service.process(validated)
+                        cache.put(validated.id, result)
+                        return result
+                    } catch (e: Exception) {
+                        log.error("Processing failed", e)
+                        return circuitBreaker.execute { retry { process$idx(data) } }
+                    }
+                }
+            """.trimIndent())
         }
 
         val verbalizations = symbolsWithCrossCutting.map { sym ->
-            createVerbalization(sym, "Process data", 0.3) // Very low confidence
+            createVerbalization(sym, "Process data with logging, authentication, authorization, validation, caching, error handling, retry, and circuit breaker", 0.3) // Very low confidence
         }
 
         val feedback = symbolsWithCrossCutting.map { sym ->
@@ -286,9 +303,9 @@ class ContextNeedinessCalculatorTest {
         println("Feedback Discrepancy: ${score.feedbackDiscrepancy.total}")
         println("Total: ${score.total}")
 
-        // High CNS should trigger LEARNING strategy (requires total > 60)
+        // High CNS should trigger LEARNING strategy (requires total >= 50)
         assertEquals(VerbalizationStrategy.LEARNING, score.recommendation.strategy)
-        assertTrue(score.total > 60, "Expected CNS > 60 but was ${score.total}")
+        assertTrue(score.total >= 50, "Expected CNS >= 50 but was ${score.total}")
     }
 
     @Test

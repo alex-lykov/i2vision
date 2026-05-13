@@ -150,6 +150,8 @@ class LearningVerbalizationStrategy(
             // Check for user feedback first
             val feedback = feedbackStore.getFeedbackForSymbol(symbol)
             if (feedback != null && feedback.rating >= 4) {
+                // Get feedback history for metadata
+                val feedbackHistory = getFeedbackHistory(symbol)
                 results.add(
                     VerbalizationResult(
                         symbol = symbol,
@@ -158,7 +160,8 @@ class LearningVerbalizationStrategy(
                         strategy = VerbalizationStrategy.LEARNING,
                         metadata = mapOf(
                             "source" to "user_feedback",
-                            "feedback_id" to feedback.id
+                            "feedback_id" to feedback.id,
+                            "feedback_history_size" to feedbackHistory.size.toString()
                         )
                     )
                 )

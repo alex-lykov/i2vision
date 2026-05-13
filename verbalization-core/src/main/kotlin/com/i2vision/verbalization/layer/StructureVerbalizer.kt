@@ -55,7 +55,7 @@ class StructureVerbalizer : LayerVerbalizer {
             symbol = symbol,
             description = description,
             confidence = calculateConfidence(symbol, structureContext),
-            strategy = intent.strategy,
+            strategy = intent.verbalization.strategy,
             metadata = mapOf(
                 "layer" to "STRUCTURE",
                 "components_count" to components.size.toString(),

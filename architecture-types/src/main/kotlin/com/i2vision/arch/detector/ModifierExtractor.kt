@@ -70,6 +70,22 @@ class KotlinModifierExtractor : ModifierExtractor<org.jetbrains.kotlin.psi.KtDec
         if (node is org.jetbrains.kotlin.psi.KtClass && node.isInline()) {
             modifiers.add(SymbolModifier(ModifierKind.VALUE_CLASS, source = ModifierSource.AST))
         }
+
+        // Also check for value class using VALUE_CLASS keyword token (Kotlin 1.5+)
+        if (node is org.jetbrains.kotlin.psi.KtClass &&
+            node.hasModifier(org.jetbrains.kotlin.lexer.KtTokens.VALUE_KEYWORD)) {
+            modifiers.add(SymbolModifier(ModifierKind.VALUE_CLASS, source = ModifierSource.AST))
+        }
+
+        // Check for @JvmInline annotation which is required for JVM value classes
+        if (node is org.jetbrains.kotlin.psi.KtClass) {
+            val hasJvmInlineAnnotation = node.annotationEntries.any { annotation ->
+                annotation.shortName?.asString() == "JvmInline"
+            }
+            if (hasJvmInlineAnnotation) {
+                modifiers.add(SymbolModifier(ModifierKind.VALUE_CLASS, source = ModifierSource.ANNOTATION))
+            }
+        }
         
         // Check for companion object
         if (node is org.jetbrains.kotlin.psi.KtObjectDeclaration && node.isCompanion()) {

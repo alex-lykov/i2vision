@@ -8,6 +8,8 @@
 package com.i2vision.verbalization.layer
 
 import com.i2vision.arch.signature.EnrichedSymbol
+import com.i2vision.arch.signature.ModifierKind
+import com.i2vision.arch.signature.SymbolModifier
 import com.i2vision.intent.DiscoveryIntent
 import com.i2vision.vslfc.SymbolKind
 import com.i2vision.vslfc.VerbalizationResult
@@ -35,7 +37,8 @@ class CodeVerbalizer : LayerVerbalizer {
         context: LayerVerbalizationContext,
         intent: DiscoveryIntent
     ): VerbalizationResult = withContext(Dispatchers.Default) {
-        val signature = extractSignature(symbol.symbol)
+        // Use PSI-extracted modifiers from EnrichedSymbol (no regex!)
+        val signature = extractSignature(symbol)
         val documentation = extractDocumentation(symbol.symbol)
         val implementations = findImplementations(symbol.symbol)
         
@@ -47,6 +50,7 @@ class CodeVerbalizer : LayerVerbalizer {
         )
         
         val description = generateCodeDescription(codeContext)
+        val modifiers = extractModifiersFromEnrichedSymbol(symbol)
         
         VerbalizationResult(
             symbol = symbol.symbol,
@@ -58,7 +62,8 @@ class CodeVerbalizer : LayerVerbalizer {
                 "symbol_kind" to symbol.symbol.kind.name,
                 "has_documentation" to (documentation != null).toString(),
                 "implementations_count" to implementations.size.toString(),
-                "signature_length" to signature.length.toString()
+                "signature_length" to signature.length.toString(),
+                "modifiers" to modifiers
             )
         )
     }
@@ -73,23 +78,23 @@ class CodeVerbalizer : LayerVerbalizer {
     }
     
     /**
-     * Extract signature from symbol.
+     * Extract signature from symbol using PSI-extracted modifiers from EnrichedSymbol.
+     * This replaces regex-based detection with AST-based detection from discovery phase.
      */
-    private fun extractSignature(symbol: com.i2vision.vslfc.Symbol): String {
+    private fun extractSignature(enrichedSymbol: EnrichedSymbol): String {
+        val symbol = enrichedSymbol.symbol
+        val modifiers = extractModifiersFromEnrichedSymbol(enrichedSymbol)
         return when (symbol.kind) {
             SymbolKind.CLASS, SymbolKind.INTERFACE, SymbolKind.ENUM, SymbolKind.OBJECT -> {
-                val modifiers = extractModifiers(symbol.content)
                 val kind = symbol.kind.name.lowercase()
                 "$modifiers $kind ${symbol.name}"
             }
             SymbolKind.FUNCTION -> {
-                val modifiers = extractModifiers(symbol.content)
                 val returnType = extractReturnType(symbol.content)
                 val params = extractParameters(symbol.content)
                 "$modifiers fun ${symbol.name}($params)$returnType"
             }
             SymbolKind.PROPERTY, SymbolKind.VARIABLE -> {
-                val modifiers = extractModifiers(symbol.content)
                 val type = extractPropertyType(symbol.content)
                 "$modifiers val/var ${symbol.name}: $type"
             }
@@ -104,26 +109,58 @@ class CodeVerbalizer : LayerVerbalizer {
             }
         }
     }
-    
+
     /**
-     * Extract modifiers from code.
+     * Extract modifiers from EnrichedSymbol (PSI-based, not regex).
+     * This uses modifiers already extracted during discovery phase via KotlinModifierExtractor.
      */
-    private fun extractModifiers(content: String): String {
-        val modifiers = mutableListOf<String>()
-        
-        // Look for visibility modifiers
-        if (Regex("""\b(public|private|protected|internal)\b""").containsMatchIn(content)) {
-            val match = Regex("""\b(public|private|protected|internal)\b""").find(content)
-            match?.let { modifiers.add(it.groupValues[1]) }
-        }
-        
-        // Look for other modifiers
-        if (Regex("""\b(abstract|final|open|override|lateinit|const|inline|suspend|tailrec)\b""").containsMatchIn(content)) {
-            val matches = Regex("""\b(abstract|final|open|override|lateinit|const|inline|suspend|tailrec)\b""").findAll(content)
-            modifiers.addAll(matches.map { it.groupValues[1] })
-        }
-        
+    private fun extractModifiersFromEnrichedSymbol(enrichedSymbol: EnrichedSymbol): String {
+        val modifiers = enrichedSymbol.modifiers.map { it.toModifierString() }
         return modifiers.joinToString(" ")
+    }
+
+    /**
+     * Convert SymbolModifier to display string.
+     * Uses PSI-extracted modifiers from EnrichedSymbol.
+     */
+    private fun SymbolModifier.toModifierString(): String {
+        return when (kind) {
+            ModifierKind.SUSPEND -> "suspend"
+            ModifierKind.DATA_CLASS -> "data"
+            ModifierKind.VALUE_CLASS -> "value"
+            ModifierKind.SEALED_CLASS -> "sealed"
+            ModifierKind.SEALED_INTERFACE -> "sealed interface"
+            ModifierKind.COMPANION_OBJECT -> "companion"
+            ModifierKind.DELEGATE -> "by"
+            ModifierKind.ABSTRACT -> "abstract"
+            ModifierKind.FINAL -> "final"
+            ModifierKind.OVERRIDE -> "override"
+            ModifierKind.STATIC -> "static"
+            ModifierKind.SYNC -> "synchronized"
+            ModifierKind.ASYNC -> "async"
+            ModifierKind.EXTENSION -> "extension"
+            ModifierKind.ANNOTATION -> "@interface"
+            ModifierKind.RECORD -> "record"
+            ModifierKind.BUSINESS_RULE -> "business_rule"
+            ModifierKind.INVARIANT -> "invariant"
+            ModifierKind.VALIDATION -> "validation"
+            ModifierKind.FLOW -> "flow"
+            ModifierKind.SEQUENCE -> "sequence"
+            ModifierKind.EVENT_PUBLISHER -> "event_publisher"
+            ModifierKind.EVENT_CONSUMER -> "event_consumer"
+            ModifierKind.DATABASE_ACCESS -> "database"
+            ModifierKind.EXTERNAL_CALL -> "external"
+            ModifierKind.CACHE_ACCESS -> "cache"
+            ModifierKind.REPOSITORY -> "repository"
+            ModifierKind.CONTROLLER -> "controller"
+            ModifierKind.SERVICE -> "service"
+            ModifierKind.FACTORY -> "factory"
+            ModifierKind.BUILDER -> "builder"
+            ModifierKind.OBSERVER -> "observer"
+            ModifierKind.STRATEGY -> "strategy"
+            ModifierKind.SINGLETON -> "singleton"
+            else -> kind.name.lowercase()
+        }
     }
     
     /**

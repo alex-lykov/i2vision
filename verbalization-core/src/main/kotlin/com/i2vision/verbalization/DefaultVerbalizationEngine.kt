@@ -8,6 +8,9 @@
 package com.i2vision.verbalization
 
 import com.i2vision.intent.DiscoveryIntent
+import com.i2vision.verbalization.feedback.FeedbackStore
+import com.i2vision.verbalization.llm.DefaultLlmVerbalizationClient
+import com.i2vision.verbalization.llm.LlmVerbalizationClient
 import com.i2vision.verbalization.strategy.*
 import com.i2vision.vslfc.*
 import java.io.File
@@ -19,23 +22,28 @@ import java.io.File
 class DefaultVerbalizationEngine(
     private val verbalizationStore: VerbalizationStore,
     private val patternMatcher: PatternMatcher = PatternMatcher(),
-    private val hashManager: HashManager = HashManager()
+    private val hashManager: HashManager = HashManager(),
+    private val feedbackStore: FeedbackStore = FeedbackStore(),
+    private val llmClient: LlmVerbalizationClient = DefaultLlmVerbalizationClient()
 ) : VerbalizationEngine {
 
-    private val strategies = mapOf(
-        VerbalizationStrategy.INCREMENTAL to IncrementalVerbalizationStrategy(patternMatcher, hashManager),
-        VerbalizationStrategy.MULTI_PASS to MultiPassVerbalizationStrategy(
-            patternMatcher,
-            SimpleContextProvider(),
-            hashManager
-        ),
-        VerbalizationStrategy.LEARNING to LearningVerbalizationStrategy(
-            patternMatcher,
-            SimpleLlmClient(),
-            SimpleFeedbackCollector(),
-            hashManager
+    // Lazy initialization of strategies to allow proper constructor injection
+    private val strategies by lazy {
+        mapOf(
+            VerbalizationStrategy.INCREMENTAL to IncrementalVerbalizationStrategy(patternMatcher, hashManager),
+            VerbalizationStrategy.MULTI_PASS to MultiPassVerbalizationStrategy(
+                patternMatcher,
+                SimpleContextProvider(),
+                hashManager
+            ),
+            VerbalizationStrategy.LEARNING to LearningVerbalizationStrategy(
+                patternMatcher,
+                llmClient,
+                feedbackStore,
+                hashManager
+            )
         )
-    )
+    }
 
     override suspend fun verbalize(
         clusterId: String,
@@ -77,8 +85,7 @@ class DefaultVerbalizationEngine(
         if (!configFile.exists()) return
 
         try {
-            val config = YamlConfigLoader.loadVerbalizationConfig(configFile)
-            patternMatcher.loadCustomPatterns(config.patterns)
+            patternMatcher.loadCustomPatterns(emptyList())
         } catch (e: Exception) {
             // Log error but don't fail
             println("Warning: Failed to load custom patterns from ${configFile.absolutePath}: ${e.message}")
@@ -135,49 +142,3 @@ class SimpleContextProvider : ContextProvider {
         )
     }
 }
-
-/**
- * Simple LLM client for learning strategy.
- * In a real implementation, this would use the llm-client module.
- */
-class SimpleLlmClient : LlmVerbalizationClient {
-    override suspend fun generateDescription(symbol: Symbol, patternHint: String?): String? {
-        // Placeholder - would integrate with actual LLM client
-        return patternHint?.let { "Enhanced: $it" }
-    }
-}
-
-/**
- * Simple feedback collector for learning strategy.
- * In a real implementation, this would persist feedback.
- */
-class SimpleFeedbackCollector : FeedbackCollector {
-    private val feedback = mutableMapOf<String, Feedback>()
-
-    override fun getFeedback(symbol: Symbol): Feedback? {
-        val key = "${symbol.filePath}:${symbol.name}"
-        return feedback[key]
-    }
-
-    override fun recordFeedback(feedback: Feedback) {
-        val key = "${feedback.symbol.filePath}:${feedback.symbol.name}"
-        this.feedback[key] = feedback
-    }
-}
-
-/**
- * YAML configuration loader for custom patterns.
- */
-object YamlConfigLoader {
-    fun loadVerbalizationConfig(file: File): VerbalizationConfig {
-        // Placeholder - would parse YAML
-        return VerbalizationConfig(emptyList())
-    }
-}
-
-/**
- * Configuration for verbalization patterns.
- */
-data class VerbalizationConfig(
-    val patterns: List<VerbalizationPattern>
-)

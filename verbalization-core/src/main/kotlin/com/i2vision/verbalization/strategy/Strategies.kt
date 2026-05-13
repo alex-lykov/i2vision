@@ -10,6 +10,11 @@ package com.i2vision.verbalization.strategy
 import com.i2vision.intent.DiscoveryIntent
 import com.i2vision.verbalization.HashManager
 import com.i2vision.verbalization.PatternMatcher
+import com.i2vision.verbalization.feedback.FeedbackStore
+import com.i2vision.verbalization.llm.FeedbackHistoryEntry
+import com.i2vision.verbalization.llm.LlmVerbalizationClient
+import com.i2vision.verbalization.llm.LlmVerbalizationRequest
+import com.i2vision.verbalization.llm.SymbolVerbalizationContext
 import com.i2vision.vslfc.Symbol
 import com.i2vision.vslfc.SymbolKind
 import com.i2vision.vslfc.VerbalizationResult
@@ -129,8 +134,9 @@ class MultiPassVerbalizationStrategy(
 class LearningVerbalizationStrategy(
     private val patternMatcher: PatternMatcher,
     private val llmClient: LlmVerbalizationClient,
-    private val feedbackCollector: FeedbackCollector,
-    private val hashManager: HashManager
+    private val feedbackStore: FeedbackStore,
+    private val hashManager: HashManager,
+    private val clusterId: String = "default"
 ) : VerbalizationStrategyImpl {
 
     override suspend fun verbalize(
@@ -142,8 +148,8 @@ class LearningVerbalizationStrategy(
 
         for (symbol in symbols) {
             // Check for user feedback first
-            val feedback = feedbackCollector.getFeedback(symbol)
-            if (feedback != null && feedback.accepted) {
+            val feedback = feedbackStore.getFeedbackForSymbol(symbol)
+            if (feedback != null && feedback.rating >= 4) {
                 results.add(
                     VerbalizationResult(
                         symbol = symbol,
@@ -159,25 +165,97 @@ class LearningVerbalizationStrategy(
                 continue
             }
 
+            // Build context for LLM
+            val context = buildContext(symbol)
+
+            // Get feedback history for this symbol
+            val feedbackHistory = getFeedbackHistory(symbol)
+
             // Generate description using LLM with pattern hints
             val patternHint = patternMatcher.matchAndDescribe(symbol)
-            val llmDescription = llmClient.generateDescription(symbol, patternHint)
+            val llmRequest = LlmVerbalizationRequest(
+                symbol = symbol,
+                heuristicDescription = patternHint,
+                context = context,
+                feedbackHistory = feedbackHistory
+            )
+
+            val llmResponse = llmClient.generate(llmRequest)
 
             results.add(
                 VerbalizationResult(
                     symbol = symbol,
-                    description = llmDescription ?: (patternHint ?: "No description available"),
-                    confidence = if (llmDescription != null) 0.9 else 0.6,
+                    description = llmResponse?.description ?: (patternHint ?: "No description available"),
+                    confidence = llmResponse?.confidence ?: (if (patternHint != null) 0.6 else 0.0),
                     strategy = VerbalizationStrategy.LEARNING,
                     metadata = mapOf(
-                        "llm_used" to (llmDescription != null).toString(),
-                        "pattern_hint_used" to (patternHint != null).toString()
+                        "llm_used" to (llmResponse != null).toString(),
+                        "llm_model" to (llmResponse?.model ?: "none"),
+                        "llm_confidence" to (llmResponse?.confidence?.toString() ?: "0.0"),
+                        "llm_tokens" to (llmResponse?.tokensUsed?.toString() ?: "0"),
+                        "pattern_hint_used" to (patternHint != null).toString(),
+                        "feedback_history_size" to feedbackHistory.size.toString()
                     )
                 )
             )
         }
 
         return results
+    }
+
+    private fun buildContext(symbol: Symbol): SymbolVerbalizationContext {
+        val parts = symbol.filePath.split("/")
+        val clusterId = if (parts.size >= 2) "${parts[0]}/${parts[1]}" else "default"
+
+        return SymbolVerbalizationContext(
+            clusterId = clusterId,
+            moduleName = parts.firstOrNull() ?: "unknown",
+            dependencies = extractDependencies(symbol.content),
+            relatedSymbols = extractRelatedSymbols(symbol.content),
+            architecturalLayer = detectArchitecturalLayer(symbol.filePath)
+        )
+    }
+
+    private fun getFeedbackHistory(symbol: Symbol): List<FeedbackHistoryEntry> {
+        return feedbackStore.getAllFeedbackForSymbol(symbol).map { fb ->
+            FeedbackHistoryEntry(
+                originalDescription = fb.originalDescription,
+                correctedDescription = fb.correction,
+                rating = fb.rating,
+                reason = fb.reason
+            )
+        }
+    }
+
+    private fun extractDependencies(content: String): List<String> {
+        val importPattern = Regex("""import\s+([\w.]+)""")
+        return importPattern.findAll(content)
+            .map { it.groupValues[1] }
+            .filter { !it.startsWith("kotlin") && !it.startsWith("java") }
+            .take(5)
+            .toList()
+    }
+
+    private fun extractRelatedSymbols(content: String): List<String> {
+        // Extract method/class calls from content
+        val callPattern = Regex("""(\w+)\(""")
+        return callPattern.findAll(content)
+            .map { it.groupValues[1] }
+            .filter { it.first().isUpperCase() }
+            .distinct()
+            .take(5)
+            .toList()
+    }
+
+    private fun detectArchitecturalLayer(filePath: String): String {
+        return when {
+            filePath.contains("/controller") || filePath.contains("/web") -> "presentation"
+            filePath.contains("/service") || filePath.contains("/business") -> "domain"
+            filePath.contains("/repository") || filePath.contains("/data") -> "data"
+            filePath.contains("/config") -> "configuration"
+            filePath.contains("/util") || filePath.contains("/helper") -> "utility"
+            else -> "unknown"
+        }
     }
 
     override fun getStrategyType(): VerbalizationStrategy = VerbalizationStrategy.LEARNING
@@ -209,30 +287,3 @@ data class SymbolContext(
 interface ContextProvider {
     fun getContext(symbol: Symbol): SymbolContext
 }
-
-/**
- * LLM client specialized for verbalization tasks.
- */
-interface LlmVerbalizationClient {
-    suspend fun generateDescription(symbol: Symbol, patternHint: String?): String?
-}
-
-/**
- * Collector for user feedback on verbalization quality.
- */
-interface FeedbackCollector {
-    fun getFeedback(symbol: Symbol): Feedback?
-    fun recordFeedback(feedback: Feedback)
-}
-
-/**
- * User feedback on a verbalization result.
- */
-data class Feedback(
-    val id: String,
-    val symbol: Symbol,
-    val originalDescription: String,
-    val correction: String,
-    val accepted: Boolean,
-    val timestamp: Long
-)

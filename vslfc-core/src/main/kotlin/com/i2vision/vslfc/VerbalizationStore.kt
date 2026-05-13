@@ -10,6 +10,10 @@ package com.i2vision.vslfc
 /**
  * Public API for verbalization storage.
  * Provides verbalization-specific operations on top of the generic CacheStore.
+ * 
+ * ## Two-Tier Hash Support:
+ * - `putHashes` / `getHashes`: Local hashes (symbol body only)
+ * - `putContextHashes` / `getContextHashes`: Context hashes (dependencies included)
  */
 interface VerbalizationStore {
 
@@ -30,13 +34,31 @@ interface VerbalizationStore {
 
     /**
      * Store hash tracking data for incremental verbalization.
+     * Stores local hashes (symbol body only).
      */
     suspend fun putHashes(clusterId: String, hashes: Map<String, String>): PutResult
 
     /**
      * Get hash tracking data for a cluster.
+     * Returns local hashes (symbol body only).
      */
     suspend fun getHashes(clusterId: String): Map<String, String>?
+
+    /**
+     * Store context hash tracking data for incremental verbalization.
+     * Stores context hashes (includes dependencies).
+     * 
+     * @since 1.1.0
+     */
+    suspend fun putContextHashes(clusterId: String, hashes: Map<String, String>): PutResult
+
+    /**
+     * Get context hash tracking data for a cluster.
+     * Returns context hashes (includes dependencies).
+     * 
+     * @since 1.1.0
+     */
+    suspend fun getContextHashes(clusterId: String): Map<String, String>?
 
     /**
      * Check if a symbol needs re-verbalization based on hash.

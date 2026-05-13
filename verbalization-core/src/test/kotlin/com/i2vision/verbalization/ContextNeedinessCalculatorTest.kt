@@ -429,6 +429,7 @@ class ContextNeedinessCalculatorTest {
     class MockVerbalizationStore : VerbalizationStore {
         private val verbalizations = mutableMapOf<String, MutableList<VerbalizationResult>>()
         private val hashes = mutableMapOf<String, MutableMap<String, String>>()
+        private val contextHashes = mutableMapOf<String, MutableMap<String, String>>()
 
         override suspend fun putVerbalizations(clusterId: String, results: List<VerbalizationResult>): PutResult {
             verbalizations[clusterId] = results.toMutableList()
@@ -446,6 +447,15 @@ class ContextNeedinessCalculatorTest {
         override suspend fun putHashes(clusterId: String, hashes: Map<String, String>): PutResult {
             this.hashes[clusterId] = hashes.toMutableMap()
             return PutResult.Success(hashes.size)
+        }
+
+        override suspend fun putContextHashes(clusterId: String, hashes: Map<String, String>): PutResult {
+            this.contextHashes[clusterId] = hashes.toMutableMap()
+            return PutResult.Success(hashes.size)
+        }
+
+        override suspend fun getContextHashes(clusterId: String): Map<String, String>? {
+            return contextHashes[clusterId]
         }
 
         override suspend fun needsReverbalization(symbol: Symbol, currentHash: String): Boolean {

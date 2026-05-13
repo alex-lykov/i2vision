@@ -1,9 +1,0 @@
-feat(verbalization-core): Implement FeedbackStore for learning-based verbalization
-
-- Add FeedbackStore with persistent storage for verbalization feedback
-- Feedback is stored in JSONL format under cluster directories
-- Support for recording, retrieving, and clearing feedback by symbol or cluster
-- Implements FeedbackLearningStore interface for learning verbalization strategy
-- Fix recursive directory traversal for nested cluster structures
-- Add fallback logic for cache misses to load from persistent storage
-- All 10 tests pass including persistence across store instances

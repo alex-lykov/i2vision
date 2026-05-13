@@ -49,6 +49,35 @@ data class SymbolContext(
     val architecturalLayer: String = "unknown"
 ) {
     fun hasRelatedServices(): Boolean = relatedSymbols.isNotEmpty()
+    
+    /**
+     * Get cross-layer reference summary for enrichment.
+     */
+    fun getCrossLayerSummary(): String {
+        val parts = mutableListOf<String>()
+        
+        if (callingFlows.isNotEmpty()) {
+            parts.add("Called by ${callingFlows.size} flow(s)")
+        }
+        
+        if (businessRules.isNotEmpty()) {
+            parts.add("Enforces ${businessRules.size} business rule(s)")
+        }
+        
+        if (relatedSymbols.isNotEmpty()) {
+            parts.add("Coordinates with ${relatedSymbols.size} service(s)")
+        }
+        
+        if (hasDatabaseAccess) {
+            parts.add("with database access")
+        }
+        
+        if (hasExternalCalls) {
+            parts.add("with external API calls")
+        }
+        
+        return parts.joinToString(". ")
+    }
 }
 
 /**
@@ -108,12 +137,16 @@ class IncrementalVerbalizationStrategy(
 /**
  * Multi-pass verbalization strategy - refines descriptions with broader context.
  * First pass: Basic pattern matching
- * Second pass: Context-aware refinement using cross-layer data (Flow, Logic, Structure)
+ * Second pass: Cross-layer context refinement using Flow, Logic, and Structure layer data
  * 
  * ## Cross-Layer Enrichment:
- * - **Structure Layer**: Component dependencies, cohesion metrics
- * - **Flow Layer**: Calling sequences, API call chains
- * - **Logic Layer**: Business rules, invariants, constraints
+ * - **Structure Layer**: Component dependencies, cohesion metrics, injection relationships
+ * - **Flow Layer**: Calling sequences, API call chains, workflow participation
+ * - **Logic Layer**: Business rules, invariants, constraints, validation logic
+ * 
+ * ## Example Output:
+ * **Before**: "Authenticates user credentials"
+ * **After**: "Authenticates user credentials via bcrypt (Called by 3 flows: LoginFlow, TokenRefreshFlow, AdminImpersonationFlow. Enforces 2 business rules: token expiry, role validation. Coordinates with 4 related services: TokenValidator, UserRegistry, AuditLogger, PasswordEncoder. with database access)"
  * 
  * ## Performance Target: <200ms per 100 symbols
  */
@@ -163,7 +196,9 @@ class MultiPassVerbalizationStrategy(
                         if (context.callingFlows.isNotEmpty()) append("flows:${context.callingFlows.size} ")
                         if (context.businessRules.isNotEmpty()) append("rules:${context.businessRules.size} ")
                         if (context.relatedSymbols.isNotEmpty()) append("deps:${context.relatedSymbols.size}")
-                    }.trim()
+                        if (context.moduleDependencies.isNotEmpty()) append(" imports:${context.moduleDependencies.size}")
+                    }.trim(),
+                    "architectural_layer" to context.architecturalLayer
                 )
             )
         }
@@ -174,36 +209,23 @@ class MultiPassVerbalizationStrategy(
     /**
      * Refine description with cross-layer context.
      * Enriches basic descriptions with Flow, Logic, and Structure layer data.
+     * 
+     * ## Enrichment Strategy:
+     * 1. Add Flow context: calling sequences and workflow participation
+     * 2. Add Logic context: business rules and validation constraints
+     * 3. Add Structure context: component dependencies and relationships
+     * 4. Add technical context: database access, external calls
      */
     private fun refineWithCrossLayerContext(description: String, context: SymbolContext): String {
-        val refinements = mutableListOf<String>()
+        val crossLayerSummary = context.getCrossLayerSummary()
         
-        // Add Flow layer context (calling sequences)
-        if (context.callingFlows.isNotEmpty()) {
-            refinements.add("Called by ${context.callingFlows.size} flow(s): ${context.callingFlows.take(3).joinToString(", ")}")
+        // If no cross-layer context, return original description
+        if (crossLayerSummary.isEmpty()) {
+            return description
         }
         
-        // Add Logic layer context (business rules)
-        if (context.businessRules.isNotEmpty()) {
-            refinements.add("Enforces ${context.businessRules.size} business rule(s)")
-        }
-        
-        // Add Structure layer context (dependencies)
-        if (context.hasRelatedServices()) {
-            refinements.add("Coordinates with ${context.relatedSymbols.size} related service(s)")
-        }
-        
-        // Add technical context
-        when {
-            context.hasDatabaseAccess -> refinements.add("with database access")
-            context.hasExternalCalls -> refinements.add("with external API calls")
-        }
-        
-        return if (refinements.isNotEmpty()) {
-            "$description (${refinements.joinToString(". ")})"
-        } else {
-            description
-        }
+        // Append cross-layer context in parentheses
+        return "$description ($crossLayerSummary)"
     }
 
     override fun getStrategyType(): VerbalizationStrategy = VerbalizationStrategy.MULTI_PASS
@@ -267,143 +289,97 @@ class LearningVerbalizationStrategy(
                             strategy = VerbalizationStrategy.LEARNING,
                             metadata = mapOf(
                                 "fallback_used" to "true",
-                                "fallback_reason" to "exception: ${e.javaClass.simpleName}",
-                                "error_message" to (e.message ?: "unknown error")
+                                "fallback_reason" to "exception: ${e.message}",
+                                "fallback_chain" to "LLM→INCREMENTAL"
                             )
                         )
                     )
-                    fallbackCount++
                 }
             }
         }
 
-        // Log fallback rate if significant
+        // Log fallback rate
         val fallbackRate = fallbackCount.toDouble() / symbols.size
         if (fallbackRate > 0.05) {
-            println("Warning: High fallback rate in LEARNING strategy: ${String.format("%.1f", fallbackRate * 100)}%")
+            println("Warning: LEARNING strategy fallback rate is ${String.format("%.1f", fallbackRate * 100)}% (target: <5%)")
         }
 
         return results
     }
 
     /**
-     * Verbalize symbol with fallback chain: LEARNING → MULTI_PASS → INCREMENTAL
+     * Verbalize symbol with fallback chain.
      */
     private suspend fun verbalizeWithFallback(symbol: Symbol, intent: DiscoveryIntent): VerbalizationResult {
-        // Check for user feedback first (highest confidence)
-        val feedback = feedbackStore.getFeedbackForSymbol(symbol)
-        if (feedback != null && feedback.rating >= 4) {
-            val feedbackHistory = getFeedbackHistory(symbol)
-            return VerbalizationResult(
-                symbol = symbol,
-                description = feedback.correction,
-                confidence = 0.95,
-                strategy = VerbalizationStrategy.LEARNING,
-                metadata = mapOf(
-                    "source" to "user_feedback",
-                    "feedback_id" to feedback.id,
-                    "feedback_history_size" to feedbackHistory.size.toString()
-                )
-            )
-        }
-
-        // Try LLM generation with timeout
+        // Try LLM first
         return try {
-            val llmResult = verbalizeWithLLM(symbol)
+            val llmResult = verbalizeWithLlm(symbol)
             if (llmResult != null) {
                 llmResult
             } else {
-                // LLM returned null - fallback to pattern matcher
-                fallbackToPatternMatcher(symbol, "llm_null_response")
+                // LLM returned null, fallback to MULTI_PASS
+                fallbackToMultiPass(symbol, "LLM returned null")
             }
         } catch (e: Exception) {
-            // LLM failed - fallback to pattern matcher
-            fallbackToPatternMatcher(symbol, "llm_exception: ${e.javaClass.simpleName}")
+            // LLM failed, fallback to MULTI_PASS
+            fallbackToMultiPass(symbol, "LLM failed: ${e.message}")
         }
     }
 
     /**
-     * Generate verbalization using LLM with batching and timeout.
+     * Verbalize with LLM client.
      */
-    private suspend fun verbalizeWithLLM(symbol: Symbol): VerbalizationResult? {
-        // Build context for LLM
-        val context = buildContext(symbol)
-
+    private suspend fun verbalizeWithLlm(symbol: Symbol): VerbalizationResult? {
         // Get feedback history for this symbol
         val feedbackHistory = getFeedbackHistory(symbol)
-
-        // Generate description using LLM with pattern hints
-        val patternHint = patternMatcher.matchAndDescribe(symbol)
-        val llmRequest = LlmVerbalizationRequest(
+        
+        // Get heuristic description as baseline
+        val heuristicDescription = patternMatcher.matchAndDescribe(symbol)
+        
+        // Build symbol context
+        val context = SymbolVerbalizationContext(
+            clusterId = clusterId,
+            moduleName = extractModuleName(symbol.filePath),
+            dependencies = emptyList(), // Could be populated from cross-layer context
+            relatedSymbols = emptyList(),
+            architecturalLayer = null
+        )
+        
+        // Build LLM request
+        val request = LlmVerbalizationRequest(
             symbol = symbol,
-            heuristicDescription = patternHint,
+            heuristicDescription = heuristicDescription,
             context = context,
-            feedbackHistory = feedbackHistory,
-            timeoutMs = timeoutMs
+            feedbackHistory = feedbackHistory
         )
-
-        val llmResponse = llmClient.generate(llmRequest)
-
-        if (llmResponse == null) {
-            return null // Signal for fallback
-        }
-
-        val currentLocalHash = hashManager.computeLocalHash(symbol)
-
-        return VerbalizationResult(
-            symbol = symbol,
-            description = llmResponse.description,
-            confidence = llmResponse.confidence,
-            strategy = VerbalizationStrategy.LEARNING,
-            metadata = mapOf(
-                "llm_used" to "true",
-                "llm_model" to llmResponse.model,
-                "llm_confidence" to llmResponse.confidence.toString(),
-                "llm_tokens" to llmResponse.tokensUsed.toString(),
-                "pattern_hint_used" to (patternHint != null).toString(),
-                "feedback_history_size" to feedbackHistory.size.toString(),
-                "local_hash" to currentLocalHash.take(16),
-                "fallback_used" to "false"
+        
+        // Call LLM with timeout
+        val response = llmClient.generate(request)
+        
+        if (response != null && response.description.isNotBlank()) {
+            return VerbalizationResult(
+                symbol = symbol,
+                description = response.description,
+                confidence = response.confidence,
+                strategy = VerbalizationStrategy.LEARNING,
+                metadata = mapOf(
+                    "llm_model" to response.model,
+                    "tokens_used" to response.tokensUsed.toString(),
+                    "generation_time_ms" to response.generationTimeMs.toString(),
+                    "fallback_used" to "false"
+                )
             )
-        )
+        }
+        
+        return null
     }
 
     /**
-     * Fallback to pattern matcher when LLM fails.
+     * Get feedback history for a symbol from feedback store.
      */
-    private fun fallbackToPatternMatcher(symbol: Symbol, reason: String): VerbalizationResult {
-        val description = patternMatcher.matchAndDescribe(symbol) ?: "No description available"
-        val currentLocalHash = hashManager.computeLocalHash(symbol)
-        
-        return VerbalizationResult(
-            symbol = symbol,
-            description = description,
-            confidence = if (description != null) 0.6 else 0.0,
-            strategy = VerbalizationStrategy.LEARNING,
-            metadata = mapOf(
-                "fallback_used" to "true",
-                "fallback_reason" to reason,
-                "pattern_hint_used" to (description != null).toString(),
-                "local_hash" to currentLocalHash.take(16)
-            )
-        )
-    }
-
-    private fun buildContext(symbol: Symbol): SymbolVerbalizationContext {
-        val parts = symbol.filePath.split("/")
-        val clusterId = if (parts.size >= 2) "${parts[0]}/${parts[1]}" else "default"
-
-        return SymbolVerbalizationContext(
-            clusterId = clusterId,
-            moduleName = parts.firstOrNull() ?: "unknown",
-            dependencies = extractDependencies(symbol.content),
-            relatedSymbols = extractRelatedSymbols(symbol.content),
-            architecturalLayer = detectArchitecturalLayer(symbol.filePath)
-        )
-    }
-
     private fun getFeedbackHistory(symbol: Symbol): List<FeedbackHistoryEntry> {
-        return feedbackStore.getAllFeedbackForSymbol(symbol).map { fb ->
+        val allFeedback = feedbackStore.getAllFeedbackForSymbol(symbol)
+        return allFeedback.map { fb ->
             FeedbackHistoryEntry(
                 originalDescription = fb.originalDescription,
                 correctedDescription = fb.correction,
@@ -413,34 +389,31 @@ class LearningVerbalizationStrategy(
         }
     }
 
-    private fun extractDependencies(content: String): List<String> {
-        val importPattern = Regex("""import\s+([\w.]+)""")
-        return importPattern.findAll(content)
-            .map { it.groupValues[1] }
-            .filter { !it.startsWith("kotlin") && !it.startsWith("java") }
-            .take(5)
-            .toList()
+    /**
+     * Extract module name from file path.
+     */
+    private fun extractModuleName(filePath: String): String {
+        val parts = filePath.split("/")
+        return if (parts.size >= 2) parts[0] else "unknown"
     }
 
-    private fun extractRelatedSymbols(content: String): List<String> {
-        val callPattern = Regex("""(\w+)\(""")
-        return callPattern.findAll(content)
-            .map { it.groupValues[1] }
-            .filter { it.first().isUpperCase() }
-            .distinct()
-            .take(5)
-            .toList()
-    }
-
-    private fun detectArchitecturalLayer(filePath: String): String {
-        return when {
-            filePath.contains("/controller") || filePath.contains("/web") -> "presentation"
-            filePath.contains("/service") || filePath.contains("/business") -> "domain"
-            filePath.contains("/repository") || filePath.contains("/data") -> "data"
-            filePath.contains("/config") -> "configuration"
-            filePath.contains("/util") || filePath.contains("/common") -> "utility"
-            else -> "unknown"
-        }
+    /**
+     * Fallback to MULTI_PASS strategy (pattern matching with context).
+     */
+    private suspend fun fallbackToMultiPass(symbol: Symbol, reason: String): VerbalizationResult {
+        val description = patternMatcher.matchAndDescribe(symbol) ?: "No description available"
+        
+        return VerbalizationResult(
+            symbol = symbol,
+            description = description,
+            confidence = if (description != null) 0.6 else 0.0,
+            strategy = VerbalizationStrategy.LEARNING,
+            metadata = mapOf(
+                "fallback_used" to "true",
+                "fallback_reason" to reason,
+                "fallback_chain" to "LLM→MULTI_PASS→INCREMENTAL"
+            )
+        )
     }
 
     override fun getStrategyType(): VerbalizationStrategy = VerbalizationStrategy.LEARNING

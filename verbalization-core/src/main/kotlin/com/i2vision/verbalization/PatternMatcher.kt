@@ -9,7 +9,6 @@ package com.i2vision.verbalization
 
 import com.i2vision.vslfc.Symbol
 import com.i2vision.vslfc.VerbalizationPattern
-import java.security.MessageDigest
 
 /**
  * Matches code patterns and generates descriptions.
@@ -153,60 +152,5 @@ class PatternMatcher {
         )
 
         patterns.addAll(builtInPatterns)
-    }
-}
-
-/**
- * Manages content hashes for incremental verbalization.
- * Tracks which symbols have changed since last verbalization.
- */
-class HashManager {
-
-    private val hashes = mutableMapOf<String, String>()
-
-    /**
-     * Compute hash for a symbol based on its content.
-     */
-    fun computeHash(symbol: Symbol): String {
-        val content = "${symbol.name}:${symbol.content}:${symbol.metadata}"
-        return MessageDigest.getInstance("SHA-256")
-            .digest(content.toByteArray())
-            .joinToString("") { "%02x".format(it) }
-    }
-
-    /**
-     * Check if a symbol has changed since last verbalization.
-     */
-    fun hasChanged(symbol: Symbol, currentHash: String): Boolean {
-        val key = getSymbolKey(symbol)
-        val previousHash = hashes[key]
-        return previousHash != currentHash
-    }
-
-    /**
-     * Update the hash for a symbol after verbalization.
-     */
-    fun updateHash(symbol: Symbol, hash: String) {
-        val key = getSymbolKey(symbol)
-        hashes[key] = hash
-    }
-
-    /**
-     * Load hashes from persistent storage.
-     */
-    fun loadHashes(storedHashes: Map<String, String>) {
-        hashes.putAll(storedHashes)
-    }
-
-    /**
-     * Get all current hashes for persistence.
-     */
-    fun getAllHashes(): Map<String, String> = hashes.toMap()
-
-    /**
-     * Generate unique key for a symbol.
-     */
-    private fun getSymbolKey(symbol: Symbol): String {
-        return "${symbol.filePath}:${symbol.lineNumber}:${symbol.name}"
     }
 }

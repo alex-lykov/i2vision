@@ -103,19 +103,19 @@ class DefaultLlmVerbalizationClient(
         // Apply feedback improvements if available
         val fromFeedback = applyFeedbackImprovements(heuristic, request.feedbackHistory)
 
-        // REFACTORED: Use structured enrichment if available, otherwise use legacy approach
+        // Use structured enrichment if available, otherwise use simple keyword enhancement
         return if (request.enrichedSymbol != null) {
-            // New structured approach
+            // New structured approach with ModifierVerbalizer
             enhanceWithStructuredData(request.enrichedSymbol, fromFeedback)
         } else {
-            // Legacy approach (to be removed after migration)
-            addKotlinTerminology(fromFeedback, symbol)
+            // Legacy fallback: simple keyword-based enhancement (no regex)
+            enhanceWithKeywords(fromFeedback, symbol)
         }
     }
 
     /**
-     * REFACTORED: Enhance description using structured data from EnrichedSymbol.
-     * This replaces the regex-based addKotlinTerminology() function.
+     * Enhance description using structured data from EnrichedSymbol.
+     * Uses ModifierVerbalizer to convert structured facts to natural language.
      */
     private fun enhanceWithStructuredData(
         enriched: EnrichedSymbol,
@@ -134,63 +134,42 @@ class DefaultLlmVerbalizationClient(
     }
 
     /**
-     * LEGACY: Regex-based terminology enhancement.
+     * LEGACY: Simple keyword-based enhancement without regex.
      * 
-     * DEPRECATED: This function uses fragile regex matching on raw source code.
+     * DEPRECATED: This is a temporary fallback for backward compatibility.
      * It will be removed after all callers migrate to structured detection.
      * 
      * @see enhanceWithStructuredData
      */
-    @Deprecated(
-        "Use enhanceWithStructuredData() with EnrichedSymbol instead",
-        ReplaceWith(
-            "enhanceWithStructuredData(symbol.enrich { /* extraction logic */ }, description)",
-            "com.i2vision.arch.signature.enrich"
-        )
-    )
-    private fun addKotlinTerminology(description: String, symbol: Symbol): String {
-        val content = symbol.content
-        val lowerContent = content.lowercase()
+    @Deprecated("Use enhanceWithStructuredData() with EnrichedSymbol instead")
+    private fun enhanceWithKeywords(description: String, symbol: Symbol): String {
+        val content = symbol.content.lowercase()
         var result = description
 
-        // Check for suspend functions
-        if (lowerContent.contains("suspend ")) {
-            // Replace async terminology with suspend (case-insensitive)
-            result = result.replace(Regex("asynchronous", RegexOption.IGNORE_CASE)) { match ->
-                // Preserve case: if original was capitalized, capitalize result
-                if (match.value.first().isUpperCase()) "Suspend" else "suspend"
-            }
-            result = result.replace(Regex("async", RegexOption.IGNORE_CASE)) { match ->
-                if (match.value.first().isUpperCase()) "Suspend" else "suspend"
-            }
-            // If description doesn't already mention suspend (case-insensitive), prepend it
-            if (!result.contains("suspend", ignoreCase = true)) {
-                result = "suspend $result"
-            }
+        // Check for suspend functions - prepend if not already mentioned
+        if (content.contains("suspend ") && !result.contains("suspend", ignoreCase = true)) {
+            result = "suspend $result"
         }
 
-        // Check for data classes
-        if (lowerContent.contains("data class") || lowerContent.contains("data ")) {
-            result = result.replace(Regex("\\bclass\\b", RegexOption.IGNORE_CASE), "data class")
+        // Check for data classes - replace "class" with "data class"
+        if ((content.contains("data class") || content.contains("data class ")) &&
+            !result.contains("data class", ignoreCase = true)
+        ) {
+            result = result.replace("class", "data class", ignoreCase = true)
         }
 
-        // Check for inline classes
-        if (lowerContent.contains("inline class")) {
-            result = result.replace(Regex("wrapper", RegexOption.IGNORE_CASE), "inline type wrapper")
+        // Check for sealed classes - replace "hierarchy" with "sealed hierarchy"
+        if (content.contains("sealed class") && !result.contains("sealed", ignoreCase = true)) {
+            result = result.replace("hierarchy", "sealed hierarchy", ignoreCase = true)
         }
 
-        // Check for sealed classes
-        if (lowerContent.contains("sealed class")) {
-            result = result.replace(Regex("hierarchy", RegexOption.IGNORE_CASE), "sealed hierarchy")
-        }
-
-        // Check for companion objects
-        if (lowerContent.contains("companion object") && !result.contains("companion", ignoreCase = true)) {
+        // Check for companion objects - append marker
+        if (content.contains("companion object") && !result.contains("companion", ignoreCase = true)) {
             result = "$result (companion)"
         }
 
-        // Check for delegation
-        if (lowerContent.contains("by ") && !result.contains("delegate", ignoreCase = true)) {
+        // Check for delegation - append marker
+        if (content.contains(" by ") && !result.contains("delegate", ignoreCase = true)) {
             result = "$result (delegate)"
         }
 
@@ -205,7 +184,7 @@ class DefaultLlmVerbalizationClient(
             symbol.kind == SymbolKind.FUNCTION -> {
                 val action = extractAction(content)
                 when {
-                    content.contains("suspend") -> "Asynchronous $action $target"
+                    content.contains("suspend") -> "asynchronous $action $target"
                     content.contains("validate") || content.contains("check") -> "Validates $target"
                     content.contains("create") || content.contains("new") -> "Creates a new $target"
                     content.contains("get") || content.contains("fetch") -> "Retrieves $target"
@@ -243,7 +222,23 @@ class DefaultLlmVerbalizationClient(
             content.contains("create") || content.contains("new") -> "creates"
             content.contains("update") || content.contains("modify") -> "updates"
             content.contains("delete") || content.contains("remove") -> "deletes"
-            else -> "operates on"
+            content.contains("send") || content.contains("publish") -> "sends"
+            content.contains("receive") || content.contains("consume") -> "receives"
+            content.contains("save") || content.contains("store") || content.contains("persist") -> "saves"
+            content.contains("load") || content.contains("read") -> "loads"
+            content.contains("transform") || content.contains("map") -> "transforms"
+            content.contains("filter") -> "filters"
+            content.contains("count") -> "counts"
+            content.contains("find") || content.contains("search") -> "finds"
+            content.contains("list") || content.contains("all") -> "lists"
+            content.contains("convert") || content.contains("cast") -> "converts"
+            content.contains("initialize") || content.contains("setup") -> "initializes"
+            content.contains("configure") || content.contains("register") -> "configures"
+            content.contains("start") || content.contains("begin") -> "starts"
+            content.contains("stop") || content.contains("end") -> "stops"
+            content.contains("reset") || content.contains("clear") -> "resets"
+            content.contains("notify") || content.contains("emit") -> "notifies"
+            else -> "processes"
         }
     }
 

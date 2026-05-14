@@ -1,6 +1,6 @@
 # verbalization-core
 
-**Multi-Layer Verbalization Engine with Context-Aware Strategy Selection**
+**Multi‑Layer Verbalization Engine with Context‑Aware Strategy Selection**
 
 verbalization-core transforms code symbols into meaningful architectural descriptions using three intelligent strategies, automatically selected based on the **Cluster Context Neediness Score (CNS)**.
 
@@ -8,16 +8,16 @@ verbalization-core transforms code symbols into meaningful architectural descrip
 
 ## Overview
 
-verbalization-core is the heart of i2vision's architectural intelligence. It goes beyond simple code-to-text conversion to provide genuine understanding of code structure, behavior, and architectural role.
+verbalization-core is the heart of i2vision's architectural intelligence. It goes beyond simple code‑to‑text conversion to provide genuine understanding of code structure, behavior, and architectural role.
 
 ### Key Capabilities
 
 - **Three Verbalization Strategies**: INCREMENTAL, MULTI_PASS, LEARNING
-- **Multi-Layer Support**: Vision, Structure, Logic, Flow, and Code layers
-- **CNS-Driven Strategy Selection**: Automatic strategy choice based on cluster neediness
+- **Multi‑Layer Support**: Vision, Structure, Logic, Flow, and Code layers
+- **CNS‑Driven Strategy Selection**: Automatic strategy choice based on cluster neediness
 - **Learning System**: LLM integration with user feedback loop
-- **Kotlin-Aware**: Specialized handling for suspend, data class, sealed class, etc.
-- **Incremental Processing**: Hash-based change detection for optimal performance
+- **Kotlin‑Aware**: Specialized handling for suspend, data class, sealed class, etc.
+- **Incremental Processing**: Hash‑based change detection for optimal performance
 
 ---
 
@@ -29,18 +29,18 @@ verbalization-core is the heart of i2vision's architectural intelligence. It goe
 |-----------|---------|--------|
 | `VerbalizationEngine` | Main interface for verbalization operations | ✅ Complete |
 | `DefaultVerbalizationEngine` | Strategy orchestration and layer coordination | ✅ Complete |
-| `PatternMatcher` | AST-aware pattern matching with Kotlin templates | ✅ Complete |
+| `PatternMatcher` | AST‑aware pattern matching with Kotlin templates | ✅ Complete |
 | `CodeAnalyzer` | Kotlin AST visitor extracting semantic information | ✅ Complete |
 | `ContextNeedinessCalculator` | CNS calculation with 4 components | ✅ Complete |
 | `FeedbackStore` | JSONL feedback persistence | ✅ Complete |
 | `LlmVerbalizationClient` | LLM integration with prompt templates | ✅ Complete |
-| `LayerVerbalizers` | 5 layer-specific verbalizers | ✅ Complete |
+| `LayerVerbalizers` | 5 layer‑specific verbalizers | ✅ Complete |
 
 ### Strategy Hierarchy
 
 ```
 VerbalizationStrategyImpl
-├── IncrementalVerbalizationStrategy (hash-based, <50ms)
+├── IncrementalVerbalizationStrategy (hash‑based, <50ms)
 ├── MultiPassVerbalizationStrategy (context refinement, <200ms)
 └── LearningVerbalizationStrategy (LLM + feedback, <5000ms)
 ```
@@ -56,19 +56,46 @@ LayerVerbalizer
 └── CodeVerbalizer (symbol descriptions)
 ```
 
+### Layer-Specific Input Sources
+
+Each layer verbalizer processes different types of input sources:
+
+#### Vision Layer (`VisionVerbalizer`)
+- **Primary Sources**: `README.md`, any `.md` files, `/docs/` directory content
+- **Configuration**: Objects with "Config" in name (SymbolKind.OBJECT)
+- **Structured Metadata**: Symbol metadata fields (`purpose`, `requirements`, `constraints`)
+- **Extraction**: Purpose statements, requirements, constraints, technical decisions
+- **Limitation**: Currently extracts from project-wide docs only (same vision for all clusters)
+
+#### Structure Layer (`StructureVerbalizer`)
+- **Primary Sources**: Class definitions, interface declarations, dependency graphs
+- **Extraction**: Component relationships, architectural patterns, dependency analysis
+
+#### Logic Layer (`LogicVerbalizer`)
+- **Primary Sources**: Validation logic, business rules, state machines
+- **Extraction**: Invariants, business rules, validation constraints
+
+#### Flow Layer (`FlowVerbalizer`)
+- **Primary Sources**: Function sequences, API endpoints, interaction patterns
+- **Extraction**: Execution flows, API sequences, interaction patterns
+
+#### Code Layer (`CodeVerbalizer`)
+- **Primary Sources**: All code symbols with semantic analysis
+- **Extraction**: Symbol descriptions, API documentation, inline comments
+
 ---
 
 ## Verbalization Strategies
 
-### Strategy Selection (CNS-Based)
+### Strategy Selection (CNS‑Based)
 
 The **ContextNeedinessCalculator** automatically selects the optimal strategy:
 
 | CNS Range | Strategy | Use Case | Latency (100 symbols) |
 |-----------|----------|----------|----------------------|
-| 0-30 | INCREMENTAL | Low need; hash-based | < 50ms |
-| 31-60 | MULTI_PASS | Moderate need; context refinement | < 200ms |
-| 61-100 | LEARNING | High need; LLM + feedback | < 5000ms |
+| 0‑30 | INCREMENTAL | Low need; hash‑based | < 50ms |
+| 31‑60 | MULTI_PASS | Moderate need; context refinement | < 200ms |
+| 61‑100 | LEARNING | High need; LLM + feedback | < 5000ms |
 
 ### CNS Formula
 
@@ -81,7 +108,7 @@ CNS = SymbolAmbiguity(35) + StructuralComplexity(25) +
 |-----------|--------|----------|
 | Symbol Ambiguity | 35% | Low confidence, duplicate names, missing docs |
 | Structural Complexity | 25% | Cyclomatic complexity, external dependencies |
-| Architectural Sensitivity | 20% | Domain module, cross-cutting flows |
+| Architectural Sensitivity | 20% | Domain module, cross‑cutting flows |
 | Feedback Discrepancy | 20% | Gap between heuristic and user feedback |
 
 ---
@@ -124,7 +151,7 @@ results.forEach { result ->
 }
 ```
 
-### Multi-Layer Verbalization
+### Multi‑Layer Verbalization
 
 ```kotlin
 import com.i2vision.verbalization.layer.LayerVerbalizerFactory
@@ -177,7 +204,7 @@ feedbackStore.recordFeedback(
 
 ## Storage Structure
 
-### Multi-Layer Cache
+### Multi‑Layer Cache
 
 ```
 .semantic-cache/{cluster}/
@@ -188,7 +215,7 @@ feedbackStore.recordFeedback(
 ├── code/verbalizations.yaml     # Code layer verbalizations
 ├── learning/feedback.jsonl      # User feedback (JSONL)
 └── .meta/
-    └── hashes.yaml              # Per-layer hash tracking
+    └── hashes.yaml              # Per‑layer hash tracking
 ```
 
 ### Feedback Format (JSONL)
@@ -232,16 +259,16 @@ timeoutMs=30000
 
 ---
 
-## Kotlin-Specific Enhancements
+## Kotlin‑Specific Enhancements
 
 The system automatically detects and enhances Kotlin terminology:
 
 | Pattern | Enhancement |
 |---------|-------------|
-| `suspend` function | Adds "asynchronous operation", "non-blocking" |
+| `suspend` function | Adds "asynchronous operation", "non‑blocking" |
 | `data class` | Adds "immutable value container" |
 | `sealed class` | Adds "restricted hierarchy for state modeling" |
-| `inline class` | Adds "zero-overhead type wrapper" |
+| `inline class` | Adds "zero‑overhead type wrapper" |
 | `companion object` | Adds "static factory/utility holder" |
 | `by` delegation | Adds "delegate implementation" |
 
@@ -340,14 +367,14 @@ fun listClustersByNeediness(limit: Int = 10): List<ClusterNeedinessScore>
 
 ### Completed Phases
 
-- ✅ **Phase 1**: AST-Aware Pattern Engine
+- ✅ **Phase 1**: AST‑Aware Pattern Engine
   - CodeAnalyzer with Kotlin AST visitor
   - PatternMatcher with template injection
   - ConfidenceEstimator with quality scoring
 
-- ✅ **Phase 2**: Multi-Layer Verbalization Storage
+- ✅ **Phase 2**: Multi‑Layer Verbalization Storage
   - All 5 VSLFC layers implemented
-  - Per-layer hash tracking
+  - Per‑layer hash tracking
   - YAML schemas for each layer
 
 - ✅ **Phase 3**: Cluster Context Neediness Score (CNS)
@@ -360,11 +387,13 @@ fun listClustersByNeediness(limit: Int = 10): List<ClusterNeedinessScore>
   - LlmVerbalizationClient with prompt templates
   - LearningVerbalizationStrategy with feedback prioritization
 
-### In Progress
+---
+
+## In Progress
 
 - 🔄 **Phase 5**: Integration and Testing
   - Update DiscoverCommand for strategy selection
-  - Upgrade InstantContextService for multi-layer
+  - Upgrade InstantContextService for multi‑layer
   - Add CNS benchmark to SelfDiscoveryTest
   - Performance benchmarks suite
 
@@ -395,8 +424,8 @@ dependencies {
 2. **Let CNS Decide**: Trust automatic strategy selection based on cluster neediness
 3. **Provide Feedback**: Rate and correct descriptions to improve LEARNING strategy
 4. **Monitor Cache Hits**: >80% indicates healthy incremental processing
-5. **Use MULTI_PASS for Services**: Context refinement adds value for service-oriented code
-6. **Enable LEARNING for Core Domain**: High-value code deserves LLM-powered descriptions
+5. **Use MULTI_PASS for Services**: Context refinement adds value for service‑oriented code
+6. **Enable LEARNING for Core Domain**: High‑value code deserves LLM‑powered descriptions
 
 ---
 
@@ -420,6 +449,71 @@ Contributions are welcome! Please read [CONTRIBUTING.md](../CONTRIBUTING.md) for
 ## References
 
 - **[Verbalization Refactoring Plan](../backlog/docs/DOC-1.md)**: Complete architecture documentation
-- **[VSLFC Layers](../docs/concepts/vslfc-layers.md)**: Five-layer contract system
+- **[VSLFC Layers](../docs/concepts/vslfc-layers.md)**: Five‑layer contract system
 - **[Verbalization Strategies](../docs/reference/strategies.md)**: Strategy reference
 - **[Test Coverage](src/test/kotlin/com/i2vision/verbalization/)**: Unit and integration tests
+
+---
+
+## Known Limitations
+
+### VisionVerbalizer Input Sources and Limitations
+
+#### Current Input Sources
+
+The `VisionVerbalizer` currently extracts vision context from the following sources:
+
+1. **Root-level documentation**:
+   - `README.md` (project root)
+   - Any `.md` file in the project
+   - Files in `/docs/` directory
+   - `docs/README.md` (if exists)
+
+2. **Configuration objects**:
+   - Classes/objects with "Config" in their name (SymbolKind.OBJECT)
+
+3. **Structured metadata**:
+   - Symbol metadata fields: `purpose`, `requirements`, `constraints`
+
+#### Key Limitations
+
+1. **Cluster-Specific Vision**: All clusters currently receive the same vision context derived from project-wide documentation. There is no support for:
+   - Per-module `README.md` files
+   - Cluster-specific vision configuration
+   - Module-level requirements/constraints
+
+2. **VSLFC Contract Gap**: The VSLFC layer contracts specify that Vision layer should read both `README.md` and `docs/INDEX.md`, but:
+   - `docs/INDEX.md` is not specifically handled (falls under general `/docs/` pattern)
+   - No explicit contract validation between documentation and implementation
+
+3. **Documentation Quality Dependency**: Vision extraction quality depends heavily on:
+   - Documentation completeness and structure
+   - Use of standard markdown section headers
+   - Presence of structured metadata in code
+
+#### Future Enhancements
+
+Planned approaches to address these limitations:
+
+1. **Per-Module Vision**:
+   - Import per-module `README.md` files for cluster-specific vision
+   - Support `.i2vision/vision/` config files per cluster
+   - Allow inline `@purpose` KDoc annotations for custom descriptions
+
+2. **Contract Compliance**:
+   - Explicit support for `docs/INDEX.md` as specified in VSLFC contracts
+   - Contract validation between documentation and implementation
+   - Confidence scoring based on contract compliance
+
+3. **Configuration Options**:
+   - Flags to enable/disable per-module reading behavior
+   - Vision source prioritization (e.g., prefer module docs over project docs)
+   - Fallback strategies for missing documentation
+
+#### Impact
+
+Until these enhancements are implemented:
+- Vision context will be generic across all clusters
+- Module-specific requirements may not be captured
+- Users should rely on other layers (Structure, Logic, Flow) for module-specific understanding
+- Consider adding structured metadata (`@purpose`, `@requirements`) to key classes for better vision extraction

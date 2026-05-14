@@ -333,17 +333,38 @@ class LearningVerbalizationStrategy(
         // Get feedback history for this symbol
         val feedbackHistory = getFeedbackHistory(symbol)
         
-        // Get heuristic description as baseline
-        val heuristicDescription = patternMatcher.matchAndDescribe(symbol)
+        // Check if we have high-rated feedback to use directly
+        val highRatedFeedback = feedbackHistory.filter { it.rating >= 4 }
+        val bestFeedback = highRatedFeedback.maxByOrNull { it.rating }
         
         // Build symbol context
         val context = SymbolVerbalizationContext(
             clusterId = clusterId,
             moduleName = extractModuleName(symbol.filePath),
-            dependencies = emptyList(), // Could be populated from cross-layer context
+            dependencies = emptyList(),
             relatedSymbols = emptyList(),
             architecturalLayer = null
         )
+        
+        // If we have high-rated feedback, use the best correction directly
+        if (bestFeedback != null) {
+            return VerbalizationResult(
+                symbol = symbol,
+                description = bestFeedback.correctedDescription,
+                confidence = 0.95, // High confidence for user-corrected feedback
+                strategy = VerbalizationStrategy.LEARNING,
+                metadata = mapOf(
+                    "source" to "user_feedback",
+                    "feedback_rating" to bestFeedback.rating.toString(),
+                    "feedback_history_size" to feedbackHistory.size.toString(),
+                    "llm_used" to "false",
+                    "fallback_used" to "false"
+                )
+            )
+        }
+        
+        // No high-rated feedback, use LLM
+        val heuristicDescription = patternMatcher.matchAndDescribe(symbol)
         
         // Build LLM request
         val request = LlmVerbalizationRequest(
@@ -353,10 +374,12 @@ class LearningVerbalizationStrategy(
             feedbackHistory = feedbackHistory
         )
         
-        // Call LLM with timeout
+        // Call LLM
         val response = llmClient.generate(request)
         
         if (response != null && response.description.isNotBlank()) {
+            val patternHintUsed = heuristicDescription != null
+            
             return VerbalizationResult(
                 symbol = symbol,
                 description = response.description,
@@ -366,7 +389,10 @@ class LearningVerbalizationStrategy(
                     "llm_model" to response.model,
                     "tokens_used" to response.tokensUsed.toString(),
                     "generation_time_ms" to response.generationTimeMs.toString(),
-                    "fallback_used" to "false"
+                    "llm_used" to "true",
+                    "fallback_used" to "false",
+                    "pattern_hint_used" to patternHintUsed.toString(),
+                    "feedback_history_size" to feedbackHistory.size.toString()
                 )
             )
         }

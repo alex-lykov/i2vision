@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2026. Oleksii Lykov.
  *
  * Licensed under the MIT License.
@@ -21,7 +21,7 @@ import java.io.File
  * 
  * ## Features:
  * - Two-tier hashing (local + context) for accurate cache invalidation
- * - Strategy fallback chain (LEARNING → MULTI_PASS → INCREMENTAL)
+ * - Strategy fallback chain (LEARNING â†’ MULTI_PASS â†’ INCREMENTAL)
  * - Batch processing for LLM efficiency
  * - Persistent hash storage for incremental sync
  */
@@ -434,6 +434,10 @@ class CrossLayerContextProvider(
             filePath.contains("/domain") -> "domain"
             filePath.contains("/repository") || filePath.contains("/data") ||
             filePath.contains("/persistence") || filePath.contains("/dao") -> "data"
+            filePath.contains("/logic") || filePath.contains("/rules") ||
+            filePath.contains("/validation") -> "logic"
+            filePath.contains("/flow") || filePath.contains("/workflow") ||
+            filePath.contains("/process") -> "flow"
             filePath.contains("/config") || filePath.contains("/configuration") -> "configuration"
             filePath.contains("/util") || filePath.contains("/helper") -> "utility"
             else -> "application"
@@ -454,9 +458,33 @@ class CrossLayerContextProvider(
             flows.add(match.groupValues[1])
         }
 
+        // Check for @Sequence annotations (also flow-related)
+        val sequencePattern = Regex("""@Sequence\(['"]([\w]+)['"]\)""")
+        sequencePattern.findAll(symbol.content).forEach { match ->
+            flows.add(match.groupValues[1])
+        }
+
         // Check for Flow: prefix in comments
         val commentFlowPattern = Regex("""//\s*Flow:\s*(\w+)""")
         commentFlowPattern.findAll(symbol.content).forEach { match ->
+            flows.add(match.groupValues[1])
+        }
+
+        // Extract flow references from method calls (e.g., paymentFlow.execute(), notificationFlow.send())
+        val methodCallPattern = Regex("""(\w+Flow)\s*\.\s*(?:execute|send|process|run|call|start|trigger)\s*\(""")
+        methodCallPattern.findAll(symbol.content).forEach { match ->
+            flows.add(match.groupValues[1])
+        }
+
+        // Also capture variable names ending with Flow that have method calls
+        val flowVariablePattern = Regex("""(\w+Flow)\s*\.\s*\w+\s*\(""")
+        flowVariablePattern.findAll(symbol.content).forEach { match ->
+            flows.add(match.groupValues[1])
+        }
+
+        // Extract flows from method invocations (e.g., startFlow(flowName))
+        val flowInvocationPattern = Regex("""(?:startFlow|callFlow|executeFlow)\s*\(\s*['"]?(\w+)['"]?\s*\)""")
+        flowInvocationPattern.findAll(symbol.content).forEach { match ->
             flows.add(match.groupValues[1])
         }
 
@@ -477,15 +505,59 @@ class CrossLayerContextProvider(
             rules.add(match.groupValues[1])
         }
 
-        // Check for require/check statements (validation rules)
-        val requirePattern = Regex("""require\([^)]+\)\s*\{[^}]+\}""")
-        requirePattern.findAll(symbol.content).forEach { match ->
-            rules.add("require: ${match.value.take(50)}")
+        // Check for @Constraint annotations (extract message)
+        val constraintPattern = Regex("""@Constraint\s*\(\s*(?:message\s*=\s*)?["']([^"']+)["']\s*\)""")
+        constraintPattern.findAll(symbol.content).forEach { match ->
+            rules.add(match.groupValues[1])
         }
 
-        val checkPattern = Regex("""check\([^)]+\)\s*\{[^}]+\}""")
+        // Check for require statements with lambda message (Kotlin)
+        // Pattern: require(condition) { "message" }
+        // Need to handle nested parentheses in condition
+        val requireWithMessagePattern = Regex("""require\s*\((?:[^()]|\([^)]*\))+\)\s*\{\s*["']([^"']+)["']\s*\}""")
+        requireWithMessagePattern.findAll(symbol.content).forEach { match ->
+            rules.add(match.groupValues[1])
+        }
+
+        // Check for require statements without message
+        val requirePattern = Regex("""require\s*\((?:[^()]|\([^)]*\))*\)""")
+        requirePattern.findAll(symbol.content).forEach { match ->
+            rules.add("require: ${match.value.substringAfter("require(").substringBeforeLast(")").trim()}")
+        }
+
+        // Check for check statements with lambda message
+        // Pattern: check(condition) { "message" }
+        val checkWithMessagePattern = Regex("""check\s*\((?:[^()]|\([^)]*\))+\)\s*\{\s*["']([^"']+)["']\s*\}""")
+        checkWithMessagePattern.findAll(symbol.content).forEach { match ->
+            rules.add(match.groupValues[1])
+        }
+
+        // Check for check statements without message
+        val checkPattern = Regex("""check\s*\((?:[^()]|\([^)]*\))*\)""")
         checkPattern.findAll(symbol.content).forEach { match ->
-            rules.add("check: ${match.value.take(50)}")
+            rules.add("check: ${match.value.substringAfter("check(").substringBeforeLast(")").trim()}")
+        }
+
+        // Check for if-throw validation patterns
+        // Pattern: if (condition) throw ExceptionType()
+        val ifThrowPattern = Regex("""if\s*\((?:[^()]|\([^)]*\))+\)\s+throw\s+(\w+Exception?)""")
+        ifThrowPattern.findAll(symbol.content).forEach { match ->
+            rules.add(match.groupValues[1])
+        }
+
+        // Check for if-else-throw patterns
+        val ifElseThrowPattern = Regex("""if\s*\((?:[^()]|\([^)]*\))+\)\s*\{?\s*throw\s+(\w+Exception?)\s*\)?\s*(?:else\s*\{[^}]*throw\s+(\w+Exception?)\s*\})?""")
+        ifElseThrowPattern.findAll(symbol.content).forEach { match ->
+            rules.add(match.groupValues[1])
+            if (match.groupValues[2].isNotEmpty()) {
+                rules.add(match.groupValues[2])
+            }
+        }
+
+        // Check for assert statements
+        val assertPattern = Regex("""assert\s*\(([^)]+)\)""")
+        assertPattern.findAll(symbol.content).forEach { match ->
+            rules.add("assert: ${match.groupValues[1].trim()}")
         }
 
         return rules.distinct()
@@ -500,7 +572,7 @@ class CrossLayerContextProvider(
         val dependencies = mutableListOf<String>()
 
         // Extract constructor injection dependencies
-        val constructorPattern = Regex("""constructor\(([^)]+)\)""")
+        val constructorPattern = Regex("""constructor\(([^()]*)\)""")
         constructorPattern.find(symbol.content)?.let { match ->
             val params = match.groupValues[1].split(",")
             params.forEach { param: String ->

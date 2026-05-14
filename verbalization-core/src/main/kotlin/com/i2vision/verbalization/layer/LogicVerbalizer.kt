@@ -76,26 +76,95 @@ class LogicVerbalizer : LayerVerbalizer {
     }
     
     private fun extractInvariants(enriched: EnrichedSymbol): List<InvariantInfo> {
-        return enriched.businessRules.map { rule ->
-            InvariantInfo(
-                name = "Invariant ${rule.hashCode()}",
-                condition = rule,
-                severity = InvariantSeverity.HIGH,
-                description = "Business rule"
+        val invariants = mutableListOf<InvariantInfo>()
+        
+        // Use pre-extracted business rules
+        enriched.businessRules.forEach { rule ->
+            invariants.add(
+                InvariantInfo(
+                    name = "Invariant ${rule.hashCode()}",
+                    condition = rule,
+                    severity = InvariantSeverity.HIGH,
+                    description = "Business rule"
+                )
             )
         }
+        
+        // Also extract from content if no pre-extracted rules
+        if (invariants.isEmpty()) {
+            val content = enriched.symbol.content
+            val requirePattern = Regex("""require\s*\((?:[^()]|\([^)]*\))+\)\s*\{\s*["']([^"']+)["']\s*\}""")
+            requirePattern.findAll(content).forEach { match ->
+                invariants.add(
+                    InvariantInfo(
+                        name = "Invariant ${match.groupValues[1].hashCode()}",
+                        condition = match.groupValues[1],
+                        severity = InvariantSeverity.HIGH,
+                        description = "Validation requirement"
+                    )
+                )
+            }
+        }
+        
+        return invariants
     }
     
     private fun extractRules(enriched: EnrichedSymbol): List<RuleInfo> {
-        return enriched.businessRules.mapIndexed { index, rule ->
-            RuleInfo(
-                name = "Business Rule ${index + 1}",
-                condition = rule,
-                action = "Enforce rule",
-                priority = index + 1,
-                description = "Business rule enforcement"
+        val rules = mutableListOf<RuleInfo>()
+        
+        // Use pre-extracted business rules
+        enriched.businessRules.forEachIndexed { index, rule ->
+            rules.add(
+                RuleInfo(
+                    name = "Business Rule ${index + 1}",
+                    condition = rule,
+                    action = "Enforce rule",
+                    priority = index + 1,
+                    description = "Business rule enforcement"
+                )
             )
         }
+        
+        // Also extract from content if no pre-extracted rules
+        if (rules.isEmpty()) {
+            val content = enriched.symbol.content
+            
+            // Match when expressions with various patterns
+            val whenPatterns = listOf(
+                // Pattern 1: when(condition) { branches }
+                Regex("""when\s*\(\s*[^)]+\s*\)\s*\{([^}]+)\}""", RegexOption.DOT_MATCHES_ALL),
+                // Pattern 2: when condition { branches }
+                Regex("""when\s+\w+\s+\{([^}]+)\}""", RegexOption.DOT_MATCHES_ALL)
+            )
+            
+            for (pattern in whenPatterns) {
+                pattern.find(content)?.let { match ->
+                    val whenBody = match.groupValues[1]
+                    // Split by branches: look for "->" as delimiter
+                    val branchPattern = Regex("""\s*([A-Za-z0-9_.\[\]]+)\s*->""")
+                    branchPattern.findAll(whenBody).forEachIndexed { index, branchMatch ->
+                        val condition = branchMatch.groupValues[1]
+                        // Find the action after ->
+                        val afterArrow = whenBody.substring(branchMatch.range.last + 1)
+                        val actionMatch = Regex("""\s*([A-Za-z0-9_]+)\s*\(""").find(afterArrow)
+                        val action = actionMatch?.groupValues?.get(1) ?: "handle"
+                        
+                        rules.add(
+                            RuleInfo(
+                                name = "Branch Rule ${index + 1}",
+                                condition = condition,
+                                action = action,
+                                priority = index + 1,
+                                description = "State transition rule"
+                            )
+                        )
+                    }
+                    if (rules.isNotEmpty()) return@let
+                }
+            }
+        }
+        
+        return rules
     }
     
     private fun extractStateMachines(enriched: EnrichedSymbol): List<StateMachineInfo> {

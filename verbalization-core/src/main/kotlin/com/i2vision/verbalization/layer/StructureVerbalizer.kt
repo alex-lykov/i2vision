@@ -185,6 +185,25 @@ class StructureVerbalizer : LayerVerbalizer {
             enriched.symbol.kind == SymbolKind.INTERFACE -> patterns.add("Interface-based")
         }
         
+        // Also detect patterns from content if modifiers aren't set
+        if (patterns.isEmpty()) {
+            val content = enriched.symbol.content
+            when {
+                content.contains("@RestController") || content.contains("@Controller") -> {
+                    patterns.add("MVC")
+                }
+                content.contains("@Service") -> {
+                    patterns.add("Layered")
+                }
+                content.contains("@Repository") -> {
+                    patterns.add("Layered")
+                }
+                content.contains("interface") && content.contains("fun") -> {
+                    patterns.add("Interface-based")
+                }
+            }
+        }
+        
         return patterns
     }
     

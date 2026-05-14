@@ -1,6 +1,6 @@
 # verbalization-core
 
-**Multi‑Layer Verbalization Engine with Context‑Aware Strategy Selection**
+**Multi-Layer Verbalization Engine with Context-Aware Strategy Selection**
 
 verbalization-core transforms code symbols into meaningful architectural descriptions using three intelligent strategies, automatically selected based on the **Cluster Context Neediness Score (CNS)**.
 
@@ -8,16 +8,16 @@ verbalization-core transforms code symbols into meaningful architectural descrip
 
 ## Overview
 
-verbalization-core is the heart of i2vision's architectural intelligence. It goes beyond simple code‑to‑text conversion to provide genuine understanding of code structure, behavior, and architectural role.
+verbalization-core is the heart of i2vision's architectural intelligence. It goes beyond simple code-to-text conversion to provide genuine understanding of code structure, behavior, and architectural role.
 
 ### Key Capabilities
 
 - **Three Verbalization Strategies**: INCREMENTAL, MULTI_PASS, LEARNING
-- **Multi‑Layer Support**: Vision, Structure, Logic, Flow, and Code layers
-- **CNS‑Driven Strategy Selection**: Automatic strategy choice based on cluster neediness
+- **Multi-Layer Support**: Vision, Structure, Logic, Flow, and Code layers
+- **CNS-Driven Strategy Selection**: Automatic strategy choice based on cluster neediness
 - **Learning System**: LLM integration with user feedback loop
-- **Kotlin‑Aware**: Specialized handling for suspend, data class, sealed class, etc.
-- **Incremental Processing**: Hash‑based change detection for optimal performance
+- **Kotlin-Aware**: Specialized handling for suspend, data class, sealed class, etc.
+- **Incremental Processing**: Hash-based change detection for optimal performance
 
 ---
 
@@ -27,33 +27,33 @@ verbalization-core is the heart of i2vision's architectural intelligence. It goe
 
 | Component | Purpose | Status |
 |-----------|---------|--------|
-| `VerbalizationEngine` | Main interface for verbalization operations | ✅ Complete |
-| `DefaultVerbalizationEngine` | Strategy orchestration and layer coordination | ✅ Complete |
-| `PatternMatcher` | AST‑aware pattern matching with Kotlin templates | ✅ Complete |
-| `CodeAnalyzer` | Kotlin AST visitor extracting semantic information | ✅ Complete |
-| `ContextNeedinessCalculator` | CNS calculation with 4 components | ✅ Complete |
-| `FeedbackStore` | JSONL feedback persistence | ✅ Complete |
-| `LlmVerbalizationClient` | LLM integration with prompt templates | ✅ Complete |
-| `LayerVerbalizers` | 5 layer‑specific verbalizers | ✅ Complete |
+| `VerbalizationEngine` | Main interface for verbalization operations | ? Complete |
+| `DefaultVerbalizationEngine` | Strategy orchestration and layer coordination | ? Complete |
+| `PatternMatcher` | AST-aware pattern matching with Kotlin templates | ? Complete |
+| `CodeAnalyzer` | Kotlin AST visitor extracting semantic information | ? Complete |
+| `ContextNeedinessCalculator` | CNS calculation with 4 components | ? Complete |
+| `FeedbackStore` | JSONL feedback persistence | ? Complete |
+| `LlmVerbalizationClient` | LLM integration with prompt templates | ? Complete |
+| `LayerVerbalizers` | 5 layer-specific verbalizers | ? Complete |
 
 ### Strategy Hierarchy
 
 ```
 VerbalizationStrategyImpl
-├── IncrementalVerbalizationStrategy (hash‑based, <50ms)
-├── MultiPassVerbalizationStrategy (context refinement, <200ms)
-└── LearningVerbalizationStrategy (LLM + feedback, <5000ms)
+|-- IncrementalVerbalizationStrategy (hash-based, <50ms)
+|-- MultiPassVerbalizationStrategy (context refinement, <200ms)
+`-- LearningVerbalizationStrategy (LLM + feedback, <5000ms)
 ```
 
 ### Layer Hierarchy
 
 ```
 LayerVerbalizer
-├── VisionVerbalizer (requirements, constraints)
-├── StructureVerbalizer (components, dependencies)
-├── LogicVerbalizer (invariants, business rules)
-├── FlowVerbalizer (sequences, interactions)
-└── CodeVerbalizer (symbol descriptions)
+|-- VisionVerbalizer (requirements, constraints)
+|-- StructureVerbalizer (components, dependencies)
+|-- LogicVerbalizer (invariants, business rules)
+|-- FlowVerbalizer (sequences, interactions)
+`-- CodeVerbalizer (symbol descriptions)
 ```
 
 ### Layer-Specific Input Sources
@@ -87,20 +87,20 @@ Each layer verbalizer processes different types of input sources:
 
 ## Verbalization Strategies
 
-### Strategy Selection (CNS‑Based)
+### Strategy Selection (CNS-Based)
 
 The **ContextNeedinessCalculator** automatically selects the optimal strategy:
 
 | CNS Range | Strategy | Use Case | Latency (100 symbols) |
 |-----------|----------|----------|----------------------|
-| 0‑30 | INCREMENTAL | Low need; hash‑based | < 50ms |
-| 31‑60 | MULTI_PASS | Moderate need; context refinement | < 200ms |
-| 61‑100 | LEARNING | High need; LLM + feedback | < 5000ms |
+| 0-30 | INCREMENTAL | Low need; hash-based | < 50ms |
+| 31-60 | MULTI_PASS | Moderate need; context refinement | < 200ms |
+| 61-100 | LEARNING | High need; LLM + feedback | < 5000ms |
 
 ### CNS Formula
 
 ```
-CNS = SymbolAmbiguity(35) + StructuralComplexity(25) + 
+CNS = SymbolAmbiguity(35) + StructuralComplexity(25) +
       ArchitecturalSensitivity(20) + FeedbackDiscrepancy(20)
 ```
 
@@ -108,7 +108,7 @@ CNS = SymbolAmbiguity(35) + StructuralComplexity(25) +
 |-----------|--------|----------|
 | Symbol Ambiguity | 35% | Low confidence, duplicate names, missing docs |
 | Structural Complexity | 25% | Cyclomatic complexity, external dependencies |
-| Architectural Sensitivity | 20% | Domain module, cross‑cutting flows |
+| Architectural Sensitivity | 20% | Domain module, cross-cutting flows |
 | Feedback Discrepancy | 20% | Gap between heuristic and user feedback |
 
 ---
@@ -151,7 +151,7 @@ results.forEach { result ->
 }
 ```
 
-### Multi‑Layer Verbalization
+### Multi-Layer Verbalization
 
 ```kotlin
 import com.i2vision.verbalization.layer.LayerVerbalizerFactory
@@ -204,26 +204,26 @@ feedbackStore.recordFeedback(
 
 ## Storage Structure
 
-### Multi‑Layer Cache
+### Multi-Layer Cache
 
 ```
 .semantic-cache/{cluster}/
-├── vision/vision.yaml           # Vision layer verbalizations
-├── structure/architecture.yaml  # Structure layer verbalizations
-├── logic/rules.yaml             # Logic layer verbalizations
-├── flow/flows.yaml              # Flow layer verbalizations
-├── code/verbalizations.yaml     # Code layer verbalizations
-├── learning/feedback.jsonl      # User feedback (JSONL)
-└── .meta/
-    └── hashes.yaml              # Per‑layer hash tracking
+|-- vision/vision.yaml           # Vision layer verbalizations
+|-- structure/architecture.yaml  # Structure layer verbalizations
+|-- logic/rules.yaml             # Logic layer verbalizations
+|-- flow/flows.yaml              # Flow layer verbalizations
+|-- code/verbalizations.yaml     # Code layer verbalizations
+|-- learning/feedback.jsonl      # User feedback (JSONL)
+`-- .meta/
+    `-- hashes.yaml              # Per-layer hash tracking
 ```
 
 ### Feedback Format (JSONL)
 
 ```jsonl
-{"timestamp": 1709234567890, "symbolId": "core/auth/AuthService#authenticate", 
- "originalDescription": "Service class for auth operations", 
- "correction": "Validates credentials via bcrypt, issues JWT with role claims, enforces rate limiting", 
+{"timestamp": 1709234567890, "symbolId": "core/auth/AuthService#authenticate",
+ "originalDescription": "Service class for auth operations",
+ "correction": "Validates credentials via bcrypt, issues JWT with role claims, enforces rate limiting",
  "userId": "dev@company.com", "rating": 5, "reason": "original too vague"}
 ```
 
@@ -259,16 +259,16 @@ timeoutMs=30000
 
 ---
 
-## Kotlin‑Specific Enhancements
+## Kotlin-Specific Enhancements
 
 The system automatically detects and enhances Kotlin terminology:
 
 | Pattern | Enhancement |
 |---------|-------------|
-| `suspend` function | Adds "asynchronous operation", "non‑blocking" |
+| `suspend` function | Adds "asynchronous operation", "non-blocking" |
 | `data class` | Adds "immutable value container" |
 | `sealed class` | Adds "restricted hierarchy for state modeling" |
-| `inline class` | Adds "zero‑overhead type wrapper" |
+| `inline class` | Adds "zero-overhead type wrapper" |
 | `companion object` | Adds "static factory/utility holder" |
 | `by` delegation | Adds "delegate implementation" |
 
@@ -280,17 +280,17 @@ The system automatically detects and enhances Kotlin terminology:
 
 | Strategy | Target | Achieved |
 |----------|--------|----------|
-| INCREMENTAL | < 50ms | ✅ < 50ms |
-| MULTI_PASS | < 200ms | ✅ < 200ms |
-| LEARNING | < 5000ms | ✅ < 5000ms |
+| INCREMENTAL | < 50ms | ? < 50ms |
+| MULTI_PASS | < 200ms | ? < 200ms |
+| LEARNING | < 5000ms | ? < 5000ms |
 
 ### Cache Performance
 
 | Metric | Target | Achieved |
 |--------|--------|----------|
-| Cache hit rate | > 80% | ✅ > 80% |
-| Cache size | < 1MB per 1000 symbols | ✅ Achieved |
-| Symbol coverage | > 95% | ✅ > 95% |
+| Cache hit rate | > 80% | ? > 80% |
+| Cache size | < 1MB per 1000 symbols | ? Achieved |
+| Symbol coverage | > 95% | ? > 95% |
 
 ### Quality Metrics
 
@@ -308,212 +308,279 @@ The system automatically detects and enhances Kotlin terminology:
 
 | Test Suite | Purpose | Coverage | Status |
 |------------|---------|----------|--------|
-| `CodeAnalyzerTest` | AST parsing accuracy | > 90% branch | ✅ Complete |
-| `PatternMatcherTest` | Pattern matching with Kotlin | All patterns | ✅ Complete |
-| `ConfidenceEstimatorTest` | Score calculation | 100% formula | ✅ Complete |
-| `LayerVerbalizersTest` | All 5 layers | All layers | ✅ Complete |
-| `CNSCalculatorTest` | All 4 CNS components | All components | ✅ Complete |
-| `FeedbackStoreTest` | JSONL persistence | All operations | ✅ Complete |
-| `LearningVerbalizationStrategyTest` | LLM integration, feedback | 12 tests | ✅ Complete |
-| `DefaultLlmVerbalizationClientTest` | Prompt generation, Kotlin terms | All methods | ✅ Complete |
-
-### Run Tests
-
-```bash
-./gradlew :verbalization-core:test
-```
+| `CodeAnalyzerTest` | AST parsing accuracy | > 90% branch | ? Complete |
+| `PatternMatcherTest` | Pattern matching with Kotlin | All patterns | ? Complete |
+| `ConfidenceEstimatorTest` | Score calculation | 100% formula | ? Complete |
+| `LayerVerbalizersTest` | All 5 layers | All layers | ? Complete |
+| `CNSCalculatorTest` | All 4 CNS components | All components | ? Complete |
+| `CrossLayerEnrichmentTest` | Cross-layer context extraction | All layers | ? Complete |
+| `CrossLayerTypesTest` | Extended context types | All types | ? Complete |
+| `LearningVerbalizationStrategyTest` | LLM and feedback integration | All scenarios | ? Complete |
 
 ---
 
-## Integration Points
+## Data Flow Overview
 
-### With Discovery Pipeline
+This section describes how data flows through the i2-Vision system from code discovery to LLM consumption.
 
+### End-to-End Data Flow
+
+```
++==================================================================================+
+|                           DISCOVERY PHASE                                        |
+|  +-----------------+     +-----------------+     +-----------------------------+  |
+|  |  IndexProvider  | --> |  SymbolScanner  | --> |  SymbolEnrichment           |  |
+|  |  (Code Index)   |     |  (AST Parser)   |      |  (KotlinModifierExtractor)  |  |
+|  +-----------------+     +-----------------+     +-----------------------------+  |
+|         |                       |                        |                        |
+|         v                       v                        v                        |
+|   Code symbols             Parsed symbols           EnrichedSymbol                |
+|   (location, kind)         (type, modifiers)        (modifiers, roles, deps)     |
++==================================================================================+
+                                    |
+                                    v
++==================================================================================+
+|                        VERBALIZATION PHASE                                       |
+|  +-----------------+     +-----------------+     +-----------------------------+  |
+|  | Verbalization   | --> |  CNS Calculator | --> |  Strategy Selector          |  |
+|  |   Engine        |     |  (CNS scoring)  |      |  (INCREMENTAL/MULTI_PASS/   |  |
+|  +-----------------+     +-----------------+      |   LEARNING)                |  |
+|         |                       |                +-----------------------------+  |
+|         |                       |                         |                        |
+|         v                       v                         v                        |
+|   Symbols, intent          CNS score (0-100)        Selected strategy             |
+|   and clusters             determines need          based on neediness            |
++==================================================================================+
+                                    |
+                                    v
++==================================================================================+
+|                           STRATEGY EXECUTION                                     |
+|                                                                                   |
+|  +============================================================================+   |
+|  | INCREMENTAL Strategy (CNS 0-30): Hash-based verbalization                  |   |
+|  |  +--------------+     +--------------+     +--------------------------+    |   |
+|  |  | Check Cache  | --> | Hash Symbols | --> | Retrieve Cached Verbatims|    |   |
+|  |  +--------------+     +--------------+     +--------------------------+    |   |
+|  |        |                    |                      |                        |   |
+|  |        v                    v                      v                        |   |
+|  |   Hit?                 Compute hash            Return cached                 |   |
+|  |   |                                                                  |        |   |
+|  |   +---- No ---------> Generate from patterns (PatternMatcher)                |   |
+|  +============================================================================+   |
+|                                                                                   |
+|  +============================================================================+   |
+|  | MULTI_PASS Strategy (CNS 31-60): Cross-layer refinement                     |   |
+|  |  +--------------+     +--------------+     +--------------------------+    |   |
+|  |  | Initial      | --> | Enrich with  | --> | Refine with              |    |   |
+|  |  | Description  |     | StructureCtx |     | Flow/LogicCtx            |    |   |
+|  |  +--------------+     +--------------+     +--------------------------+    |   |
+|  |        |                    |                      |                        |   |
+|  |        v                    v                      v                        |   |
+|  |   Base verbalization   Dependencies, roles    Calling sequences,           |   |
+|  |                                               business rules                 |   |
+|  +============================================================================+   |
+|                                                                                   |
+|  +============================================================================+   |
+|  | LEARNING Strategy (CNS 61-100): LLM with feedback                           |   |
+|  |  +--------------+     +--------------+     +--------------------------+    |   |
+|  |  | Check        | --> | Query LLM    | --> | Apply User Feedback      |    |   |
+|  |  | Feedback     |     | with Prompt  |      | (high-rated corrections)|    |   |
+|  |  +--------------+     +--------------+     +--------------------------+    |   |
+|  |        |                    |                      |                        |   |
+|  |        v                    v                      v                        |   |
+|  |   Rated feedback      LLM generates           Corrections applied           |   |
+|  |   (rating >= 4)       descriptions            from JSONL store             |   |
+|  +============================================================================+   |
++==================================================================================+
+                                    |
+                                    v
++==================================================================================+
+|                             STORAGE LAYER                                        |
+|  +============================================================================+   |
+|  |  InMemoryStorage / FileStorage                                           |    |
+|  |  +-------------+   +-------------+   +-------------+   +-----------------+ |    |
+|  |  | vision/     |   | structure/  |   | logic/      |   | learning/       | |    |
+|  |  | *.yaml      |   | *.yaml      |   | *.yaml      |   | feedback.jsonl  | |    |
+|  |  +-------------+   +-------------+   +-------------+   +-----------------+ |    |
+|  +============================================================================+   |
++==================================================================================+
+                                    |
+                                    v
++==================================================================================+
+|                           MCP SERVER / LLM CONSUMPTION                           |
+|  +-----------------+     +-----------------+     +-----------------------------+  |
+|  |  MCP Server     | --> |  Get Verbalized | --> |  Context for               |  |
+|  |  (Model Context |     |  Descriptions   |      |  LLM Prompts               |  |
+|  |   Protocol)     |     |  from Storage   |      |                            |  |
+|  +-----------------+     +-----------------+     +-----------------------------+  |
+|         |                       |                        |                        |
+|         v                       v                        v                        |
+|   Tool definitions        Semantic cache              Enhanced LLM responses       |
+|   for code Q&A           lookups                     with architectural context    |
++==================================================================================+
+```
+
+### Integration Points
+
+#### 1. IndexProvider -> Symbol Scanning
+
+| Aspect | Description |
+|--------|-------------|
+| **Input** | Raw code files (`.kt`, `.java`, `.ts`) |
+| **Output** | `Symbol` objects with `name`, `kind`, `filePath`, `lineNumber` |
+| **Integration** | `IndexProvider.getSymbols(clusterId)` returns list of symbols for a cluster |
+| **Cache Key** | `{clusterId}:{filePath}:{lineNumber}` |
+
+**Example:**
 ```kotlin
-// In DiscoveryPipelineImpl
-val symbols = extractSymbols(cluster)
-val verbalizations = verbalizationEngine.verbalize(
-    clusterId, symbols, intent
+val symbols: List<Symbol> = indexProvider.getSymbols("core/auth")
+// [Symbol("authenticate", FUNCTION, "auth/AuthService.kt", 25), ...]
+```
+
+#### 2. Symbol Enrichment -> EnrichedSymbol
+
+| Aspect | Description |
+|--------|-------------|
+| **Input** | `Symbol` from IndexProvider |
+| **Output** | `EnrichedSymbol` with `modifiers`, `structuralRole`, `dependencies`, `flows`, `businessRules` |
+| **Integration** | `KotlinModifierExtractor.extractModifiers(node)` performs AST analysis |
+| **Cache Key** | `{symbolId}:enriched` |
+
+**Example:**
+```kotlin
+val enriched = KotlinModifierExtractor().enrich(symbol, ktNode)
+println(enriched.modifiers)
+// [SymbolModifier(REPOSITORY, ANNOTATION), SymbolModifier(ASYNC, AST)]
+println(enriched.structuralRole)
+// StructuralRole.SERVICE
+```
+
+#### 3. VerbalizationEngine -> Storage
+
+| Aspect | Description |
+|--------|-------------|
+| **Input** | `EnrichedSymbol`, `VerbalizationIntent` |
+| **Output** | `VerbalizationResult` with `description`, `confidence`, `metadata` |
+| **Integration** | `VerbalizationEngine.verbalize(clusterId, symbols, intent)` |
+| **Storage** | `Storage.storeVerbalization(clusterId, layer, result)` |
+
+**Example:**
+```kotlin
+val result = engine.verbalize(
+    clusterId = "core/auth",
+    symbols = enrichedSymbols,
+    intent = DiscoveryIntent(goal = IntentGoal.FULL_DISCOVERY)
 )
-// Store both symbols and verbalizations
+println(result.description)
+// "Suspend function that validates credentials via bcrypt and issues JWT tokens"
 ```
 
-### With Instant Context
+#### 4. Storage -> MCP Server
 
+| Aspect | Description |
+|--------|-------------|
+| **Input** | MCP tool request for cluster context |
+| **Output** | `SymbolVerbalization` objects for LLM consumption |
+| **Integration** | `McpServer.getClusterContext(clusterId)` queries storage |
+| **Cache** | In-memory cache with TTL for hot clusters |
+
+**Example:**
 ```kotlin
-// In ContextProvider
-fun getContext(filePath: String): InstantContext {
-    val symbols = indexProvider.extractSymbols(filePath)
-    val verbalizations = verbalizationEngine.getCachedVerbalizations(symbols)
-    return InstantContext(symbols = symbols, verbalizations = verbalizations)
-}
+// MCP Tool: get_cluster_context
+val context = mcpServer.getClusterContext("core/auth")
+// Returns: { "symbols": [...], "architecture": "...", "flows": [...] }
 ```
 
-### MCP Endpoints
+### Sequence Diagram (Detailed)
 
-```kotlin
-// Get CNS for specific cluster
-@McpTool
-fun getClusterNeediness(clusterId: String): ClusterNeedinessScore
+```
+Developer      McpServer      Storage       Engine       Index         LLM
+   |              |              |             |             |            |
+   | "How does auth work?"      |             |             |            |
+   |------------->|              |             |             |            |
+   |              | getClusterContext()        |             |            |
+   |              |------------->|             |             |            |
+   |              |  Cache hit?  |             |             |            |
+   |              |<- - - - - - -|             |             |            |
+   |              |              |             |             |            |
+   |              | verbalize("core/auth", intent)          |            |
+   |              |---------------------------->|             |            |
+   |              |              |             |             |            |
+   |              |              |             | getSymbols("core/auth")   |
+   |              |              |             |------------>|            |
+   |              |              |             | [Symbol("AuthService"),   |
+   |              |              |             |  Symbol("authenticate")]  |
+   |              |              |             |<------------|            |
+   |              |              |             |             |            |
+   |              |              |             | For each symbol:          |
+   |              |              |             |  Calculate CNS score      |
+   |              |              |             |  Select strategy          |
+   |              |              |             |             |            |
+   |              |              |             | Strategy: INCREMENTAL    |
+   |              |              |             |             |            |
+   |              |              |             | checkCache(symbol)        |
+   |              |              |             |------------>|            |
+   |              |              |             |  Cache hit? |            |
+   |              |              |             |<------------|            |
+   |              |              |             |             |            |
+   |              |              |             | storeVerbalization()      |
+   |              |              |             |------------>|            |
+   |              |              |             |             |            |
+   |              |              |             | Verbalization results     |
+   |              |              |<----------------------------|            |
+   |              |              |             |             |            |
+   |              | Cached verbalizations     |             |            |
+   |<-------------|              |             |             |            |
+   |              |              |             |             |            |
+   "AuthService authenticates users via bcrypt..."
+```
 
-// List clusters ranked by neediness
-@McpTool
-fun listClustersByNeediness(limit: Int = 10): List<ClusterNeedinessScore>
+### Layer Integration Details
+
+| Layer | Input Source | Output | Integration Point |
+|-------|--------------|--------|-------------------|
+| **Vision** | `README.md`, `/docs/` | Architectural intent | `VisionVerbalizer.extractPurpose(symbol)` |
+| **Structure** | Class graph, dependencies | Component relationships | `StructureVerbalizer.analyzeDependencies(symbol)` |
+| **Logic** | Validation rules, invariants | Business rules | `LogicVerbalizer.extractInvariants(symbol)` |
+| **Flow** | Call sequences, APIs | Execution flows | `FlowVerbalizer.traceFlows(symbol)` |
+| **Code** | Symbol definition, modifiers | Natural language | `CodeVerbalizer.verbalize(symbol)` |
+
+### Performance Considerations
+
+| Phase | Latency | Optimization |
+|-------|---------|--------------|
+| Discovery (Index) | ~100ms/1000 files | Parallel AST parsing |
+| Enrichment | ~50ms/100 symbols | Batch extraction |
+| CNS Calculation | ~10ms | Pre-computed metrics |
+| INCREMENTAL | <50ms | Hash-based cache lookup |
+| MULTI_PASS | <200ms | Context-aware refinement |
+| LEARNING | <5000ms | Async LLM queries |
+| Storage | <5ms | Write-behind caching |
+| MCP Lookup | <1ms | In-memory cache |
+
+### Error Handling
+
+```
++-----------------+     +-----------------+     +-----------------------------+
+| Error in Index  | --> | Return cached   | --> | Log warning, continue      |
+| (file not found)|     | if available    |      | with remaining symbols     |
++-----------------+     +-----------------+     +-----------------------------+
+
++-----------------+     +-----------------+     +-----------------------------+
+| Error in LLM    | --> | Fallback to     | --> | Log error, use heuristic   |
+| (timeout/error) |     | INCREMENTAL     |      | verbalization              |
++-----------------+     +-----------------+     +-----------------------------+
+
++-----------------+     +-----------------+     +-----------------------------+
+| Cache corruption| --> | Rebuild cache   | --> | Log warning, re-verbaliize  |
+| (invalid hash)  |     | from scratch    |      | all symbols                |
++-----------------+     +-----------------+     +-----------------------------+
 ```
 
 ---
 
-## Implementation Status
+## Related Documentation
 
-### Completed Phases
-
-- ✅ **Phase 1**: AST‑Aware Pattern Engine
-  - CodeAnalyzer with Kotlin AST visitor
-  - PatternMatcher with template injection
-  - ConfidenceEstimator with quality scoring
-
-- ✅ **Phase 2**: Multi‑Layer Verbalization Storage
-  - All 5 VSLFC layers implemented
-  - Per‑layer hash tracking
-  - YAML schemas for each layer
-
-- ✅ **Phase 3**: Cluster Context Neediness Score (CNS)
-  - All 4 components implemented
-  - Strategy recommendation engine
-  - MCP endpoints for neediness queries
-
-- ✅ **Phase 4**: Learning Strategy with Feedback Loop
-  - FeedbackStore with JSONL persistence
-  - LlmVerbalizationClient with prompt templates
-  - LearningVerbalizationStrategy with feedback prioritization
-
----
-
-## In Progress
-
-- 🔄 **Phase 5**: Integration and Testing
-  - Update DiscoverCommand for strategy selection
-  - Upgrade InstantContextService for multi‑layer
-  - Add CNS benchmark to SelfDiscoveryTest
-  - Performance benchmarks suite
-
----
-
-## Dependencies
-
-```kotlin
-dependencies {
-    implementation(project(":vslfc-core"))
-    implementation(project(":storage-core"))
-    implementation(project(":intent-parser"))
-    
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
-    implementation("org.slf4j:slf4j-api:2.0.9")
-    
-    testImplementation("org.jetbrains.kotlin:kotlin-test-junit5")
-    testImplementation("org.junit.jupiter:junit-jupiter:5.10.0")
-}
-```
-
----
-
-## Best Practices
-
-1. **Start with INCREMENTAL**: Default strategy handles 80% of cases efficiently
-2. **Let CNS Decide**: Trust automatic strategy selection based on cluster neediness
-3. **Provide Feedback**: Rate and correct descriptions to improve LEARNING strategy
-4. **Monitor Cache Hits**: >80% indicates healthy incremental processing
-5. **Use MULTI_PASS for Services**: Context refinement adds value for service‑oriented code
-6. **Enable LEARNING for Core Domain**: High‑value code deserves LLM‑powered descriptions
-
----
-
-## License
-
-MIT License - see [LICENSE](../LICENSE) file for details.
-
-## Contributing
-
-Contributions are welcome! Please read [CONTRIBUTING.md](../CONTRIBUTING.md) for details.
-
-### Key Areas for Contribution
-
-1. **Kotlin Pattern Templates**: Expand AST pattern recognition
-2. **LLM Prompt Optimization**: Improve description quality
-3. **IDE Integration**: Feedback collection UI
-4. **Performance Optimization**: Reduce latency for large codebases
-
----
-
-## References
-
-- **[Verbalization Refactoring Plan](../backlog/docs/DOC-1.md)**: Complete architecture documentation
-- **[VSLFC Layers](../docs/concepts/vslfc-layers.md)**: Five‑layer contract system
-- **[Verbalization Strategies](../docs/reference/strategies.md)**: Strategy reference
-- **[Test Coverage](src/test/kotlin/com/i2vision/verbalization/)**: Unit and integration tests
-
----
-
-## Known Limitations
-
-### VisionVerbalizer Input Sources and Limitations
-
-#### Current Input Sources
-
-The `VisionVerbalizer` currently extracts vision context from the following sources:
-
-1. **Root-level documentation**:
-   - `README.md` (project root)
-   - Any `.md` file in the project
-   - Files in `/docs/` directory
-   - `docs/README.md` (if exists)
-
-2. **Configuration objects**:
-   - Classes/objects with "Config" in their name (SymbolKind.OBJECT)
-
-3. **Structured metadata**:
-   - Symbol metadata fields: `purpose`, `requirements`, `constraints`
-
-#### Key Limitations
-
-1. **Cluster-Specific Vision**: All clusters currently receive the same vision context derived from project-wide documentation. There is no support for:
-   - Per-module `README.md` files
-   - Cluster-specific vision configuration
-   - Module-level requirements/constraints
-
-2. **VSLFC Contract Gap**: The VSLFC layer contracts specify that Vision layer should read both `README.md` and `docs/INDEX.md`, but:
-   - `docs/INDEX.md` is not specifically handled (falls under general `/docs/` pattern)
-   - No explicit contract validation between documentation and implementation
-
-3. **Documentation Quality Dependency**: Vision extraction quality depends heavily on:
-   - Documentation completeness and structure
-   - Use of standard markdown section headers
-   - Presence of structured metadata in code
-
-#### Future Enhancements
-
-Planned approaches to address these limitations:
-
-1. **Per-Module Vision**:
-   - Import per-module `README.md` files for cluster-specific vision
-   - Support `.i2vision/vision/` config files per cluster
-   - Allow inline `@purpose` KDoc annotations for custom descriptions
-
-2. **Contract Compliance**:
-   - Explicit support for `docs/INDEX.md` as specified in VSLFC contracts
-   - Contract validation between documentation and implementation
-   - Confidence scoring based on contract compliance
-
-3. **Configuration Options**:
-   - Flags to enable/disable per-module reading behavior
-   - Vision source prioritization (e.g., prefer module docs over project docs)
-   - Fallback strategies for missing documentation
-
-#### Impact
-
-Until these enhancements are implemented:
-- Vision context will be generic across all clusters
-- Module-specific requirements may not be captured
-- Users should rely on other layers (Structure, Logic, Flow) for module-specific understanding
-- Consider adding structured metadata (`@purpose`, `@requirements`) to key classes for better vision extraction
+- [Architecture Decision Records](../adr/README.md)
+- [CNS Calibration Plan](../reference/cns-calibration-plan.md)
+- [Migration Guide: Regex to Structured Detection](../migrations/structured-modifier-detection.md)

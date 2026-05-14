@@ -185,6 +185,43 @@ fun ModifierVerbalizer.verbalizeEnrichedSymbol(
 }
 
 /**
+ * Verbalize structural role into natural language description.
+ */
+fun ModifierVerbalizer.verbalizeStructuralRole(role: StructuralRole): String {
+    return when (role) {
+        // Data layer
+        StructuralRole.REPOSITORY -> "Repository pattern implementation"
+        StructuralRole.ENTITY -> "Domain entity"
+        StructuralRole.DTO -> "Data transfer object"
+        StructuralRole.VALIDATOR -> "Validation component"
+        
+        // Service layer
+        StructuralRole.SERVICE -> "service component"
+        StructuralRole.CONTROLLER -> "REST controller"
+        StructuralRole.ORCHESTRATOR -> "Orchestration coordinator"
+        StructuralRole.DISPATCHER -> "Request dispatcher"
+        
+        // Factory/Creational
+        StructuralRole.FACTORY -> "Factory pattern implementation"
+        StructuralRole.BUILDER -> "Builder pattern implementation"
+        
+        // Event handling
+        StructuralRole.EVENT_PRODUCER -> "Event publisher"
+        StructuralRole.EVENT_CONSUMER -> "Event consumer"
+        StructuralRole.EVENT_HANDLER -> "Event handler"
+        
+        // Transformation
+        StructuralRole.TRANSFORMER -> "Data transformer"
+        StructuralRole.AGGREGATOR -> "Data aggregator"
+        
+        // Other
+        StructuralRole.UTIL -> "Utility component"
+        StructuralRole.CONFIG -> "Configuration component"
+        StructuralRole.UNKNOWN -> ""
+    }
+}
+
+/**
  * Verbalize symbol with full context.
  */
 fun ModifierVerbalizer.verbalizeWithContext(context: VerbalizationContext): String {
@@ -194,18 +231,22 @@ fun ModifierVerbalizer.verbalizeWithContext(context: VerbalizationContext): Stri
     sb.append(context.baseDescription)
     
     // Add modifiers if requested
-    if (context.includeModifiers && context.enrichedSymbol.modifiers.isNotEmpty()) {
-        val modifierText = verbalizeModifiers(context.enrichedSymbol.modifiers)
-        if (modifierText.isNotEmpty()) {
-            sb.append(" (").append(modifierText).append(")")
+    if (context.includeModifiers) {
+        val modifierPhrases = context.enrichedSymbol.modifiers.map { verbalizeModifier(it) }
+            .filter { it.isNotEmpty() }
+        if (modifierPhrases.isNotEmpty()) {
+            sb.append(" - ").append(modifierPhrases.joinToString(", "))
         }
     }
     
-    // Add structural role if requested
+    // Add structural role if requested - incorporate naturally into description
     if (context.includeRole) {
         val role = context.enrichedSymbol.structuralRole
         if (role != null && role != StructuralRole.UNKNOWN) {
-            sb.append(" [").append(role.name.lowercase().replace("_", " ")).append("]")
+            val roleDescription = verbalizeStructuralRole(role)
+            if (roleDescription.isNotEmpty()) {
+                sb.append(" - ").append(roleDescription)
+            }
         }
     }
     

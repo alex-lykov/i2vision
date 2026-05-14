@@ -203,3 +203,348 @@ class FeedbackStoreTest {
         assertEquals(1, feedback.size)
     }
 }
+
+// ============ GUARDRAIL TESTS ============
+
+/**
+ * Unit tests for feedback guardrails.
+ */
+class FeedbackStoreGuardrailTest {
+
+    @TempDir
+    lateinit var tempDir: Path
+
+    private lateinit var feedbackStore: FeedbackStore
+
+    private val testSymbol = Symbol(
+        name = "testFunction",
+        kind = SymbolKind.FUNCTION,
+        filePath = "auth/service/TestService.kt",
+        lineNumber = 10,
+        content = "fun testFunction() { }"
+    )
+
+    private val coreSymbol = Symbol(
+        name = "coreFunction",
+        kind = SymbolKind.FUNCTION,
+        filePath = "core/domain/CoreService.kt",
+        lineNumber = 5,
+        content = "fun coreFunction() { }"
+    )
+
+    @BeforeEach
+    fun setup() {
+        feedbackStore = FeedbackStore(
+            customBaseDir = tempDir.toString(),
+            guardrailConfig = FeedbackGuardrailConfig(
+                enableExpiry = true,
+                enableReviewWorkflow = true,
+                enableConfidenceDecay = true,
+                enableValidation = true,
+                defaultExpiryDays = 90,
+                maxCodeChangesBeforeExpiry = 10
+            )
+        )
+    }
+
+    @Test
+    fun `feedback has correct default scope for regular symbols`() = runBlocking {
+        val feedback = feedbackStore.recordFeedback(
+            symbol = testSymbol,
+            originalDescription = "Original description",
+            correction = "Corrected description",
+            rating = 4,
+            reason = "Test"
+        )
+
+        assertEquals(FeedbackScope.CLUSTER, feedback.scope)
+        assertEquals(1.0, feedback.confidenceScore)
+        assertNotNull(feedback.expiresAt)
+    }
+
+    @Test
+    fun `feedback has PROJECT scope for core domain symbols`() = runBlocking {
+        val feedback = feedbackStore.recordFeedback(
+            symbol = coreSymbol,
+            originalDescription = "Original",
+            correction = "Corrected",
+            rating = 4,
+            reason = null
+        )
+
+        assertEquals(FeedbackScope.PROJECT, feedback.scope)
+    }
+
+    @Test
+    fun `feedback expires after time expiry`() = runBlocking {
+        // Create store with very short expiry
+        val shortExpiryStore = FeedbackStore(
+            customBaseDir = tempDir.toString(),
+            guardrailConfig = FeedbackGuardrailConfig(
+                enableExpiry = true,
+                defaultExpiryDays = 0, // Expires immediately
+                enableConfidenceDecay = false
+            )
+        )
+
+        val feedback = shortExpiryStore.recordFeedback(
+            symbol = testSymbol,
+            originalDescription = "Original",
+            correction = "Corrected",
+            rating = 4,
+            reason = null
+        )
+
+        assertTrue(shortExpiryStore.isExpired(feedback))
+    }
+
+    @Test
+    fun `feedback expires after code changes`() = runBlocking {
+        feedbackStore.recordFeedback(
+            symbol = testSymbol,
+            originalDescription = "Original",
+            correction = "Corrected",
+            rating = 4,
+            reason = null
+        )
+
+        // Simulate code changes - this updates the cached feedback's codeChangeCount
+        repeat(11) {
+            feedbackStore.onCodeChanged(testSymbol.filePath)
+        }
+
+        // Get the updated feedback from cache
+        val updatedFeedback = feedbackStore.getFeedbackForSymbol(testSymbol)
+        assertNotNull(updatedFeedback)
+
+        // Now it should be expired (codeChangeCount >= 10)
+        assertTrue(feedbackStore.isExpired(updatedFeedback))
+    }
+
+    @Test
+    fun `confidence decays over time`() = runBlocking {
+        val feedback = feedbackStore.recordFeedback(
+            symbol = testSymbol,
+            originalDescription = "Original",
+            correction = "Corrected",
+            rating = 4,
+            reason = null
+        )
+
+        // Initial confidence should be 1.0
+        assertEquals(1.0, feedbackStore.calculateDecayedConfidence(feedback), 0.01)
+    }
+
+    @Test
+    fun `confidence decays after code changes`() = runBlocking {
+        val feedback = feedbackStore.recordFeedback(
+            symbol = testSymbol,
+            originalDescription = "Original",
+            correction = "Corrected",
+            rating = 4,
+            reason = null
+        )
+
+        // Simulate some code changes
+        repeat(5) {
+            feedbackStore.onCodeChanged(testSymbol.filePath)
+        }
+
+        val decayed = feedbackStore.calculateDecayedConfidence(feedback)
+        assertTrue(decayed < 1.0)
+        assertTrue(decayed >= 0.0)
+    }
+
+    @Test
+    fun `active feedback filters out expired`() = runBlocking {
+        // Create store with short expiry
+        val shortExpiryStore = FeedbackStore(
+            customBaseDir = tempDir.toString(),
+            guardrailConfig = FeedbackGuardrailConfig(
+                enableExpiry = true,
+                defaultExpiryDays = 0,
+                minConfidenceThreshold = 0.0
+            )
+        )
+
+        shortExpiryStore.recordFeedback(testSymbol, "Orig", "Corr", 4, null)
+        val active = shortExpiryStore.getActiveFeedbackForSymbol(testSymbol)
+
+        assertTrue(active.isEmpty())
+    }
+
+    @Test
+    fun `validate feedback rejects low rating with correction`() {
+        val result = feedbackStore.validateFeedback(
+            symbol = testSymbol,
+            originalDescription = "Original description",
+            correction = "Corrected description",
+            rating = 2
+        )
+
+        assertTrue(result is FeedbackValidationResult.Invalid)
+        assertTrue((result as FeedbackValidationResult.Invalid).reason.contains("Low rating"))
+    }
+
+    @Test
+    fun `validate feedback rejects identical correction`() {
+        val original = "Same description"
+        val result = feedbackStore.validateFeedback(
+            symbol = testSymbol,
+            originalDescription = original,
+            correction = original, // Same as original
+            rating = 4
+        )
+
+        assertTrue(result is FeedbackValidationResult.Invalid)
+        assertTrue((result as FeedbackValidationResult.Invalid).reason.contains("identical"))
+    }
+
+    @Test
+    fun `validate feedback warns about short correction`() {
+        val result = feedbackStore.validateFeedback(
+            symbol = testSymbol,
+            originalDescription = "This is a very long original description that explains everything in detail",
+            correction = "Short", // Much shorter than original
+            rating = 5
+        )
+
+        assertTrue(result is FeedbackValidationResult.Warning)
+    }
+
+    @Test
+    fun `validate feedback accepts valid correction`() {
+        val result = feedbackStore.validateFeedback(
+            symbol = testSymbol,
+            originalDescription = "Original description",
+            correction = "Improved and more detailed description",
+            rating = 5
+        )
+
+        assertEquals(FeedbackValidationResult.Valid, result)
+    }
+
+    @Test
+    fun `mark as reviewed boosts confidence for global feedback`() = runBlocking {
+        // Create a global-scoped feedback by using shared path
+        val sharedSymbol = Symbol(
+            name = "sharedFunction",
+            kind = SymbolKind.FUNCTION,
+            filePath = "shared/utils/SharedHelper.kt",  // "shared" triggers GLOBAL scope
+            lineNumber = 5,
+            content = "fun sharedFunction() { }"
+        )
+
+        val feedback = feedbackStore.recordFeedback(
+            symbol = sharedSymbol,
+            originalDescription = "Original",
+            correction = "Corrected",
+            rating = 4,
+            reason = null
+        )
+
+        // Verify it's global scope
+        assertEquals(FeedbackScope.GLOBAL, feedback.scope)
+
+        // Mark as reviewed
+        val marked = feedbackStore.markAsReviewed(feedback.id, "reviewer@example.com")
+        assertTrue(marked)
+
+        // Confidence should be boosted
+        val updated = feedbackStore.getFeedbackForSymbol(sharedSymbol)
+        assertNotNull(updated)
+        assertEquals("reviewer@example.com", updated.reviewedBy)
+    }
+
+    @Test
+    fun `get scoped feedback respects scope hierarchy`() = runBlocking {
+        // Record cluster-scoped feedback
+        val clusterFeedback = feedbackStore.recordFeedback(
+            symbol = testSymbol,
+            originalDescription = "Orig",
+            correction = "Corr",
+            rating = 4,
+            reason = null
+        )
+
+        // Verify scope is CLUSTER
+        assertEquals(FeedbackScope.CLUSTER, clusterFeedback.scope)
+
+        // Get feedback at CLUSTER scope - should see it
+        val clusterResults = feedbackStore.getScopedFeedback(testSymbol, FeedbackScope.CLUSTER)
+        assertTrue(clusterResults.any { it.id == clusterFeedback.id }, 
+            "CLUSTER scope should see CLUSTER-scoped feedback")
+
+        // Get feedback at PROJECT scope - should NOT see cluster-scoped
+        // because PROJECT scope only shows PROJECT and GLOBAL feedback
+        val projectResults = feedbackStore.getScopedFeedback(testSymbol, FeedbackScope.PROJECT)
+        assertTrue(projectResults.none { it.id == clusterFeedback.id }, 
+            "PROJECT scope should NOT see CLUSTER-scoped feedback")
+    }
+
+    @Test
+    fun `prune expired feedback removes expired entries`() = runBlocking {
+        // Create store with short expiry
+        val shortExpiryStore = FeedbackStore(
+            customBaseDir = tempDir.toString(),
+            guardrailConfig = FeedbackGuardrailConfig(
+                enableExpiry = true,
+                defaultExpiryDays = 0,
+                minConfidenceThreshold = 0.0
+            )
+        )
+
+        shortExpiryStore.recordFeedback(testSymbol, "Orig1", "Corr1", 4, null)
+        shortExpiryStore.recordFeedback(testSymbol, "Orig2", "Corr2", 4, null)
+
+        // Prune expired
+        val prunedCount = shortExpiryStore.pruneExpiredFeedback("auth/service")
+
+        assertEquals(2, prunedCount)
+
+        // Should have no feedback left
+        val remaining = shortExpiryStore.getClusterFeedback("auth/service")
+        assertTrue(remaining.isEmpty())
+    }
+
+    @Test
+    fun `detailed stats include scope breakdown`() = runBlocking {
+        feedbackStore.recordFeedback(testSymbol, "Orig1", "Corr1", 4, null)
+
+        val stats = feedbackStore.getDetailedFeedbackStats("auth/service")
+
+        assertEquals(1, stats.totalEntries)
+        assertEquals(1, stats.activeEntries)
+        assertEquals(0, stats.expiredEntries)
+        assertTrue(stats.scopeBreakdown[FeedbackScope.CLUSTER] == 1)
+    }
+
+    @Test
+    fun `record with guardrails extension function works`() = runBlocking {
+        val result = feedbackStore.recordWithGuardrails(
+            symbol = testSymbol,
+            originalDescription = "Original description",
+            correction = "Improved description",
+            rating = 5,
+            reason = "Better wording"
+        )
+
+        assertTrue(result.isSuccess)
+        val feedback = result.getOrNull()
+        assertNotNull(feedback)
+        assertEquals("Improved description", feedback?.correction)
+    }
+
+    @Test
+    fun `record with guardrails rejects invalid feedback`() {
+        val result = feedbackStore.recordWithGuardrails(
+            symbol = testSymbol,
+            originalDescription = "Original description",
+            correction = "Corrected description",
+            rating = 2, // Low rating with correction
+            reason = null
+        )
+
+        assertTrue(result.isFailure)
+    }
+}

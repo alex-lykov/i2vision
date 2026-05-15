@@ -24,6 +24,7 @@ import com.i2vision.storage.impl.FileVerbalizationStore
 import com.i2vision.verbalization.ContextNeedinessCalculator
 import com.i2vision.verbalization.DefaultVerbalizationEngine
 import com.i2vision.vslfc.VerbalizationStore
+import com.i2vision.index.ScannerService
 import com.i2vision.vslfc.Symbol
 import com.i2vision.validation.VerbalizationSelfTestReport
 import com.i2vision.vslfc.SymbolKind
@@ -255,13 +256,13 @@ fun main(args: Array<String>) {
         val verbalizationEngine = DefaultVerbalizationEngine(verbalizationStore)
         
         // Extract symbols from results for verbalization
-        val symbols = extractSymbolsFromResults(allResults)
+        val symbols = extractSymbolsFromResults(allResults, projectRoot)
         println("Extracted ${symbols.size} symbols for verbalization")
         
         // Build symbols map for self-test
         allResults.forEach { result ->
             val clusterId = result.clusterId
-            val clusterSymbols = extractSymbolsFromResults(listOf(result))
+            val clusterSymbols = extractSymbolsFromResults(listOf(result), projectRoot)
             symbolsMap[clusterId] = clusterSymbols.toMutableList()
         }
         
@@ -415,91 +416,112 @@ fun main(args: Array<String>) {
 /**
  * Extract symbols from discovery results
  */
-private fun extractSymbolsFromResults(results: List<ClusterDiscoveryResult>): List<Symbol> {
+private fun extractSymbolsFromResults(results: List<ClusterDiscoveryResult>, projectRoot: File): List<Symbol> {
+    val scanner = ScannerService(projectRoot.absolutePath)
     val symbols = mutableListOf<Symbol>()
-    
+    val processedFiles = mutableSetOf<String>()
+
     results.forEach { clusterResult ->
         clusterResult.result.artifacts.forEach { artifact ->
-            val content = artifact.content
-            
-            // Parse YAML content
-            val yaml = Yaml()
-            val doc = try {
-                yaml.load(content) as? Map<String, Any>
-            } catch (e: Exception) {
-                null
-            }
-            
-            // Extract class symbols
-            val classPattern = Regex("""class\s+(\w+)""")
-            val interfacePattern = Regex("""interface\s+(\w+)""")
-            val functionPattern = Regex("""fun\s+(\w+)""")
-            val dataClassPattern = Regex("""data\s+class\s+(\w+)""")
-            val enumPattern = Regex("""enum\s+class\s+(\w+)""")
-            
-            classPattern.findAll(content).forEach { match ->
-                symbols.add(
-                    Symbol(
-                        name = match.groupValues[1],
-                        kind = SymbolKind.CLASS,
-                        filePath = artifact.path,
-                        lineNumber = 1,
-                        content = content
-                    )
-                )
-            }
-            
-            interfacePattern.findAll(content).forEach { match ->
-                symbols.add(
-                    Symbol(
-                        name = match.groupValues[1],
-                        kind = SymbolKind.INTERFACE,
-                        filePath = artifact.path,
-                        lineNumber = 1,
-                        content = content
-                    )
-                )
-            }
-            
-            functionPattern.findAll(content).forEach { match ->
-                symbols.add(
-                    Symbol(
-                        name = match.groupValues[1],
-                        kind = SymbolKind.FUNCTION,
-                        filePath = artifact.path,
-                        lineNumber = 1,
-                        content = content
-                    )
-                )
-            }
-            
-            dataClassPattern.findAll(content).forEach { match ->
-                symbols.add(
-                    Symbol(
-                        name = match.groupValues[1],
-                        kind = SymbolKind.CLASS,
-                        filePath = artifact.path,
-                        lineNumber = 1,
-                        content = content
-                    )
-                )
-            }
-            
-            enumPattern.findAll(content).forEach { match ->
-                symbols.add(
-                    Symbol(
-                        name = match.groupValues[1],
-                        kind = SymbolKind.ENUM,
-                        filePath = artifact.path,
-                        lineNumber = 1,
-                        content = content
-                    )
-                )
+            // Collect source file paths referenced in the artifact
+            val sourcePaths = extractSourcePathsFromArtifact(artifact)
+            sourcePaths.forEach { srcPath ->
+                if (srcPath !in processedFiles) {
+                    processedFiles.add(srcPath)
+                    try {
+                        val codeSymbols = scanner.extractSymbols(srcPath)
+                        codeSymbols.forEach { cs ->
+                            symbols.add(cs.toSymbol())
+                        }
+                    } catch (e: Exception) {
+                        // Skip files that cannot be scanned
+                    }
+                }
             }
         }
     }
-    
+
     return symbols
+}
+
+/**
+ * Extract source file paths from a discovery artifact.
+ * Artifacts are YAML documents that may reference source files in their content.
+ */
+private fun extractSourcePathsFromArtifact(artifact: DiscoveryArtifact): List<String> {
+    val paths = mutableListOf<String>()
+    val content = artifact.content
+
+    // The artifact path itself may be a source file (not YAML)
+    if (!artifact.path.endsWith(".yaml") && !artifact.path.endsWith(".yml")) {
+        paths.add(artifact.path)
+        return paths
+    }
+
+    // Parse YAML to find referenced source file paths
+    val yaml = Yaml()
+    val doc = try {
+        yaml.load(content) as? Map<String, Any>
+    } catch (e: Exception) {
+        null
+    }
+
+    doc?.let { extractPathsFromYaml(it, paths) }
+
+    // Also try regex-based extraction for file path patterns
+    val pathPattern = Regex("""(?:src/[\w/\-\.]+\.(?:kt|java|py|ts|js|go))""")
+    pathPattern.findAll(content).forEach { match ->
+        paths.add(match.value)
+    }
+
+    return paths.distinct()
+}
+
+/**
+ * Recursively extract file paths from a parsed YAML map.
+ */
+@Suppress("UNCHECKED_CAST")
+private fun extractPathsFromYaml(yamlMap: Map<String, Any>, paths: MutableList<String>) {
+    yamlMap.forEach { (_, value) ->
+        when (value) {
+            is String -> {
+                if (value.contains("src/") && value.matches(Regex(".*\\.(kt|java|py|ts|js|go)$"))) {
+                    paths.add(value)
+                }
+            }
+            is Map<*, *> -> extractPathsFromYaml(value as Map<String, Any>, paths)
+            is List<*> -> value.forEach { item ->
+                if (item is Map<*, *>) extractPathsFromYaml(item as Map<String, Any>, paths)
+                else if (item is String && item.contains("src/") && item.matches(Regex(".*\\.(kt|java|py|ts|js|go)$"))) {
+                    paths.add(item)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Convert a [CodeSymbol] from the scanner to a [Symbol] for verbalization.
+ */
+private fun com.i2vision.index.CodeSymbol.toSymbol(): Symbol {
+    val kind = when (kind) {
+        "class" -> SymbolKind.CLASS
+        "interface" -> SymbolKind.INTERFACE
+        "function" -> SymbolKind.FUNCTION
+        "property" -> SymbolKind.PROPERTY
+        "object" -> SymbolKind.OBJECT
+        "enum" -> SymbolKind.ENUM
+        "annotation" -> SymbolKind.ANNOTATION
+        "type_alias" -> SymbolKind.TYPE_ALIAS
+        else -> SymbolKind.UNKNOWN
+    }
+    return Symbol(
+        name = name,
+        kind = kind,
+        filePath = filePath,
+        lineNumber = line,
+        content = ""  // Content is not needed for verbalization; the engine reads files directly
+    )
 }
 
 /**

@@ -21,8 +21,11 @@ import com.i2vision.intent.QualityFocus
 import com.i2vision.storage.I2VisionPaths
 import com.i2vision.storage.impl.FileCacheStore
 import com.i2vision.storage.impl.FileVerbalizationStore
+import com.i2vision.verbalization.ContextNeedinessCalculator
 import com.i2vision.verbalization.DefaultVerbalizationEngine
+import com.i2vision.vslfc.VerbalizationStore
 import com.i2vision.vslfc.Symbol
+import com.i2vision.validation.VerbalizationSelfTestReport
 import com.i2vision.vslfc.SymbolKind
 import com.i2vision.vslfc.VerbalizationStrategy
 import kotlinx.coroutines.Dispatchers
@@ -77,6 +80,9 @@ fun main(args: Array<String>) {
 
     // Map --deep flag to discovery depth (DEEP for --deep, STANDARD otherwise)
     val discoveryDepth = if (deep) IntentDepth.DEEP else IntentDepth.STANDARD
+
+    // Self-test mode (runs verbalization automatically)
+    val selfTestMode = args.contains("--self-test")
 
     // Setup file logging
     val logDir = File(projectRoot, ".vision-ai/logs")
@@ -237,8 +243,12 @@ fun main(args: Array<String>) {
 
     // Step 6: Verbalization (if requested)
     var verbalizationCount = 0
+    var cnsCalculator: ContextNeedinessCalculator? = null
+    var selfTest: VerbalizationSelfTest? = null
+    var testReport: VerbalizationSelfTestReport? = null
+    val symbolsMap = mutableMapOf<String, MutableList<Symbol>>()
     
-    if (verbalize || reportVerbalization) {
+    if (verbalize || reportVerbalization || selfTestMode) {
         println("--- Verbalization Analysis ---")
         
         val verbalizationStore = FileVerbalizationStore(cacheStore)
@@ -247,6 +257,24 @@ fun main(args: Array<String>) {
         // Extract symbols from results for verbalization
         val symbols = extractSymbolsFromResults(allResults)
         println("Extracted ${symbols.size} symbols for verbalization")
+        
+        // Build symbols map for self-test
+        allResults.forEach { result ->
+            val clusterId = result.clusterId
+            val clusterSymbols = extractSymbolsFromResults(listOf(result))
+            symbolsMap[clusterId] = clusterSymbols.toMutableList()
+        }
+        
+        // Initialize self-test if needed
+        if (selfTestMode) {
+            cnsCalculator = ContextNeedinessCalculator()
+            selfTest = VerbalizationSelfTest(
+                engine = verbalizationEngine,
+                cnsCalculator = cnsCalculator!!,
+                verbalizationStore = verbalizationStore,
+                cacheDir = cacheDir
+            )
+        }
         
         // Generate verbalizations for each cluster
         runBlocking {
@@ -275,6 +303,50 @@ fun main(args: Array<String>) {
                     println("✅ ${results.size} verbalizations (${duration}ms)")
                 }
             }
+        }
+        
+        // Step 6b: Verbalization Self-Test (if self-test mode is enabled)
+        if (selfTestMode && selfTest != null) {
+            println("--- Verbalization Self-Test ---")
+            
+            // Execute self-test
+            testReport = selfTest!!.execute(allResults, symbolsMap)
+            
+            // Export report
+            val reportFile = File(projectRoot, ".vision-ai/logs/verbalization-self-test-${timestamp}.json")
+            reportFile.parentFile.mkdirs()
+            reportFile.writeText("""
+                {
+                    "timestamp": "${testReport!!.formattedTimestamp}",
+                    "overallStatus": "${testReport!!.overallStatus}",
+                    "phasesPassed": ${testReport!!.phasesPassed}/${testReport!!.totalPhases},
+                    "strategyRouting": {
+                        "status": "${testReport!!.strategyRouting.status}",
+                        "passed": ${testReport!!.strategyRouting.passed},
+                        "failed": ${testReport!!.strategyRouting.failed},
+                        "suspect": ${testReport!!.strategyRouting.suspect}
+                    },
+                    "layerCoverage": {
+                        "status": "${testReport!!.layerCoverage.status}",
+                        "layersWithOutput": ${testReport!!.layerCoverage.layersWithOutput}
+                    },
+                    "qualityMetrics": {
+                        "status": "${testReport!!.qualityMetrics.status}",
+                        "totalSymbols": ${testReport!!.qualityMetrics.totalSymbols},
+                        "antiPatternRate": ${testReport!!.qualityMetrics.antiPatternRate}
+                    },
+                    "performance": {
+                        "status": "${testReport!!.performance.status}"
+                    },
+                    "cacheMetrics": {
+                        "status": "${testReport!!.cacheMetrics.status}",
+                        "hitRate": ${testReport!!.cacheMetrics.hitRate}
+                    },
+                    "regressions": ${testReport!!.regressions.size}
+                }
+            """.trimIndent())
+            
+            println("Self-test report exported to: ${reportFile.absolutePath}")
         }
         
         println()

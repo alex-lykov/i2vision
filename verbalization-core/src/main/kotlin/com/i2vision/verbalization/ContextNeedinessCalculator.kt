@@ -9,7 +9,10 @@ package com.i2vision.verbalization
 
 import com.i2vision.intent.DiscoveryIntent
 import com.i2vision.verbalization.feedback.Feedback
+import com.i2vision.verbalization.feedback.FeedbackScope
+import com.i2vision.verbalization.feedback.FeedbackStats
 import com.i2vision.verbalization.feedback.IFeedbackStore
+import com.i2vision.vslfc.PutResult
 import com.i2vision.vslfc.Symbol
 import com.i2vision.vslfc.SymbolKind
 import com.i2vision.vslfc.VerbalizationResult
@@ -34,9 +37,50 @@ import java.math.RoundingMode
  * @property config Configuration for CNS calculation
  */
 class ContextNeedinessCalculator(
-    private val symbolRepository: SymbolRepository,
-    private val verbalizationStore: VerbalizationStore,
-    private val feedbackStore: IFeedbackStore,
+    private val symbolRepository: SymbolRepository = object : SymbolRepository {
+        override suspend fun getClusterSymbols(clusterId: String): List<Symbol> = emptyList()
+    },
+    private val verbalizationStore: VerbalizationStore = object : VerbalizationStore {
+        override suspend fun putVerbalizations(clusterId: String, results: List<VerbalizationResult>): PutResult = PutResult.Success(Unit)
+        override suspend fun getVerbalizations(clusterId: String): List<VerbalizationResult>? = null
+        override suspend fun getVerbalization(symbol: Symbol): VerbalizationResult? = null
+        override suspend fun putHashes(clusterId: String, hashes: Map<String, String>): PutResult = PutResult.Success(Unit)
+        override suspend fun getHashes(clusterId: String): Map<String, String>? = null
+        override suspend fun putContextHashes(clusterId: String, hashes: Map<String, String>): PutResult = PutResult.Success(Unit)
+        override suspend fun getContextHashes(clusterId: String): Map<String, String>? = null
+        override suspend fun needsReverbalization(symbol: Symbol, currentHash: String): Boolean = true
+        override suspend fun clearVerbalizations(clusterId: String): Int = 0
+    },
+    private val feedbackStore: IFeedbackStore = object : IFeedbackStore {
+        override fun getClusterFeedback(clusterId: String): List<Feedback> = emptyList()
+        override fun getFeedbackForSymbol(symbol: Symbol): Feedback? = null
+        override fun getAllFeedbackForSymbol(symbol: Symbol): List<Feedback> = emptyList()
+        override fun recordFeedback(feedback: Feedback) {}
+        override fun recordFeedback(
+            symbol: Symbol,
+            originalDescription: String,
+            correction: String,
+            rating: Int,
+            reason: String?
+        ): Feedback = Feedback(
+            id = "mock",
+            symbolId = "${symbol.filePath}:${symbol.lineNumber}",
+            symbolPath = symbol.filePath,
+            symbolName = symbol.name,
+            originalDescription = originalDescription,
+            correction = correction,
+            rating = rating,
+            reason = reason,
+            timestamp = System.currentTimeMillis(),
+            scope = FeedbackScope.CLUSTER,
+            expiresAt = null,
+            confidenceScore = 1.0,
+            codeChangeCount = 0
+        )
+        override fun getClusterFeedbackStats(clusterId: String): FeedbackStats = FeedbackStats(clusterId, 0, 0.0, 0)
+        override fun clearClusterFeedback(clusterId: String) {}
+        override fun getRecentFeedback(limit: Int): List<Feedback> = emptyList()
+    },
     private val config: CnsConfig = CnsConfig()
 ) {
 

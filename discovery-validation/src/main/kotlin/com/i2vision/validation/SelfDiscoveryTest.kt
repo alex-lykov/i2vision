@@ -421,21 +421,29 @@ private fun extractSymbolsFromResults(results: List<ClusterDiscoveryResult>, pro
     val symbols = mutableListOf<Symbol>()
     val processedFiles = mutableSetOf<String>()
 
+    // Get all source files once
+    val allSourceFiles = scanner.listFiles("src")
+
     results.forEach { clusterResult ->
-        clusterResult.result.artifacts.forEach { artifact ->
-            // Collect source file paths referenced in the artifact
-            val sourcePaths = extractSourcePathsFromArtifact(artifact)
-            sourcePaths.forEach { srcPath ->
-                if (srcPath !in processedFiles) {
-                    processedFiles.add(srcPath)
-                    try {
-                        val codeSymbols = scanner.extractSymbols(srcPath)
-                        codeSymbols.forEach { cs ->
-                            symbols.add(cs.toSymbol())
-                        }
-                    } catch (e: Exception) {
-                        // Skip files that cannot be scanned
+        // Filter source files by cluster ID (cluster IDs map to directory paths)
+        val clusterPath = clusterResult.clusterId.replace(":", "/")
+        val clusterFiles = allSourceFiles.filter { file ->
+            file.path.contains(clusterResult.clusterId) || file.path.contains(clusterPath)
+        }
+
+        // If no files matched by cluster name, fall back to using all files for single-cluster results
+        val filesToScan = if (clusterFiles.isNotEmpty()) clusterFiles else allSourceFiles
+
+        filesToScan.forEach { sourceFile ->
+            if (sourceFile.path !in processedFiles) {
+                processedFiles.add(sourceFile.path)
+                try {
+                    val codeSymbols = scanner.extractSymbols(sourceFile.path)
+                    codeSymbols.forEach { cs ->
+                        symbols.add(cs.toSymbol())
                     }
+                } catch (e: Exception) {
+                    // Skip files that cannot be scanned
                 }
             }
         }
@@ -453,9 +461,10 @@ private fun extractSourcePathsFromArtifact(artifact: DiscoveryArtifact): List<St
     val content = artifact.content
 
     // The artifact path itself may be a source file (not YAML)
-    if (!artifact.path.endsWith(".yaml") && !artifact.path.endsWith(".yml")) {
+    // Only treat it as a source path if it has a known source extension
+    if (!artifact.path.endsWith(".yaml") && !artifact.path.endsWith(".yml") &&
+        artifact.path.matches(Regex(".*\\.(kt|java|py|ts|js|go)$"))) {
         paths.add(artifact.path)
-        return paths
     }
 
     // Parse YAML to find referenced source file paths

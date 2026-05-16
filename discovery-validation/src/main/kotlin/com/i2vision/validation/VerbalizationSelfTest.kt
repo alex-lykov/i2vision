@@ -275,64 +275,99 @@ class VerbalizationSelfTest(
         val metrics = mutableListOf<QualityMetrics>()
         val antiPatterns = mutableListOf<AntiPatternDetected>()
         
+        println()
+        println("  Processing ${symbols.values.flatten().size} symbols...")
+        
+        // Process all symbols in parallel with batching
+        val allSymbols = mutableListOf<Pair<String, Symbol>>()
         results.forEach { cluster ->
             val clusterSymbols = symbols[cluster.clusterId] ?: emptyList()
-            
             clusterSymbols.forEach { symbol ->
-                // Generate verbalization to assess
-                val verbalization = runBlocking {
-                    engine.verbalize(
-                        clusterId = cluster.clusterId,
-                        symbols = listOf(symbol),
-                        strategy = VerbalizationStrategy.INCREMENTAL,
-                        intent = createTestIntent()
-                    ).firstOrNull()
-                }
-                
-                if (verbalization != null) {
-                    val desc = verbalization.description
-                    val symbolName = symbol.name
-                    
-                    // Anti-pattern 1: Description is just name + verb prefix
-                    if (isTautological(desc, symbolName)) {
-                        antiPatterns.add(AntiPatternDetected(
-                            symbolId = "${cluster.clusterId}/${symbol.name}",
-                            type = "TAUTOLOGICAL",
-                            description = "Description is tautological: '$desc'",
-                            severity = "HIGH"
-                        ))
-                    }
-                    
-                    // Anti-pattern 2: Very short descriptions
-                    if (desc.length < MIN_DESCRIPTION_LENGTH) {
-                        antiPatterns.add(AntiPatternDetected(
-                            symbolId = "${cluster.clusterId}/${symbol.name}",
-                            type = "TOO_SHORT",
-                            description = "Suspiciously short: '$desc'",
-                            severity = "MEDIUM"
-                        ))
-                    }
-                    
-                    // Anti-pattern 3: No verb detected
-                    val hasVerb = desc.contains(Regex("\\b(validates|transforms|calculates|retrieves|persists|authorizes|handles|processes|manages|creates|updates|deletes|finds|searches|parses|formats|converts|validates|executes|performs)\\b", RegexOption.IGNORE_CASE))
-                    if (!hasVerb) {
-                        antiPatterns.add(AntiPatternDetected(
-                            symbolId = "${cluster.clusterId}/${symbol.name}",
-                            type = "NO_VERB",
-                            description = "Description lacks action verb: '$desc'",
-                            severity = "LOW"
-                        ))
-                    }
-                    
-                    metrics.add(QualityMetrics(
-                        symbolId = "${cluster.clusterId}/${symbol.name}",
-                        descriptionLength = desc.length,
-                        containsVerb = hasVerb,
-                        confidenceScore = verbalization.confidence,
-                        isTautological = isTautological(desc, symbolName)
-                    ))
-                }
+                allSymbols.add(cluster.clusterId to symbol)
             }
+        }
+        
+        val batchSize = 50
+        val batches = allSymbols.chunked(batchSize)
+        
+        // Process symbols sequentially per cluster to avoid concurrent cache access issues
+        // but in parallel across clusters for better throughput
+        println("  Processing ${results.size} clusters...")
+        
+        runBlocking {
+            results.map { cluster ->
+                async(Dispatchers.Default) {
+                    val clusterSymbols = symbols[cluster.clusterId] ?: emptyList()
+                    val clusterMetrics = mutableListOf<QualityMetrics>()
+                    val clusterAntiPatterns = mutableListOf<AntiPatternDetected>()
+                    
+                    println("    Cluster ${cluster.clusterId}: ${clusterSymbols.size} symbols")
+                    
+                    clusterSymbols.forEach { symbol ->
+                        try {
+                            val verbalization = engine.verbalize(
+                                clusterId = cluster.clusterId,
+                                symbols = listOf(symbol),
+                                strategy = VerbalizationStrategy.INCREMENTAL,
+                                intent = createTestIntent()
+                            ).firstOrNull()
+                            
+                            if (verbalization != null) {
+                                val desc = verbalization.description
+                                val symbolName = symbol.name
+                                
+                                // Anti-pattern checks
+                                val isTautological = isTautological(desc, symbolName)
+                                if (isTautological) {
+                                    clusterAntiPatterns.add(AntiPatternDetected(
+                                        symbolId = "$cluster.clusterId/${symbol.name}",
+                                        type = "TAUTOLOGICAL",
+                                        description = "Description is tautological: '$desc'",
+                                        severity = "HIGH"
+                                    ))
+                                }
+                                
+                                if (desc.length < MIN_DESCRIPTION_LENGTH) {
+                                    clusterAntiPatterns.add(AntiPatternDetected(
+                                        symbolId = "$cluster.clusterId/${symbol.name}",
+                                        type = "TOO_SHORT",
+                                        description = "Suspiciously short: '$desc'",
+                                        severity = "MEDIUM"
+                                    ))
+                                }
+                                
+                                val hasVerb = desc.contains(Regex("\\b(validates|transforms|calculates|retrieves|persists|authorizes|handles|processes|manages|creates|updates|deletes|finds|searches|parses|formats|converts|validates|executes|performs)\\b", RegexOption.IGNORE_CASE))
+                                if (!hasVerb) {
+                                    clusterAntiPatterns.add(AntiPatternDetected(
+                                        symbolId = "$cluster.clusterId/${symbol.name}",
+                                        type = "NO_VERB",
+                                        description = "Description lacks action verb: '$desc'",
+                                        severity = "LOW"
+                                    ))
+                                }
+                                
+                                clusterMetrics.add(QualityMetrics(
+                                    symbolId = "$cluster.clusterId/${symbol.name}",
+                                    descriptionLength = desc.length,
+                                    containsVerb = hasVerb,
+                                    confidenceScore = verbalization.confidence,
+                                    isTautological = isTautological
+                                ))
+                            }
+                        } catch (e: Exception) {
+                            // Skip symbols that fail due to cache issues
+                            println("    Warning: Failed to verbalize ${symbol.name}: ${e.message}")
+                        }
+                    }
+                    
+                    println("    Cluster ${cluster.clusterId}: ${clusterMetrics.size} metrics, ${clusterAntiPatterns.size} anti-patterns")
+                    
+                    synchronized(metrics) {
+                        metrics.addAll(clusterMetrics)
+                        antiPatterns.addAll(clusterAntiPatterns)
+                    }
+                }
+            }.awaitAll()
         }
         
         val antiPatternRate = if (metrics.isNotEmpty()) {

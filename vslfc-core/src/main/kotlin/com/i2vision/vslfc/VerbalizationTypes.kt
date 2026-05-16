@@ -19,7 +19,8 @@ data class Symbol(
     val filePath: String,
     val lineNumber: Int,
     val content: String,
-    val metadata: Map<String, String> = emptyMap()
+    val metadata: Map<String, String> = emptyMap(),
+    val verbalization: VerbalizationResult? = null
 )
 
 /**

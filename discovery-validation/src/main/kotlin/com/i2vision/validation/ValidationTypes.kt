@@ -7,6 +7,7 @@
 
 package com.i2vision.validation
 
+import com.i2vision.discover.api.models.PipelineResult
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 
@@ -29,6 +30,15 @@ data class ValidationResult(
     val actual: String,
     val expected: String,
     val detail: String
+)
+
+/**
+ * Data class to hold cluster discovery result with timing
+ */
+data class ClusterDiscoveryResult(
+    val clusterId: String,
+    val result: PipelineResult,
+    val duration: Long
 )
 
 /**

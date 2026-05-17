@@ -259,11 +259,11 @@ fun main(args: Array<String>) {
         val symbols = extractSymbolsFromResults(allResults, projectRoot)
         println("Extracted ${symbols.size} symbols for verbalization")
         
-        // Build symbols map for self-test
+        // Build symbols map for self-test (keyed by cluster name for verbalization loop)
         allResults.forEach { result ->
-            val clusterId = result.clusterId
+            val clusterName = result.clusterId.substringBefore(":")
             val clusterSymbols = extractSymbolsFromResults(listOf(result), projectRoot)
-            symbolsMap[clusterId] = clusterSymbols.toMutableList()
+            symbolsMap[clusterName] = clusterSymbols.toMutableList()
         }
         
         // Initialize self-test if needed
@@ -280,7 +280,7 @@ fun main(args: Array<String>) {
         // Generate verbalizations for each cluster
         runBlocking {
             validClusters.forEach { cluster ->
-                val clusterSymbols = symbols.filter { it.filePath.contains(cluster.name.replace("-", "_")) || it.filePath.contains(cluster.name) }
+                val clusterSymbols = symbolsMap[cluster.name] ?: emptyList()
                 if (clusterSymbols.isNotEmpty()) {
                     print("Verbalizing ${cluster.name}... ")
                     val startTime = System.currentTimeMillis()
@@ -532,15 +532,6 @@ private fun com.i2vision.index.CodeSymbol.toSymbol(): Symbol {
         content = ""  // Content is not needed for verbalization; the engine reads files directly
     )
 }
-
-/**
- * Data class to hold cluster discovery result with timing
- */
-data class ClusterDiscoveryResult(
-    val clusterId: String,
-    val result: PipelineResult,
-    val duration: Long
-)
 
 /**
  * Tee PrintStream to output to both console and file

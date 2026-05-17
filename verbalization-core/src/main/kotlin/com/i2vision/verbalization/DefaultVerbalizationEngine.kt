@@ -63,8 +63,12 @@ class DefaultVerbalizationEngine(
         intent: DiscoveryIntent
     ): List<VerbalizationResult> {
 
-        // Load existing hashes for incremental checking
-        loadHashesForCluster(clusterId)
+        // Skip hash loading when forcing full verbalization
+        if (!intent.forceFullVerbalization) {
+            loadHashesForCluster(clusterId)
+        } else {
+            println("Force full verbalization: skipping hash cache for $clusterId")
+        }
 
         val strategyImpl = strategies[strategy]
             ?: throw IllegalArgumentException("Unsupported strategy: $strategy")
@@ -74,8 +78,10 @@ class DefaultVerbalizationEngine(
         // Store results
         storeResults(clusterId, results)
 
-        // Save updated hashes (both local and context)
-        saveHashesForCluster(clusterId)
+        // Only save hashes if we loaded them (don't overwrite with forced results)
+        if (!intent.forceFullVerbalization) {
+            saveHashesForCluster(clusterId)
+        }
 
         return results
     }

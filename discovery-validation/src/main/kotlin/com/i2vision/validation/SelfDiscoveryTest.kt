@@ -289,7 +289,8 @@ fun main(args: Array<String>) {
                         goal = IntentGoal.FULL_DISCOVERY,
                         focus = setOf(LayerFocus.VISION, LayerFocus.STRUCTURE, LayerFocus.LOGIC, LayerFocus.FLOW, LayerFocus.CODE),
                         depth = discoveryDepth,
-                        quality = QualityFocus.BALANCED
+                        quality = QualityFocus.BALANCED,
+                        forceFullVerbalization = selfTestMode
                     )
                     
                     val results = verbalizationEngine.verbalize(

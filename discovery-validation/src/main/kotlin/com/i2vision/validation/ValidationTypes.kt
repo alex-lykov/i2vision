@@ -152,6 +152,8 @@ data class FeedbackReport(
  */
 data class VerbalizationSelfTestReport(
     val timestamp: Instant,
+    val version: String = "unknown",
+    val gitCommit: String = "unknown",
     var overallStatus: ValidationStatus = ValidationStatus.PASS,
     var strategyRouting: StrategyRoutingReport = StrategyRoutingReport(0, 0, 0, 0, ValidationStatus.PASS, emptyMap()),
     var layerCoverage: LayerCoverageReport = LayerCoverageReport(emptyList(), 0, emptyMap(), emptyMap(), ValidationStatus.PASS),

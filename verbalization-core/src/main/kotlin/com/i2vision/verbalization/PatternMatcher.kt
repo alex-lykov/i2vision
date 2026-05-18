@@ -25,6 +25,7 @@ class PatternMatcher {
 
     /**
      * Match a symbol against registered patterns and generate description.
+     * Falls back to a basic kind-based description if no pattern matches.
      */
     fun matchAndDescribe(symbol: Symbol): String? {
         for (pattern in patterns.sortedByDescending { it.priority }) {
@@ -35,7 +36,26 @@ class PatternMatcher {
                 return applyTemplate(pattern.description, match.groupValues.drop(1))
             }
         }
-        return null
+        // Fallback: generate a basic description from symbol kind and name
+        return generateFallbackDescription(symbol)
+    }
+
+    /**
+     * Generate a basic fallback description when no pattern matches.
+     */
+    private fun generateFallbackDescription(symbol: Symbol): String {
+        return when (symbol.kind) {
+            com.i2vision.vslfc.SymbolKind.CLASS -> "Class '${symbol.name}'"
+            com.i2vision.vslfc.SymbolKind.INTERFACE -> "Interface '${symbol.name}'"
+            com.i2vision.vslfc.SymbolKind.FUNCTION -> "Function '${symbol.name}'"
+            com.i2vision.vslfc.SymbolKind.PROPERTY -> "Property '${symbol.name}'"
+            com.i2vision.vslfc.SymbolKind.VARIABLE -> "Variable '${symbol.name}'"
+            com.i2vision.vslfc.SymbolKind.ANNOTATION -> "Annotation '${symbol.name}'"
+            com.i2vision.vslfc.SymbolKind.ENUM -> "Enum '${symbol.name}'"
+            com.i2vision.vslfc.SymbolKind.OBJECT -> "Object '${symbol.name}'"
+            com.i2vision.vslfc.SymbolKind.TYPE_ALIAS -> "Type alias '${symbol.name}'"
+            else -> "Symbol '${symbol.name}'"
+        }
     }
 
     /**

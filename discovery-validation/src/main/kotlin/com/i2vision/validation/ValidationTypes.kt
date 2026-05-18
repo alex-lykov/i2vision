@@ -92,6 +92,7 @@ data class QualityReport(
     val totalSymbols: Int,
     val metrics: List<QualityMetrics>,
     val antiPatterns: List<AntiPatternDetected>,
+    val suspects: List<AntiPatternDetected>,
     val antiPatternRate: Double,
     val status: ValidationStatus
 )
@@ -154,7 +155,7 @@ data class VerbalizationSelfTestReport(
     var overallStatus: ValidationStatus = ValidationStatus.PASS,
     var strategyRouting: StrategyRoutingReport = StrategyRoutingReport(0, 0, 0, 0, ValidationStatus.PASS, emptyMap()),
     var layerCoverage: LayerCoverageReport = LayerCoverageReport(emptyList(), 0, emptyMap(), emptyMap(), ValidationStatus.PASS),
-    var qualityMetrics: QualityReport = QualityReport(0, emptyList(), emptyList(), 0.0, ValidationStatus.PASS),
+    var qualityMetrics: QualityReport = QualityReport(0, emptyList(), emptyList(), emptyList(), 0.0, ValidationStatus.PASS),
     var enrichmentEvidence: EnrichmentReport = EnrichmentReport(emptyList(), 0, 0.0, 0.0, ValidationStatus.PASS),
     var performance: PerformanceReport = PerformanceReport(0.0, 0.0, 0.0, ValidationStatus.PASS),
     var cacheMetrics: CacheMetricsReport = CacheMetricsReport(1.0, 0.0, ValidationStatus.PASS),

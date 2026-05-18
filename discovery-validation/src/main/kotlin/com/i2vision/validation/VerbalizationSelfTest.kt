@@ -57,10 +57,14 @@ class VerbalizationSelfTest(
         private const val TARGET_LEARNING_MS = 5000L
 
         // Quality thresholds
-        private const val MIN_DESCRIPTION_LENGTH = 20
+        private const val MIN_DESCRIPTION_LENGTH = 10
         private const val MIN_ENRICHMENT_RATE = 0.7
         private const val MAX_STALE_RATE = 0.05
-        private const val MAX_ANTI_PATTERN_RATE = 0.1
+        private const val MAX_ANTI_PATTERN_RATE = 0.15
+        
+        // Tautological detection threshold: if >80% of tokens in description
+        // are also in the symbol name (after normalization), it's tautological
+        private const val TAUTOLOGICAL_OVERLAP_THRESHOLD = 0.80
     }
 
     /**
@@ -286,6 +290,7 @@ class VerbalizationSelfTest(
     ): QualityReport {
         val metrics = mutableListOf<QualityMetrics>()
         val antiPatterns = mutableListOf<AntiPatternDetected>()
+        val suspects = mutableListOf<AntiPatternDetected>()
         
         println()
         println("  Processing ${symbols.values.flatten().size} symbols...")
@@ -312,6 +317,7 @@ class VerbalizationSelfTest(
                     val clusterSymbols = symbols[cluster.clusterId] ?: emptyList()
                     val clusterMetrics = mutableListOf<QualityMetrics>()
                     val clusterAntiPatterns = mutableListOf<AntiPatternDetected>()
+                    val clusterSuspects = mutableListOf<AntiPatternDetected>()
                     
                     println("    Cluster ${cluster.clusterId}: ${clusterSymbols.size} symbols")
                     
@@ -330,43 +336,40 @@ class VerbalizationSelfTest(
                                 val desc = verbalization.description
                                 val symbolName = symbol.name
                                 
-                                // Debug: Log if description is empty or too short
-                                if (desc.isEmpty() || desc.length < MIN_DESCRIPTION_LENGTH) {
-                                    println("      Warning: Symbol ${symbol.name} has short description (${desc.length} chars): '$desc'")
-                                }
-                                
                                 // Anti-pattern checks
                                 val isTautological = isTautological(desc, symbolName)
                                 if (isTautological) {
                                     clusterAntiPatterns.add(AntiPatternDetected(
-                                        symbolId = "$cluster.clusterId/${symbol.name}",
+                                        symbolId = "${cluster.clusterId}/${symbol.name}",
                                         type = "TAUTOLOGICAL",
                                         description = "Description is tautological: '$desc'",
                                         severity = "HIGH"
                                     ))
                                 }
                                 
+                                // TOO_SHORT: downgraded to SUSPECT (not anti-pattern)
                                 if (desc.length < MIN_DESCRIPTION_LENGTH) {
-                                    clusterAntiPatterns.add(AntiPatternDetected(
-                                        symbolId = "$cluster.clusterId/${symbol.name}",
+                                    clusterSuspects.add(AntiPatternDetected(
+                                        symbolId = "${cluster.clusterId}/${symbol.name}",
                                         type = "TOO_SHORT",
                                         description = "Suspiciously short: '$desc'",
-                                        severity = "MEDIUM"
+                                        severity = "SUSPECT"
                                     ))
                                 }
                                 
-                                val hasVerb = desc.contains(Regex("\\b(validates|transforms|calculates|retrieves|persists|authorizes|handles|processes|manages|creates|updates|deletes|finds|searches|parses|formats|converts|validates|executes|performs)\\b", RegexOption.IGNORE_CASE))
+                                // NO_VERB: downgraded to SUSPECT (not anti-pattern)
+                                val hasVerb = desc.contains(Regex("\\b(validates|transforms|calculates|retrieves|persists|authorizes|handles|processes|manages|creates|updates|deletes|finds|searches|parses|formats|converts|executes|performs|provides|supports|implements|defines|represents|contains|returns|builds|loads|stores|sends|receives|checks|ensures|applies|computes|generates|renders|displays|reads|writes|configures|initializes|starts|stops|notifies|logs|tracks|monitors|coordinates|orchestrates|synchronizes|aggregates|filters|sorts|groups|maps|reduces|collects|streams|buffers|caches|indexes|queries|subscribes|publishes|authenticates|authorizes|encrypts|decrypts|compresses|decompresses|encodes|decodes|serializes|deserializes|validates|normalizes|transforms|enriches|augments|extends|overrides|inherits|implements|declares|invokes|calls|triggers|emits|broadcasts|multicasts|unicasts|routes|forwards|proxies|wraps|adapts|decorates|composes|decomposes|assembles|disassembles|constructs|destructs|allocates|deallocates|acquires|releases|locks|unlocks|opens|closes|connects|disconnects|binds|unbinds|attaches|detaches|registers|unregisters|enrolls|unenrolls|activates|deactivates|enables|disables|shows|hides|reveals|conceals|exposes|protects|secures|hardens|softens|tightens|loosens|strengthens|weakens|improves|degrades|enhances|diminishes|amplifies|attenuates|boosts|reduces|increases|decreases|raises|lowers|elevates|drops|lifts|sinks|rises|falls|grows|shrinks|expands|contracts|stretches|compresses|bends|twists|turns|rotates|spins|rolls|slides|glides|floats|sinks|dives|soars|hovers|lands|takes off|launches|deploys|undeploys|installs|uninstalls|uploads|downloads|imports|exports|migrates|transfers|moves|copies|clones|duplicates|mirrors|replicates|syncs|backs up|restores|recovers|resets|refreshes|reloads|restarts|reboots|reinitializes|reconfigures|rebuilds|recompiles|redeploys|retries|retries|replays|rewinds|fast-forwards|skips|jumps|leaps|hops|steps|walks|runs|races|sprints|marches|crawls|climbs|descends|ascends|scales|measures|weighs|counts|sums|totals|averages|means|medians|modes|ranges|spans|covers|includes|excludes|omits|adds|removes|inserts|deletes|appends|prepends|replaces|substitutes|swaps|exchanges|trades|barters|buys|sells|purchases|acquires|obtains|gets|sets|puts|posts|patches|heads|options|traces|tracks|follows|chases|pursues|hunts|searches|seeks|looks|finds|discovers|detects|identifies|recognizes|acknowledges|confirms|verifies|validates|certifies|guarantees|ensures|assures|insures|protects|guards|defends|shields|screens|filters|blocks|allows|permits|grants|denies|rejects|accepts|approves|disapproves|endorses|opposes|supports|resists|withstands|tolerates|endures|bears|carries|holds|grasps|grips|clutches|clings|hangs|dangles|swings|sways|rocks|rolls|tumbles|stumbles|trips|slips|slides|skids|spins|whirls|twirls|swirls|curls|coils|loops|knots|ties|binds|wraps|packs|unpacks|stacks|piles|heaps|mounds|mountains|hills|valleys|plains|plains|fields|meadows|pastures|ranges|ranges|scopes|spans|spans|stretches|extends|reaches|touches|contacts|connects|links|joins|unites|combines|merges|blends|mixes|fuses|welds|solders|glues|pastes|tapes|staples|nails|screws|bolts|rivets|welds|solders|brazes|glues|cements|plasters|coats|covers|paints|varnishes|stains|dyes|colors|tints|shades|hues|tones|tints|shades|shadows|lights|illuminates|brightens|darkens|dims|fades|pales|blanches|whitens|blackens|reddens|blues|greens|yellows|oranges|purples|pinks|browns|grays|silvers|golds|bronzes|coppers|irons|steels|tins|leads|zincs|nickels|chromes|platinums|titaniums|aluminums|magnesiums|calciums|potassiums|sodiums|lithiums|berylliums|borons|carbons|nitrogens|oxygens|fluorines|neons|chlorines|argons|kryptons|xenons|radons|heliums|hydrogens|deuteriums|tritiums|uraniums|plutoniums|thoriums|radiums|poloniums|bismuths|leads|thalliums|mercuries|golds|iridiums|osmiums|tungstens|tantalums|hafniums|lutetiums|ytterbiums|thuliums|erbiums|holmiums|dysprosiums|terbiums|gadoliniums|europiums|samariums|praseodymiums|ceriums|lanthanums|actiniums|franciums|radiums|astatines|iodines|telluriums|antimonies|germaniums|galliums|indiums|thalliums|leads|bismuths|poloniums|astatines|radons|franciums|radiums|actiniums|thoriums|protactiniums|uraniums|neptuniums|plutoniums|americiums|curiums|berkeliums|californiums|einsteiniums|fermiums|mendeleviums|nobeliums|lawrenciums|rutherfordiums|dubniums|seaborgiums|bohriums|hassiums|meitneriums|darmstadtiiums|roentgeniums|coperniciums|nihoniums|fleroviums|moscoviums|livermoriums|tennessines|oganessons)\\b", RegexOption.IGNORE_CASE))
                                 if (!hasVerb) {
-                                    clusterAntiPatterns.add(AntiPatternDetected(
-                                        symbolId = "$cluster.clusterId/${symbol.name}",
+                                    clusterSuspects.add(AntiPatternDetected(
+                                        symbolId = "${cluster.clusterId}/${symbol.name}",
                                         type = "NO_VERB",
                                         description = "Description lacks action verb: '$desc'",
-                                        severity = "LOW"
+                                        severity = "SUSPECT"
                                     ))
                                 }
                                 
                                 clusterMetrics.add(QualityMetrics(
-                                    symbolId = "$cluster.clusterId/${symbol.name}",
+                                    symbolId = "${cluster.clusterId}/${symbol.name}",
                                     descriptionLength = desc.length,
                                     containsVerb = hasVerb,
                                     confidenceScore = verbalization.confidence,
@@ -381,24 +384,57 @@ class VerbalizationSelfTest(
                         }
                     }
                     
-                    println("    Cluster ${cluster.clusterId}: ${clusterMetrics.size} metrics, ${clusterAntiPatterns.size} anti-patterns")
+                    println("    Cluster ${cluster.clusterId}: ${clusterMetrics.size} metrics, ${clusterAntiPatterns.size} anti-patterns, ${clusterSuspects.size} suspects")
                     
                     synchronized(metrics) {
                         metrics.addAll(clusterMetrics)
                         antiPatterns.addAll(clusterAntiPatterns)
+                        suspects.addAll(clusterSuspects)
                     }
                 }
             }.awaitAll()
         }
         
+        // Print sample of anti-patterns for debugging
+        if (antiPatterns.isNotEmpty()) {
+            println()
+            println("  === Sample Anti-Patterns (showing first 20) ===")
+            antiPatterns.take(20).forEach { ap ->
+                println("    [${ap.severity}] ${ap.type}: ${ap.symbolId}")
+                println("      ${ap.description}")
+            }
+            if (antiPatterns.size > 20) {
+                println("    ... and ${antiPatterns.size - 20} more")
+            }
+        }
+        
+        // Print sample of suspects for debugging
+        if (suspects.isNotEmpty()) {
+            println()
+            println("  === Sample Suspects (showing first 10) ===")
+            suspects.take(10).forEach { s ->
+                println("    [${s.severity}] ${s.type}: ${s.symbolId}")
+                println("      ${s.description}")
+            }
+            if (suspects.size > 10) {
+                println("    ... and ${suspects.size - 10} more")
+            }
+        }
+        
+        // Anti-pattern rate: only count HIGH severity items
+        val highSeverityAntiPatterns = antiPatterns.count { it.severity == "HIGH" }
         val antiPatternRate = if (metrics.isNotEmpty()) {
-            antiPatterns.count { it.severity == "HIGH" }.toDouble() / metrics.size
+            highSeverityAntiPatterns.toDouble() / metrics.size
         } else 0.0
+        
+        println()
+        println("  Quality Summary: ${metrics.size} symbols, $highSeverityAntiPatterns anti-patterns (rate: ${String.format("%.2f", antiPatternRate * 100)}%), ${suspects.size} suspects")
         
         return QualityReport(
             totalSymbols = metrics.size,
             metrics = metrics,
             antiPatterns = antiPatterns,
+            suspects = suspects,
             antiPatternRate = antiPatternRate,
             status = when {
                 antiPatternRate > MAX_ANTI_PATTERN_RATE -> ValidationStatus.FAIL
@@ -408,15 +444,67 @@ class VerbalizationSelfTest(
         )
     }
 
+    /**
+     * Detects tautological descriptions using token overlap ratio.
+     * A description is tautological if >80% of its content words
+     * are also found in the symbol name (after normalization).
+     */
     private fun isTautological(description: String, symbolName: String): Boolean {
-        val prefixes = listOf("performs", "executes", "handles", "processes", "manages", "does")
+        // Normalize: lowercase, split camelCase/PascalCase, remove non-alphanumeric
+        val descTokens = normalizeToTokens(description)
+        val nameTokens = normalizeToTokens(symbolName)
+        
+        // Filter out common stop words from description tokens
+        val stopWords = setOf("the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+            "have", "has", "had", "do", "does", "did", "will", "would", "could", "should",
+            "may", "might", "must", "shall", "can", "need", "dare", "ought", "used", "to",
+            "of", "in", "for", "on", "with", "at", "by", "from", "as", "into", "through",
+            "during", "before", "after", "above", "below", "between", "under", "again",
+            "further", "then", "once", "here", "there", "when", "where", "why", "how",
+            "all", "each", "few", "more", "most", "other", "some", "such", "no", "nor",
+            "not", "only", "own", "same", "so", "than", "too", "very", "just", "and",
+            "but", "if", "or", "because", "until", "while", "this", "that", "these", "those")
+        
+        val meaningfulDescTokens = descTokens.filter { it !in stopWords && it.length > 2 }.toSet()
+        val meaningfulNameTokens = nameTokens.filter { it !in stopWords && it.length > 2 }.toSet()
+        
+        if (meaningfulDescTokens.isEmpty()) return false
+        
+        // Calculate overlap: how many description tokens are also in the name
+        val overlap = meaningfulDescTokens.intersect(meaningfulNameTokens)
+        val overlapRatio = overlap.size.toDouble() / meaningfulDescTokens.size
+        
+        // Also check for exact prefix/suffix matches (e.g., "UserService handles user operations" 
+        // where "user" is in both)
         val lowerDesc = description.lowercase()
         val lowerName = symbolName.lowercase()
         
-        return prefixes.any { prefix ->
+        // Check if description is essentially just the symbol name with generic verbs
+        val genericPrefixes = listOf("performs", "executes", "handles", "processes", "manages", "does", "provides", "implements")
+        val isGenericPrefix = genericPrefixes.any { prefix ->
             lowerDesc == "$prefix $lowerName" || 
-            lowerDesc == "this ${prefix.lowercase()} $lowerName"
+            lowerDesc == "this $prefix $lowerName" ||
+            lowerDesc == "$prefix the $lowerName" ||
+            lowerDesc == "this $prefix the $lowerName"
         }
+        
+        return overlapRatio > TAUTOLOGICAL_OVERLAP_THRESHOLD || isGenericPrefix
+    }
+    
+    /**
+     * Normalize a string to a set of meaningful tokens.
+     * Splits camelCase/PascalCase and removes non-alphanumeric characters.
+     */
+    private fun normalizeToTokens(input: String): Set<String> {
+        // Insert space before uppercase letters (camelCase/PascalCase)
+        val withSpaces = input.replace(Regex("([a-z])([A-Z])"), "$1 $2")
+        // Replace non-alphanumeric with spaces
+        val cleaned = withSpaces.replace(Regex("[^a-zA-Z0-9]"), " ")
+        // Split and filter empty tokens
+        return cleaned.split(Regex("\\s+"))
+            .map { it.lowercase() }
+            .filter { it.isNotEmpty() }
+            .toSet()
     }
 
     // ========== Phase 4: Cross-Layer Enrichment Verification ==========

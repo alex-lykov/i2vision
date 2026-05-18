@@ -317,7 +317,9 @@ class VerbalizationSelfTest(
                     
                     clusterSymbols.forEach { symbol ->
                         try {
-                            val verbalization = engine.verbalize(
+                            // Reuse attached verbalization from initial discovery phase
+                            // to avoid cache-hit skips and redundant re-verbalization
+                            val verbalization = symbol.verbalization ?: engine.verbalize(
                                 clusterId = cluster.clusterId,
                                 symbols = listOf(symbol),
                                 strategy = VerbalizationStrategy.INCREMENTAL,

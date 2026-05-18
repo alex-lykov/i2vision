@@ -302,6 +302,13 @@ fun main(args: Array<String>) {
                     
                     val duration = System.currentTimeMillis() - startTime
                     verbalizationCount += results.size
+                    
+                    // Attach verbalizations to symbols for self-test reuse
+                    val resultMap = results.associateBy { it.symbol.name }
+                    symbolsMap[cluster.name] = clusterSymbols.map { symbol ->
+                        resultMap[symbol.name]?.let { symbol.copy(verbalization = it) } ?: symbol
+                    }.toMutableList()
+                    
                     println("✅ ${results.size} verbalizations (${duration}ms)")
                 }
             }

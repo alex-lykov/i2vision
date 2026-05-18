@@ -213,7 +213,8 @@ data class CodeSymbol(
     val name: String,
     val kind: String,          // class | function | property | interface | object | enum
     val filePath: String,
-    val line: Int
+    val line: Int,
+    val content: String = ""   // Symbol declaration line / body content
 )
 
 data class SymbolLocation(
@@ -249,14 +250,17 @@ class KotlinAdapter : LanguageAdapter {
     )
 
     override fun extractSymbols(file: File): List<CodeSymbol> = buildList {
-        file.readLines().forEachIndexed { idx, line ->
+        val lines = file.readLines()
+        lines.forEachIndexed { idx, line ->
             symbolRegex.find(line.trim())?.let { m ->
+                val body = extractBodyLines(lines, idx + 1)
                 add(
                     CodeSymbol(
                         name = m.groupValues[2],
                         kind = m.groupValues[1].trim(),
                         filePath = file.path,
-                        line = idx + 1
+                        line = idx + 1,
+                        content = body.joinToString("\n")
                     )
                 )
             }
@@ -271,6 +275,12 @@ class KotlinAdapter : LanguageAdapter {
             }
         }
     }
+
+    private fun extractBodyLines(lines: List<String>, startLine: Int): List<String> {
+        val start = (startLine - 1).coerceAtLeast(0)
+        val end = (start + 60).coerceAtMost(lines.size)
+        return lines.subList(start, end)
+    }
 }
 
 class PythonAdapter : LanguageAdapter {
@@ -279,9 +289,11 @@ class PythonAdapter : LanguageAdapter {
     private val defRegex = Regex("""^(def|class|async def)\s+(\w+)""")
 
     override fun extractSymbols(file: File) = buildList<CodeSymbol> {
-        file.readLines().forEachIndexed { idx, line ->
+        val lines = file.readLines()
+        lines.forEachIndexed { idx, line ->
             defRegex.find(line)?.let { m ->
-                add(CodeSymbol(m.groupValues[2], m.groupValues[1], file.path, idx + 1))
+                val body = extractBodyLines(lines, idx + 1)
+                add(CodeSymbol(m.groupValues[2], m.groupValues[1], file.path, idx + 1, body.joinToString("\n")))
             }
         }
     }
@@ -291,6 +303,12 @@ class PythonAdapter : LanguageAdapter {
             if (line.contains(symbolName))
                 add(SymbolLocation(file.path, idx + 1, symbolName, "reference"))
         }
+    }
+
+    private fun extractBodyLines(lines: List<String>, startLine: Int): List<String> {
+        val start = (startLine - 1).coerceAtLeast(0)
+        val end = (start + 60).coerceAtMost(lines.size)
+        return lines.subList(start, end)
     }
 }
 
@@ -300,9 +318,11 @@ class JavaScriptAdapter : LanguageAdapter {
     private val defRegex = Regex("""(?:function|class|const|let|var)\s+(\w+)""")
 
     override fun extractSymbols(file: File) = buildList<CodeSymbol> {
-        file.readLines().forEachIndexed { idx, line ->
+        val lines = file.readLines()
+        lines.forEachIndexed { idx, line ->
             defRegex.find(line)?.let { m ->
-                add(CodeSymbol(m.groupValues[1], "declaration", file.path, idx + 1))
+                val body = extractBodyLines(lines, idx + 1)
+                add(CodeSymbol(m.groupValues[1], "declaration", file.path, idx + 1, body.joinToString("\n")))
             }
         }
     }
@@ -312,6 +332,12 @@ class JavaScriptAdapter : LanguageAdapter {
             if (line.contains(symbolName))
                 add(SymbolLocation(file.path, idx + 1, symbolName, "reference"))
         }
+    }
+
+    private fun extractBodyLines(lines: List<String>, startLine: Int): List<String> {
+        val start = (startLine - 1).coerceAtLeast(0)
+        val end = (start + 60).coerceAtMost(lines.size)
+        return lines.subList(start, end)
     }
 }
 

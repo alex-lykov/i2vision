@@ -229,7 +229,7 @@ class DiscoveryPipelineImpl(
                             },
                             filePath = symbol.file.absolutePath,
                             lineNumber = symbol.line,
-                            content = "", // TODO: Read actual content from file
+                            content = symbol.content,
                             metadata = mapOf(
                                 "qualifiedName" to symbol.qualifiedName,
                                 "language" to symbol.language

@@ -537,7 +537,7 @@ private fun com.i2vision.index.CodeSymbol.toSymbol(): Symbol {
         kind = kind,
         filePath = filePath,
         lineNumber = line,
-        content = ""  // Content is not needed for verbalization; the engine reads files directly
+        content = this.content
     )
 }
 

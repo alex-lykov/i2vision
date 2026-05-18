@@ -52,30 +52,43 @@ data class SymbolContext(
     
     /**
      * Get cross-layer reference summary for enrichment.
+     * Includes actual symbol names as @CrossReferences for the self-test to detect.
      */
     fun getCrossLayerSummary(): String {
         val parts = mutableListOf<String>()
-        
+
+        // Include actual flow names as cross-references
         if (callingFlows.isNotEmpty()) {
-            parts.add("Called by ${callingFlows.size} flow(s)")
+            val flowRefs = callingFlows.take(5).joinToString(", ") { "@$it" }
+            parts.add("Called by ${callingFlows.size} flow(s): $flowRefs")
         }
-        
+
+        // Include actual business rule names/descriptions
         if (businessRules.isNotEmpty()) {
-            parts.add("Enforces ${businessRules.size} business rule(s)")
+            val ruleRefs = businessRules.take(3).joinToString(", ") { "@$it" }
+            parts.add("Enforces ${businessRules.size} business rule(s): $ruleRefs")
         }
-        
+
+        // Include actual related symbol names as cross-references
         if (relatedSymbols.isNotEmpty()) {
-            parts.add("Coordinates with ${relatedSymbols.size} service(s)")
+            val symbolRefs = relatedSymbols.take(5).map { "@${it.name}" }.joinToString(", ")
+            parts.add("Coordinates with ${relatedSymbols.size} service(s): $symbolRefs")
         }
-        
+
+        // Include module dependencies as cross-references
+        if (moduleDependencies.isNotEmpty()) {
+            val depRefs = moduleDependencies.take(5).joinToString(", ") { "@$it" }
+            parts.add("Depends on: $depRefs")
+        }
+
         if (hasDatabaseAccess) {
             parts.add("with database access")
         }
-        
+
         if (hasExternalCalls) {
             parts.add("with external API calls")
         }
-        
+
         return parts.joinToString(". ")
     }
 }

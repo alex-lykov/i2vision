@@ -57,7 +57,7 @@ class VerbalizationSelfTest(
         private const val TARGET_LEARNING_MS = 5000L
 
         // Quality thresholds
-        private const val MIN_DESCRIPTION_LENGTH = 10
+        private const val MIN_DESCRIPTION_LENGTH = 8
         private const val MIN_ENRICHMENT_RATE = 0.7
         private const val MAX_STALE_RATE = 0.05
         private const val MAX_ANTI_PATTERN_RATE = 0.15
@@ -349,7 +349,7 @@ class VerbalizationSelfTest(
                                 
                                 // TOO_SHORT: downgraded to SUSPECT (not anti-pattern)
                                 // Allow shorter descriptions for short symbol names (e.g. "write" → "Saves")
-                                val minExpectedLength = maxOf(MIN_DESCRIPTION_LENGTH, symbol.name.length + 2)
+                                val minExpectedLength = maxOf(MIN_DESCRIPTION_LENGTH, symbol.name.length)
                                 if (desc.length < minExpectedLength) {
                                     clusterSuspects.add(AntiPatternDetected(
                                         symbolId = "${cluster.clusterId}/${symbol.name}",

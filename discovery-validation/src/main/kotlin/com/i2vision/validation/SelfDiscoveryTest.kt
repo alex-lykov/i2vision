@@ -519,12 +519,25 @@ private fun extractPathsFromYaml(yamlMap: Map<String, Any>, paths: MutableList<S
 
 /**
  * Convert a [CodeSymbol] from the scanner to a [Symbol] for verbalization.
+ *
+ * Applies post-hoc heuristics to correct misclassifications from regex-based scanning:
+ * 1. Single lowercase words without parameters are likely properties, not functions
+ * 2. PascalCase names ending in "Type" are likely enums or sealed classes
  */
 private fun com.i2vision.index.CodeSymbol.toSymbol(): Symbol {
-    val kind = when (kind) {
+    val rawKind = this.kind
+    val inferredKind = when (rawKind) {
         "class" -> SymbolKind.CLASS
         "interface" -> SymbolKind.INTERFACE
-        "function", "fun" -> SymbolKind.FUNCTION
+        "function", "fun" -> {
+            // Heuristic: single lowercase word with no parameters is likely a property
+            // (e.g. "success", "depth", "route", "debug" — these are properties/fields, not functions)
+            if (name.all { it.isLowerCase() || it == '_' } && !name.contains("(")) {
+                SymbolKind.PROPERTY
+            } else {
+                SymbolKind.FUNCTION
+            }
+        }
         "property", "val", "var" -> SymbolKind.PROPERTY
         "object" -> SymbolKind.OBJECT
         "enum" -> SymbolKind.ENUM
@@ -532,9 +545,22 @@ private fun com.i2vision.index.CodeSymbol.toSymbol(): Symbol {
         "type_alias", "typealias" -> SymbolKind.TYPE_ALIAS
         else -> SymbolKind.UNKNOWN
     }
+
+    // Heuristic: PascalCase names ending in "Type" are likely enums or sealed classes
+    // (e.g. ContractType, EntryPointType, ParserType, ClusterType)
+    val finalKind = if (inferredKind == SymbolKind.UNKNOWN &&
+        name.endsWith("Type") &&
+        name.length > 4 &&
+        name.first().isUpperCase()
+    ) {
+        SymbolKind.ENUM
+    } else {
+        inferredKind
+    }
+
     return Symbol(
         name = name,
-        kind = kind,
+        kind = finalKind,
         filePath = filePath,
         lineNumber = line,
         content = this.content

@@ -148,13 +148,16 @@ class KotlinAstWalker {
         if (name == null) return null
 
         // Determine symbol kind from PSI node type
-        val kind = when (declaration) {
-            is KtNamedFunction -> SymbolKind.FUNCTION
-            is KtClass -> SymbolKind.CLASS
-            is KtObjectDeclaration -> SymbolKind.OBJECT
-            is KtProperty -> SymbolKind.PROPERTY
-            is KtEnumEntry -> SymbolKind.ENUM
-            is KtTypeAlias -> SymbolKind.TYPE_ALIAS
+        val kind = when {
+            declaration is KtNamedFunction -> SymbolKind.FUNCTION
+            declaration is KtClass && declaration.isInterface() -> SymbolKind.INTERFACE
+            declaration is KtClass && declaration.isEnum() -> SymbolKind.ENUM
+            declaration is KtClass && declaration.isAnnotation() -> SymbolKind.ANNOTATION
+            declaration is KtClass -> SymbolKind.CLASS
+            declaration is KtObjectDeclaration -> SymbolKind.OBJECT
+            declaration is KtProperty -> SymbolKind.PROPERTY
+            declaration is KtEnumEntry -> SymbolKind.ENUM
+            declaration is KtTypeAlias -> SymbolKind.TYPE_ALIAS
             else -> SymbolKind.UNKNOWN
         }
 

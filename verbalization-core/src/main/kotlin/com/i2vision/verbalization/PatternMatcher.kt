@@ -49,21 +49,142 @@ class PatternMatcher {
     }
 
     /**
-     * Generate a basic fallback description when no pattern matches.
+     * Generate an enhanced fallback description when no pattern matches.
+     * Converts camelCase/PascalCase names into readable sentences with
+     * appropriate verbs to avoid tautological "Function 'X'" outputs.
      */
     private fun generateFallbackDescription(symbol: Symbol): String {
         return when (symbol.kind) {
-            com.i2vision.vslfc.SymbolKind.CLASS -> "Class '${symbol.name}'"
-            com.i2vision.vslfc.SymbolKind.INTERFACE -> "Interface '${symbol.name}'"
-            com.i2vision.vslfc.SymbolKind.FUNCTION -> "Function '${symbol.name}'"
-            com.i2vision.vslfc.SymbolKind.PROPERTY -> "Property '${symbol.name}'"
-            com.i2vision.vslfc.SymbolKind.VARIABLE -> "Variable '${symbol.name}'"
+            com.i2vision.vslfc.SymbolKind.CLASS -> {
+                val words = symbol.name.camelCaseToWords()
+                if (words.size > 1 && words.last().lowercase() in setOf("class", "object", "enum", "interface")) {
+                    "${words.joinToString(" ")} for ${symbol.name}"
+                } else {
+                    "Class representing ${words.joinToString(" ")}"
+                }
+            }
+            com.i2vision.vslfc.SymbolKind.INTERFACE -> "Interface defining ${symbol.name.camelCaseToWords().joinToString(" ")}"
+            com.i2vision.vslfc.SymbolKind.FUNCTION -> generateFunctionDescription(symbol.name)
+            com.i2vision.vslfc.SymbolKind.PROPERTY -> "Property holding ${symbol.name.camelCaseToWords().joinToString(" ")}"
+            com.i2vision.vslfc.SymbolKind.VARIABLE -> "Variable holding ${symbol.name.camelCaseToWords().joinToString(" ")}"
             com.i2vision.vslfc.SymbolKind.ANNOTATION -> "Annotation '${symbol.name}'"
-            com.i2vision.vslfc.SymbolKind.ENUM -> "Enum '${symbol.name}'"
-            com.i2vision.vslfc.SymbolKind.OBJECT -> "Object '${symbol.name}'"
-            com.i2vision.vslfc.SymbolKind.TYPE_ALIAS -> "Type alias '${symbol.name}'"
-            com.i2vision.vslfc.SymbolKind.UNKNOWN -> "Symbol '${symbol.name}'"
+            com.i2vision.vslfc.SymbolKind.ENUM -> "Enum '${symbol.name.camelCaseToWords().joinToString(" ")}'"
+            com.i2vision.vslfc.SymbolKind.OBJECT -> "Singleton object '${symbol.name.camelCaseToWords().joinToString(" ")}'"
+            com.i2vision.vslfc.SymbolKind.TYPE_ALIAS -> "Type alias '${symbol.name.camelCaseToWords().joinToString(" ")}'"
+            com.i2vision.vslfc.SymbolKind.UNKNOWN -> inferUnknownDescription(symbol.name)
         }
+    }
+
+    /**
+     * Generate a function description from its name by converting camelCase
+     * to words and prepending an appropriate action verb.
+     */
+    private fun generateFunctionDescription(name: String): String {
+        val words = name.camelCaseToWords()
+        if (words.isEmpty()) return "Function '$name'"
+
+        val firstWord = words.first().lowercase()
+        val remaining = words.drop(1).joinToString(" ")
+
+        // If the name already starts with an action verb, just capitalize it
+        val actionVerb = when (firstWord) {
+            "get" -> "Gets"
+            "set" -> "Sets"
+            "is", "has", "can", "should", "will" -> "Checks"
+            "create", "make", "build", "generate" -> "Creates"
+            "delete", "remove", "clear", "purge" -> "Removes"
+            "update", "modify", "edit", "change" -> "Updates"
+            "find", "search", "lookup", "locate" -> "Finds"
+            "parse", "deserialize", "extract" -> "Parses"
+            "validate", "check", "ensure", "verify" -> "Validates"
+            "convert", "transform", "map", "to" -> "Converts"
+            "load", "fetch", "read", "retrieve" -> "Loads"
+            "save", "store", "write", "persist" -> "Saves"
+            "send", "publish", "emit", "dispatch" -> "Sends"
+            "receive", "accept", "consume", "handle" -> "Receives"
+            "process", "execute", "run", "invoke", "call", "perform" -> "Executes"
+            "show", "display", "print", "render", "draw" -> "Displays"
+            "clean", "sanitize", "normalize", "format" -> "Cleans"
+            "fallback" -> "Falls back to"
+            "bridge" -> "Bridges"
+            "map" -> "Maps"
+            "main" -> "Main entry point"
+            "println" -> "Prints line"
+            else -> null
+        }
+
+        return when {
+            actionVerb == "Main entry point" -> actionVerb
+            actionVerb == "Prints line" -> "$actionVerb to output"
+            actionVerb != null && remaining.isNotEmpty() -> "$actionVerb $remaining"
+            actionVerb != null -> actionVerb
+            // No recognized verb — infer from naming convention
+            name.startsWith("is") && name.length > 2 && name[2].isUpperCase() ->
+                "Checks ${name.substring(2).camelCaseToWords().joinToString(" ")}"
+            name.startsWith("has") && name.length > 3 && name[3].isUpperCase() ->
+                "Checks ${name.substring(3).camelCaseToWords().joinToString(" ")}"
+            name.startsWith("to") && name.length > 2 && name[2].isUpperCase() ->
+                "Converts to ${name.substring(2).camelCaseToWords().joinToString(" ")}"
+            else -> "Executes ${words.joinToString(" ")}"
+        }
+    }
+
+    /**
+     * Infer a description for an UNKNOWN kind symbol based on its name.
+     */
+    private fun inferUnknownDescription(name: String): String {
+        return when {
+            name.first().isUpperCase() && name.all { it.isUpperCase() || it == '_' } ->
+                "Constant '$name'"
+            name.first().isUpperCase() ->
+                "Type '$name'"
+            name.contains("(") ->
+                "Function '$name'"
+            else ->
+                "Symbol '$name'"
+        }
+    }
+
+    /**
+     * Convert camelCase or PascalCase to space-separated lowercase words.
+     * Handles acronyms like "URL" or "HTTP" gracefully.
+     */
+    private fun String.camelCaseToWords(): List<String> {
+        if (isEmpty()) return emptyList()
+
+        val result = mutableListOf<String>()
+        val currentWord = StringBuilder()
+
+        for (i in indices) {
+            val ch = this[i]
+            val prev = if (i > 0) this[i - 1] else null
+            val next = if (i + 1 < length) this[i + 1] else null
+
+            // Start of new word: uppercase letter preceded by lowercase, or
+            // uppercase letter followed by lowercase (end of acronym)
+            val isNewWord = when {
+                i == 0 -> false
+                ch.isUpperCase() && prev?.isLowerCase() == true -> true
+                ch.isUpperCase() && next?.isLowerCase() == true && prev?.isUpperCase() == true -> true
+                ch == '_' || ch == '-' -> true
+                else -> false
+            }
+
+            if (isNewWord && currentWord.isNotEmpty()) {
+                result.add(currentWord.toString().lowercase())
+                currentWord.clear()
+            }
+
+            if (ch.isLetterOrDigit()) {
+                currentWord.append(ch)
+            }
+        }
+
+        if (currentWord.isNotEmpty()) {
+            result.add(currentWord.toString().lowercase())
+        }
+
+        return result
     }
 
     /**

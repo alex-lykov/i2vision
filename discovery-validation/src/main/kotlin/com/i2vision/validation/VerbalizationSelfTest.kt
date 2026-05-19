@@ -534,20 +534,20 @@ class VerbalizationSelfTest(
             runBlocking {
                 sampleSymbols.forEach { symbol ->
                     try {
-                        // Run INCREMENTAL strategy
+                        // Run INCREMENTAL strategy (force full to bypass hash cache)
                         val incrementalResult = engine.verbalize(
                             clusterId = cluster.clusterId,
                             symbols = listOf(symbol),
                             strategy = VerbalizationStrategy.INCREMENTAL,
-                            intent = createTestIntent()
+                            intent = createTestIntent(forceFullVerbalization = true)
                         ).firstOrNull()
                         
-                        // Run MULTI_PASS strategy
+                        // Run MULTI_PASS strategy (force full to bypass hash cache)
                         val multiPassResult = engine.verbalize(
                             clusterId = cluster.clusterId,
                             symbols = listOf(symbol),
                             strategy = VerbalizationStrategy.MULTI_PASS,
-                            intent = createTestIntent()
+                            intent = createTestIntent(forceFullVerbalization = true)
                         ).firstOrNull()
                         
                         if (incrementalResult != null && multiPassResult != null) {
@@ -750,12 +750,13 @@ class VerbalizationSelfTest(
         }
     }
 
-    private fun createTestIntent(): com.i2vision.intent.DiscoveryIntent {
+    private fun createTestIntent(forceFullVerbalization: Boolean = false): com.i2vision.intent.DiscoveryIntent {
         return com.i2vision.intent.DiscoveryIntent(
             goal = IntentGoal.FULL_DISCOVERY,
             focus = LayerFocus.ALL,
             depth = IntentDepth.STANDARD,
-            quality = QualityFocus.BALANCED
+            quality = QualityFocus.BALANCED,
+            forceFullVerbalization = forceFullVerbalization
         )
     }
 }

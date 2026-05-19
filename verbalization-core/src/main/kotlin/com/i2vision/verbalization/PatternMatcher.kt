@@ -54,7 +54,7 @@ class PatternMatcher {
             com.i2vision.vslfc.SymbolKind.ENUM -> "Enum '${symbol.name}'"
             com.i2vision.vslfc.SymbolKind.OBJECT -> "Object '${symbol.name}'"
             com.i2vision.vslfc.SymbolKind.TYPE_ALIAS -> "Type alias '${symbol.name}'"
-            else -> "Symbol '${symbol.name}'"
+            com.i2vision.vslfc.SymbolKind.UNKNOWN -> "Symbol '${symbol.name}'"
         }
     }
 

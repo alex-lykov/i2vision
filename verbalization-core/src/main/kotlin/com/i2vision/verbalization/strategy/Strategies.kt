@@ -125,7 +125,7 @@ class IncrementalVerbalizationStrategy(
 
             val result = VerbalizationResult(
                 symbol = symbol,
-                description = description ?: "No description available",
+                description = description ?: "${symbol.kind.name.lowercase().replaceFirstChar { it.uppercase() }} '${symbol.name}'",
                 confidence = if (description != null) 0.8 else 0.0,
                 strategy = VerbalizationStrategy.INCREMENTAL,
                 metadata = mapOf(
@@ -181,7 +181,7 @@ class MultiPassVerbalizationStrategy(
             val description = patternMatcher.matchAndDescribe(symbol)
             VerbalizationResult(
                 symbol = symbol,
-                description = description ?: "No description available",
+                description = description ?: "${symbol.kind.name.lowercase().replaceFirstChar { it.uppercase() }} '${symbol.name}'",
                 confidence = if (description != null) 0.7 else 0.0,
                 strategy = VerbalizationStrategy.MULTI_PASS,
                 metadata = mapOf(
@@ -293,7 +293,7 @@ class LearningVerbalizationStrategy(
                     }
                 } catch (e: Exception) {
                     // Ultimate fallback: use pattern matcher only
-                    val description = patternMatcher.matchAndDescribe(symbol) ?: "No description available"
+                    val description = patternMatcher.matchAndDescribe(symbol) ?: "${symbol.kind.name.lowercase().replaceFirstChar { it.uppercase() }} '${symbol.name}'"
                     results.add(
                         VerbalizationResult(
                             symbol = symbol,
@@ -440,7 +440,7 @@ class LearningVerbalizationStrategy(
      * Fallback to MULTI_PASS strategy (pattern matching with context).
      */
     private suspend fun fallbackToMultiPass(symbol: Symbol, reason: String): VerbalizationResult {
-        val description = patternMatcher.matchAndDescribe(symbol) ?: "No description available"
+        val description = patternMatcher.matchAndDescribe(symbol) ?: "${symbol.kind.name.lowercase().replaceFirstChar { it.uppercase() }} '${symbol.name}'"
         
         return VerbalizationResult(
             symbol = symbol,

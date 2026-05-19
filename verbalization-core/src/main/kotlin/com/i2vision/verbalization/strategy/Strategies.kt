@@ -116,7 +116,8 @@ class IncrementalVerbalizationStrategy(
             val currentLocalHash = hashManager.computeLocalHash(symbol)
 
             // Skip if symbol hasn't changed (fast local hash check)
-            if (!hashManager.hasLocalChanged(symbol, currentLocalHash)) {
+            // Always process when forceFullVerbalization is requested (e.g. enrichment self-test)
+            if (!intent.forceFullVerbalization && !hashManager.hasLocalChanged(symbol, currentLocalHash)) {
                 continue
             }
 

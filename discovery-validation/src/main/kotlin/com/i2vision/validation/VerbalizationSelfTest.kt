@@ -535,20 +535,30 @@ class VerbalizationSelfTest(
                 sampleSymbols.forEach { symbol ->
                     try {
                         // Run INCREMENTAL strategy (force full to bypass hash cache)
-                        val incrementalResult = engine.verbalize(
+                        val incrementalResults = engine.verbalize(
                             clusterId = cluster.clusterId,
                             symbols = listOf(symbol),
                             strategy = VerbalizationStrategy.INCREMENTAL,
                             intent = createTestIntent(forceFullVerbalization = true)
-                        ).firstOrNull()
+                        )
+                        println("    ENRICHMENT DEBUG: INCREMENTAL returned ${incrementalResults.size} results for ${symbol.name}")
+                        if (incrementalResults.isNotEmpty()) {
+                            println("      First: ${incrementalResults.first().symbol.name} -> ${incrementalResults.first().description.take(60)}")
+                        }
+                        val incrementalResult = incrementalResults.firstOrNull()
                         
                         // Run MULTI_PASS strategy (force full to bypass hash cache)
-                        val multiPassResult = engine.verbalize(
+                        val multiPassResults = engine.verbalize(
                             clusterId = cluster.clusterId,
                             symbols = listOf(symbol),
                             strategy = VerbalizationStrategy.MULTI_PASS,
                             intent = createTestIntent(forceFullVerbalization = true)
-                        ).firstOrNull()
+                        )
+                        println("    ENRICHMENT DEBUG: MULTI_PASS returned ${multiPassResults.size} results for ${symbol.name}")
+                        if (multiPassResults.isNotEmpty()) {
+                            println("      First: ${multiPassResults.first().symbol.name} -> ${multiPassResults.first().description.take(60)}")
+                        }
+                        val multiPassResult = multiPassResults.firstOrNull()
                         
                         if (incrementalResult != null && multiPassResult != null) {
                             val incDesc = incrementalResult.description

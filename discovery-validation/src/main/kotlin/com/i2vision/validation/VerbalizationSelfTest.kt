@@ -349,8 +349,12 @@ class VerbalizationSelfTest(
                                 
                                 // TOO_SHORT: downgraded to SUSPECT (not anti-pattern)
                                 // Allow shorter descriptions for short symbol names (e.g. "write" → "Saves")
+                                // Exempt known valid short patterns (e.g. data class "Immutable data container")
                                 val minExpectedLength = maxOf(MIN_DESCRIPTION_LENGTH, symbol.name.length)
-                                if (desc.length < minExpectedLength) {
+                                val isKnownShortPattern = desc == "Immutable data container" ||
+                                    desc == "Data transfer object" ||
+                                    desc == "Value object"
+                                if (desc.length < minExpectedLength && !isKnownShortPattern) {
                                     clusterSuspects.add(AntiPatternDetected(
                                         symbolId = "${cluster.clusterId}/${symbol.name}",
                                         type = "TOO_SHORT",
@@ -494,8 +498,13 @@ class VerbalizationSelfTest(
             lowerDesc == "$prefix the $lowerName" ||
             lowerDesc == "this $prefix the $lowerName"
         }
-        
-        return overlapRatio > TAUTOLOGICAL_OVERLAP_THRESHOLD || isGenericPrefix
+
+        // Exempt test fixture classes: names ending in "Class" with "class for" pattern
+        // (e.g. "no package class for NoPackageClass" — the pattern is intentional)
+        val isTestFixtureClass = symbolName.endsWith("Class") &&
+            lowerDesc.contains("class for")
+
+        return (overlapRatio > TAUTOLOGICAL_OVERLAP_THRESHOLD || isGenericPrefix) && !isTestFixtureClass
     }
     
     /**

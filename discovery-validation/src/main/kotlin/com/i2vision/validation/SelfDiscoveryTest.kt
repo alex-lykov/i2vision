@@ -534,6 +534,22 @@ private fun com.i2vision.index.CodeSymbol.toSymbol(): Symbol {
             // (e.g. "success", "depth", "route", "debug" — these are properties/fields, not functions)
             if (name.all { it.isLowerCase() || it == '_' } && !name.contains("(")) {
                 SymbolKind.PROPERTY
+            }
+            // Heuristic: single PascalCase word (no lowercase start, no underscores, no parens)
+            // is likely a type reference or class name, not a function
+            // (e.g. "Symbol", "String", "List", "sha256")
+            else if (name.first().isUpperCase() &&
+                     !name.contains("_") &&
+                     !name.contains("(") &&
+                     name.drop(1).all { it.isLowerCase() || it.isDigit() }) {
+                SymbolKind.CLASS
+            }
+            // Heuristic: names ending in path/directory/file/dir are properties, not functions
+            // (e.g. "primaryLayerKotlinDirectoryPath", "mirrorLayerKotlinDirectoryPath")
+            else if (name.endsWith("Path") || name.endsWith("Dir") ||
+                     name.endsWith("Directory") || name.endsWith("File") ||
+                     name.endsWith("Location") || name.endsWith("Url")) {
+                SymbolKind.PROPERTY
             } else {
                 SymbolKind.FUNCTION
             }

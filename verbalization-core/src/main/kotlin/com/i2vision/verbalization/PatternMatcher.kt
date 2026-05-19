@@ -28,9 +28,17 @@ class PatternMatcher {
      * Falls back to a basic kind-based description if no pattern matches.
      */
     fun matchAndDescribe(symbol: Symbol): String? {
+        // Extract only the declaration line from symbol content.
+        // ScannerService.extractBodyLines() grabs 60 lines forward, so symbols
+        // in the same file share overlapping content. Matching against the full
+        // content causes false positives (e.g. a property matching a later
+        // function declaration in the same file).
+        val declarationLine = symbol.content.lineSequence().firstOrNull()?.trim() ?: ""
+
         for (pattern in patterns.sortedByDescending { it.priority }) {
             val regex = Regex(pattern.codePattern)
-            val match = regex.find(symbol.content) ?: regex.find(symbol.name)
+            // Match against declaration line first, then fall back to symbol name
+            val match = regex.find(declarationLine) ?: regex.find(symbol.name)
 
             if (match != null) {
                 return applyTemplate(pattern.description, match.groupValues.drop(1))
@@ -138,6 +146,12 @@ class PatternMatcher {
             VerbalizationPattern(
                 codePattern = "@Repository",
                 description = "Data access component",
+                confidence = 0.9,
+                priority = 15
+            ),
+            VerbalizationPattern(
+                codePattern = "@Component",
+                description = "Spring-managed component",
                 confidence = 0.9,
                 priority = 15
             ),

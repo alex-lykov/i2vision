@@ -524,12 +524,12 @@ private fun com.i2vision.index.CodeSymbol.toSymbol(): Symbol {
     val kind = when (kind) {
         "class" -> SymbolKind.CLASS
         "interface" -> SymbolKind.INTERFACE
-        "function" -> SymbolKind.FUNCTION
-        "property" -> SymbolKind.PROPERTY
+        "function", "fun" -> SymbolKind.FUNCTION
+        "property", "val", "var" -> SymbolKind.PROPERTY
         "object" -> SymbolKind.OBJECT
         "enum" -> SymbolKind.ENUM
         "annotation" -> SymbolKind.ANNOTATION
-        "type_alias" -> SymbolKind.TYPE_ALIAS
+        "type_alias", "typealias" -> SymbolKind.TYPE_ALIAS
         else -> SymbolKind.UNKNOWN
     }
     return Symbol(

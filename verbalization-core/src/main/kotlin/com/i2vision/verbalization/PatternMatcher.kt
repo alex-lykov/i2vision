@@ -80,6 +80,63 @@ class PatternMatcher {
      * to words and prepending an appropriate action verb.
      */
     private fun generateFunctionDescription(name: String): String {
+        // Special-case common single-word function names that would otherwise
+        // produce tautological "Executes X" descriptions
+        val specialCase = when (name) {
+            "equals" -> "Compares equality with another object"
+            "hashCode" -> "Generates hash code for hashing"
+            "toString" -> "Converts to string representation"
+            "add" -> "Adds an element to the collection"
+            "remove" -> "Removes an element from the collection"
+            "put" -> "Stores a value associated with a key"
+            "get" -> "Retrieves a value"
+            "set" -> "Assigns a value"
+            "clear" -> "Removes all elements"
+            "size" -> "Returns the number of elements"
+            "isEmpty" -> "Checks whether the collection is empty"
+            "contains" -> "Checks whether the collection contains an element"
+            "containsKey" -> "Checks whether the map contains a key"
+            "containsValue" -> "Checks whether the map contains a value"
+            "invalidate" -> "Marks cached value as invalid for recomputation"
+            "register" -> "Registers a listener or handler"
+            "unregister" -> "Unregisters a listener or handler"
+            "notify" -> "Notifies waiting threads"
+            "notifyAll" -> "Notifies all waiting threads"
+            "wait" -> "Pauses execution until notified"
+            "clone" -> "Creates a copy of this object"
+            "compareTo" -> "Compares with another object for ordering"
+            "close" -> "Releases resources and closes"
+            "flush" -> "Flushes buffered data to destination"
+            "read" -> "Reads data from source"
+            "write" -> "Writes data to destination"
+            "open" -> "Opens a resource for access"
+            "run" -> "Executes the runnable task"
+            "start" -> "Starts execution"
+            "stop" -> "Stops execution"
+            "pause" -> "Pauses execution"
+            "resume" -> "Resumes execution"
+            "reset" -> "Resets state to initial values"
+            "init" -> "Initializes state and resources"
+            "initialize" -> "Initializes state and resources"
+            "destroy" -> "Releases all resources and cleans up"
+            "dispose" -> "Releases resources and disposes"
+            "apply" -> "Applies configuration or transformation"
+            "also" -> "Executes side effect and returns object"
+            "let" -> "Transforms object with lambda and returns result"
+            "with" -> "Executes lambda with object as receiver"
+            "takeIf" -> "Returns object if predicate matches, null otherwise"
+            "takeUnless" -> "Returns object unless predicate matches"
+            "repeat" -> "Repeats action specified number of times"
+            "require" -> "Validates precondition and throws on failure"
+            "check" -> "Validates state and throws on failure"
+            "error" -> "Throws an error with message"
+            "assert" -> "Asserts condition is true"
+            "lazy" -> "Returns lazily initialized value"
+            "synchronized" -> "Executes block with mutual exclusion lock"
+            else -> null
+        }
+        if (specialCase != null) return specialCase
+
         val words = name.camelCaseToWords()
         if (words.isEmpty()) return "Function '$name'"
 

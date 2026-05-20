@@ -7,6 +7,7 @@
 
 package com.i2vision.instant.context
 
+import com.i2vision.storage.I2VisionPaths
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import kotlin.test.Test
@@ -106,7 +107,9 @@ class ContextProviderTest {
     @Test
     fun `should detect discovery cache when it exists`() = withTempDir { tempDir ->
         // Given: ContextProvider with cache structure
-        val cacheDir = File(tempDir, ".semantic-cache/i2vision-instant")
+        // FIX: Use I2VisionPaths to get correct cache location (user home, not project root)
+        val projectCacheDir = I2VisionPaths.getProjectCacheDir(tempDir.absolutePath)
+        val cacheDir = File(projectCacheDir, "i2vision-instant")
         cacheDir.mkdirs()
         File(cacheDir, "flow").mkdirs()
         File(cacheDir, "logic").mkdirs()
@@ -121,7 +124,7 @@ class ContextProviderTest {
     }
 
     @Test
-    fun `should return error for enhanced context without cache`() = withTempDir { tempDir ->
+    fun `should return basic context when cache is missing`() = withTempDir { tempDir ->
         // Given: ContextProvider without cache
         val testFile = File(tempDir, "src/main/kotlin/Test.kt")
         testFile.parentFile?.mkdirs()
@@ -134,16 +137,19 @@ class ContextProviderTest {
             contextProvider.getEnhancedContext("src/main/kotlin/Test.kt", "debug")
         }
 
-        // Then: Should return error context
+        // Then: Should return basic context (not error) with empty enhanced data
         assertNotNull(context)
-        assertTrue(!context.success, "Should return error context")
-        assertTrue(context.error?.contains("No discovery cache") == true, "Should mention missing cache")
+        assertTrue(context.success, "Should return successful context")
+        assertTrue(context.flows.isEmpty(), "Flows should be empty without cache")
+        assertTrue(context.businessRules.isEmpty(), "Business rules should be empty without cache")
     }
 
     @Test
     fun `should load flows from cache when available`() = withTempDir { tempDir ->
         // Given: ContextProvider with flow cache
-        val cacheDir = File(tempDir, ".semantic-cache/i2vision-instant/flow")
+        // FIX: Use I2VisionPaths to get correct cache location (user home, not project root)
+        val projectCacheDir = I2VisionPaths.getProjectCacheDir(tempDir.absolutePath)
+        val cacheDir = File(projectCacheDir, "i2vision-instant/flow")
         cacheDir.mkdirs()
         val flowsFile = File(cacheDir, "sequences.yaml")
         flowsFile.writeText(

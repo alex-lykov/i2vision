@@ -1,6 +1,7 @@
 # i²-Vision (i2Vision)
 
-**i² = Insight × Intelligence** | *vision = high-quality semantic context for both human developers and LLMs*
+**i² = Insight × Intelligence**
+**vision = high-quality semantic context for both human developers and LLMs**
 
 ![Kotlin](https://img.shields.io/badge/Kotlin-2.1.0-blueviolet) 
 ![Platform](https://img.shields.io/badge/Platform-JVM%20%7C%20Multi--Module-brightgreen) 
@@ -9,7 +10,11 @@
 
 ---
 
-> ⚠️ **Development Status:** i²-Vision is in active development. The discovery engine is production-tested on 18–38 clusters. The verbalization engine achieves 99.9% quality rate across 7,700+ symbols. LLM-enhanced features are on the roadmap. Use for learning, testing, and evaluation—production use at your own discretion.
+> ⚠️ **Development Status:** i²-Vision is in active development. 
+> The discovery engine is production-tested on 18 clusters. 
+> Development engine and LLM enhancements are on the roadmap.
+> The verbalization engine achieves 99.9% quality rate across 7,700+ symbols. LLM-enhanced features are on the roadmap. 
+> Use for learning, testing, and evaluation—production use at your own discretion.
 
 ---
 
@@ -244,20 +249,93 @@ Phases Passed: 6/8
 
 ### Get Instant Context
 
+Use the CLI context command to get instant context for files and directories:
+
 ```bash
-# Basic context for a file (symbols + complexity)
-./gradlew :i2vision-cli:run --args="context file --path=AuthService.kt --project=/path/to/project"
+# Get context for a specific file (basic context - symbols + complexity)
+./gradlew :i2vision-cli:run --args="context file --path=i2vision-instant/src/main/kotlin/com/i2vision/instant/context/ContextProvider.kt --task=discovery --project=."
 
-# Context with task-specific analysis
-./gradlew :i2vision-cli:run --args="context file --path=AuthService.kt --task=debug --project=/path/to/project"
+# Get context with task-specific analysis
+./gradlew :i2vision-cli:run --args="context file --path=<file-path> --task=refactor --project=<project-root>"
 
-# Enhanced context (requires discovery cache)
-./gradlew :i2vision-cli:run --args="context enhanced --path=AuthService.kt --project=/path/to/project"
+# Get context for multiple files
+./gradlew :i2vision-cli:run --args="context files <file1> <file2> <file3> --project=<project-root>"
+
+# Get enhanced context (requires discovery cache - flows, rules, components)
+./gradlew :i2vision-cli:run --args="context enhanced --path=i2vision-instant/src/main/kotlin/com/i2vision/instant/context/ContextProvider.kt --project=."
+
+# Enhanced context for a different file
+./gradlew :i2vision-cli:run --args="context enhanced --path=<file-path> --project=<project-root>"
+
+# Cache management
+./gradlew :i2vision-cli:run --args="context cache stats --project=."
+./gradlew :i2vision-cli:run --args="context cache clean --project=."
+./gradlew :i2vision-cli:run --args="context cache invalidate --pattern=*.kt --project=."
 ```
+
+**Real example** - ContextProvider.kt (heart of instant context feature):
+
+```
+=== Enhanced Context ===
+File: i2vision-instant/src/main/kotlin/com/i2vision/instant/context/ContextProvider.kt
+[ENHANCED] Discovery cache active
+
+Symbols: 153
+  - class ContextProvider (line 31)
+  - val projectRoot (line 32)
+  - val cacheStore (line 34)
+  - val indexProvider (line 38)
+  - val semanticCacheRoot (line 41)
+  - val artifactLoader (line 42)
+  - val fileAnalyzer (line 43)
+  - val cacheManager (line 44)
+  - fun getContext (line 53)
+  - val absolutePath (line 56)
+  - val indexSymbols (line 62)
+  - val symbols (line 63)
+  - val relatedFiles (line 66)
+  - val module (line 69)
+  - val artifacts (line 70)
+  - val taskContext (line 77)
+  ... and 133 more
+
+Complexity Score: 5
+Cyclomatic Complexity: 5
+Cognitive Complexity: 6
+Maintainability Index: 16
+
+Strategy suggestions:
+  - Find missing context: High
+  - Identify structure: Medium
+  - Generate documentation: Low context confidence
+  - Kotlin code analysis: medium
+
+Cache Statistics:
+  Total entries: 1,775
+  Valid entries: 1,775
+  Expired entries: 0
+```
+
+**What you get:** Instant context including symbols, related files, task-specific suggestions, artifacts, complexity
+metrics, and strategy suggestions.
+
+**Context types:**
+
+- **Basic context** (`context file` / `context files`): Works immediately - symbols, complexity, suggestions
+- **Enhanced context** (`context enhanced`): Requires discovery - adds flows, business rules, components
 
 **Available tasks:** `debug`, `refactor`, `add feature`, `fix bug`, `optimize`, `discovery` (default)
 
+**Cache subcommands:**
+- `stats` - Show cache statistics (total entries, expired entries, valid entries)
+- `clean` - Remove expired cache entries
+- `invalidate --pattern=<glob>` - Invalidate cache entries matching pattern
+
+---
+
 ### Test with MCP (Beta)
+
+The MCP integration is currently in beta. Build the MCP server first:
 
 ```bash
 ./gradlew :i2vision-mcp:shadowJar
@@ -332,7 +410,10 @@ i2vision analyzes its own codebase during development:
 | Layers with Valid Output | 5/5 |
 | Total Duration | ~3 minutes |
 
-This is a real-world validation that the discovery engine and verbalization system work on complex, multi-module Kotlin projects.
+**Latest run:** 2026-05-20 | **Log:** `.vision-ai/logs/discovery-log-*.txt`
+
+*This is a real-world validation that the discovery engine and verbalization system work on complex, multi-module Kotlin projects.*
+
 
 ---
 
@@ -424,14 +505,16 @@ This is a real-world validation that the discovery engine and verbalization syst
 | [VSLFC Layers](#) | Five-layer contract system |
 | [Contract System](#) | Bidirectional validation |
 | [Architecture Detection](#) | Multi-dimensional signatures |
+| [Project Structure](docs/concepts/project-structure.md) | VSLFC project layout                              |
 | [Verbalization Engine](verbalization-core/README.md) | Multi-layer verbalization with CNS strategies |
 | [Self-Test Framework](discovery-validation/README.md) | 8-phase quality validation |
 | [MCP Integration](#) | Claude Desktop, Cursor setup |
 | [Instant Context](#) | Task-aware context optimization |
 | [CLI Reference](#) | Command-line interface |
 | [API Reference](#) | HTTP endpoints |
+| [Diagrams](docs/diagrams/) | Sequence diagrams and architecture visualizations |
 
-→ [Full Documentation](#)
+[Full Documentation →](docs/README.md)
 
 ---
 
@@ -465,13 +548,14 @@ i²-Vision is licensed under the **MIT License**.
 
 ## 📦 Built With
 
-| Technology | Purpose |
-| :--- | :--- |
-| Kotlin | Primary language |
-| Kotlin Coroutines | Async & parallel processing |
-| SnakeYAML | YAML parsing |
-| MCP Protocol | LLM integration |
-| SLF4J | Logging |
+| Technology                                                        | Purpose                           |
+|-------------------------------------------------------------------|-----------------------------------|
+| [Kotlin](https://kotlinlang.org/)                                 | Primary language                  |
+| [Kotlin Coroutines](https://github.com/Kotlin/kotlinx.coroutines) | Async & parallel processing       |
+| [Koog Agents](https://github.com/koog/koog-agents)                | AI agent framework                |
+| [conf-agent-core](../conf-agent-core/)                            | YAML-configurable agent framework |
+| [SnakeYAML](https://bitbucket.org/snakeyaml/snakeyaml)            | YAML parsing                      |
+| [MCP Protocol](https://modelcontextprotocol.io/)                  | LLM integration                   |
 
 ---
 

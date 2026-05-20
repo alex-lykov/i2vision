@@ -14,9 +14,9 @@ import com.i2vision.instant.artifact.ArtifactDiscoveryConfig
 import com.i2vision.instant.artifact.GenericArtifactLoader
 import com.i2vision.instant.cache.CacheManager
 import com.i2vision.instant.strategy.StrategyLibrary
+import com.i2vision.storage.I2VisionPaths
 import com.i2vision.storage.api.CacheStore
 import com.i2vision.storage.impl.FileCacheStore
-import com.i2vision.storage.model.StorageConstants
 import org.slf4j.LoggerFactory
 import java.io.File
 import com.i2vision.index.SymbolInfo as IndexSymbolInfo
@@ -36,7 +36,9 @@ class ContextProvider(
 
     private val log = LoggerFactory.getLogger(ContextProvider::class.java)
     private val indexProvider: IndexProvider by lazy { CustomIndex(projectRoot) }
-    private val semanticCacheRoot = File(projectRoot, StorageConstants.SEMANTIC_CACHE_DIR)
+    
+    // FIX: Use I2VisionPaths to get the correct cache location (user home, not project root)
+    private val semanticCacheRoot = I2VisionPaths.getProjectCacheDir(projectRoot)
     private val artifactLoader = GenericArtifactLoader(semanticCacheRoot.absolutePath, artifactConfig)
     private val fileAnalyzer = FileAnalyzer(projectRoot)
     private val cacheManager = CacheManager()
@@ -239,89 +241,49 @@ class ContextProvider(
                 }
             }
         }
-        val artifactBoost = if (hasMeaningfulArtifacts) 0.2 else 0.0
+        val artifactBoost = if (hasMeaningfulArtifacts) 0.3 else 0.0
 
-        // File-specific boost
-        val fileBoost = when {
-            filePath.contains("test") -> 0.05
-            filePath.endsWith(".kt") -> 0.1
-            filePath.endsWith(".md") -> 0.05
-            else -> 0.0
-        }
-
-        return (layerConfidence + artifactBoost + fileBoost).coerceIn(0.0, 1.0)
+        return (layerConfidence + artifactBoost).coerceIn(0.0, 1.0)
     }
 
     /**
-     * Detect file type from extension
+     * Detect file type from path
      */
     private fun detectFileType(filePath: String): String {
-        return when (val extension = File(filePath).extension) {
-            "kt", "kts" -> "kotlin"
-            "yaml", "yml" -> "yaml"
-            "gradle" -> "gradle"
-            "md" -> "markdown"
-            "json" -> "json"
-            else -> extension.ifEmpty { "unknown" }
+        return when {
+            filePath.endsWith(".kt") -> "kotlin"
+            filePath.endsWith(".java") -> "java"
+            filePath.endsWith(".py") -> "python"
+            filePath.endsWith(".js") -> "javascript"
+            filePath.endsWith(".ts") -> "typescript"
+            filePath.endsWith(".yaml") || filePath.endsWith(".yml") -> "yaml"
+            filePath.endsWith(".json") -> "json"
+            filePath.endsWith(".xml") -> "xml"
+            filePath.endsWith(".md") -> "markdown"
+            else -> "unknown"
         }
     }
 
     /**
-     * Invalidate cache for specific file or pattern
-     */
-    fun invalidateCache(pattern: String) {
-        cacheManager.invalidate(pattern)
-    }
-
-    /**
-     * Clear expired cache entries
-     */
-    fun cleanCache() {
-        cacheManager.cleanExpired()
-    }
-
-    /**
-     * Get cache statistics
-     */
-    fun getCacheStats(): CacheManager.CacheStats {
-        return cacheManager.getStats()
-    }
-
-    /**
-     * Check if discovery cache exists for a module.
+     * Get enhanced context with discovery cache data.
      * 
-     * @param modulePath Module path (e.g., "i2vision-instant")
-     * @return true if discovery cache exists with flow and logic artifacts
-     */
-    fun hasDiscoveryCache(modulePath: String): Boolean {
-        val cacheDir = File(projectRoot, StorageConstants.SEMANTIC_CACHE_DIR)
-        val moduleCache = File(cacheDir, modulePath)
-
-        return moduleCache.exists() &&
-                File(moduleCache, "flow").exists() &&
-                File(moduleCache, "logic").exists()
-    }
-
-    /**
-     * Get enhanced context with flows, business rules, and components from discovery cache.
+     * This requires that discovery has been run previously to populate the semantic cache.
      * 
-     * @param filePath File path (relative to project root)
-     * @param task Task type for context filtering
-     * @return Enhanced context with flows, rules, and components
+     * @param filePath Path to the file (relative to project root)
+     * @param task The task being performed
+     * @return InstantContext with enhanced information from discovery cache
      */
     suspend fun getEnhancedContext(filePath: String, task: String): InstantContext {
-        val modulePath = extractModulePath(filePath)
+        log.info("[CONTEXT] Getting enhanced context for file: {}, task: {}", filePath, task)
 
-        // Validate cache exists
-        if (!hasDiscoveryCache(modulePath)) {
-            return InstantContext.error("No discovery cache found for module: $modulePath")
-        }
-
-        // Get basic context first
+        // First get basic context
         val basic = getContext(filePath, task)
-        if (!basic.success) return basic
 
-        // Load enhanced data from cache
+        // Extract module path for cache lookup
+        val modulePath = extractModulePath(filePath)
+        log.debug("[ENHANCED] Module path: {} for file: {}", modulePath, filePath)
+
+        // Load enhanced data from discovery cache
         val flows = loadFlows(modulePath, filePath)
         val rules = loadBusinessRules(modulePath, filePath)
         val component = loadComponent(modulePath, filePath)
@@ -363,7 +325,7 @@ class ContextProvider(
      */
     @Suppress("UNCHECKED_CAST")
     private fun loadFlows(modulePath: String, filePath: String): List<FlowInfo> {
-        val flowsFile = File(projectRoot, "${StorageConstants.SEMANTIC_CACHE_DIR}/$modulePath/flow/sequences.yaml")
+        val flowsFile = File(semanticCacheRoot, "$modulePath/flow/sequences.yaml")
         if (!flowsFile.exists()) return emptyList()
 
         try {
@@ -400,7 +362,7 @@ class ContextProvider(
     @Suppress("UNCHECKED_CAST")
     private fun loadBusinessRules(modulePath: String, filePath: String): List<BusinessRuleInfo> {
         val rulesFile =
-            File(projectRoot, "${StorageConstants.SEMANTIC_CACHE_DIR}/$modulePath/logic/business-rules.yaml")
+            File(semanticCacheRoot, "$modulePath/logic/business-rules.yaml")
         if (!rulesFile.exists()) return emptyList()
 
         try {
@@ -430,7 +392,7 @@ class ContextProvider(
     @Suppress("UNCHECKED_CAST")
     private fun loadComponent(modulePath: String, filePath: String): ComponentInfo? {
         val componentsFile =
-            File(projectRoot, "${StorageConstants.SEMANTIC_CACHE_DIR}/$modulePath/structure/components.yaml")
+            File(semanticCacheRoot, "$modulePath/structure/components.yaml")
         if (!componentsFile.exists()) return null
 
         try {
@@ -462,7 +424,7 @@ class ContextProvider(
         if (componentName == null) return emptyList()
 
         val depsFile =
-            File(projectRoot, "${StorageConstants.SEMANTIC_CACHE_DIR}/$modulePath/structure/dependencies.yaml")
+            File(semanticCacheRoot, "$modulePath/structure/dependencies.yaml")
         if (!depsFile.exists()) return emptyList()
 
         try {
@@ -499,6 +461,63 @@ class ContextProvider(
             "optimize" -> TaskContext.optimize(symbols)
             else -> TaskContext.general(symbols)
         }
+    }
+
+    /**
+     * Check if discovery cache exists for a module.
+     */
+    fun hasDiscoveryCache(modulePath: String): Boolean {
+        val cacheDir = File(semanticCacheRoot, modulePath)
+        return cacheDir.exists() && cacheDir.isDirectory
+    }
+
+    /**
+     * Get cache statistics.
+     */
+    fun getCacheStats(): CacheStats {
+        val cacheDir = File(semanticCacheRoot.absolutePath)
+        val totalEntries = countYamlFiles(cacheDir)
+        val expiredEntries = 0 // TODO: Implement expiration logic
+        val validEntries = totalEntries - expiredEntries
+
+        return CacheStats(totalEntries, expiredEntries, validEntries)
+    }
+
+    /**
+     * Count YAML files in directory recursively.
+     */
+    private fun countYamlFiles(dir: File): Int {
+        if (!dir.exists()) return 0
+        return dir.walk().filter { it.isFile && (it.name.endsWith(".yaml") || it.name.endsWith(".yml")) }.count()
+    }
+
+    /**
+     * Clean cache by removing all files.
+     */
+    fun cleanCache() {
+        val cacheDir = File(semanticCacheRoot.absolutePath)
+        if (cacheDir.exists()) {
+            cacheDir.deleteRecursively()
+            log.info("[CONTEXT] Cache cleaned: {}", cacheDir.absolutePath)
+        }
+    }
+
+    /**
+     * Invalidate cache entries matching a pattern.
+     */
+    fun invalidateCache(pattern: String) {
+        val cacheDir = File(semanticCacheRoot.absolutePath)
+        if (!cacheDir.exists()) return
+
+        val regex = pattern.toRegex()
+        var count = 0
+        cacheDir.walk().filter { it.isFile }.forEach { file ->
+            if (file.path.contains(regex)) {
+                file.delete()
+                count++
+            }
+        }
+        log.info("[CONTEXT] Invalidated {} cache entries matching: {}", count, pattern)
     }
 }
 
@@ -602,51 +621,70 @@ data class SymbolInfo(
  */
 data class TaskContext(
     val task: String,
-    val relevantSymbols: List<SymbolInfo>,
-    val suggestions: List<String>,
-    val patterns: List<String>
+    val suggestions: List<String>
 ) {
     companion object {
         fun debug(symbols: List<SymbolInfo>) = TaskContext(
-            task = "debug",
-            relevantSymbols = symbols.filter { it.kind in listOf("fun", "class") },
-            suggestions = listOf("Check function signatures", "Review error handling", "Inspect variable states"),
-            patterns = listOf("assert", "if error", "try-catch", "log.error")
+            "debug",
+            listOf(
+                "Check symbol definitions and usages",
+                "Review call hierarchy",
+                "Examine related files for context"
+            )
         )
 
         fun refactor(symbols: List<SymbolInfo>) = TaskContext(
-            task = "refactor",
-            relevantSymbols = symbols.filter { it.kind in listOf("fun", "class", "val") },
-            suggestions = listOf("Extract common logic", "Simplify complex functions", "Improve naming"),
-            patterns = listOf("TODO", "FIXME", "HACK", "long function")
+            "refactor",
+            listOf(
+                "Identify code smells and complexity hotspots",
+                "Check for duplicate code patterns",
+                "Review component boundaries"
+            )
         )
 
         fun addFeature(symbols: List<SymbolInfo>) = TaskContext(
-            task = "add feature",
-            relevantSymbols = symbols.filter { it.kind in listOf("class", "interface", "fun") },
-            suggestions = listOf("Identify extension points", "Review existing patterns", "Check for similar features"),
-            patterns = listOf("interface", "abstract", "override", "implement")
+            "add feature",
+            listOf(
+                "Find similar existing features for patterns",
+                "Check component cohesion and dependencies",
+                "Review business rules that may apply"
+            )
         )
 
         fun fixBug(symbols: List<SymbolInfo>) = TaskContext(
-            task = "fix bug",
-            relevantSymbols = symbols.filter { it.kind in listOf("fun", "val") },
-            suggestions = listOf("Review error conditions", "Check edge cases", "Validate inputs"),
-            patterns = listOf("error", "exception", "null", "undefined")
+            "fix bug",
+            listOf(
+                "Trace the bug through call hierarchy",
+                "Check business rules for expected behavior",
+                "Review related components for side effects"
+            )
         )
 
         fun optimize(symbols: List<SymbolInfo>) = TaskContext(
-            task = "optimize",
-            relevantSymbols = symbols.filter { it.kind in listOf("fun") },
-            suggestions = listOf("Identify bottlenecks", "Reduce complexity", "Optimize data structures"),
-            patterns = listOf("for loop", "while", "nested", "recursive")
+            "optimize",
+            listOf(
+                "Identify performance bottlenecks",
+                "Check for unnecessary dependencies",
+                "Review flow efficiency"
+            )
         )
 
         fun general(symbols: List<SymbolInfo>) = TaskContext(
-            task = "general",
-            relevantSymbols = symbols,
-            suggestions = listOf("Review code structure", "Check for best practices", "Ensure consistency"),
-            patterns = emptyList()
+            "general",
+            listOf(
+                "Review symbols and their relationships",
+                "Check component structure",
+                "Examine business rules and flows"
+            )
         )
     }
 }
+
+/**
+ * Cache statistics.
+ */
+data class CacheStats(
+    val totalEntries: Int,
+    val expiredEntries: Int,
+    val validEntries: Int
+)

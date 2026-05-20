@@ -133,7 +133,8 @@ class DiscoveryPipelineImpl(
         clusterId: String?,
         contracts: List<ContractHint>
     ): PipelineResult {
-        // Call internal method with disabled verbalization for depth-based discovery
+        // Call internal method with default verbalization config (disabled) for depth-based discovery
+        // Verbalization can be enabled via intent-based discovery (see discover(intent, ...) below)
         return discover(depth, clusterId, contracts, com.i2vision.intent.VerbalizationConfig.DISABLED)
     }
 

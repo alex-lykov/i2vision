@@ -81,7 +81,8 @@ data class SymbolInfo(
     val kind: String,           // class | fun | val | interface | object | enum
     val file: File,
     val line: Int,
-    val language: String
+    val language: String,
+    val content: String = ""    // Symbol declaration line / body content
 )
 
 data class CallHierarchy(

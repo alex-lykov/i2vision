@@ -77,8 +77,9 @@ class DocContractYamlParser(
      * Parse a contract file for a specific VSLFC layer.
      * Handles both old format (single contract with 'contract' field) and new format (contracts array).
      * Results are cached to avoid concurrent file access on Windows.
+     * Returns null if the contracts array is empty.
      */
-    fun parse(contractFile: File): DocLayerContract {
+    fun parse(contractFile: File): DocLayerContract? {
         val cacheKey = contractFile.absolutePath
 
         // Return cached result if available
@@ -108,6 +109,10 @@ class DocContractYamlParser(
                 // Pass file-level documentation as fallback for individual contracts
                 val fileLevelDocData = (data["documentation"] as? Map<String, Any>) ?: emptyMap<String, Any>()
                 parseContractFromMap(contractData, layer, contractFile, fileLevelDocData)
+            } else if (contractsData != null && contractsData.isEmpty()) {
+                // Edge case: contracts array exists but is empty - skip this file
+                log.warn("Contract file ${contractFile.name} has empty contracts array, skipping")
+                return null
             } else {
                 // Old format: single contract per file with 'contract' field
                 parseContract(data, contractFile)

@@ -9,7 +9,6 @@ package com.i2vision.verbalization
 
 import com.i2vision.vslfc.Symbol
 import com.i2vision.vslfc.VerbalizationPattern
-import java.security.MessageDigest
 
 /**
  * Matches code patterns and generates descriptions.
@@ -26,17 +25,223 @@ class PatternMatcher {
 
     /**
      * Match a symbol against registered patterns and generate description.
+     * Falls back to a basic kind-based description if no pattern matches.
      */
     fun matchAndDescribe(symbol: Symbol): String? {
+        // Extract only the declaration line from symbol content.
+        // ScannerService.extractBodyLines() grabs 60 lines forward, so symbols
+        // in the same file share overlapping content. Matching against the full
+        // content causes false positives (e.g. a property matching a later
+        // function declaration in the same file).
+        val declarationLine = symbol.content.lineSequence().firstOrNull()?.trim() ?: ""
+
         for (pattern in patterns.sortedByDescending { it.priority }) {
             val regex = Regex(pattern.codePattern)
-            val match = regex.find(symbol.content) ?: regex.find(symbol.name)
+            // Match against declaration line first, then fall back to symbol name
+            val match = regex.find(declarationLine) ?: regex.find(symbol.name)
 
             if (match != null) {
                 return applyTemplate(pattern.description, match.groupValues.drop(1))
             }
         }
-        return null
+        // Fallback: generate a basic description from symbol kind and name
+        return generateFallbackDescription(symbol)
+    }
+
+    /**
+     * Generate an enhanced fallback description when no pattern matches.
+     * Converts camelCase/PascalCase names into readable sentences with
+     * appropriate verbs to avoid tautological "Function 'X'" outputs.
+     */
+    private fun generateFallbackDescription(symbol: Symbol): String {
+        return when (symbol.kind) {
+            com.i2vision.vslfc.SymbolKind.CLASS -> {
+                val words = symbol.name.camelCaseToWords()
+                if (words.size > 1 && words.last().lowercase() in setOf("class", "object", "enum", "interface")) {
+                    "${words.joinToString(" ")} for ${symbol.name}"
+                } else {
+                    "Class representing ${words.joinToString(" ")}"
+                }
+            }
+            com.i2vision.vslfc.SymbolKind.INTERFACE -> "Interface defining ${symbol.name.camelCaseToWords().joinToString(" ")}"
+            com.i2vision.vslfc.SymbolKind.FUNCTION -> generateFunctionDescription(symbol.name)
+            com.i2vision.vslfc.SymbolKind.PROPERTY -> "Property holding ${symbol.name.camelCaseToWords().joinToString(" ")}"
+            com.i2vision.vslfc.SymbolKind.VARIABLE -> "Variable holding ${symbol.name.camelCaseToWords().joinToString(" ")}"
+            com.i2vision.vslfc.SymbolKind.ANNOTATION -> "Annotation '${symbol.name}'"
+            com.i2vision.vslfc.SymbolKind.ENUM -> "Enum '${symbol.name.camelCaseToWords().joinToString(" ")}'"
+            com.i2vision.vslfc.SymbolKind.OBJECT -> "Singleton object '${symbol.name.camelCaseToWords().joinToString(" ")}'"
+            com.i2vision.vslfc.SymbolKind.TYPE_ALIAS -> "Type alias '${symbol.name.camelCaseToWords().joinToString(" ")}'"
+            com.i2vision.vslfc.SymbolKind.UNKNOWN -> inferUnknownDescription(symbol.name)
+        }
+    }
+
+    /**
+     * Generate a function description from its name by converting camelCase
+     * to words and prepending an appropriate action verb.
+     */
+    private fun generateFunctionDescription(name: String): String {
+        // Special-case common single-word function names that would otherwise
+        // produce tautological "Executes X" descriptions
+        val specialCase = when (name) {
+            "equals" -> "Compares equality with another object"
+            "hashCode" -> "Generates hash code for hashing"
+            "toString" -> "Converts to string representation"
+            "add" -> "Adds an element to the collection"
+            "remove" -> "Removes an element from the collection"
+            "put" -> "Stores a value associated with a key"
+            "get" -> "Retrieves a value"
+            "set" -> "Assigns a value"
+            "clear" -> "Removes all elements"
+            "size" -> "Returns the number of elements"
+            "isEmpty" -> "Checks whether the collection is empty"
+            "contains" -> "Checks whether the collection contains an element"
+            "containsKey" -> "Checks whether the map contains a key"
+            "containsValue" -> "Checks whether the map contains a value"
+            "invalidate" -> "Marks cached value as invalid for recomputation"
+            "register" -> "Registers a listener or handler"
+            "unregister" -> "Unregisters a listener or handler"
+            "notify" -> "Notifies waiting threads"
+            "notifyAll" -> "Notifies all waiting threads"
+            "wait" -> "Pauses execution until notified"
+            "clone" -> "Creates a copy of this object"
+            "compareTo" -> "Compares with another object for ordering"
+            "close" -> "Releases resources and closes"
+            "flush" -> "Flushes buffered data to destination"
+            "read" -> "Reads data from source"
+            "write" -> "Writes data to destination"
+            "open" -> "Opens a resource for access"
+            "run" -> "Executes the runnable task"
+            "start" -> "Starts execution"
+            "stop" -> "Stops execution"
+            "pause" -> "Pauses execution"
+            "resume" -> "Resumes execution"
+            "reset" -> "Resets state to initial values"
+            "init" -> "Initializes state and resources"
+            "initialize" -> "Initializes state and resources"
+            "destroy" -> "Releases all resources and cleans up"
+            "dispose" -> "Releases resources and disposes"
+            "apply" -> "Applies configuration or transformation"
+            "also" -> "Executes side effect and returns object"
+            "let" -> "Transforms object with lambda and returns result"
+            "with" -> "Executes lambda with object as receiver"
+            "takeIf" -> "Returns object if predicate matches, null otherwise"
+            "takeUnless" -> "Returns object unless predicate matches"
+            "repeat" -> "Repeats action specified number of times"
+            "require" -> "Validates precondition and throws on failure"
+            "check" -> "Validates state and throws on failure"
+            "error" -> "Throws an error with message"
+            "assert" -> "Asserts condition is true"
+            "lazy" -> "Returns lazily initialized value"
+            "synchronized" -> "Executes block with mutual exclusion lock"
+            else -> null
+        }
+        if (specialCase != null) return specialCase
+
+        val words = name.camelCaseToWords()
+        if (words.isEmpty()) return "Function '$name'"
+
+        val firstWord = words.first().lowercase()
+        val remaining = words.drop(1).joinToString(" ")
+
+        // If the name already starts with an action verb, just capitalize it
+        val actionVerb = when (firstWord) {
+            "get" -> "Gets"
+            "set" -> "Sets"
+            "is", "has", "can", "should", "will" -> "Checks"
+            "create", "make", "build", "generate" -> "Creates"
+            "delete", "remove", "clear", "purge" -> "Removes"
+            "update", "modify", "edit", "change" -> "Updates"
+            "find", "search", "lookup", "locate" -> "Finds"
+            "parse", "deserialize", "extract" -> "Parses"
+            "validate", "check", "ensure", "verify" -> "Validates"
+            "convert", "transform", "map", "to" -> "Converts"
+            "load", "fetch", "read", "retrieve" -> "Loads"
+            "save", "store", "write", "persist" -> "Saves"
+            "send", "publish", "emit", "dispatch" -> "Sends"
+            "receive", "accept", "consume", "handle" -> "Receives"
+            "process", "execute", "run", "invoke", "call", "perform" -> "Executes"
+            "show", "display", "print", "render", "draw" -> "Displays"
+            "clean", "sanitize", "normalize", "format" -> "Cleans"
+            "fallback" -> "Falls back to"
+            "bridge" -> "Bridges"
+            "map" -> "Maps"
+            "main" -> "Main entry point"
+            "println" -> "Prints line"
+            else -> null
+        }
+
+        return when {
+            actionVerb == "Main entry point" -> actionVerb
+            actionVerb == "Prints line" -> "$actionVerb to output"
+            actionVerb != null && remaining.isNotEmpty() -> "$actionVerb $remaining"
+            actionVerb != null -> actionVerb
+            // No recognized verb — infer from naming convention
+            name.startsWith("is") && name.length > 2 && name[2].isUpperCase() ->
+                "Checks ${name.substring(2).camelCaseToWords().joinToString(" ")}"
+            name.startsWith("has") && name.length > 3 && name[3].isUpperCase() ->
+                "Checks ${name.substring(3).camelCaseToWords().joinToString(" ")}"
+            name.startsWith("to") && name.length > 2 && name[2].isUpperCase() ->
+                "Converts to ${name.substring(2).camelCaseToWords().joinToString(" ")}"
+            else -> "Executes ${words.joinToString(" ")}"
+        }
+    }
+
+    /**
+     * Infer a description for an UNKNOWN kind symbol based on its name.
+     */
+    private fun inferUnknownDescription(name: String): String {
+        return when {
+            name.first().isUpperCase() && name.all { it.isUpperCase() || it == '_' } ->
+                "Constant '$name'"
+            name.first().isUpperCase() ->
+                "Type '$name'"
+            name.contains("(") ->
+                "Function '$name'"
+            else ->
+                "Symbol '$name'"
+        }
+    }
+
+    /**
+     * Convert camelCase or PascalCase to space-separated lowercase words.
+     * Handles acronyms like "URL" or "HTTP" gracefully.
+     */
+    private fun String.camelCaseToWords(): List<String> {
+        if (isEmpty()) return emptyList()
+
+        val result = mutableListOf<String>()
+        val currentWord = StringBuilder()
+
+        for (i in indices) {
+            val ch = this[i]
+            val prev = if (i > 0) this[i - 1] else null
+            val next = if (i + 1 < length) this[i + 1] else null
+
+            // Start of new word: uppercase letter preceded by lowercase, or
+            // uppercase letter followed by lowercase (end of acronym)
+            val isNewWord = when {
+                i == 0 -> false
+                ch.isUpperCase() && prev?.isLowerCase() == true -> true
+                ch.isUpperCase() && next?.isLowerCase() == true && prev?.isUpperCase() == true -> true
+                ch == '_' || ch == '-' -> true
+                else -> false
+            }
+
+            if (isNewWord && currentWord.isNotEmpty()) {
+                result.add(currentWord.toString().lowercase())
+                currentWord.clear()
+            }
+
+            if (ch.isLetterOrDigit()) {
+                currentWord.append(ch)
+            }
+        }
+
+        if (currentWord.isNotEmpty()) {
+            result.add(currentWord.toString().lowercase())
+        }
+
+        return result
     }
 
     /**
@@ -122,6 +327,12 @@ class PatternMatcher {
                 confidence = 0.9,
                 priority = 15
             ),
+            VerbalizationPattern(
+                codePattern = "@Component",
+                description = "Spring-managed component",
+                confidence = 0.9,
+                priority = 15
+            ),
 
             // Validation patterns
             VerbalizationPattern(
@@ -153,60 +364,5 @@ class PatternMatcher {
         )
 
         patterns.addAll(builtInPatterns)
-    }
-}
-
-/**
- * Manages content hashes for incremental verbalization.
- * Tracks which symbols have changed since last verbalization.
- */
-class HashManager {
-
-    private val hashes = mutableMapOf<String, String>()
-
-    /**
-     * Compute hash for a symbol based on its content.
-     */
-    fun computeHash(symbol: Symbol): String {
-        val content = "${symbol.name}:${symbol.content}:${symbol.metadata}"
-        return MessageDigest.getInstance("SHA-256")
-            .digest(content.toByteArray())
-            .joinToString("") { "%02x".format(it) }
-    }
-
-    /**
-     * Check if a symbol has changed since last verbalization.
-     */
-    fun hasChanged(symbol: Symbol, currentHash: String): Boolean {
-        val key = getSymbolKey(symbol)
-        val previousHash = hashes[key]
-        return previousHash != currentHash
-    }
-
-    /**
-     * Update the hash for a symbol after verbalization.
-     */
-    fun updateHash(symbol: Symbol, hash: String) {
-        val key = getSymbolKey(symbol)
-        hashes[key] = hash
-    }
-
-    /**
-     * Load hashes from persistent storage.
-     */
-    fun loadHashes(storedHashes: Map<String, String>) {
-        hashes.putAll(storedHashes)
-    }
-
-    /**
-     * Get all current hashes for persistence.
-     */
-    fun getAllHashes(): Map<String, String> = hashes.toMap()
-
-    /**
-     * Generate unique key for a symbol.
-     */
-    private fun getSymbolKey(symbol: Symbol): String {
-        return "${symbol.filePath}:${symbol.lineNumber}:${symbol.name}"
     }
 }

@@ -71,7 +71,8 @@ class CustomIndex(
                 kind = sym.kind,
                 file = file,
                 line = sym.line,
-                language = file.extension
+                language = file.extension,
+                content = sym.content
             )
         }
     }
@@ -396,13 +397,16 @@ class CustomIndex(
 
     private fun SymbolLocation.toSymbolInfo(): SymbolInfo {
         val f = File(projectRoot, filePath)
+        val lines = runCatching { f.readLines() }.getOrElse { emptyList() }
+        val body = extractBodyLines(lines, line)
         return SymbolInfo(
             name = symbolName,
             qualifiedName = "${filePath.replace('/', '.')}::$symbolName",
             kind = kind,
             file = f,
             line = line,
-            language = f.extension
+            language = f.extension,
+            content = body.joinToString("\n")
         )
     }
 }

@@ -36,11 +36,17 @@ class ArtifactWriter(
 ) {
 
     private val log = LoggerFactory.getLogger(ArtifactWriter::class.java)
-    private val yaml = Yaml(DumperOptions().apply {
+    private val dumperOptions = DumperOptions().apply {
         defaultFlowStyle = DumperOptions.FlowStyle.BLOCK
         indicatorIndent = 2
         indent = 4
-    })
+    }
+
+    /**
+     * SnakeYAML Yaml instances are not thread-safe.
+     * Create a new instance for each serialization call.
+     */
+    private fun createYaml(): Yaml = Yaml(dumperOptions)
 
     // Cluster-level locks to prevent concurrent writes to the same cluster's artifacts
     private val clusterLocks = ConcurrentHashMap<String, Mutex>()
@@ -150,7 +156,7 @@ class ArtifactWriter(
         }
 
         try {
-            cacheStore.put(ref, yaml.dump(flowData).toByteArray())
+            cacheStore.put(ref, createYaml().dump(flowData).toByteArray())
             log.debug("[ARTIFACT_WRITER] Wrote flow: {}", ref.name)
         } catch (e: Exception) {
             log.error("[ARTIFACT_WRITER] Failed to write flow: {}", ref.name, e)
@@ -187,7 +193,7 @@ class ArtifactWriter(
         ruleData["line"] = rule.line
 
         try {
-            cacheStore.put(ref, yaml.dump(ruleData).toByteArray())
+            cacheStore.put(ref, createYaml().dump(ruleData).toByteArray())
             log.debug("[ARTIFACT_WRITER] Wrote business rule: {}", ref.name)
         } catch (e: Exception) {
             log.error("[ARTIFACT_WRITER] Failed to write business rule: {}", ref.name, e)
@@ -226,7 +232,7 @@ class ArtifactWriter(
         componentData["dependencies"] = component.dependencies
 
         try {
-            cacheStore.put(ref, yaml.dump(componentData).toByteArray())
+            cacheStore.put(ref, createYaml().dump(componentData).toByteArray())
             log.debug("[ARTIFACT_WRITER] Wrote component: {}", ref.name)
         } catch (e: Exception) {
             log.error("[ARTIFACT_WRITER] Failed to write component: {}", ref.name, e)
@@ -272,7 +278,7 @@ class ArtifactWriter(
             "componentIds" to components.map { it.id }
         )
 
-        cacheStore.put(ref, yaml.dump(summaryData).toByteArray())
+        cacheStore.put(ref, createYaml().dump(summaryData).toByteArray())
         log.debug("[ARTIFACT_WRITER] Wrote discovery summary: {}", ref.name)
 
         return ref
@@ -354,7 +360,7 @@ class ArtifactWriter(
                     }
                     
                     if (hasValidData) {
-                        val yamlString = yaml.dump(deepCleaned)
+                        val yamlString = createYaml().dump(deepCleaned)
                         cacheStore.put(ref, yamlString.toByteArray())
                         log.debug("[ARTIFACT_WRITER] Wrote vision requirement: {}", ref.name)
                         writtenArtifacts.add(ref)
@@ -404,7 +410,7 @@ class ArtifactWriter(
                 if (constraintData.isNotEmpty()) {
                     // Recursively clean nested structures to remove any nulls
                     val deepCleaned = cleanNestedData(constraintData)
-                    val yamlString = yaml.dump(deepCleaned)
+                    val yamlString = createYaml().dump(deepCleaned)
                     cacheStore.put(ref, yamlString.toByteArray())
                     log.debug("[ARTIFACT_WRITER] Wrote vision constraint: {}", ref.name)
                     writtenArtifacts.add(ref)

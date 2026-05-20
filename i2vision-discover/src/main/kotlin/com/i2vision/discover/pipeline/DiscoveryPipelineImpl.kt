@@ -229,7 +229,7 @@ class DiscoveryPipelineImpl(
                             },
                             filePath = symbol.file.absolutePath,
                             lineNumber = symbol.line,
-                            content = "", // TODO: Read actual content from file
+                            content = symbol.content,
                             metadata = mapOf(
                                 "qualifiedName" to symbol.qualifiedName,
                                 "language" to symbol.language
@@ -360,7 +360,10 @@ class DiscoveryPipelineImpl(
 
                     if (visionContractFile.exists()) {
                         val visionContract = docContractParser.parse(visionContractFile)
-                        log.info("[DISCOVERY] Loaded Vision contract: {}", visionContract.contractId)
+                        if (visionContract == null) {
+                            log.warn("[DISCOVERY] Vision contract file exists but is empty, skipping Vision layer population")
+                        } else {
+                            log.info("[DISCOVERY] Loaded Vision contract: {}", visionContract.contractId)
 
                         // Import from documentation
                         val importResult = docLayerImporter.importFromDocs(visionContract)
@@ -506,6 +509,7 @@ class DiscoveryPipelineImpl(
                             log.warn("[DISCOVERY] Vision import failed: {}", importResult.errors.joinToString(", "))
                             errors.addAll(importResult.errors)
                         }
+                    }
                     } else {
                         log.info(
                             "[DISCOVERY] Vision contract not found at {}, skipping Vision layer population",

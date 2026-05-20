@@ -36,6 +36,9 @@ dependencies {
     implementation("com.fasterxml.jackson.dataformat:jackson-dataformat-yaml:2.15.2")
     implementation("com.networknt:json-schema-validator:1.0.79")
 
+    // Kotlin PSI for AST-based modifier detection (no regex)
+    implementation("org.jetbrains.kotlin:kotlin-compiler-embeddable:1.9.21")
+
     // Internal dependencies (extracted modules)
     implementation(project(":vslfc-core"))
     implementation(project(":architecture-types"))

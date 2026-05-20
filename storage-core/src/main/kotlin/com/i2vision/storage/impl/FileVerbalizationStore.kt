@@ -20,6 +20,11 @@ import kotlinx.serialization.json.Json
 /**
  * File-based implementation of VerbalizationStore.
  * Uses the underlying CacheStore but provides verbalization-specific operations.
+ * 
+ * ## Storage Structure:
+ * - `verbalization/verbalizations.yaml`: Verbalization results
+ * - `verbalization/.meta/hashes.yaml`: Local hashes (symbol body only)
+ * - `verbalization/.meta/context-hashes.yaml`: Context hashes (dependencies included)
  */
 class FileVerbalizationStore(
     private val cacheStore: CacheStore
@@ -73,6 +78,30 @@ class FileVerbalizationStore(
             module = clusterId,
             layer = Layer.CODE,
             name = "verbalization/.meta/hashes.yaml"
+        )
+
+        val artifact = cacheStore.get(artifactRef)
+        return artifact?.let {
+            json.decodeFromString<Map<String, String>>(String(it.content))
+        }
+    }
+
+    override suspend fun putContextHashes(clusterId: String, hashes: Map<String, String>): PutResult {
+        val artifactRef = ArtifactRef(
+            module = clusterId,
+            layer = Layer.CODE,
+            name = "verbalization/.meta/context-hashes.yaml"
+        )
+
+        val content = json.encodeToString(hashes).toByteArray()
+        return cacheStore.put(artifactRef, content)
+    }
+
+    override suspend fun getContextHashes(clusterId: String): Map<String, String>? {
+        val artifactRef = ArtifactRef(
+            module = clusterId,
+            layer = Layer.CODE,
+            name = "verbalization/.meta/context-hashes.yaml"
         )
 
         val artifact = cacheStore.get(artifactRef)

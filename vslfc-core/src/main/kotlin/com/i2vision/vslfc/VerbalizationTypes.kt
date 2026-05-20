@@ -8,6 +8,7 @@
 package com.i2vision.vslfc
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.Transient
 
 /**
  * A code symbol that can be verbalized.
@@ -19,7 +20,9 @@ data class Symbol(
     val filePath: String,
     val lineNumber: Int,
     val content: String,
-    val metadata: Map<String, String> = emptyMap()
+    val metadata: Map<String, String> = emptyMap(),
+    @Transient
+    val verbalization: VerbalizationResult? = null
 )
 
 /**

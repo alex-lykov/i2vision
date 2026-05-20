@@ -21,8 +21,12 @@ import com.i2vision.intent.QualityFocus
 import com.i2vision.storage.I2VisionPaths
 import com.i2vision.storage.impl.FileCacheStore
 import com.i2vision.storage.impl.FileVerbalizationStore
+import com.i2vision.verbalization.ContextNeedinessCalculator
 import com.i2vision.verbalization.DefaultVerbalizationEngine
+import com.i2vision.vslfc.VerbalizationStore
+import com.i2vision.index.ScannerService
 import com.i2vision.vslfc.Symbol
+import com.i2vision.validation.VerbalizationSelfTestReport
 import com.i2vision.vslfc.SymbolKind
 import com.i2vision.vslfc.VerbalizationStrategy
 import kotlinx.coroutines.Dispatchers
@@ -77,6 +81,9 @@ fun main(args: Array<String>) {
 
     // Map --deep flag to discovery depth (DEEP for --deep, STANDARD otherwise)
     val discoveryDepth = if (deep) IntentDepth.DEEP else IntentDepth.STANDARD
+
+    // Self-test mode (runs verbalization automatically)
+    val selfTestMode = args.contains("--self-test")
 
     // Setup file logging
     val logDir = File(projectRoot, ".vision-ai/logs")
@@ -237,21 +244,43 @@ fun main(args: Array<String>) {
 
     // Step 6: Verbalization (if requested)
     var verbalizationCount = 0
+    var cnsCalculator: ContextNeedinessCalculator? = null
+    var selfTest: VerbalizationSelfTest? = null
+    var testReport: VerbalizationSelfTestReport? = null
+    val symbolsMap = mutableMapOf<String, MutableList<Symbol>>()
     
-    if (verbalize || reportVerbalization) {
+    if (verbalize || reportVerbalization || selfTestMode) {
         println("--- Verbalization Analysis ---")
         
         val verbalizationStore = FileVerbalizationStore(cacheStore)
         val verbalizationEngine = DefaultVerbalizationEngine(verbalizationStore)
         
         // Extract symbols from results for verbalization
-        val symbols = extractSymbolsFromResults(allResults)
+        val symbols = extractSymbolsFromResults(allResults, projectRoot)
         println("Extracted ${symbols.size} symbols for verbalization")
+        
+        // Build symbols map for self-test (keyed by cluster name for verbalization loop)
+        allResults.forEach { result ->
+            val clusterName = result.clusterId.substringBefore(":")
+            val clusterSymbols = extractSymbolsFromResults(listOf(result), projectRoot)
+            symbolsMap[clusterName] = clusterSymbols.toMutableList()
+        }
+        
+        // Initialize self-test if needed
+        if (selfTestMode) {
+            cnsCalculator = ContextNeedinessCalculator()
+            selfTest = VerbalizationSelfTest(
+                engine = verbalizationEngine,
+                cnsCalculator = cnsCalculator!!,
+                verbalizationStore = verbalizationStore,
+                cacheDir = cacheDir
+            )
+        }
         
         // Generate verbalizations for each cluster
         runBlocking {
             validClusters.forEach { cluster ->
-                val clusterSymbols = symbols.filter { it.filePath.contains(cluster.name.replace("-", "_")) || it.filePath.contains(cluster.name) }
+                val clusterSymbols = symbolsMap[cluster.name] ?: emptyList()
                 if (clusterSymbols.isNotEmpty()) {
                     print("Verbalizing ${cluster.name}... ")
                     val startTime = System.currentTimeMillis()
@@ -260,7 +289,8 @@ fun main(args: Array<String>) {
                         goal = IntentGoal.FULL_DISCOVERY,
                         focus = setOf(LayerFocus.VISION, LayerFocus.STRUCTURE, LayerFocus.LOGIC, LayerFocus.FLOW, LayerFocus.CODE),
                         depth = discoveryDepth,
-                        quality = QualityFocus.BALANCED
+                        quality = QualityFocus.BALANCED,
+                        forceFullVerbalization = selfTestMode
                     )
                     
                     val results = verbalizationEngine.verbalize(
@@ -272,9 +302,60 @@ fun main(args: Array<String>) {
                     
                     val duration = System.currentTimeMillis() - startTime
                     verbalizationCount += results.size
+                    
+                    // Attach verbalizations to symbols for self-test reuse
+                    val resultMap = results.associateBy { it.symbol.name }
+                    symbolsMap[cluster.name] = clusterSymbols.map { symbol ->
+                        resultMap[symbol.name]?.let { symbol.copy(verbalization = it) } ?: symbol
+                    }.toMutableList()
+                    
                     println("✅ ${results.size} verbalizations (${duration}ms)")
                 }
             }
+        }
+        
+        // Step 6b: Verbalization Self-Test (if self-test mode is enabled)
+        if (selfTestMode && selfTest != null) {
+            println("--- Verbalization Self-Test ---")
+            
+            // Execute self-test
+            testReport = selfTest!!.execute(allResults, symbolsMap)
+            
+            // Export report
+            val reportFile = File(projectRoot, ".vision-ai/logs/verbalization-self-test-${timestamp}.json")
+            reportFile.parentFile.mkdirs()
+            reportFile.writeText("""
+                {
+                    "timestamp": "${testReport!!.formattedTimestamp}",
+                    "overallStatus": "${testReport!!.overallStatus}",
+                    "phasesPassed": ${testReport!!.phasesPassed}/${testReport!!.totalPhases},
+                    "strategyRouting": {
+                        "status": "${testReport!!.strategyRouting.status}",
+                        "passed": ${testReport!!.strategyRouting.passed},
+                        "failed": ${testReport!!.strategyRouting.failed},
+                        "suspect": ${testReport!!.strategyRouting.suspect}
+                    },
+                    "layerCoverage": {
+                        "status": "${testReport!!.layerCoverage.status}",
+                        "layersWithOutput": ${testReport!!.layerCoverage.layersWithOutput}
+                    },
+                    "qualityMetrics": {
+                        "status": "${testReport!!.qualityMetrics.status}",
+                        "totalSymbols": ${testReport!!.qualityMetrics.totalSymbols},
+                        "antiPatternRate": ${testReport!!.qualityMetrics.antiPatternRate}
+                    },
+                    "performance": {
+                        "status": "${testReport!!.performance.status}"
+                    },
+                    "cacheMetrics": {
+                        "status": "${testReport!!.cacheMetrics.status}",
+                        "hitRate": ${testReport!!.cacheMetrics.hitRate}
+                    },
+                    "regressions": ${testReport!!.regressions.size}
+                }
+            """.trimIndent())
+            
+            println("Self-test report exported to: ${reportFile.absolutePath}")
         }
         
         println()
@@ -343,101 +424,164 @@ fun main(args: Array<String>) {
 /**
  * Extract symbols from discovery results
  */
-private fun extractSymbolsFromResults(results: List<ClusterDiscoveryResult>): List<Symbol> {
+private fun extractSymbolsFromResults(results: List<ClusterDiscoveryResult>, projectRoot: File): List<Symbol> {
+    val scanner = ScannerService(projectRoot.absolutePath)
     val symbols = mutableListOf<Symbol>()
-    
+    val processedFiles = mutableSetOf<String>()
+
+    // Get all source files once
+    val allSourceFiles = scanner.listFiles("src")
+
     results.forEach { clusterResult ->
-        clusterResult.result.artifacts.forEach { artifact ->
-            val content = artifact.content
-            
-            // Parse YAML content
-            val yaml = Yaml()
-            val doc = try {
-                yaml.load(content) as? Map<String, Any>
-            } catch (e: Exception) {
-                null
-            }
-            
-            // Extract class symbols
-            val classPattern = Regex("""class\s+(\w+)""")
-            val interfacePattern = Regex("""interface\s+(\w+)""")
-            val functionPattern = Regex("""fun\s+(\w+)""")
-            val dataClassPattern = Regex("""data\s+class\s+(\w+)""")
-            val enumPattern = Regex("""enum\s+class\s+(\w+)""")
-            
-            classPattern.findAll(content).forEach { match ->
-                symbols.add(
-                    Symbol(
-                        name = match.groupValues[1],
-                        kind = SymbolKind.CLASS,
-                        filePath = artifact.path,
-                        lineNumber = 1,
-                        content = content
-                    )
-                )
-            }
-            
-            interfacePattern.findAll(content).forEach { match ->
-                symbols.add(
-                    Symbol(
-                        name = match.groupValues[1],
-                        kind = SymbolKind.INTERFACE,
-                        filePath = artifact.path,
-                        lineNumber = 1,
-                        content = content
-                    )
-                )
-            }
-            
-            functionPattern.findAll(content).forEach { match ->
-                symbols.add(
-                    Symbol(
-                        name = match.groupValues[1],
-                        kind = SymbolKind.FUNCTION,
-                        filePath = artifact.path,
-                        lineNumber = 1,
-                        content = content
-                    )
-                )
-            }
-            
-            dataClassPattern.findAll(content).forEach { match ->
-                symbols.add(
-                    Symbol(
-                        name = match.groupValues[1],
-                        kind = SymbolKind.CLASS,
-                        filePath = artifact.path,
-                        lineNumber = 1,
-                        content = content
-                    )
-                )
-            }
-            
-            enumPattern.findAll(content).forEach { match ->
-                symbols.add(
-                    Symbol(
-                        name = match.groupValues[1],
-                        kind = SymbolKind.ENUM,
-                        filePath = artifact.path,
-                        lineNumber = 1,
-                        content = content
-                    )
-                )
+        // Filter source files by cluster ID (cluster IDs map to directory paths)
+        val clusterPath = clusterResult.clusterId.replace(":", "/")
+        val clusterFiles = allSourceFiles.filter { file ->
+            file.path.contains(clusterResult.clusterId) || file.path.contains(clusterPath)
+        }
+
+        // If no files matched by cluster name, fall back to using all files for single-cluster results
+        val filesToScan = if (clusterFiles.isNotEmpty()) clusterFiles else allSourceFiles
+
+        filesToScan.forEach { sourceFile ->
+            if (sourceFile.path !in processedFiles) {
+                processedFiles.add(sourceFile.path)
+                try {
+                    val codeSymbols = scanner.extractSymbols(sourceFile.path)
+                    codeSymbols.forEach { cs ->
+                        symbols.add(cs.toSymbol())
+                    }
+                } catch (e: Exception) {
+                    // Skip files that cannot be scanned
+                }
             }
         }
     }
-    
+
     return symbols
 }
 
 /**
- * Data class to hold cluster discovery result with timing
+ * Extract source file paths from a discovery artifact.
+ * Artifacts are YAML documents that may reference source files in their content.
  */
-data class ClusterDiscoveryResult(
-    val clusterId: String,
-    val result: PipelineResult,
-    val duration: Long
-)
+private fun extractSourcePathsFromArtifact(artifact: DiscoveryArtifact): List<String> {
+    val paths = mutableListOf<String>()
+    val content = artifact.content
+
+    // The artifact path itself may be a source file (not YAML)
+    // Only treat it as a source path if it has a known source extension
+    if (!artifact.path.endsWith(".yaml") && !artifact.path.endsWith(".yml") &&
+        artifact.path.matches(Regex(".*\\.(kt|java|py|ts|js|go)$"))) {
+        paths.add(artifact.path)
+    }
+
+    // Parse YAML to find referenced source file paths
+    val yaml = Yaml()
+    val doc = try {
+        yaml.load(content) as? Map<String, Any>
+    } catch (e: Exception) {
+        null
+    }
+
+    doc?.let { extractPathsFromYaml(it, paths) }
+
+    // Also try regex-based extraction for file path patterns
+    val pathPattern = Regex("""(?:src/[\w/\-\.]+\.(?:kt|java|py|ts|js|go))""")
+    pathPattern.findAll(content).forEach { match ->
+        paths.add(match.value)
+    }
+
+    return paths.distinct()
+}
+
+/**
+ * Recursively extract file paths from a parsed YAML map.
+ */
+@Suppress("UNCHECKED_CAST")
+private fun extractPathsFromYaml(yamlMap: Map<String, Any>, paths: MutableList<String>) {
+    yamlMap.forEach { (_, value) ->
+        when (value) {
+            is String -> {
+                if (value.contains("src/") && value.matches(Regex(".*\\.(kt|java|py|ts|js|go)$"))) {
+                    paths.add(value)
+                }
+            }
+            is Map<*, *> -> extractPathsFromYaml(value as Map<String, Any>, paths)
+            is List<*> -> value.forEach { item ->
+                if (item is Map<*, *>) extractPathsFromYaml(item as Map<String, Any>, paths)
+                else if (item is String && item.contains("src/") && item.matches(Regex(".*\\.(kt|java|py|ts|js|go)$"))) {
+                    paths.add(item)
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Convert a [CodeSymbol] from the scanner to a [Symbol] for verbalization.
+ *
+ * Applies post-hoc heuristics to correct misclassifications from regex-based scanning:
+ * 1. Single lowercase words without parameters are likely properties, not functions
+ * 2. PascalCase names ending in "Type" are likely enums or sealed classes
+ */
+private fun com.i2vision.index.CodeSymbol.toSymbol(): Symbol {
+    val rawKind = this.kind
+    val inferredKind = when (rawKind) {
+        "class" -> SymbolKind.CLASS
+        "interface" -> SymbolKind.INTERFACE
+        "function", "fun" -> {
+            // Heuristic: single lowercase word with no parameters is likely a property
+            // (e.g. "success", "depth", "route", "debug" — these are properties/fields, not functions)
+            if (name.all { it.isLowerCase() || it == '_' } && !name.contains("(")) {
+                SymbolKind.PROPERTY
+            }
+            // Heuristic: single PascalCase word (no lowercase start, no underscores, no parens)
+            // is likely a type reference or class name, not a function
+            // (e.g. "Symbol", "String", "List", "sha256")
+            else if (name.first().isUpperCase() &&
+                     !name.contains("_") &&
+                     !name.contains("(") &&
+                     name.drop(1).all { it.isLowerCase() || it.isDigit() }) {
+                SymbolKind.CLASS
+            }
+            // Heuristic: names ending in path/directory/file/dir are properties, not functions
+            // (e.g. "primaryLayerKotlinDirectoryPath", "mirrorLayerKotlinDirectoryPath")
+            else if (name.endsWith("Path") || name.endsWith("Dir") ||
+                     name.endsWith("Directory") || name.endsWith("File") ||
+                     name.endsWith("Location") || name.endsWith("Url")) {
+                SymbolKind.PROPERTY
+            } else {
+                SymbolKind.FUNCTION
+            }
+        }
+        "property", "val", "var" -> SymbolKind.PROPERTY
+        "object" -> SymbolKind.OBJECT
+        "enum" -> SymbolKind.ENUM
+        "annotation" -> SymbolKind.ANNOTATION
+        "type_alias", "typealias" -> SymbolKind.TYPE_ALIAS
+        else -> SymbolKind.UNKNOWN
+    }
+
+    // Heuristic: PascalCase names ending in "Type" are likely enums or sealed classes
+    // (e.g. ContractType, EntryPointType, ParserType, ClusterType)
+    val finalKind = if (inferredKind == SymbolKind.UNKNOWN &&
+        name.endsWith("Type") &&
+        name.length > 4 &&
+        name.first().isUpperCase()
+    ) {
+        SymbolKind.ENUM
+    } else {
+        inferredKind
+    }
+
+    return Symbol(
+        name = name,
+        kind = finalKind,
+        filePath = filePath,
+        lineNumber = line,
+        content = this.content
+    )
+}
 
 /**
  * Tee PrintStream to output to both console and file

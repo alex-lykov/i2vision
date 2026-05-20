@@ -511,7 +511,8 @@ private fun IndexSymbolInfo.toSymbolInfo(): SymbolInfo {
         qualifiedName = qualifiedName,
         kind = kind,
         file = file.path,
-        line = line
+        line = line,
+        content = content
     )
 }
 
@@ -594,7 +595,8 @@ data class SymbolInfo(
     val qualifiedName: String,
     val kind: String,
     val file: String,
-    val line: Int
+    val line: Int,
+    val content: String = ""
 )
 
 /**

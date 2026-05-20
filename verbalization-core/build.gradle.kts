@@ -42,6 +42,9 @@ dependencies {
     // LLM client for enhanced verbalization
     implementation(project(":llm-client"))
 
+    // Architecture types for structured detection (NEW)
+    implementation(project(":architecture-types"))
+
     // Testing
     testImplementation(kotlin("test"))
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")

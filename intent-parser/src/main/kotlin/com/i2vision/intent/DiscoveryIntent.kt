@@ -27,6 +27,7 @@ data class DiscoveryIntent(
     val depth: IntentDepth = IntentDepth.STANDARD,
     val quality: QualityFocus = QualityFocus.BALANCED,
     val verbalization: VerbalizationConfig = VerbalizationConfig.DISABLED,
+    val forceFullVerbalization: Boolean = false,
     val constraints: Map<String, Any> = emptyMap()
 ) {
     /**

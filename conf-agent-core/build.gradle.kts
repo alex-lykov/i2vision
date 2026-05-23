@@ -34,12 +34,20 @@ dependencies {
     // External dependency (koog-agents for AI agent framework)
     implementation("ai.koog:koog-agents:0.6.3")
 
+    // Ktor Server (for JSON-RPC HTTP server)
+    implementation("io.ktor:ktor-server-core:2.3.7")
+    implementation("io.ktor:ktor-server-cio:2.3.7")
+    implementation("io.ktor:ktor-server-content-negotiation:2.3.7")
+    implementation("io.ktor:ktor-server-websockets:2.3.7")
+    implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.7")
+
     // Logging
     implementation("org.slf4j:slf4j-api:2.0.7")
 
     // Testing
     testImplementation(kotlin("test"))
     testImplementation("org.slf4j:slf4j-simple:2.0.7")
+    testImplementation("io.ktor:ktor-server-tests:2.3.7")
 }
 
 tasks.test {

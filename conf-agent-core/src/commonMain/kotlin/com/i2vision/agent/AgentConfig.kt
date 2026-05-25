@@ -7,6 +7,7 @@
 
 package com.i2vision.agent
 
+import com.i2vision.agent.config.SafetyConfig
 import com.i2vision.agent.tools.Tool
 
 /**
@@ -64,7 +65,8 @@ data class AgentConfig(
     val maxContextTokens: Int = 8192,
     val availableTools: List<Tool> = emptyList(),
     val modelProvider: String = "openai",
-    val modelId: String = "gpt-4"
+    val modelId: String = "gpt-4",
+    val safety: SafetyConfig = SafetyConfig()
 ) {
     companion object {
         /**
@@ -140,7 +142,8 @@ data class AgentConfig(
         maxContextTokens = maxContextTokens, // Not overridable
         availableTools = availableTools, // Not overridable
         modelProvider = modelProvider, // Not overridable
-        modelId = modelId // Not overridable
+        modelId = modelId, // Not overridable
+        safety = safety
     )
 }
 

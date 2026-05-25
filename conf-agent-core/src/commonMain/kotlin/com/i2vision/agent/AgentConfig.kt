@@ -7,6 +7,8 @@
 
 package com.i2vision.agent
 
+import com.i2vision.agent.tools.Tool
+
 /**
  * Runtime configuration for an agent instance.
  * 
@@ -21,6 +23,10 @@ package com.i2vision.agent
  * - Overridden per-request via AgentConfigOverrides
  * - Updated at runtime via updateConfig()
  * 
+ * @property id Unique agent identifier
+ * @property displayName Human-readable name
+ * @property description Configuration description
+ * @property layer VSLFC layer this agent specializes in
  * @property maxIterations Maximum iterations per task (think → act cycles)
  * @property maxConsecutiveToolCalls Maximum consecutive tool calls before pausing
  * @property toolTimeoutSeconds Tool execution timeout in seconds
@@ -29,10 +35,20 @@ package com.i2vision.agent
  * @property fileOperationMode How file operations are performed (DIRECT via JVM API, SHELL via subprocess)
  * @property enableKickstart Whether kickstart is enabled for malformed LLM output
  * @property kickstartMinInvalidOutputs Minimum invalid outputs before kickstart activates
+ * @property maxToolRetries Maximum retries for failed tool executions
+ * @property maxKickstarts Maximum kickstart attempts
  * @property injectClusterContext Whether to inject cluster context from discovery
  * @property useDiscoveryCache Whether to use discovery cache for context enrichment
+ * @property maxContextTokens Maximum context tokens for the model
+ * @property availableTools List of tools available to the agent
+ * @property modelProvider Model provider identifier
+ * @property modelId Model identifier
  */
 data class AgentConfig(
+    val id: String,
+    val displayName: String,
+    val description: String? = null,
+    val layer: VslfcLayer,
     val maxIterations: Int = 10,
     val maxConsecutiveToolCalls: Int = 12,
     val toolTimeoutSeconds: Long = 30,
@@ -41,20 +57,41 @@ data class AgentConfig(
     val fileOperationMode: FileOperationMode = FileOperationMode.DIRECT,
     val enableKickstart: Boolean = true,
     val kickstartMinInvalidOutputs: Int = 2,
+    val maxToolRetries: Int? = null,
+    val maxKickstarts: Int? = null,
     val injectClusterContext: Boolean = true,
-    val useDiscoveryCache: Boolean = true
+    val useDiscoveryCache: Boolean = true,
+    val maxContextTokens: Int = 8192,
+    val availableTools: List<Tool> = emptyList(),
+    val modelProvider: String = "openai",
+    val modelId: String = "gpt-4"
 ) {
     companion object {
         /**
          * Default configuration suitable for most tasks.
          */
-        fun default() = AgentConfig()
+        fun default(
+            id: String = "default",
+            displayName: String = "Default Agent",
+            layer: VslfcLayer = VslfcLayer.CODE
+        ) = AgentConfig(
+            id = id,
+            displayName = displayName,
+            layer = layer
+        )
         
         /**
          * Conservative configuration for production use.
          * Lower iteration limits, build verification enabled.
          */
-        fun conservative() = AgentConfig(
+        fun conservative(
+            id: String = "conservative",
+            displayName: String = "Conservative Agent",
+            layer: VslfcLayer = VslfcLayer.CODE
+        ) = AgentConfig(
+            id = id,
+            displayName = displayName,
+            layer = layer,
             maxIterations = 5,
             maxConsecutiveToolCalls = 5,
             enableBuildVerification = true,
@@ -65,7 +102,14 @@ data class AgentConfig(
          * Permissive configuration for exploration and debugging.
          * Higher iteration limits, build verification disabled.
          */
-        fun permissive() = AgentConfig(
+        fun permissive(
+            id: String = "permissive",
+            displayName: String = "Permissive Agent",
+            layer: VslfcLayer = VslfcLayer.CODE
+        ) = AgentConfig(
+            id = id,
+            displayName = displayName,
+            layer = layer,
             maxIterations = 20,
             maxConsecutiveToolCalls = 20,
             enableBuildVerification = false,
@@ -77,6 +121,10 @@ data class AgentConfig(
      * Create a new config with the specified overrides applied.
      */
     fun withOverrides(overrides: AgentConfigOverrides): AgentConfig = AgentConfig(
+        id = id,
+        displayName = displayName,
+        description = description,
+        layer = layer,
         maxIterations = overrides.maxIterations ?: maxIterations,
         maxConsecutiveToolCalls = overrides.maxConsecutiveToolCalls ?: maxConsecutiveToolCalls,
         toolTimeoutSeconds = overrides.toolTimeoutSeconds ?: toolTimeoutSeconds,
@@ -85,8 +133,14 @@ data class AgentConfig(
         fileOperationMode = fileOperationMode, // Not overridable
         enableKickstart = overrides.enableKickstart ?: enableKickstart,
         kickstartMinInvalidOutputs = kickstartMinInvalidOutputs, // Not overridable
+        maxToolRetries = maxToolRetries, // Not overridable
+        maxKickstarts = maxKickstarts, // Not overridable
         injectClusterContext = overrides.injectClusterContext ?: injectClusterContext,
-        useDiscoveryCache = useDiscoveryCache // Not overridable
+        useDiscoveryCache = useDiscoveryCache, // Not overridable
+        maxContextTokens = maxContextTokens, // Not overridable
+        availableTools = availableTools, // Not overridable
+        modelProvider = modelProvider, // Not overridable
+        modelId = modelId // Not overridable
     )
 }
 
@@ -100,6 +154,7 @@ data class AgentConfig(
  * @property maxConsecutiveToolCalls Override maximum consecutive tool calls
  * @property toolTimeoutSeconds Override tool timeout
  * @property enableBuildVerification Override build verification setting
+ * @property enableKickstart Override kickstart setting
  * @property injectClusterContext Override cluster context injection
  */
 data class AgentConfigOverrides(

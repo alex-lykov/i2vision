@@ -159,8 +159,8 @@ class KoogPromptTemplateBuilder(
             "sessionId" to (runtimeVars["sessionId"] ?: ""),
             
             // Formatting
-            "formatDescription" to yaml.formattingRules.formatDescription,
-            "formatBrief" to yaml.formattingRules.formatBrief
+            "formatDescription" to yaml.formattingRules.rules,
+            "formatBrief" to yaml.formattingRules.brief
         )
     }
     

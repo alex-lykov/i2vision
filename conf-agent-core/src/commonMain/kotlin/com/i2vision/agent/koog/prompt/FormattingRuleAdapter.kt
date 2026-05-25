@@ -47,58 +47,12 @@ class FormattingRuleAdapter {
             allowJson = true,
             allowXml = true,
             maxResponseSize = rules.maxResponseSize,
-            formatDescription = buildFormatDescription(rules),
-            formatBrief = buildFormatBrief(rules)
+            formatDescription = rules.rules,
+            formatBrief = rules.brief
         )
     }
     
-    /**
-     * Build detailed format description.
-     */
-    private fun buildFormatDescription(rules: FormattingRulesConfig): String {
-        return buildString {
-            appendLine("Your response should follow this format:")
-            appendLine()
-            appendLine("1. **Reasoning** (optional): Start with `${rules.reasoningHeader}` followed by your thinking process.")
-            appendLine("2. **Tool Call** (optional): If you need to use a tool, use `${rules.toolCallHeader}` followed by JSON.")
-            appendLine("3. **Response**: Provide your final answer or explanation.")
-            appendLine("4. **End Marker**: End with `${rules.eosMarker}` when complete.")
-            appendLine()
-            appendLine("## Examples")
-            appendLine()
-            appendLine("### Example 1: Reasoning Only")
-            appendLine("```")
-            appendLine("${rules.reasoningHeader} I need to analyze the code structure first...")
-            appendLine("The main entry point is in Main.kt...")
-            appendLine("${rules.eosMarker}")
-            appendLine("```")
-            appendLine()
-            appendLine("### Example 2: Tool Call")
-            appendLine("```")
-            appendLine("${rules.reasoningHeader} I should read the file to understand the current implementation.")
-            appendLine("${rules.toolCallHeader} {\"tool\": \"read_file\", \"args\": {\"path\": \"src/main.kt\"}}")
-            appendLine("```")
-            appendLine()
-            appendLine("### Example 3: JSON Tool Call")
-            appendLine("```")
-            appendLine("{\"tool\": \"write_file\", \"args\": {\"path\": \"src/test.kt\", \"content\": \"...\"}}")
-            appendLine("```")
-            appendLine()
-            appendLine("### Example 4: XML Tool Call")
-            appendLine("```")
-            appendLine("<invoke name=\"read_file\">")
-            appendLine("  <arg name=\"path\">src/main.kt</arg>")
-            appendLine("</invoke>")
-            appendLine("```")
-        }
-    }
-    
-    /**
-     * Build brief format description.
-     */
-    private fun buildFormatBrief(rules: FormattingRulesConfig): String {
-        return "Format: `${rules.reasoningHeader}` [reasoning], `${rules.toolCallHeader}` [JSON tool call], end with `${rules.eosMarker}`"
-    }
+
     
     /**
      * Get default formatting rules for a VSLFC layer.
@@ -112,41 +66,31 @@ class FormattingRuleAdapter {
                 reasoningHeader = "reasoning:",
                 toolCallHeader = "tool_call:",
                 eosMarker = "[EOS]",
-                maxResponseSize = 200000,
-                formatDescription = "Use reasoning and tool_call headers",
-                formatBrief = "reasoning: [...], tool_call: {...}"
+                maxResponseSize = 200000
             )
             com.i2vision.agent.VslfcLayer.FLOW -> FormattingRulesConfig(
                 reasoningHeader = "analysis:",
                 toolCallHeader = "invoke:",
                 eosMarker = "[COMPLETE]",
-                maxResponseSize = 150000,
-                formatDescription = "Use analysis and invoke headers",
-                formatBrief = "analysis: [...], invoke: {...}"
+                maxResponseSize = 150000
             )
             com.i2vision.agent.VslfcLayer.LOGIC -> FormattingRulesConfig(
                 reasoningHeader = "reasoning:",
                 toolCallHeader = "tool_call:",
                 eosMarker = "[EOS]",
-                maxResponseSize = 200000,
-                formatDescription = "Use reasoning and tool_call headers",
-                formatBrief = "reasoning: [...], tool_call: {...}"
+                maxResponseSize = 200000
             )
             com.i2vision.agent.VslfcLayer.STRUCTURE -> FormattingRulesConfig(
                 reasoningHeader = "architecture:",
                 toolCallHeader = "discover:",
                 eosMarker = "[ANALYSIS_COMPLETE]",
-                maxResponseSize = 100000,
-                formatDescription = "Use architecture and discover headers",
-                formatBrief = "architecture: [...], discover: {...}"
+                maxResponseSize = 100000
             )
             com.i2vision.agent.VslfcLayer.VISION -> FormattingRulesConfig(
                 reasoningHeader = "vision:",
                 toolCallHeader = "query:",
                 eosMarker = "[VISION_COMPLETE]",
-                maxResponseSize = 100000,
-                formatDescription = "Use vision and query headers",
-                formatBrief = "vision: [...], query: {...}"
+                maxResponseSize = 100000
             )
         }
     }

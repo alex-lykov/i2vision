@@ -49,6 +49,11 @@ export function activate(context: vscode.ExtensionContext) {
     // Initialize agent tab manager
     agentManager = new AgentTabManager(context, outputChannel);
     
+    // Initialize the agent manager (and provider)
+    agentManager.initialize().catch(err => {
+        outputChannel.appendLine(`Warning: Agent manager initialization failed: ${err.message}`);
+    });
+    
     // Register tree view
     const treeView = vscode.window.createTreeView('i2visionTreeView', {
         treeDataProvider: treeProvider,

@@ -198,10 +198,15 @@ data class LlmConfig(
 )
 
 /**
- * Code formatting rules.
+ * Formatting rules configuration.
+ * 
+ * Combines two types of formatting:
+ * 1. **Code formatting** - Indentation, line length, whitespace (for generated code)
+ * 2. **Agent response formatting** - Reasoning headers, tool call markers, EOS markers (for agent output)
  */
 @Serializable
 data class FormattingRulesConfig(
+    // === Code formatting (for generated code) ===
     @SerialName("indentSize")
     val indentSize: Int = 4,
     
@@ -215,7 +220,29 @@ data class FormattingRulesConfig(
     val trimTrailingWhitespace: Boolean = true,
     
     @SerialName("insertFinalNewline")
-    val insertFinalNewline: Boolean = true
+    val insertFinalNewline: Boolean = true,
+    
+    // === Agent response formatting (for agent output) ===
+    @SerialName("rules")
+    val rules: String = "OUTPUT FORMAT (STRICT): Use header lines: reasoning: <text> and tool_call: <json>",
+    
+    @SerialName("brief")
+    val brief: String = "reasoning: <text> | tool_call: {\"tool\":\"...\",\"args\":{...}} | EOS",
+    
+    @SerialName("reasoningHeader")
+    val reasoningHeader: String = "reasoning:",
+    
+    @SerialName("toolCallHeader")
+    val toolCallHeader: String = "tool_call:",
+    
+    @SerialName("eosMarker")
+    val eosMarker: String = "EOS",
+    
+    @SerialName("maxResponseSize")
+    val maxResponseSize: Int = 200000,
+    
+    @SerialName("maxProseChars")
+    val maxProseChars: Int = 400
 )
 
 /**
@@ -288,24 +315,6 @@ data class SafetyConfig(
 )
 
 /**
- * Response parsing configuration.
- */
-@Serializable
-data class ParsingConfig(
-    @SerialName("strictJsonParsing")
-    val strictJsonParsing: Boolean = true,
-    
-    @SerialName("allowMarkdownCodeBlocks")
-    val allowMarkdownCodeBlocks: Boolean = true,
-    
-    @SerialName("fallbackToPlainText")
-    val fallbackToPlainText: Boolean = true,
-    
-    @SerialName("maxParseAttempts")
-    val maxParseAttempts: Int = 3
-)
-
-/**
  * Discovery cache and cluster context settings.
  */
 @Serializable
@@ -373,6 +382,12 @@ data class StreamingConfig(
     @SerialName("enabled")
     val enabled: Boolean = true,
     
+    @SerialName("chunkSize")
+    val chunkSize: Int = 100,
+    
+    @SerialName("flushIntervalMs")
+    val flushIntervalMs: Long = 50,
+    
     @SerialName("emitReasoning")
     val emitReasoning: Boolean = true,
     
@@ -380,50 +395,29 @@ data class StreamingConfig(
     val emitToolCalls: Boolean = true,
     
     @SerialName("emitProgress")
-    val emitProgress: Boolean = true,
-    
-    @SerialName("chunkSize")
-    val chunkSize: Int = 50
+    val emitProgress: Boolean = true
 )
 
 /**
- * MCP (Model Context Protocol) server configuration.
+ * MCP server configuration.
  */
 @Serializable
 data class McpConfig(
     @SerialName("enabled")
     val enabled: Boolean = false,
     
-    @SerialName("servers")
-    val servers: List<McpServerConfig> = emptyList(),
+    @SerialName("serverUrl")
+    val serverUrl: String? = null,
+    
+    @SerialName("apiKey")
+    val apiKey: String? = null,
     
     @SerialName("injectClusterContext")
     val injectClusterContext: Boolean = true,
     
     @SerialName("timeoutSeconds")
-    val timeoutSeconds: Long = 30
-)
-
-/**
- * Individual MCP server configuration.
- */
-@Serializable
-data class McpServerConfig(
-    @SerialName("name")
-    val name: String,
+    val timeoutSeconds: Long = 30,
     
-    @SerialName("type")
-    val type: String, // "stdio" or "http"
-    
-    @SerialName("command")
-    val command: String? = null,
-    
-    @SerialName("args")
-    val args: List<String> = emptyList(),
-    
-    @SerialName("url")
-    val url: String? = null,
-    
-    @SerialName("env")
-    val env: Map<String, String> = emptyMap()
+    @SerialName("servers")
+    val servers: List<String> = emptyList()
 )

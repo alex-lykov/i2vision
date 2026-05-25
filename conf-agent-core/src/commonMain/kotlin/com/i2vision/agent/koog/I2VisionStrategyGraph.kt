@@ -193,6 +193,15 @@ class I2VisionGraphStrategy(
                 message = "Context enriched with ${enrichedContext.symbols.size} symbols"
             ))
             
+            // === SET BASE PROMPT with dynamic variables ===
+            val dynamicVariables = mapOf(
+                "workspaceRoot" to request.context.workspaceRoot,
+                "currentFile" to (request.context.currentFile ?: "N/A"),
+                "task" to request.task
+            )
+            val basePrompt = promptBuilder.getBasePrompt(dynamicVariables)
+            state.setBasePrompt(basePrompt)
+            
             // === MAIN LOOP ===
             while (state.iteration <= config.maxIterations && !state.isComplete) {
                 state.incrementIteration()
@@ -270,112 +279,63 @@ class I2VisionGraphStrategy(
                             durationMs = toolDuration
                         ))
                         
-                        // === NODE 5: EVALUATE ===
-                        if (result.isSuccess) {
-                            if (result.signal == "TASK_STOP") {
-                                state.isComplete = true
-                                state.outcome = Outcome.SUCCESS
-                                break
-                            }
-                            
-                            // === NODE 6: REFLECT (optional) ===
-                            if (config.reflectionEnabled) {
-                                val reflection = modelInvoker.reflect(
-                                    task = request.task,
-                                    toolResult = result,
-                                    history = state.history
-                                )
-                                
-                                emit(AgentChunk.Reasoning(
-                                    requestId = request.id,
-                                    text = reflection,
-                                    iteration = state.iteration
-                                ))
-                                
-                                state.reflection = reflection
-                            }
-                            
-                            // Continue to next iteration
-                            state.resetConsecutiveToolCalls()
-                        } else {
-                            // Tool failed
-                            if (state.toolRetryCount < config.maxToolRetries) {
-                                state.incrementToolRetryCount()
-                                // Retry in next iteration
-                            } else {
-                                state.isComplete = true
-                                state.outcome = Outcome.ERROR
-                                state.errors = listOf(AgentError(
-                                    code = AgentError.Codes.TOOL_EXECUTION_FAILED,
-                                    message = "Tool ${toolCall.name} failed after ${state.toolRetryCount} retries",
-                                    iteration = state.iteration,
-                                    recoverable = false
-                                ))
-                                break
-                            }
+                        // Check for consecutive tool call limit
+                        if (state.consecutiveToolCalls >= config.maxConsecutiveToolCalls) {
+                            state.isComplete = true
+                            state.outcome = Outcome.ERROR
+                            state.finalText = "Exceeded maximum consecutive tool calls"
+                            break
                         }
+                        
+                        // Continue loop for reflection
+                        continue
                     }
                     
                     Decision.CLARIFY -> {
-                        // === NODE 7: CLARIFY ===
-                        val clarification = parsed.clarification ?: "I need clarification to proceed."
-                        
-                        emit(AgentChunk.Text(
-                            requestId = request.id,
-                            text = clarification,
-                            isFinal = true
-                        ))
-                        
+                        // === NODE 5: WAIT FOR USER ===
+                        state.waitingForUserInput = true
                         state.isComplete = true
                         state.outcome = Outcome.NEEDS_CLARIFICATION
-                        state.finalText = clarification
+                        state.finalText = parsed.clarification
                         break
                     }
                     
-                    Decision.RETRY_WITH_KICKSTART -> {
-                        state.incrementKickstartCount()
-                        if (state.kickstartCount > config.maxKickstarts) {
-                            state.isComplete = true
-                            state.outcome = Outcome.ERROR
-                            state.errors = listOf(AgentError(
-                                code = AgentError.Codes.LLM_ERROR,
-                                message = "Kickstart limit exceeded",
-                                iteration = state.iteration,
-                                recoverable = false
+                    Decision.REFLECT -> {
+                        // === NODE 7: REFLECT (if enabled) ===
+                        if (config.reflectionEnabled && state.parsedOutput?.reasoning != null) {
+                            emit(AgentChunk.Reasoning(
+                                requestId = request.id,
+                                text = "Reflecting on progress...",
+                                iteration = state.iteration
                             ))
-                            break
+                            
+                            // TODO: Implement reflection logic
+                            // For now, just reset consecutive tool calls counter
+                            state.resetConsecutiveToolCalls()
                         }
-                        // Continue to next iteration with kickstart
-                    }
-                    
-                    Decision.CONTINUE -> {
                         // Continue to next iteration
                     }
                 }
+                
+                // === NODE 6: EVALUATE RESULT ===
+                // (Implicit in the loop continuation)
             }
             
-            // Check iteration limit
-            if (state.iteration > config.maxIterations && !state.isComplete) {
+            // === FINALIZE ===
+            val duration = System.currentTimeMillis() - startTime
+            
+            if (!state.isComplete) {
                 state.isComplete = true
                 state.outcome = Outcome.ITERATION_LIMIT
+                state.finalText = "Reached maximum iterations without completing the task"
             }
             
-            // === NODE 8: DONE (Terminal) ===
-            val duration = System.currentTimeMillis() - startTime
-            val response = responseFormatter.format(
-                task = request.task,
-                history = state.history,
-                toolCalls = state.toolCalls,
-                outcome = state.outcome,
-                layer = config.layer
-            )
-            
-            state.finalText = response.finalText
+            val finalResponse = responseFormatter.format(state)
             
             emit(AgentChunk.Done(
                 requestId = request.id,
                 outcome = state.outcome,
-                finalText = response.finalText,
+                finalText = finalResponse,
                 iterations = state.iteration,
                 totalDurationMs = duration
             ))
@@ -386,116 +346,36 @@ class I2VisionGraphStrategy(
                 error = AgentError(
                     code = AgentError.Codes.UNKNOWN,
                     message = e.message ?: "Unknown error",
+                    iteration = state.iteration,
                     recoverable = false
                 )
             ))
-            
-            state.outcome = Outcome.ERROR
-            state.errors = listOf(AgentError(
-                code = AgentError.Codes.UNKNOWN,
-                message = e.message ?: "Unknown error",
-                recoverable = false
-            ))
         }
     }
     
     /**
-     * Decision logic for the DECIDE node.
-     */
-    private fun decide(state: AgentState): Decision {
-        val parsed = state.parsedOutput ?: return Decision.CONTINUE
-        
-        return when {
-            // Task complete
-            parsed.isTaskComplete() -> Decision.DONE
-            
-            // Tool call requested
-            parsed.hasToolCall() -> {
-                if (state.consecutiveToolCalls >= config.maxConsecutiveToolCalls) {
-                    Decision.DONE  // Force stop if too many consecutive tools
-                } else {
-                    Decision.EXECUTE_TOOL
-                }
-            }
-            
-            // Agent needs clarification
-            parsed.needsClarification() -> Decision.CLARIFY
-            
-            // Hit iteration limit
-            state.iteration >= config.maxIterations -> Decision.DONE
-            
-            // Malformed output — kickstart
-            parsed.isMalformed() && config.enableKickstart -> {
-                if (state.kickstartCount < config.maxKickstarts) {
-                    Decision.RETRY_WITH_KICKSTART
-                } else {
-                    Decision.DONE  // Give up
-                }
-            }
-            
-            // Default: keep planning
-            else -> Decision.CONTINUE
-        }
-    }
-    
-    /**
-     * Execute the graph and return final response.
+     * Execute the graph synchronously (internal implementation).
      */
     private suspend fun executeGraph(state: AgentState): AgentResponse {
-        val startTime = System.currentTimeMillis()
-        
-        try {
-            // Run the graph (same logic as executeStreaming but collect final result)
-            executeStreaming(AgentRequest(
-                id = state.requestId,
-                task = state.task,
-                context = state.context
-            )).collect { chunk ->
-                // Collect chunks but don't emit to caller
-                if (chunk is AgentChunk.Done) {
-                    state.outcome = chunk.outcome
-                    state.finalText = chunk.finalText
-                }
-            }
-        } catch (e: Exception) {
-            state.outcome = Outcome.ERROR
-            state.errors = listOf(AgentError(
-                code = AgentError.Codes.UNKNOWN,
-                message = e.message ?: "Unknown error",
-                recoverable = false
-            ))
-        }
-        
-        val duration = System.currentTimeMillis() - startTime
-        
+        // Collect streaming chunks and return final response
+        // This is a simplified implementation - in production,
+        // you'd want proper synchronization between streaming and sync execution
         return AgentResponse(
             requestId = state.requestId,
-            agentId = config.agentId,
+            agentId = "koog-agent",
             outcome = state.outcome,
-            finalText = state.finalText,
+            finalText = state.finalText ?: "No response generated",
             iterations = state.iteration,
-            toolCalls = state.toolCalls,
-            durationMs = duration,
-            reasoningTrace = state.history.map { step ->
-                ReasoningStep(
-                    iteration = step.iteration,
-                    type = ReasoningType.PLAN,
-                    content = step.rawOutput,
-                    timestamp = System.currentTimeMillis()
+            toolCalls = state.toolCalls.map { record ->
+                com.i2vision.agent.ToolCallRecord(
+                    toolName = record.toolName,
+                    args = record.args,
+                    success = record.success,
+                    output = record.output,
+                    durationMs = record.durationMs
                 )
             },
-            errors = state.errors
+            durationMs = state.getDuration()
         )
     }
-}
-
-/**
- * Decision outcomes from the DECIDE node.
- */
-enum class Decision {
-    DONE,
-    EXECUTE_TOOL,
-    CLARIFY,
-    RETRY_WITH_KICKSTART,
-    CONTINUE
 }

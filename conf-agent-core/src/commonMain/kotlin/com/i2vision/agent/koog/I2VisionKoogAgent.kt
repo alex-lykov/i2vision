@@ -10,6 +10,10 @@ package com.i2vision.agent.koog
 import com.i2vision.agent.*
 import com.i2vision.agent.config.AgentPromptConfiguration
 import com.i2vision.agent.config.KoogConfigs
+import com.i2vision.llm.ModelProvider
+import com.i2vision.llm.ToolRegistry
+import com.i2vision.agent.tools.DiscoveryCache
+import com.i2vision.agent.tools.InstantContextProvider
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -66,7 +70,7 @@ class I2VisionKoogAgent(
         supportsStreaming = true,
         supportsCancellation = true,
         supportsRuntimeConfig = true,
-        maxContextTokens = config.maxContextTokens,
+        maxContextTokens = config.maxContextTokens.toLong(),
         availableTools = config.availableTools.map { it.toToolInfo() },
         supportedLayers = listOf(layer),
         modelProvider = config.modelProvider,
@@ -134,9 +138,9 @@ class I2VisionKoogAgent(
      * @return New effective configuration
      */
     override suspend fun updateConfig(overrides: AgentConfigOverrides): AgentConfig {
-        // Apply overrides to runtime config
-        config.applyOverrides(overrides)
-        return config
+        // Note: AgentConfig is immutable, so we can't apply overrides at runtime
+        // This method returns the effective config with overrides applied
+        return config.withOverrides(overrides)
     }
     
     /**
@@ -365,7 +369,7 @@ class KoogExecution(
 /**
  * Extension function to create ToolInfo from AgentConfig tool.
  */
-fun com.i2vision.agent.config.ToolInfo.toToolInfo(): com.i2vision.agent.ToolInfo =
+fun com.i2vision.agent.tools.Tool.toToolInfo(): com.i2vision.agent.ToolInfo =
     com.i2vision.agent.ToolInfo(
         name = name,
         description = description,

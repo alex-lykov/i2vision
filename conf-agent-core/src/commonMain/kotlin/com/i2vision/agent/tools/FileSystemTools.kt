@@ -242,7 +242,7 @@ class FileSystemTools(
                     "Search text not found in file. " +
                     "Make sure the text matches exactly, including whitespace and indentation."
                 )
-                > 1 -> return@Tool ToolResult.failure(
+                in 2..Int.MAX_VALUE -> return@Tool ToolResult.failure(
                     "Search text found $occurrences times. " +
                     "Provide more context (surrounding lines) to make the match unique."
                 )
@@ -486,7 +486,7 @@ class FileSystemTools(
                 )
             )
         }
-    }
+    )
     
     /**
      * Resolve a path relative to workspace root.

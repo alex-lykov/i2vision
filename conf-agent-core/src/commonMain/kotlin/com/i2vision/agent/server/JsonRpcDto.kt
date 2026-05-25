@@ -23,14 +23,23 @@ data class JsonRpcRequest(
 )
 
 /**
+ * Sealed class for all JSON-RPC responses
+ */
+@Serializable
+sealed class JsonRpcResponse {
+    abstract val jsonrpc: String
+    abstract val id: Long?
+}
+
+/**
  * JSON-RPC 2.0 Success Response
  */
 @Serializable
 data class JsonRpcSuccessResponse(
-    val jsonrpc: String = "2.0",
-    val result: JsonElement,
-    val id: Long?
-)
+    override val jsonrpc: String = "2.0",
+    override val id: Long?,
+    val result: JsonElement
+) : JsonRpcResponse()
 
 /**
  * JSON-RPC 2.0 Error
@@ -55,10 +64,10 @@ data class JsonRpcError(
  */
 @Serializable
 data class JsonRpcErrorResponse(
-    val jsonrpc: String = "2.0",
-    val error: JsonRpcError,
-    val id: Long?
-)
+    override val jsonrpc: String = "2.0",
+    override val id: Long?,
+    val error: JsonRpcError
+) : JsonRpcResponse()
 
 /**
  * JSON-RPC 2.0 Notification
@@ -69,12 +78,3 @@ data class JsonRpcNotification(
     val method: String,
     val params: JsonElement? = null
 )
-
-/**
- * Sealed class for all JSON-RPC responses
- */
-@Serializable
-sealed class JsonRpcResponse {
-    abstract val jsonrpc: String
-    abstract val id: Long?
-}

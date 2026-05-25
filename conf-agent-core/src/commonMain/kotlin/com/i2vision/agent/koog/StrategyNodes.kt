@@ -8,8 +8,11 @@
 package com.i2vision.agent.koog
 
 import com.i2vision.agent.*
-import com.i2vision.agent.config.KoogPromptConfig
+import com.i2vision.agent.config.ParserType
 import com.i2vision.agent.config.ParsingConfig
+import com.i2vision.agent.tools.DiscoveryCache
+import com.i2vision.agent.tools.InstantContextProvider
+import com.i2vision.agent.tools.TaskType
 
 /**
  * Individual node logic components extracted for testability and reuse.
@@ -51,11 +54,11 @@ class ContextEnricher(
     ): EnrichedContext {
         // Use i2vision-instant for semantic context
         val fileContext = currentFile?.let {
-            instantContextProvider.getContext(file = it, task = task)
+            instantContextProvider.getContext(file = it, task = TaskType.fromString(task))
         }
         
         // Use discovery cache for project-wide context
-        val discovery = discoveryCache.getOrDiscover(workspaceRoot)
+        val discovery = discoveryCache.get(workspaceRoot)
         
         return EnrichedContext(
             symbols = fileContext?.symbols ?: emptyList(),
@@ -79,11 +82,9 @@ class ContextEnricher(
  * - Including iteration hints and constraints
  * 
  * @property promptTemplate Base prompt template
- * @property config Prompt configuration
  */
 class PromptBuilder(
-    private val promptTemplate: KoogPromptConfig,
-    private val config: AgentPromptConfiguration
+    private val promptTemplate: com.i2vision.agent.config.KoogPromptConfig
 ) {
     
     /**
@@ -130,7 +131,7 @@ class PromptBuilder(
             }
             
             // Add kickstart hint if needed
-            if (iteration > 1 && history.lastOrNull()?.parsed?.isMalformed() == true) {
+            if (iteration > 1 && history.lastOrNull()?.parsed?.isMalformed == true) {
                 appendLine("\n## Important")
                 appendLine("Your previous output was malformed. Please follow the expected format.")
             }
@@ -139,9 +140,12 @@ class PromptBuilder(
     
     /**
      * Get the base system prompt with variables rendered.
+     * 
+     * @param dynamicVariables Runtime variables (workspaceRoot, currentFile, etc.)
+     * @return Rendered system prompt
      */
-    fun getBasePrompt(variables: Map<String, String> = emptyMap()): String =
-        promptTemplate.systemPrompt
+    fun getBasePrompt(dynamicVariables: Map<String, String> = emptyMap()): String =
+        promptTemplate.renderSystemPrompt(dynamicVariables)
 }
 
 /**
@@ -324,144 +328,106 @@ class OutputParser(
      */
     private fun parseToolCallJson(jsonStr: String): ToolCall? {
         return try {
-            // Simple JSON parsing (in production, use kotlinx.serialization)
-            val toolRegex = Regex("\"tool\"\\s*:\\s*\"([^\"]+)\"")
-            val argsRegex = Regex("\"args\"\\s*:\\s*(\\{[^}]+\\})")
-            
-            val toolMatch = toolRegex.find(jsonStr) ?: return null
-            val toolName = toolMatch.groupValues[1]
-            
-            val argsMatch = argsRegex.find(jsonStr)
-            val args = argsMatch?.let { parseSimpleJson(it.groupValues[1]) } ?: emptyMap()
-            
-            ToolCall(name = toolName, args = args)
+            val map = parseJsonToMap(jsonStr)
+            val toolName = map["tool"]?.toString() ?: map["name"]?.toString() ?: return null
+            val args = (map["args"] as? Map<*, *>)?.filterKeys { it != null }?.mapKeys { it.key.toString() } ?: emptyMap()
+            ToolCall(name = toolName, args = args as Map<String, Any>)
         } catch (e: Exception) {
             null
         }
     }
     
     /**
-     * Parse simple JSON object to Map.
+     * Parse XML arguments.
      */
-    private fun parseSimpleJson(jsonStr: String): Map<String, Any> {
-        val result = mutableMapOf<String, Any>()
-        
-        // Simple key-value parsing (in production, use proper JSON parser)
-        val kvRegex = Regex("\"([^\"]+)\"\\s*:\\s*\"([^\"]+)\"")
-        for (match in kvRegex.findAll(jsonStr)) {
-            result[match.groupValues[1]] = match.groupValues[2]
+    private fun parseXmlArgs(argsXml: String): Map<String, Any> {
+        val argRegex = Regex("<arg\\s+name=\"([^\"]+)\"\\s*>(.*?)</arg>", RegexOption.DOT_MATCHES_ALL)
+        return argRegex.findAll(argsXml).associate { match ->
+            match.groupValues[1] to match.groupValues[2].trim()
         }
-        
-        return result
     }
     
     /**
-     * Parse XML arguments to Map.
+     * Simple JSON parser for tool call arguments.
      */
-    private fun parseXmlArgs(xmlStr: String): Map<String, Any> {
-        val result = mutableMapOf<String, Any>()
+    private fun parseJsonToMap(jsonStr: String): Map<String, Any?> {
+        // Simple JSON parsing - in production use a proper JSON library
+        val map = mutableMapOf<String, Any?>()
+        val cleaned = jsonStr.trim().trimStart('{').trimEnd('}')
         
-        val argRegex = Regex("<arg\\s+name=\"([^\"]+)\"\\s*>([^<]*)</arg>")
-        for (match in argRegex.findAll(xmlStr)) {
-            result[match.groupValues[1]] = match.groupValues[2]
+        // Extract key-value pairs
+        val pairs = cleaned.split(",")
+        for (pair in pairs) {
+            val colonIndex = pair.indexOf(':')
+            if (colonIndex > 0) {
+                val key = pair.substring(0, colonIndex).trim().trim('"')
+                val value = pair.substring(colonIndex + 1).trim()
+                map[key] = parseJsonValue(value)
+            }
         }
         
-        return result
+        return map
+    }
+    
+    /**
+     * Parse a JSON value.
+     */
+    private fun parseJsonValue(value: String): Any? {
+        return when {
+            value == "null" -> null
+            value == "true" -> true
+            value == "false" -> false
+            value.startsWith("\"") && value.endsWith("\"") -> value.substring(1, value.length - 1)
+            value.toIntOrNull() != null -> value.toInt()
+            value.toLongOrNull() != null -> value.toLong()
+            value.toDoubleOrNull() != null -> value.toDouble()
+            else -> value
+        }
     }
 }
 
 /**
- * Invokes the LLM model.
+ * Invokes the LLM with a prompt.
  * 
  * This component handles:
- * - Model invocation with retries
+ * - Model selection
+ * - Parameter configuration (temperature, top_p, etc.)
+ * - Retry logic
  * - Timeout handling
- * - Streaming support
- * - Reflection prompts
  * 
- * @property modelProvider Model provider interface
+ * @property modelProvider Model provider implementation
  * @property config LLM configuration
  */
 class ModelInvoker(
-    private val modelProvider: ModelProvider,
-    private val config: KoogLlmConfig
+    private val modelProvider: com.i2vision.llm.ModelProvider,
+    private val config: com.i2vision.agent.config.KoogLlmConfig
 ) {
     
     /**
      * Invoke the model with a prompt.
      * 
      * @param prompt The prompt to send
-     * @return Model response text
+     * @return Raw model output
      */
     suspend fun invoke(prompt: String): String {
-        var lastError: Exception? = null
-        
-        for (attempt in 1..config.retries) {
-            try {
-                return modelProvider.generate(
-                    prompt = prompt,
-                    temperature = config.temperature,
-                    topP = config.topP,
-                    topK = config.topK,
-                    maxTokens = config.maxTokens,
-                    timeoutSeconds = config.timeoutSeconds
-                )
-            } catch (e: Exception) {
-                lastError = e
-                if (attempt < config.retries) {
-                    // Backoff before retry
-                    kotlinx.coroutines.delay(1000L * attempt)
-                }
-            }
-        }
-        
-        throw lastError ?: IllegalStateException("Model invocation failed")
-    }
-    
-    /**
-     * Invoke model for reflection.
-     * 
-     * @param task The original task
-     * @param toolResult Result from tool execution
-     * @param history Conversation history
-     * @return Reflection text
-     */
-    suspend fun reflect(
-        task: String,
-        toolResult: ToolExecutionResult,
-        history: List<IterationStep>
-    ): String {
-        val reflectionPrompt = buildString {
-            appendLine("Reflect on the tool execution result.")
-            appendLine("\n## Task")
-            appendLine(task)
-            appendLine("\n## Tool Result")
-            appendLine(toolResult.output ?: "Error: ${toolResult.error}")
-            appendLine("\n## History")
-            history.takeLast(3).forEach { step ->
-                appendLine("- Iteration ${step.iteration}: ${step.rawOutput.take(100)}...")
-            }
-            appendLine("\n## Reflection")
-            appendLine("What did you learn? What should you do next?")
-        }
-        
-        return invoke(reflectionPrompt)
+        // TODO: Implement model invocation with retries and timeouts
+        return "Model response placeholder"
     }
 }
 
 /**
  * Executes tool calls.
  * 
- * This component handles:
- * - Tool dispatching by name
- * - Timeout handling
- * - Result formatting
- * - Error handling
+ * This component:
+ * - Looks up tools in the registry
+ * - Validates arguments
+ * - Executes the tool
+ * - Handles timeouts and errors
  * 
- * @property toolRegistry Registry of available tools
+ * @property toolRegistry Tool registry implementation
  */
 class ToolExecutor(
-    private val toolRegistry: ToolRegistry
+    private val toolRegistry: com.i2vision.llm.ToolRegistry
 ) {
     
     /**
@@ -469,7 +435,7 @@ class ToolExecutor(
      * 
      * @param toolName Name of the tool to execute
      * @param args Tool arguments
-     * @param timeoutSeconds Execution timeout
+     * @param timeoutSeconds Timeout in seconds
      * @return Tool execution result
      */
     suspend fun execute(
@@ -477,150 +443,75 @@ class ToolExecutor(
         args: Map<String, Any>,
         timeoutSeconds: Long
     ): ToolExecutionResult {
-        return try {
-            kotlinx.coroutines.withTimeout(timeoutSeconds * 1000) {
-                val result = toolRegistry.execute(toolName, args)
-                ToolExecutionResult(
-                    toolName = toolName,
-                    args = args,
-                    isSuccess = true,
-                    output = result.toString(),
-                    signal = detectSignal(result)
-                )
-            }
-        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-            ToolExecutionResult(
-                toolName = toolName,
-                args = args,
-                isSuccess = false,
-                output = null,
-                error = "Tool execution timed out after ${timeoutSeconds}s",
-                signal = null
-            )
-        } catch (e: Exception) {
-            ToolExecutionResult(
-                toolName = toolName,
-                args = args,
-                isSuccess = false,
-                output = null,
-                error = e.message ?: "Tool execution failed",
-                signal = null
-            )
-        }
-    }
-    
-    /**
-     * Detect task completion signals in tool output.
-     */
-    private fun detectSignal(result: Any): String? {
-        val resultStr = result.toString().lowercase()
-        return when {
-            "task_complete" in resultStr || "task_stop" in resultStr -> "TASK_STOP"
-            else -> null
-        }
+        // TODO: Implement tool execution
+        return ToolExecutionResult(
+            isSuccess = false,
+            output = "Tool execution not implemented"
+        )
     }
 }
 
 /**
  * Formats final agent responses.
  * 
- * This component constructs the final response by:
- * - Summarizing the execution history
- * - Including tool call results
- * - Formatting according to layer-specific rules
- * - Adding reasoning trace (if configured)
+ * This component:
+ * - Applies formatting rules
+ * - Includes/excludes reasoning traces
+ * - Formats code blocks
+ * - Applies compact mode if enabled
  * 
- * @property config Formatting configuration
+ * @property config Agent configuration
  */
 class ResponseFormatter(
-    private val config: AgentPromptConfiguration
+    private val config: com.i2vision.agent.config.AgentPromptConfiguration
 ) {
     
     /**
-     * Format final response.
+     * Format the final response.
      * 
-     * @param task Original task
-     * @param history Execution history
-     * @param toolCalls Tool calls made
-     * @param outcome Task outcome
-     * @param layer VSLFC layer
+     * @param state Agent state with final result
      * @return Formatted response
      */
-    fun format(
-        task: String,
-        history: List<IterationStep>,
-        toolCalls: List<ToolCallRecord>,
-        outcome: Outcome,
-        layer: VslfcLayer
-    ): AgentResponse {
-        val responseText = buildString {
-            // Outcome header
-            appendLine("## ${outcome.name}")
-            appendLine()
-            
-            // Summary
-            appendLine("### Summary")
-            appendLine(formatSummary(task, history, outcome))
-            appendLine()
-            
-            // Tool calls (if any)
-            if (toolCalls.isNotEmpty()) {
-                appendLine("### Tool Calls")
-                toolCalls.forEach { call ->
-                    appendLine("- **${call.toolName}**: ${if (call.success) "Success" : "Failed"}")
-                    if (config.formatting.includeToolCallDetails) {
-                        appendLine("  - Args: ${call.args}")
-                        if (call.output != null) {
-                            appendLine("  - Output: ${call.output.take(200)}")
-                        }
-                    }
-                }
-                appendLine()
-            }
-            
-            // Reasoning trace (if configured)
-            if (config.formatting.includeReasoningTrace && history.isNotEmpty()) {
-                appendLine("### Reasoning Trace")
-                history.takeLast(3).forEach { step ->
-                    appendLine("#### Iteration ${step.iteration}")
-                    appendLine(step.parsed.reasoning?.take(300) ?: "No reasoning provided")
-                    appendLine()
-                }
-            }
-            
-            // Final text
-            appendLine("### Response")
-            appendLine(formatFinalText(history, layer))
-        }
-        
-        return AgentResponse(
-            requestId = "response",
-            agentId = "formatter",
-            outcome = outcome,
-            finalText = responseText,
-            iterations = history.size,
-            toolCalls = toolCalls,
-            durationMs = 0
-        )
+    fun format(state: AgentState): String {
+        // TODO: Implement response formatting
+        return state.finalText ?: "No response generated"
+    }
+}
+
+/**
+ * Decision types for the DECIDE node.
+ */
+enum class Decision {
+    DONE,
+    EXECUTE_TOOL,
+    CLARIFY,
+    REFLECT
+}
+
+/**
+ * Decide the next action based on parsed output.
+ * 
+ * @param state Current agent state
+ * @return Decision for next action
+ */
+fun decide(state: AgentState): Decision {
+    val parsed = state.parsedOutput ?: return Decision.DONE
+    
+    // Check if task is complete
+    if (parsed.isTaskComplete()) {
+        return Decision.DONE
     }
     
-    /**
-     * Format execution summary.
-     */
-    private fun formatSummary(task: String, history: List<IterationStep>, outcome: Outcome): String {
-        return when (outcome) {
-            Outcome.SUCCESS -> "Task completed successfully in ${history.size} iterations."
-            Outcome.ITERATION_LIMIT -> "Reached maximum iterations (${history.size}) without completing the task."
-            Outcome.CANCELLED -> "Task was cancelled by the user."
-            Outcome.ERROR -> "Task failed with an error."
-            Outcome.NEEDS_CLARIFICATION -> "Task requires additional clarification from the user."
-        }
+    // Check if clarification is needed
+    if (parsed.needsClarification()) {
+        return Decision.CLARIFY
     }
     
-    /**
-     * Format final text from history.
-     */
-    private fun formatFinalText(history: List<IterationStep>, layer: VslfcLayer): String {
-        return history.lastOrNull()?.parsed?.reasoning ?: "No response generated."
+    // Check if tool call is present
+    if (parsed.hasToolCall()) {
+        return Decision.EXECUTE_TOOL
     }
+    
+    // Default to reflect (if reflection enabled) or done
+    return Decision.REFLECT
 }

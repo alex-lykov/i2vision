@@ -31,11 +31,11 @@ class AgentState(
 ) {
     /** Current iteration number (1-based) */
     var iteration: Int = 0
-        private set
+        internal set
     
     /** Consecutive tool calls in current iteration */
     var consecutiveToolCalls: Int = 0
-        private set
+        internal set
     
     /** Whether execution is complete */
     var isComplete: Boolean = false
@@ -66,12 +66,12 @@ class AgentState(
         internal set
     
     /** Conversation history */
-    val history: MutableList<IterationStep> = mutableListOf()
-        private set
+    var history: MutableList<IterationStep> = mutableListOf()
+        internal set
     
     /** Tool calls made during execution */
-    val toolCalls: MutableList<ToolCallRecord> = mutableListOf()
-        private set
+    var toolCalls: MutableList<ToolCallRecord> = mutableListOf()
+        internal set
     
     /** Errors encountered */
     var errors: List<AgentError> = emptyList()
@@ -79,11 +79,11 @@ class AgentState(
     
     /** Number of kickstart attempts */
     var kickstartCount: Int = 0
-        private set
+        internal set
     
     /** Number of tool retries */
     var toolRetryCount: Int = 0
-        private set
+        internal set
     
     /** Whether waiting for user input */
     var waitingForUserInput: Boolean = false
@@ -184,7 +184,7 @@ data class EnrichedContext(
     val symbols: List<SymbolInfo> = emptyList(),
     val relatedFiles: List<String> = emptyList(),
     val architecture: ArchitectureInfo? = null,
-    val contracts: List<ContractInfo> = emptyList(),
+    val contracts: List<ContractInfo>? = null,
     val flows: List<FlowInfo> = emptyList(),
     val businessRules: List<BusinessRuleInfo> = emptyList(),
     val layer: VslfcLayer = VslfcLayer.CODE
@@ -194,7 +194,7 @@ data class EnrichedContext(
      */
     fun isNotEmpty(): Boolean =
         symbols.isNotEmpty() || relatedFiles.isNotEmpty() ||
-        architecture != null || contracts.isNotEmpty() ||
+        architecture != null || !contracts.isNullOrEmpty() ||
         flows.isNotEmpty() || businessRules.isNotEmpty()
     
     /**
@@ -229,7 +229,7 @@ data class EnrichedContext(
             appendLine()
         }
         
-        if (contracts.isNotEmpty()) {
+        if (!contracts.isNullOrEmpty()) {
             appendLine("#### Contracts")
             contracts.take(5).forEach { contract ->
                 appendLine("- ${contract.layer}: ${contract.description.take(100)}")
@@ -379,86 +379,31 @@ data class ToolCall(
 )
 
 /**
- * Result from tool execution.
+ * Record of a tool call execution.
  * 
- * @property toolName Tool that was executed
- * @property args Arguments passed to tool
- * @property isSuccess Whether execution succeeded
- * @property output Output from tool (if successful)
- * @property error Error message (if failed)
- * @property signal Signal (e.g., "TASK_STOP")
+ * @property toolName Tool name
+ * @property args Tool arguments
+ * @property success Whether execution succeeded
+ * @property output Tool output
+ * @property durationMs Execution duration in milliseconds
  */
-data class ToolExecutionResult(
+data class ToolCallRecord(
     val toolName: String,
     val args: Map<String, Any>,
+    val success: Boolean,
+    val output: String,
+    val durationMs: Long
+)
+
+/**
+ * Result of a tool execution.
+ * 
+ * @property isSuccess Whether execution succeeded
+ * @property output Tool output or error message
+ * @property error Exception if failed
+ */
+data class ToolExecutionResult(
     val isSuccess: Boolean,
-    val output: String?,
-    val error: String? = null,
-    val signal: String? = null
+    val output: String,
+    val error: Throwable? = null
 )
-
-/**
- * Interface for providing instant context.
- */
-interface InstantContextProvider {
-    /**
-     * Get context for a specific file and task.
-     */
-    suspend fun getContext(file: String, task: String): FileContext?
-}
-
-/**
- * Context for a specific file.
- */
-data class FileContext(
-    val symbols: List<SymbolInfo>,
-    val relatedFiles: List<String>,
-    val flows: List<FlowInfo>,
-    val businessRules: List<BusinessRuleInfo>
-)
-
-/**
- * Interface for discovery cache.
- */
-interface DiscoveryCache {
-    /**
-     * Get or discover context for a workspace.
-     */
-    suspend fun getOrDiscover(workspaceRoot: String): DiscoveryResult?
-}
-
-/**
- * Result from discovery.
- */
-data class DiscoveryResult(
-    val architecture: ArchitectureInfo?,
-    val contracts: List<ContractInfo>,
-    val timestamp: Long
-)
-
-/**
- * Interface for model provider.
- */
-interface ModelProvider {
-    /**
-     * Generate text from a prompt.
-     */
-    suspend fun generate(
-        prompt: String,
-        temperature: Double,
-        topP: Double,
-        topK: Int,
-        maxTokens: Int,
-        timeoutSeconds: Long
-    ): String
-}
-
-/**
- * Interface for tool registry.
- */
-interface ToolRegistry {
-    /**
-     * Execute a tool with arguments.
-     */
-    suspend fun execute(toolName: String, args: Map<String, Any>): Any
-}

@@ -102,11 +102,15 @@ class ConfigurationAdapter {
      * system prompt template, variables, and formatting rules.
      * 
      * This is used by task-15 (Koog PromptTemplate Integration).
+     * 
+     * Note: systemPrompt is stored as a TEMPLATE (unrendered) so that
+     * dynamic variables like {{$workspaceRoot}} and {{$currentFile}}
+     * can be rendered at runtime with actual values from the request context.
      */
     fun toKoogPromptConfig(yaml: AgentPromptConfiguration): KoogPromptConfig {
         return KoogPromptConfig(
-            systemPrompt = yaml.getRenderedPrompt(),
-            templateVariables = yaml.templateVariables,
+            systemPromptTemplate = yaml.systemPromptTemplate,
+            staticTemplateVariables = yaml.templateVariables,
             ruleSetKeys = yaml.ruleSetKeys,
             temperature = yaml.model.temperature,
             topP = yaml.model.topP,
@@ -218,8 +222,8 @@ class ConfigurationAdapter {
 /**
  * Koog-specific prompt template configuration.
  * 
- * @property systemPrompt System prompt with variables rendered
- * @property templateVariables Variable substitutions
+ * @property systemPromptTemplate System prompt TEMPLATE with variable placeholders (e.g., {{$workspaceRoot}})
+ * @property staticTemplateVariables Static variable substitutions from config (rendered at load time)
  * @property ruleSetKeys References to rule sets
  * @property temperature LLM temperature
  * @property topP Top-p sampling parameter
@@ -229,8 +233,8 @@ class ConfigurationAdapter {
  * @property parsingConfig Response parsing configuration
  */
 data class KoogPromptConfig(
-    val systemPrompt: String,
-    val templateVariables: Map<String, String>,
+    val systemPromptTemplate: String,
+    val staticTemplateVariables: Map<String, String>,
     val ruleSetKeys: List<String>,
     val temperature: Double,
     val topP: Double,
@@ -238,7 +242,23 @@ data class KoogPromptConfig(
     val maxTokens: Int,
     val formattingRules: KoogFormattingRules,
     val parsingConfig: KoogParsingConfig
-)
+) {
+    /**
+     * Render the system prompt with dynamic variables.
+     * 
+     * @param dynamicVariables Runtime variables (workspaceRoot, currentFile, etc.)
+     * @return Fully rendered system prompt
+     */
+    fun renderSystemPrompt(dynamicVariables: Map<String, String> = emptyMap()): String {
+        // Combine static and dynamic variables (dynamic override static)
+        val allVariables = staticTemplateVariables + dynamicVariables
+        var rendered = systemPromptTemplate
+        allVariables.forEach { (key, value) ->
+            rendered = rendered.replace("{{$key}}", value)
+        }
+        return rendered
+    }
+}
 
 /**
  * Koog formatting rules.
@@ -266,45 +286,39 @@ data class KoogParsingConfig(
  * 
  * @property maxIterations Maximum iterations per task
  * @property maxConsecutiveToolCalls Maximum consecutive tool calls
- * @property reflectionEnabled Whether reflection is enabled
+ * @property reflectionEnabled Whether self-reflection is enabled
  * @property selfCorrectionEnabled Whether self-correction is enabled
- * @property llmRetries LLM request retries
- * @property llmTimeoutSeconds LLM request timeout
+ * @property llmRetries LLM retry count
+ * @property llmTimeoutSeconds LLM timeout in seconds
  * @property streamingEnabled Whether streaming is enabled
+ * @property layer VSLFC layer for the strategy
+ * @property agentId Unique agent identifier
  */
 data class KoogStrategyConfig(
-    val maxIterations: Int,
-    val maxConsecutiveToolCalls: Int,
-    val reflectionEnabled: Boolean,
-    val selfCorrectionEnabled: Boolean,
-    val llmRetries: Int,
-    val llmTimeoutSeconds: Long,
-    val streamingEnabled: Boolean
+    val maxIterations: Int = 10,
+    val maxConsecutiveToolCalls: Int = 12,
+    val reflectionEnabled: Boolean = true,
+    val selfCorrectionEnabled: Boolean = true,
+    val llmRetries: Int = 3,
+    val llmTimeoutSeconds: Long = 60,
+    val toolTimeoutSeconds: Long = 30,
+    val streamingEnabled: Boolean = true,
+    val layer: VslfcLayer = VslfcLayer.CODE,
+    val agentId: String = ""
 )
 
 /**
  * Koog ToolRegistry configuration.
- * 
- * @property enabledTools List of enabled tool names
- * @property disabledTools List of disabled tool names
- * @property toolTimeoutSeconds Tool execution timeout
- * @property requireConfirmationFor Tools requiring user confirmation
- * @property readOnlyMode Whether all tools are read-only
- * @property allowFileWrites Whether file writes are allowed
- * @property allowedDirectories Directories where files can be modified
- * @property forbiddenDirectories Directories where modifications are forbidden
- * @property maxFileSize Maximum file size for operations
- * @property requireBackupBeforeWrite Whether to backup files before writing
  */
 data class KoogToolRegistryConfig(
-    val enabledTools: List<String>,
-    val disabledTools: List<String>,
-    val toolTimeoutSeconds: Long,
-    val requireConfirmationFor: List<String>,
-    val readOnlyMode: Boolean,
-    val allowFileWrites: Boolean,
-    val allowedDirectories: List<String>,
-    val forbiddenDirectories: List<String>,
-    val maxFileSize: Long,
-    val requireBackupBeforeWrite: Boolean
+    val enabledTools: List<String> = emptyList(),
+    val disabledTools: List<String> = emptyList(),
+    val toolTimeoutSeconds: Long = 30,
+    val requireConfirmationFor: List<String> = emptyList(),
+    val readOnlyMode: Boolean = false,
+    val allowFileWrites: Boolean = true,
+    val allowedDirectories: List<String> = emptyList(),
+    val forbiddenDirectories: List<String> = emptyList(),
+    val maxFileSize: Long = 1024 * 1024,
+    val requireBackupBeforeWrite: Boolean = true
 )

@@ -187,7 +187,7 @@ fun AgentChunk.extractText(): String? = when (this) {
 fun AgentChunk.getIteration(): Int? = when (this) {
     is AgentChunk.Reasoning -> iteration
     is AgentChunk.ToolCallStarted -> iteration
-    is AgentChunk.ToolCallCompleted -> null // No iteration field
+    is AgentChunk.ToolCallCompleted -> null
     is AgentChunk.Progress -> iteration
     is AgentChunk.Done -> iterations
     else -> null

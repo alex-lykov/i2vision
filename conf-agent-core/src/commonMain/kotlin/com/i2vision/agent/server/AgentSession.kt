@@ -60,7 +60,7 @@ class AgentSession(
      */
     suspend fun process(task: String): AgentResponse {
         lastActivityAt = System.currentTimeMillis()
-        return agent.process(task)
+        return agent.process(AgentRequest(task = task))
     }
     
     /**
@@ -74,7 +74,7 @@ class AgentSession(
         
         currentJob?.cancel()
         currentJob = CoroutineScope(Dispatchers.Default).launch {
-            agent.processStreaming(task).collect(collector)
+            agent.processStreaming(AgentRequest(task = task)).collect(collector)
         }
         currentJob?.join()
     }
@@ -90,7 +90,7 @@ class AgentSession(
     /**
      * Dispose the session and release resources.
      */
-    fun dispose() {
+    suspend fun dispose() {
         cancel()
         agent.dispose()
     }
@@ -136,15 +136,18 @@ class SessionManager(
      * @param layerName Layer name
      * @return The created session
      */
-    fun createSession(sessionId: String? = null, configId: String = "default", layerName: String = "koog"): AgentSession {
+    suspend fun createSession(sessionId: String? = null, configId: String = "default", layerName: String = "koog"): AgentSession {
         val id = sessionId ?: UUID.randomUUID().toString()
         
         // Remove existing session with same ID
-        sessions.remove(id)?.dispose()
+        sessions.remove(id)?.let { existing ->
+            // Cancel but don't await dispose since we're not in a suspend context
+            existing.cancel()
+        }
         
         // Create agent instance
         val layer = VslfcLayer.valueOf(layerName.uppercase())
-        val agent = agentProvider.createAgent(configId, layer)
+        val agent = agentProvider.createAgent(layer, configId)
         
         val session = AgentSession(
             id = id,
@@ -173,35 +176,21 @@ class SessionManager(
      * @param sessionId Session ID
      */
     fun removeSession(sessionId: String) {
-        sessions.remove(sessionId)?.dispose()
+        sessions.remove(sessionId)?.let { session ->
+            // Launch disposal in background since dispose is now suspend
+            managerScope.launch {
+                session.dispose()
+            }
+        }
     }
     
     /**
      * List all available configurations.
      * 
-     * @return List of agent configurations
+     * @return List of agent configuration summaries
      */
-    fun listConfigurations(): List<AgentConfig> {
+    suspend fun listConfigurations(): List<AgentConfigSummary> {
         return agentProvider.listConfigurations()
-    }
-    
-    /**
-     * Get a specific configuration.
-     * 
-     * @param configId Configuration ID
-     * @return The configuration or null if not found
-     */
-    fun getConfiguration(configId: String): AgentConfig? {
-        return agentProvider.getConfiguration(configId)
-    }
-    
-    /**
-     * Update a configuration.
-     * 
-     * @param config The updated configuration
-     */
-    fun updateConfiguration(config: AgentConfig) {
-        agentProvider.updateConfiguration(config)
     }
     
     /**
@@ -225,7 +214,12 @@ class SessionManager(
         val idleSessions = sessions.filterValues { it.isIdle(idleTimeoutMs) }
         idleSessions.forEach { (id, session) ->
             println("Removing idle session: $id")
-            sessions.remove(id)?.dispose()
+            sessions.remove(id)?.let { s ->
+                // Launch disposal in background
+                managerScope.launch {
+                    s.dispose()
+                }
+            }
         }
     }
     
@@ -234,7 +228,12 @@ class SessionManager(
      */
     fun dispose() {
         managerScope.cancel()
-        sessions.values.forEach { it.dispose() }
+        sessions.values.forEach { session ->
+            // Launch disposal in background
+            managerScope.launch {
+                session.dispose()
+            }
+        }
         sessions.clear()
     }
 }

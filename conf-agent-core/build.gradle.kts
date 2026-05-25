@@ -7,6 +7,7 @@
 
 plugins {
     kotlin("jvm")
+    application
     `maven-publish`
 }
 
@@ -34,6 +35,9 @@ dependencies {
     // External dependency (koog-agents for AI agent framework)
     implementation("ai.koog:koog-agents:0.6.3")
 
+    // LLM Client
+    implementation(project(":llm-client"))
+
     // Ktor Server (for JSON-RPC HTTP server)
     implementation("io.ktor:ktor-server-core:2.3.7")
     implementation("io.ktor:ktor-server-cio:2.3.7")
@@ -56,6 +60,38 @@ tasks.test {
 
 kotlin {
     jvmToolchain(17)
+}
+
+// Configure source sets to include jvmMain
+sourceSets {
+    main {
+        kotlin {
+            srcDirs("src/jvmMain/kotlin", "src/commonMain/kotlin")
+        }
+    }
+    test {
+        kotlin {
+            srcDirs("src/jvmTest/kotlin", "src/commonTest/kotlin")
+        }
+    }
+}
+
+application {
+    mainClass.set("com.i2vision.agent.server.AgentServerMainKt")
+}
+
+// Custom task to run the agent server with arguments
+tasks.register<JavaExec>("runAgentServer") {
+    group = "application"
+    description = "Run the i2Vision Agent JSON-RPC Server"
+    
+    mainClass.set("com.i2vision.agent.server.AgentServerMainKt")
+    classpath = sourceSets["main"].runtimeClasspath
+    
+    // Pass command line arguments
+    if (project.hasProperty("args")) {
+        args((project.property("args") as String).split(" "))
+    }
 }
 
 publishing {

@@ -2,14 +2,18 @@
  * AgentTabManager - Manages agent tabs in VSCode
  * 
  * Creates and manages webview panels for each agent instance,
- * loading configuration from YAML files and bridging to the agent core.
+ * using LocalAgentProvider to create agents dynamically.
+ * 
+ * Updated for Option C: Uses LocalAgentProvider instead of direct AgentBridge
  */
 
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as yaml from 'js-yaml';
-import { AgentBridge, AgentConfig, InteractionRecord } from './AgentBridge';
+import { LocalAgentProvider } from './LocalAgentProvider';
+import { LocalI2VisionAgent, VslfcLayer, AgentContext } from './LocalI2VisionAgent';
+import { AgentConfig, InteractionRecord } from './AgentBridge';
 
 /**
  * Agent tab representation
@@ -17,8 +21,7 @@ import { AgentBridge, AgentConfig, InteractionRecord } from './AgentBridge';
 interface AgentTab {
   id: string;
   layer: 'vision' | 'structure' | 'logic' | 'flow' | 'code';
-  config: AgentConfig;
-  bridge: AgentBridge;
+  agent: LocalI2VisionAgent;
   panel: vscode.WebviewPanel;
   history: InteractionRecord[];
   isProcessing: boolean;
@@ -29,7 +32,7 @@ interface AgentTab {
  */
 export class AgentTabManager {
   private tabs: Map<string, AgentTab> = new Map();
-  private configPath: string;
+  private provider: LocalAgentProvider;
   private outputChannel: vscode.OutputChannel;
 
   constructor(
@@ -38,13 +41,18 @@ export class AgentTabManager {
   ) {
     this.outputChannel = outputChannel;
     
-    this.configPath = path.join(
-      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '',
-      '.vscode', 'i2vision', 'agents'
-    );
+    // Create the local agent provider
+    this.provider = new LocalAgentProvider(context, outputChannel);
     
-    this.log('AgentTabManager initialized');
-    this.log(`Config path: ${this.configPath}`);
+    this.log('AgentTabManager initialized with LocalAgentProvider');
+  }
+
+  /**
+   * Initialize the manager and provider
+   */
+  async initialize(): Promise<void> {
+    await this.provider.initialize();
+    this.log('AgentTabManager initialization complete');
   }
 
   /**
@@ -54,17 +62,9 @@ export class AgentTabManager {
     this.log(`Creating ${layer} agent tab...`);
     
     try {
-      // Load the YAML configuration
-      const configPath = path.join(this.configPath, `${layer}-agent.yaml`);
-      const config = await this.loadConfig(configPath);
-      
-      if (!config) {
-        throw new Error(`Configuration file not found: ${configPath}`);
-      }
-      
-      // Create the agent bridge
-      const bridge = new AgentBridge(config, this.outputChannel);
-      await bridge.initialize();
+      // Create the agent using the provider
+      const vslfcLayer = VslfcLayer[layer.toUpperCase() as keyof typeof VslfcLayer];
+      const agent = await this.provider.createAgent(vslfcLayer);
       
       // Create the webview panel
       const panel = vscode.window.createWebviewPanel(
@@ -79,10 +79,9 @@ export class AgentTabManager {
       );
       
       const tab: AgentTab = {
-        id: `${layer}-${Date.now()}`,
+        id: agent.id,
         layer,
-        config,
-        bridge,
+        agent,
         panel,
         history: [],
         isProcessing: false
@@ -100,7 +99,7 @@ export class AgentTabManager {
       });
       
       // Set initial HTML
-      panel.webview.html = this.getWebviewContent(layer, config);
+      panel.webview.html = this.getWebviewContent(layer, agent.getConfig());
       
       this.tabs.set(tab.id, tab);
       this.log(`Created ${layer} agent tab: ${tab.id}`);
@@ -110,51 +109,6 @@ export class AgentTabManager {
       this.log(`Error creating ${layer} agent tab: ${error.message}`);
       vscode.window.showErrorMessage(`Failed to create ${layer} agent: ${error.message}`);
       throw error;
-    }
-  }
-
-  /**
-   * Load agent configuration from YAML file
-   */
-  private async loadConfig(configPath: string): Promise<AgentConfig | null> {
-    try {
-      if (!fs.existsSync(configPath)) {
-        // Create default config if it doesn't exist
-        await this.createDefaultConfig(configPath);
-      }
-      
-      const yamlContent = fs.readFileSync(configPath, 'utf8');
-      const config = yaml.load(yamlContent) as AgentConfig;
-      
-      this.log(`Loaded config from: ${configPath}`);
-      this.log(`Agent key: ${config.key}, type: ${config.agentType}`);
-      
-      return config;
-    } catch (error: any) {
-      this.log(`Error loading config: ${error.message}`);
-      throw new Error(`Failed to load agent configuration: ${error.message}`);
-    }
-  }
-
-  /**
-   * Create default configuration file if it doesn't exist
-   */
-  private async createDefaultConfig(configPath: string): Promise<void> {
-    const dir = path.dirname(configPath);
-    
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-      this.log(`Created config directory: ${dir}`);
-    }
-    
-    // Copy from the template if available
-    const templatePath = path.join(this.context.extensionPath, '.vscode', 'i2vision', 'agents', 'coding-agent.yaml');
-    
-    if (fs.existsSync(templatePath)) {
-      fs.copyFileSync(templatePath, configPath);
-      this.log(`Created default config from template: ${configPath}`);
-    } else {
-      this.log(`No template found at: ${templatePath}`);
     }
   }
 
@@ -179,7 +133,7 @@ export class AgentTabManager {
         break;
         
       case 'reloadConfig':
-        await this.reloadConfig(tab);
+        await this.reloadAgent(tab);
         break;
     }
   }
@@ -208,11 +162,18 @@ export class AgentTabManager {
       // Get current file context
       const currentFile = vscode.window.activeTextEditor?.document.uri.fsPath;
       
-      // Call the agent bridge
-      const response = await tab.bridge.process(userInput, {
+      // Prepare agent request
+      const context: AgentContext = {
+        workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '',
         currentFile,
-        projectName: vscode.workspace.workspaceFolders?.[0]?.name,
-        task: userInput
+        sessionId: tab.id
+      };
+      
+      // Call the agent
+      const response = await tab.agent.process({
+        id: `request-${Date.now()}`,
+        task: userInput,
+        context: context
       });
       
       // Record the interaction
@@ -254,7 +215,10 @@ export class AgentTabManager {
    * Open the configuration file for editing
    */
   private async openConfigFile(tab: AgentTab) {
-    const configPath = path.join(this.configPath, `${tab.layer}-agent.yaml`);
+    const configPath = path.join(
+      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '',
+      '.vscode', 'i2vision', 'agents', `${tab.layer}-agent.yaml`
+    );
     
     try {
       const doc = await vscode.workspace.openTextDocument(configPath);
@@ -267,36 +231,34 @@ export class AgentTabManager {
   }
 
   /**
-   * Reload configuration from file
+   * Reload agent with new configuration
    */
-  private async reloadConfig(tab: AgentTab) {
+  private async reloadAgent(tab: AgentTab) {
     try {
-      const configPath = path.join(this.configPath, `${tab.layer}-agent.yaml`);
-      const newConfig = await this.loadConfig(configPath);
+      // Create a new agent with the same layer
+      const vslfcLayer = VslfcLayer[tab.layer.toUpperCase() as keyof typeof VslfcLayer];
+      const newAgent = await this.provider.createAgent(vslfcLayer);
       
-      if (newConfig) {
-        tab.config = newConfig;
-        
-        // Reinitialize the bridge with new config
-        tab.bridge.dispose();
-        tab.bridge = new AgentBridge(newConfig, this.outputChannel);
-        await tab.bridge.initialize();
-        
-        this.log(`Reloaded config for tab: ${tab.id}`);
-        
-        tab.panel.webview.postMessage({
-          command: 'configReloaded',
-          config: {
-            model: newConfig.model.id,
-            maxIterations: newConfig.iterationSettings.maxIterations
-          }
-        });
-        
-        vscode.window.showInformationMessage(`${this.capitalize(tab.layer)} Agent configuration reloaded`);
-      }
+      // Dispose old agent
+      await tab.agent.dispose();
+      
+      // Replace with new agent
+      tab.agent = newAgent;
+      
+      this.log(`Reloaded agent for tab: ${tab.id}`);
+      
+      tab.panel.webview.postMessage({
+        command: 'configReloaded',
+        config: {
+          model: newAgent.getConfig().model.id,
+          maxIterations: newAgent.getConfig().iterationSettings.maxIterations
+        }
+      });
+      
+      vscode.window.showInformationMessage(`${this.capitalize(tab.layer)} Agent configuration reloaded`);
     } catch (error: any) {
-      this.log(`Error reloading config: ${error.message}`);
-      vscode.window.showErrorMessage(`Failed to reload configuration: ${error.message}`);
+      this.log(`Error reloading agent: ${error.message}`);
+      vscode.window.showErrorMessage(`Failed to reload agent: ${error.message}`);
     }
   }
 
@@ -313,11 +275,15 @@ export class AgentTabManager {
   /**
    * Close and dispose an agent tab
    */
-  private closeTab(tabId: string) {
+  private async closeTab(tabId: string) {
     const tab = this.tabs.get(tabId);
     if (tab) {
       this.log(`Closing tab: ${tabId}`);
-      tab.bridge.dispose();
+      try {
+        await tab.agent.dispose();
+      } catch (error: any) {
+        this.log(`Error disposing agent: ${error.message}`);
+      }
       this.tabs.delete(tabId);
     }
   }
@@ -351,267 +317,129 @@ export class AgentTabManager {
   }
 
   /**
-   * Generate webview HTML for agent chat interface
+   * Get webview HTML content
    */
   private getWebviewContent(layer: string, config: AgentConfig): string {
     return `<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${this.capitalize(layer)} Agent</title>
+  <title>i2-Vision ${this.capitalize(layer)} Agent</title>
   <style>
-    :root {
-      --vscode-font-family: ${this.getVsCodeFontFamily()};
-      --vscode-font-size: 13px;
-      --vscode-foreground: #cccccc;
-      --vscode-background: #1e1e1e;
-      --vscode-input-background: #3c3c3c;
-      --vscode-input-foreground: #cccccc;
-      --vscode-button-background: #0e639c;
-      --vscode-button-foreground: #ffffff;
-      --vscode-textBlockQuote-background: #2d2d2d;
-      --vscode-titleBar-activeBackground: #323233;
-      --vscode-badge-background: #0e639c;
-      --vscode-badge-foreground: #ffffff;
-      --vscode-panel-border: #454545;
-      --vscode-textLink-foreground: #3794ff;
-      --vscode-errorForeground: #f48771;
-      --vscode-successForeground: #89d185;
-    }
-    
-    * {
-      box-sizing: border-box;
-    }
-    
-    body { 
+    body {
       font-family: var(--vscode-font-family);
-      font-size: var(--vscode-font-size);
-      color: var(--vscode-foreground);
-      background: var(--vscode-background);
-      padding: 0;
-      margin: 0;
+      padding: 20px;
+      background-color: var(--vscode-editor-background);
+      color: var(--vscode-editor-foreground);
+    }
+    .chat-container {
       display: flex;
       flex-direction: column;
-      height: 100vh;
-      overflow: hidden;
+      height: calc(100vh - 100px);
     }
-    
-    .config-bar {
+    .messages {
+      flex: 1;
+      overflow-y: auto;
+      border: 1px solid var(--vscode-widget-border);
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+    .message {
+      margin-bottom: 10px;
+      padding: 8px;
+      border-radius: 4px;
+    }
+    .message.user {
+      background-color: var(--vscode-input-background);
+      margin-left: 20%;
+    }
+    .message.agent {
+      background-color: var(--vscode-editor-inactiveSelectionBackground);
+      margin-right: 20%;
+    }
+    .input-area {
       display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 6px 12px;
-      background: var(--vscode-titleBar-activeBackground);
-      font-size: 0.85em;
-      border-bottom: 1px solid var(--vscode-panel-border);
-      flex-shrink: 0;
+      gap: 10px;
     }
-    
-    .config-info {
-      display: flex;
-      gap: 12px;
-      align-items: center;
+    textarea {
+      flex: 1;
+      resize: none;
+      height: 60px;
+      background-color: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      border: 1px solid var(--vscode-input-border);
+      padding: 8px;
     }
-    
-    .config-actions {
-      display: flex;
-      gap: 6px;
-    }
-    
     button {
-      padding: 4px 10px;
-      background: var(--vscode-button-background);
+      padding: 8px 16px;
+      background-color: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
       border: none;
-      border-radius: 2px;
       cursor: pointer;
-      font-size: 0.85em;
     }
-    
     button:hover {
-      opacity: 0.9;
+      background-color: var(--vscode-button-hoverBackground);
     }
-    
     button:disabled {
       opacity: 0.5;
       cursor: not-allowed;
     }
-    
-    #chat-container {
-      flex: 1;
-      overflow-y: auto;
-      padding: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-    
-    .message {
-      padding: 10px 12px;
-      border-radius: 6px;
-      max-width: 85%;
-      line-height: 1.4;
-      white-space: pre-wrap;
-      word-wrap: break-word;
-    }
-    
-    .user-message {
-      background: var(--vscode-textBlockQuote-background);
-      margin-left: auto;
-      border-bottom-right-radius: 2px;
-    }
-    
-    .agent-message {
-      background: var(--vscode-background);
-      margin-right: auto;
-      border: 1px solid var(--vscode-panel-border);
-      border-bottom-left-radius: 2px;
-    }
-    
-    .agent-message.error {
-      border-color: var(--vscode-errorForeground);
-      background: rgba(244, 135, 113, 0.1);
-    }
-    
-    .tool-call {
-      font-size: 0.85em;
-      color: var(--vscode-textLink-foreground);
-      margin-top: 6px;
-      padding-top: 6px;
-      border-top: 1px solid var(--vscode-panel-border);
-    }
-    
-    .iteration-info {
-      font-size: 0.75em;
-      color: var(--vscode-foreground);
-      opacity: 0.7;
-      margin-top: 4px;
-      display: flex;
-      gap: 8px;
-    }
-    
-    .iteration-badge {
-      background: var(--vscode-badge-background);
-      color: var(--vscode-badge-foreground);
-      padding: 2px 6px;
-      border-radius: 3px;
-      font-size: 0.8em;
-    }
-    
-    #input-container {
-      display: flex;
-      padding: 12px;
-      border-top: 1px solid var(--vscode-panel-border);
-      background: var(--vscode-background);
-      flex-shrink: 0;
-      gap: 8px;
-    }
-    
-    #user-input {
-      flex: 1;
-      padding: 8px 12px;
-      background: var(--vscode-input-background);
-      color: var(--vscode-input-foreground);
-      border: 1px solid var(--vscode-panel-border);
-      border-radius: 4px;
-      font-family: inherit;
-      font-size: inherit;
-    }
-    
-    #user-input:focus {
-      outline: 1px solid var(--vscode-button-background);
-    }
-    
-    .processing-indicator {
-      display: inline-block;
-      width: 8px;
-      height: 8px;
-      border: 2px solid var(--vscode-foreground);
-      border-top-color: transparent;
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-      margin-right: 8px;
-    }
-    
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-    
-    .empty-state {
-      text-align: center;
-      color: var(--vscode-foreground);
-      opacity: 0.5;
-      padding: 40px 20px;
-    }
-    
-    .empty-state h3 {
-      margin: 0 0 8px 0;
-      font-weight: normal;
-    }
-    
-    .empty-state p {
-      margin: 0;
-      font-size: 0.9em;
+    .status {
+      font-size: 12px;
+      color: var(--vscode-descriptionForeground);
+      margin-bottom: 10px;
     }
   </style>
 </head>
 <body>
-  <div class="config-bar">
-    <div class="config-info">
-      <span>🔧 ${layer.toUpperCase()} Agent</span>
-      <span class="iteration-badge">Model: ${config.model.id}</span>
-      <span class="iteration-badge">Max: ${config.iterationSettings.maxIterations} iter</span>
-    </div>
-    <div class="config-actions">
-      <button onclick="openConfig()">⚙️ Config</button>
-      <button onclick="reloadConfig()">🔄 Reload</button>
-      <button onclick="clearHistory()">🗑️ Clear</button>
-    </div>
+  <h2>i2-Vision ${this.capitalize(layer)} Agent</h2>
+  <div class="status">
+    Model: ${config.model.id} | Max Iterations: ${config.iterationSettings.maxIterations}
   </div>
-  
-  <div id="chat-container">
-    <div class="empty-state">
-      <h3>Welcome to the ${this.capitalize(layer)} Agent</h3>
-      <p>Ask me to analyze code, make changes, or explore the project</p>
+  <div class="chat-container">
+    <div class="messages" id="messages"></div>
+    <div class="input-area">
+      <textarea id="input" placeholder="Ask the agent to analyze, explain, or modify code..."></textarea>
+      <button id="send" onclick="sendMessage()">Send</button>
+      <button id="clear" onclick="clearHistory()">Clear</button>
+      <button id="config" onclick="openConfig()">Config</button>
     </div>
   </div>
-  
-  <div id="input-container">
-    <input 
-      type="text" 
-      id="user-input" 
-      placeholder="Ask the agent to do something..." 
-      onkeypress="if(event.key==='Enter') sendMessage()"
-      autocomplete="off"
-    />
-    <button id="send-btn" onclick="sendMessage()">Send</button>
-  </div>
-  
   <script>
     const vscode = acquireVsCodeApi();
+    const messagesEl = document.getElementById('messages');
+    const inputEl = document.getElementById('input');
+    const sendBtn = document.getElementById('send');
+    
     let isProcessing = false;
     
     function sendMessage() {
-      if (isProcessing) return;
-      
-      const input = document.getElementById('user-input');
-      const text = input.value.trim();
-      if (!text) return;
+      const text = inputEl.value.trim();
+      if (!text || isProcessing) return;
       
       isProcessing = true;
-      input.value = '';
-      input.disabled = true;
-      document.getElementById('send-btn').disabled = true;
+      sendBtn.disabled = true;
       
-      // Add user message to chat
-      addMessage('user', text);
-      
-      // Show processing indicator
-      addProcessingMessage();
+      // Add user message to UI
+      addMessage(text, 'user');
       
       // Send to extension
       vscode.postMessage({ command: 'sendMessage', text });
+      inputEl.value = '';
+    }
+    
+    function addMessage(text, type) {
+      const div = document.createElement('div');
+      div.className = 'message ' + type;
+      div.textContent = text;
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+    
+    function clearHistory() {
+      vscode.postMessage({ command: 'clearHistory' });
+      messagesEl.innerHTML = '';
     }
     
     function openConfig() {
@@ -622,116 +450,40 @@ export class AgentTabManager {
       vscode.postMessage({ command: 'reloadConfig' });
     }
     
-    function clearHistory() {
-      vscode.postMessage({ command: 'clearHistory' });
-      document.getElementById('chat-container').innerHTML = \`
-        <div class="empty-state">
-          <h3>History cleared</h3>
-          <p>Start a new conversation</p>
-        </div>
-      \`;
-    }
-    
-    function addMessage(type, text, toolCalls, isError) {
-      const container = document.getElementById('chat-container');
-      
-      // Remove empty state if present
-      const emptyState = container.querySelector('.empty-state');
-      if (emptyState) {
-        emptyState.remove();
-      }
-      
-      const div = document.createElement('div');
-      div.className = 'message ' + type + '-message' + (isError ? ' error' : '');
-      div.textContent = text;
-      
-      if (toolCalls && toolCalls.length > 0) {
-        const toolsDiv = document.createElement('div');
-        toolsDiv.className = 'tool-call';
-        toolsDiv.textContent = '🔧 Tools: ' + toolCalls.join(', ');
-        div.appendChild(toolsDiv);
-      }
-      
-      container.appendChild(div);
-      container.scrollTop = container.scrollHeight;
-    }
-    
-    function addProcessingMessage() {
-      const container = document.getElementById('chat-container');
-      const div = document.createElement('div');
-      div.className = 'message agent-message';
-      div.id = 'processing-message';
-      div.innerHTML = '<span class="processing-indicator"></span>Processing...';
-      container.appendChild(div);
-      container.scrollTop = container.scrollHeight;
-    }
-    
-    function removeProcessingMessage() {
-      const processingMsg = document.getElementById('processing-message');
-      if (processingMsg) {
-        processingMsg.remove();
-      }
-    }
-    
-    function addIterationInfo(iterations, durationMs) {
-      const container = document.getElementById('chat-container');
-      const lastMessage = container.lastElementChild;
-      
-      if (lastMessage && lastMessage.classList.contains('agent-message')) {
-        const info = document.createElement('div');
-        info.className = 'iteration-info';
-        info.innerHTML = \`
-          <span class="iteration-badge">\${iterations} iterations</span>
-          <span>\${durationMs}ms</span>
-        \`;
-        lastMessage.appendChild(info);
-      }
-    }
-    
     // Handle messages from extension
     window.addEventListener('message', event => {
       const message = event.data;
       
       switch (message.command) {
         case 'processing':
-          // Already showing processing indicator
+          addMessage('Processing...', 'agent');
           break;
           
         case 'response':
-          removeProcessingMessage();
-          
-          if (message.response.success) {
-            const toolNames = message.response.toolCalls?.map(tc => tc.toolName);
-            addMessage('agent', message.response.text, toolNames, false);
-            addIterationInfo(message.response.iterations, message.response.durationMs);
-          } else {
-            addMessage('agent', message.response.text, null, true);
-          }
-          
           isProcessing = false;
-          const input = document.getElementById('user-input');
-          input.disabled = false;
-          document.getElementById('send-btn').disabled = false;
-          input.focus();
+          sendBtn.disabled = false;
+          if (message.response.text) {
+            addMessage(message.response.text, 'agent');
+          }
           break;
           
         case 'error':
-          removeProcessingMessage();
-          addMessage('agent', '❌ Error: ' + message.error, null, true);
           isProcessing = false;
-          const input2 = document.getElementById('user-input');
-          input2.disabled = false;
-          document.getElementById('send-btn').disabled = false;
+          sendBtn.disabled = false;
+          addMessage('Error: ' + message.error, 'agent');
           break;
           
         case 'configReloaded':
-          // Update the config bar
-          const badges = document.querySelectorAll('.iteration-badge');
-          if (badges.length > 1) {
-            badges[1].textContent = 'Model: ' + message.config.model;
-            badges[2].textContent = 'Max: ' + message.config.maxIterations + ' iter';
-          }
+          console.log('Config reloaded:', message.config);
           break;
+      }
+    });
+    
+    // Enter to send, Shift+Enter for new line
+    inputEl.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
       }
     });
   </script>
@@ -740,9 +492,19 @@ export class AgentTabManager {
   }
 
   /**
-   * Get VSCode font family for webview
+   * Dispose of all resources
    */
-  private getVsCodeFontFamily(): string {
-    return "system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif";
+  async dispose(): Promise<void> {
+    this.log('Disposing AgentTabManager...');
+    
+    // Close all tabs
+    for (const tabId of this.tabs.keys()) {
+      await this.closeTab(tabId);
+    }
+    
+    // Dispose provider
+    await this.provider.dispose();
+    
+    this.log('AgentTabManager disposed');
   }
 }

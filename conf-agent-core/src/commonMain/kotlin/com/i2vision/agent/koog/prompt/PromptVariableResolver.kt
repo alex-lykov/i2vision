@@ -13,7 +13,7 @@ package com.i2vision.agent.koog.prompt
  * Supports:
  * - Simple substitution: `${variableName}`
  * - Default values: `${variableName:default value}`
- * - Escaped literals: `$${literal}` outputs `${literal}`
+ * - Escaped literals: `$${...}` outputs `${...}`
  * 
  * ## Syntax Examples
  * 
@@ -41,6 +41,15 @@ package com.i2vision.agent.koog.prompt
  */
 class PromptVariableResolver {
     
+    // Use unique placeholder strings instead of null character
+    private companion object {
+        private const val ESCAPE_START = "ESCAPED_DOLLAR_START"
+        private const val ESCAPE_END = "ESCAPED_DOLLAR_END"
+    }
+    
+    // Dollar sign as a constant to avoid interpolation issues
+    private val dollarSign = "$"
+    
     /**
      * Resolve all ${variable} placeholders in the template.
      * 
@@ -50,12 +59,17 @@ class PromptVariableResolver {
      */
     fun resolve(template: String, variables: Map<String, String>): String {
         // First, handle escaped literals ($${...} → ${...})
-        val unescaped = template.replace("$${", "\u0000{\$").replace("}$$", "\$}\u0000")
+        // Replace $${ with placeholder, then }$$ with placeholder
+        val escapedDollarBrace = dollarSign + dollarSign + "{"
+        val escapedBraceDollar = "}" + dollarSign + dollarSign
+        
+        val withEscapedStart = template.replace(escapedDollarBrace, ESCAPE_START)
+        val withEscapedEnd = withEscapedStart.replace(escapedBraceDollar, ESCAPE_END)
         
         // Pattern: ${variableName} or ${variableName:defaultValue}
-        val pattern = Regex("""\$\{([^}:]+)(?::([^}]*))?\}""")
+        val pattern = Regex(dollarSign + """\{([^}:]+)(?::([^}]*))?\}""")
         
-        return pattern.replace(unescaped) { match ->
+        return pattern.replace(withEscapedEnd) { match ->
             val varName = match.groupValues[1]
             val defaultValue = match.groupValues[2].ifEmpty { null }
             
@@ -67,7 +81,9 @@ class PromptVariableResolver {
                 // Keep unresolved if no default
                 match.value
             }
-        }.replace("\u0000{\$", "${").replace("\$}\u0000", "}$")
+        }
+            .replace(ESCAPE_START, dollarSign)
+            .replace(ESCAPE_END, "}")
     }
     
     /**
@@ -79,11 +95,15 @@ class PromptVariableResolver {
      */
     fun findUnresolved(template: String, variables: Map<String, String>): List<String> {
         // Remove escaped literals first
-        val unescaped = template.replace("$${", "ESCAPED_START").replace("}$$", "ESCAPED_END")
+        val escapedDollarBrace = dollarSign + dollarSign + "{"
+        val escapedBraceDollar = "}" + dollarSign + dollarSign
         
-        val pattern = Regex("""\$\{([^}:]+)(?::[^}]*)?\}""")
+        val withEscapedStart = template.replace(escapedDollarBrace, "ESCAPED_START")
+        val withEscapedEnd = withEscapedStart.replace(escapedBraceDollar, "ESCAPED_END")
         
-        return pattern.findAll(unescaped)
+        val pattern = Regex(dollarSign + """\{([^}:]+)(?::[^}]*)?\}""")
+        
+        return pattern.findAll(withEscapedEnd)
             .map { it.groupValues[1] }
             .filter { it !in variables }
             .toList()
@@ -97,13 +117,18 @@ class PromptVariableResolver {
      */
     fun extractVariableNames(template: String): List<String> {
         // Remove escaped literals first
-        val unescaped = template.replace("$${", "ESCAPED_START").replace("}$$", "ESCAPED_END")
+        val escapedDollarBrace = dollarSign + dollarSign + "{"
+        val escapedBraceDollar = "}" + dollarSign + dollarSign
         
-        val pattern = Regex("""\$\{([^}:]+)(?::[^}]*)?\}""")
+        val withEscapedStart = template.replace(escapedDollarBrace, "ESCAPED_START")
+        val withEscapedEnd = withEscapedStart.replace(escapedBraceDollar, "ESCAPED_END")
         
-        return pattern.findAll(unescaped)
+        val pattern = Regex(dollarSign + """\{([^}:]+)(?::[^}]*)?\}""")
+        
+        return pattern.findAll(withEscapedEnd)
             .map { it.groupValues[1] }
             .distinct()
+            .toList()
     }
     
     /**

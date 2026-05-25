@@ -9,7 +9,8 @@ package com.i2vision.agent.config
 
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.yaml.Yaml
+import org.yaml.snakeyaml.Yaml
+import org.yaml.snakeyaml.constructor.SafeConstructor
 import java.io.File
 
 /**
@@ -38,7 +39,8 @@ import java.io.File
  */
 object YamlConfigLoader {
     
-    private val yamlFormat = Yaml {
+    private val yaml = Yaml(SafeConstructor())
+    private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
         explicitNulls = false
@@ -142,7 +144,15 @@ object YamlConfigLoader {
     @OptIn(ExperimentalSerializationApi::class)
     private fun parseYaml(content: String, source: String): AgentPromptConfiguration {
         try {
-            val config = yamlFormat.decodeFromString<AgentPromptConfiguration>(content)
+            // Parse YAML to Map first
+            @Suppress("UNCHECKED_CAST")
+            val yamlMap = yaml.load<Map<String, Any>>(content) as Map<String, Any>
+            
+            // Convert to JSON string
+            val jsonString = json.encodeToString(yamlMap)
+            
+            // Deserialize from JSON
+            val config = json.decodeFromString<AgentPromptConfiguration>(jsonString)
             
             // Validate required fields
             val errors = AgentPromptConfiguration.validate(config)
@@ -151,6 +161,8 @@ object YamlConfigLoader {
             }
             
             return config
+        } catch (e: ConfigLoadException) {
+            throw e
         } catch (e: Exception) {
             throw ConfigLoadException("Failed to parse YAML from $source: ${e.message}", e)
         }
@@ -167,10 +179,57 @@ object YamlConfigLoader {
             val file = File(path)
             file.parentFile?.mkdirs()
             
-            val content = yamlFormat.encodeToString(config)
-            file.writeText(content)
+            // Convert to JSON first, then to YAML-like format
+            val jsonString = json.encodeToString(config)
+            @Suppress("UNCHECKED_CAST")
+            val map = json.decodeFromString<Map<String, Any>>(jsonString)
+            
+            // Simple YAML serialization
+            val yamlContent = buildYaml(map)
+            file.writeText(yamlContent)
         } catch (e: Exception) {
             throw ConfigLoadException("Failed to save configuration to $path: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * Build a simple YAML string from a map.
+     */
+    private fun buildYaml(map: Map<String, Any>, indent: Int = 0): String = buildString {
+        val prefix = "  ".repeat(indent)
+        map.forEach { (key, value) ->
+            when (value) {
+                is Map<*, *> -> {
+                    appendLine("${prefix}${key}:")
+                    @Suppress("UNCHECKED_CAST")
+                    append(buildYaml(value as Map<String, Any>, indent + 1))
+                }
+                is List<*> -> {
+                    appendLine("${prefix}${key}:")
+                    value.forEach { item ->
+                        appendLine("${prefix}  - $item")
+                    }
+                }
+                is String -> {
+                    if (value.contains("\n") || value.contains(":") || value.contains("#")) {
+                        appendLine("${prefix}${key}: |")
+                        value.lines().forEach { line ->
+                            appendLine("${prefix}  $line")
+                        }
+                    } else {
+                        appendLine("${prefix}${key}: $value")
+                    }
+                }
+                is Boolean, is Number -> {
+                    appendLine("${prefix}${key}: $value")
+                }
+                null -> {
+                    appendLine("${prefix}${key}: null")
+                }
+                else -> {
+                    appendLine("${prefix}${key}: $value")
+                }
+            }
         }
     }
 }

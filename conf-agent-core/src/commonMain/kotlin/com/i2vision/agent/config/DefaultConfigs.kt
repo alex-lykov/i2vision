@@ -40,6 +40,11 @@ import com.i2vision.agent.VslfcLayer
  */
 object DefaultConfigs {
     
+    // Template variable placeholders - using const to avoid repetition
+    private const val WORKSPACE_ROOT = "{{$" + "workspaceRoot}}"
+    private const val CURRENT_FILE = "{{$" + "currentFile}}"
+    private const val PROJECT_ROOT = "{{$" + "projectRoot}}"
+    
     /**
      * Default configuration for CODE layer agents.
      * 
@@ -60,8 +65,8 @@ Your role is to write clean, efficient, and maintainable code.
 
 ## Context
 - Layer: CODE
-- Workspace: {{$workspaceRoot}}
-- Current File: {{$currentFile}}
+- Workspace: {{${"$"}workspaceRoot}}
+- Current File: {{${"$"}currentFile}}
 
 ## Guidelines
 1. Follow language best practices and conventions
@@ -79,7 +84,11 @@ Your role is to write clean, efficient, and maintainable code.
 5. Verify it compiles and works
 6. Explain your changes
 """.trimIndent(),
-        templateVariables = emptyMap(),
+        templateVariables = mapOf(
+            "workspaceRoot" to WORKSPACE_ROOT,
+            "currentFile" to CURRENT_FILE,
+            "projectRoot" to PROJECT_ROOT
+        ),
         ruleSetKeys = listOf("code-style", "error-handling"),
         model = ModelConfig(
             provider = "Ollama",
@@ -193,7 +202,7 @@ Your role is to design clear, efficient, and maintainable interaction flows.
 
 ## Context
 - Layer: FLOW
-- Workspace: {{$workspaceRoot}}
+- Workspace: {{${"$"}workspaceRoot}}
 
 ## Guidelines
 1. Design clear API contracts
@@ -211,7 +220,11 @@ Your role is to design clear, efficient, and maintainable interaction flows.
 5. Validate against constraints
 6. Explain the design
 """.trimIndent(),
-        templateVariables = emptyMap(),
+        templateVariables = mapOf(
+            "workspaceRoot" to WORKSPACE_ROOT,
+            "currentFile" to CURRENT_FILE,
+            "projectRoot" to PROJECT_ROOT
+        ),
         ruleSetKeys = listOf("api-design", "state-machines"),
         model = ModelConfig(
             provider = "Ollama",
@@ -324,7 +337,7 @@ Your role is to implement correct, efficient, and maintainable business logic.
 
 ## Context
 - Layer: LOGIC
-- Workspace: {{$workspaceRoot}}
+- Workspace: {{${"$"}workspaceRoot}}
 
 ## Guidelines
 1. Implement business rules accurately
@@ -342,7 +355,11 @@ Your role is to implement correct, efficient, and maintainable business logic.
 5. Verify correctness
 6. Explain the implementation
 """.trimIndent(),
-        templateVariables = emptyMap(),
+        templateVariables = mapOf(
+            "workspaceRoot" to WORKSPACE_ROOT,
+            "currentFile" to CURRENT_FILE,
+            "projectRoot" to PROJECT_ROOT
+        ),
         ruleSetKeys = listOf("business-rules", "algorithms"),
         model = ModelConfig(
             provider = "Ollama",
@@ -389,8 +406,8 @@ Your role is to implement correct, efficient, and maintainable business logic.
         safety = SafetyConfig(
             allowFileWrites = true,
             allowedDirectories = emptyList(),
-            forbiddenDirectories = listOf(".git"),
-            enableBuildVerification = true,
+            forbiddenDirectories = listOf(".git", "node_modules"),
+            enableBuildVerification = false,
             maxFileSize = 1024 * 1024,
             requireBackupBeforeWrite = true
         ),
@@ -440,9 +457,9 @@ Your role is to implement correct, efficient, and maintainable business logic.
      * 
      * Optimized for:
      * - Component design
-     * - Module organization
+     * - Module architecture
      * - Dependency management
-     * - Architecture patterns
+     * - System organization
      */
     val STRUCTURE = AgentPromptConfiguration(
         key = "default-structure",
@@ -450,31 +467,35 @@ Your role is to implement correct, efficient, and maintainable business logic.
         version = "1.0.0",
         isActive = true,
         systemPromptTemplate = """
-You are an expert software architect specializing in system structure and organization.
+You are an expert system architect specializing in structural design.
 Your role is to design clear, modular, and maintainable system architectures.
 
 ## Context
 - Layer: STRUCTURE
-- Workspace: {{$workspaceRoot}}
+- Workspace: {{${"$"}workspaceRoot}}
 
 ## Guidelines
 1. Design modular components
-2. Minimize coupling
-3. Maximize cohesion
-4. Document dependencies
-5. Follow architectural patterns
-6. Plan for evolution
+2. Define clear interfaces
+3. Minimize coupling
+4. Maximize cohesion
+5. Document dependencies
+6. Ensure scalability
 
 ## Process
 1. Understand the system requirements
 2. Identify components and modules
 3. Define interfaces and contracts
 4. Map dependencies
-5. Validate the structure
-6. Explain the architecture
+5. Validate the architecture
+6. Explain the design
 """.trimIndent(),
-        templateVariables = emptyMap(),
-        ruleSetKeys = listOf("modularity", "dependencies"),
+        templateVariables = mapOf(
+            "workspaceRoot" to WORKSPACE_ROOT,
+            "currentFile" to CURRENT_FILE,
+            "projectRoot" to PROJECT_ROOT
+        ),
+        ruleSetKeys = listOf("architecture", "modularity"),
         model = ModelConfig(
             provider = "Ollama",
             id = "llama3.2:3b",
@@ -490,9 +511,9 @@ Your role is to design clear, modular, and maintainable system architectures.
             streaming = true
         ),
         formattingRules = FormattingRulesConfig(
-            indentSize = 2,
+            indentSize = 4,
             useTabs = false,
-            maxLineLength = 100,
+            maxLineLength = 120,
             trimTrailingWhitespace = true,
             insertFinalNewline = true
         ),
@@ -507,21 +528,20 @@ Your role is to design clear, modular, and maintainable system architectures.
         toolSelection = ToolSelectionConfig(
             enabledTools = listOf(
                 "read_file",
+                "write_file",
                 "list_directory",
-                "search_files",
                 "i2vision_discover",
-                "i2vision_get_context",
-                "i2vision_search_symbols"
+                "i2vision_get_context"
             ),
             disabledTools = emptyList(),
             toolTimeoutSeconds = 30,
-            requireConfirmationFor = emptyList(),
-            readOnlyMode = true
+            requireConfirmationFor = listOf("write_file"),
+            readOnlyMode = false
         ),
         safety = SafetyConfig(
-            allowFileWrites = false,
+            allowFileWrites = true,
             allowedDirectories = emptyList(),
-            forbiddenDirectories = emptyList(),
+            forbiddenDirectories = listOf(".git", "node_modules"),
             enableBuildVerification = false,
             maxFileSize = 1024 * 1024,
             requireBackupBeforeWrite = true
@@ -582,31 +602,35 @@ Your role is to design clear, modular, and maintainable system architectures.
         version = "1.0.0",
         isActive = true,
         systemPromptTemplate = """
-You are an expert product architect specializing in requirements and vision.
-Your role is to clarify goals, identify constraints, and define success criteria.
+You are an expert strategic planner specializing in requirements and vision.
+Your role is to define clear goals, identify constraints, and create strategic plans.
 
 ## Context
 - Layer: VISION
-- Workspace: {{$workspaceRoot}}
+- Workspace: {{${"$"}workspaceRoot}}
 
 ## Guidelines
-1. Understand the business context
-2. Identify stakeholder needs
+1. Understand the big picture
+2. Identify key stakeholders
 3. Define clear goals
-4. Identify constraints
-5. Prioritize requirements
-6. Define success criteria
+4. Identify constraints and risks
+5. Create actionable plans
+6. Ensure alignment with business objectives
 
 ## Process
 1. Gather requirements
-2. Analyze stakeholder needs
-3. Define the vision
+2. Analyze stakeholders
+3. Define goals and objectives
 4. Identify constraints
-5. Prioritize requirements
-6. Document the vision
+5. Create strategic plan
+6. Validate and refine
 """.trimIndent(),
-        templateVariables = emptyMap(),
-        ruleSetKeys = listOf("requirements", "goals"),
+        templateVariables = mapOf(
+            "workspaceRoot" to WORKSPACE_ROOT,
+            "currentFile" to CURRENT_FILE,
+            "projectRoot" to PROJECT_ROOT
+        ),
+        ruleSetKeys = listOf("requirements", "strategic-planning"),
         model = ModelConfig(
             provider = "Ollama",
             id = "llama3.2:3b",
@@ -622,15 +646,15 @@ Your role is to clarify goals, identify constraints, and define success criteria
             streaming = true
         ),
         formattingRules = FormattingRulesConfig(
-            indentSize = 2,
+            indentSize = 4,
             useTabs = false,
-            maxLineLength = 100,
+            maxLineLength = 120,
             trimTrailingWhitespace = true,
             insertFinalNewline = true
         ),
         iterationSettings = IterationConfig(
-            maxIterations = 6,
-            maxConsecutiveToolCalls = 8,
+            maxIterations = 8,
+            maxConsecutiveToolCalls = 10,
             enableKickstart = true,
             kickstartMinInvalidOutputs = 2,
             reflectionEnabled = true,
@@ -639,19 +663,20 @@ Your role is to clarify goals, identify constraints, and define success criteria
         toolSelection = ToolSelectionConfig(
             enabledTools = listOf(
                 "read_file",
+                "write_file",
                 "list_directory",
                 "i2vision_discover",
                 "i2vision_get_context"
             ),
             disabledTools = emptyList(),
             toolTimeoutSeconds = 30,
-            requireConfirmationFor = emptyList(),
-            readOnlyMode = true
+            requireConfirmationFor = listOf("write_file"),
+            readOnlyMode = false
         ),
         safety = SafetyConfig(
-            allowFileWrites = false,
+            allowFileWrites = true,
             allowedDirectories = emptyList(),
-            forbiddenDirectories = emptyList(),
+            forbiddenDirectories = listOf(".git", "node_modules"),
             enableBuildVerification = false,
             maxFileSize = 1024 * 1024,
             requireBackupBeforeWrite = true
@@ -699,21 +724,14 @@ Your role is to clarify goals, identify constraints, and define success criteria
     
     /**
      * Get the default configuration for a specific VSLFC layer.
-     * 
-     * @param layer The VSLFC layer
-     * @return Default configuration for that layer
      */
-    fun forLayer(layer: VslfcLayer): AgentPromptConfiguration = when (layer) {
-        VslfcLayer.CODE -> CODE
-        VslfcLayer.FLOW -> FLOW
-        VslfcLayer.LOGIC -> LOGIC
-        VslfcLayer.STRUCTURE -> STRUCTURE
-        VslfcLayer.VISION -> VISION
+    fun forLayer(layer: VslfcLayer): AgentPromptConfiguration {
+        return when (layer) {
+            VslfcLayer.CODE -> CODE
+            VslfcLayer.FLOW -> FLOW
+            VslfcLayer.LOGIC -> LOGIC
+            VslfcLayer.STRUCTURE -> STRUCTURE
+            VslfcLayer.VISION -> VISION
+        }
     }
-    
-    /**
-     * Get all default configurations.
-     */
-    fun all(): List<AgentPromptConfiguration> =
-        listOf(CODE, FLOW, LOGIC, STRUCTURE, VISION)
 }

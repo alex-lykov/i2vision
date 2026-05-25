@@ -7,6 +7,8 @@
 
 package com.i2vision.agent
 
+import com.i2vision.agent.tools.Tool
+
 /**
  * Declares what an agent instance can do.
  * 
@@ -69,6 +71,8 @@ data class ToolInfo(
 
 /**
  * Categories for organizing agent tools.
+ * 
+ * This is the canonical ToolCategory enum used throughout the agent system.
  */
 enum class ToolCategory {
     /** File system operations: read_file, write_file, list_directory, etc. */
@@ -77,6 +81,9 @@ enum class ToolCategory {
     /** Discovery operations: i2vision_discover, i2vision_get_context */
     DISCOVERY,
     
+    /** Analysis operations: i2vision_search_symbols, i2vision_analyze_dependencies */
+    ANALYSIS,
+    
     /** Contract validation: i2vision_validate_contracts */
     CONTRACT,
     
@@ -84,5 +91,32 @@ enum class ToolCategory {
     CODE_ANALYSIS,
     
     /** Control operations: task_complete, cancel_request */
-    CONTROL
+    CONTROL,
+    
+    /** MCP operations: Tools from MCP servers */
+    MCP
+}
+
+/**
+ * Convert tools ToolCategory to agent ToolCategory.
+ */
+fun com.i2vision.agent.tools.ToolCategory.toAgentToolCategory(): ToolCategory = when (this) {
+    com.i2vision.agent.tools.ToolCategory.FILE_SYSTEM -> ToolCategory.FILE_SYSTEM
+    com.i2vision.agent.tools.ToolCategory.DISCOVERY -> ToolCategory.DISCOVERY
+    com.i2vision.agent.tools.ToolCategory.ANALYSIS -> ToolCategory.ANALYSIS
+    com.i2vision.agent.tools.ToolCategory.CONTROL -> ToolCategory.CONTROL
+    com.i2vision.agent.tools.ToolCategory.MCP -> ToolCategory.MCP
+}
+
+/**
+ * Convert agent ToolCategory to tools ToolCategory.
+ */
+fun ToolCategory.toToolsToolCategory(): com.i2vision.agent.tools.ToolCategory = when (this) {
+    ToolCategory.FILE_SYSTEM -> com.i2vision.agent.tools.ToolCategory.FILE_SYSTEM
+    ToolCategory.DISCOVERY -> com.i2vision.agent.tools.ToolCategory.DISCOVERY
+    ToolCategory.ANALYSIS -> com.i2vision.agent.tools.ToolCategory.ANALYSIS
+    ToolCategory.CONTROL -> com.i2vision.agent.tools.ToolCategory.CONTROL
+    ToolCategory.MCP -> com.i2vision.agent.tools.ToolCategory.MCP
+    ToolCategory.CONTRACT -> com.i2vision.agent.tools.ToolCategory.ANALYSIS
+    ToolCategory.CODE_ANALYSIS -> com.i2vision.agent.tools.ToolCategory.ANALYSIS
 }

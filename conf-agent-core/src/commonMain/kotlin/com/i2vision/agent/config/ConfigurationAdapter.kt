@@ -51,7 +51,14 @@ class ConfigurationAdapter {
             else -> FileOperationMode.DIRECT
         }
         
+        val layer = parseAgentType(yaml.agentType)
+        val displayName = createAgentDisplayName(layer, yaml.model.id, yaml.model.provider)
+        
         return AgentConfig(
+            id = yaml.key,
+            displayName = displayName,
+            description = null,
+            layer = layer,
             maxIterations = yaml.iterationSettings.maxIterations,
             maxConsecutiveToolCalls = yaml.iterationSettings.maxConsecutiveToolCalls,
             toolTimeoutSeconds = yaml.toolSelection.toolTimeoutSeconds,
@@ -61,7 +68,10 @@ class ConfigurationAdapter {
             enableKickstart = yaml.iterationSettings.enableKickstart,
             kickstartMinInvalidOutputs = yaml.iterationSettings.kickstartMinInvalidOutputs,
             injectClusterContext = yaml.mcp.injectClusterContext,
-            useDiscoveryCache = yaml.discovery.enableClusterContext
+            useDiscoveryCache = yaml.discovery.enableClusterContext,
+            maxContextTokens = yaml.model.contextLength,
+            modelProvider = yaml.model.provider,
+            modelId = yaml.model.id
         )
     }
     
@@ -180,6 +190,12 @@ class ConfigurationAdapter {
      */
     private fun parseAgentType(agentType: String): VslfcLayer =
         VslfcLayer.fromStringOrNull(agentType) ?: VslfcLayer.CODE
+    
+    /**
+     * Create a display name for an agent configuration.
+     */
+    private fun createAgentDisplayName(layer: VslfcLayer, modelId: String, provider: String): String =
+        "${layer.name} Agent ($provider $modelId)"
     
     /**
      * Get description for a tool by name.

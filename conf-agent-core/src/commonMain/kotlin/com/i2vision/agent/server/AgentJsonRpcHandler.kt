@@ -12,6 +12,59 @@ import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 
 /**
+ * Convert AgentChunk to JSON for transmission.
+ */
+private fun AgentChunk.toJson(): JsonObject {
+    return buildJsonObject {
+        put("type", this@toJson::class.simpleName ?: "Unknown")
+        put("requestId", requestId)
+        put("timestamp", timestamp)
+        
+        when (this@toJson) {
+            is AgentChunk.Reasoning -> {
+                put("text", text)
+                put("iteration", iteration)
+            }
+            is AgentChunk.ToolCallStarted -> {
+                put("toolName", toolName)
+                put("args", buildJsonObject {
+                    args.forEach { (key, value) ->
+                        put(key, value.toString())
+                    }
+                })
+                put("iteration", iteration)
+            }
+            is AgentChunk.ToolCallCompleted -> {
+                put("toolName", toolName)
+                put("success", success)
+                put("output", output ?: "")
+                put("durationMs", durationMs)
+            }
+            is AgentChunk.Text -> {
+                put("text", text)
+                put("isFinal", isFinal)
+            }
+            is AgentChunk.Progress -> {
+                put("iteration", iteration)
+                put("maxIterations", maxIterations)
+                put("message", message)
+            }
+            is AgentChunk.Done -> {
+                put("outcome", outcome.name)
+                put("finalText", finalText ?: "")
+                put("iterations", iterations)
+                put("totalDurationMs", totalDurationMs)
+            }
+            is AgentChunk.ChunkError -> {
+                put("errorCode", error.code)
+                put("message", error.message)
+                put("recoverable", error.recoverable)
+            }
+        }
+    }
+}
+
+/**
  * Handles JSON-RPC requests and routes them to appropriate methods.
  * 
  * Supported methods:
@@ -131,7 +184,7 @@ class AgentJsonRpcHandler(
         val response = session.process(task)
         
         val result = buildJsonObject {
-            put("answer", response.answer)
+            put("answer", response.finalText ?: "")
             if (response.usage != null) {
                 put("usage", buildJsonObject {
                     put("promptTokens", response.usage.promptTokens)
@@ -280,9 +333,13 @@ class AgentJsonRpcHandler(
         val result = JsonArray(configs.map { config ->
             buildJsonObject {
                 put("id", config.id)
-                put("displayName", config.displayName)
-                put("description", config.description ?: "")
-                put("layer", config.layer.name)
+                put("name", config.name)
+                put("description", config.description)
+                put("modelProvider", config.modelProvider)
+                put("modelId", config.modelId)
+                put("supportedLayers", JsonArray(config.supportedLayers.map { JsonPrimitive(it.name) }))
+                put("maxContextTokens", config.maxContextTokens)
+                put("isDefault", config.isDefault)
             }
         })
         
@@ -295,6 +352,7 @@ class AgentJsonRpcHandler(
     
     /**
      * Handle getConfiguration method.
+     * Note: This is a placeholder - actual implementation depends on provider capabilities.
      */
     private suspend fun handleGetConfiguration(params: JsonObject?, id: Long?): JsonRpcResponse {
         val configId = params?.get("configId")?.jsonPrimitive?.content
@@ -304,14 +362,25 @@ class AgentJsonRpcHandler(
                 id = id
             )
         
-        val config = sessionManager.getConfiguration(configId)
+        // Get configuration from provider
+        val configs = sessionManager.listConfigurations()
+        val config = configs.find { it.id == configId }
             ?: return JsonRpcErrorResponse(
                 jsonrpc = "2.0",
                 error = JsonRpcError(code = JsonRpcError.INVALID_PARAMS, message = "Configuration not found: $configId"),
                 id = id
             )
         
-        val result = agentConfigToJson(config)
+        val result = buildJsonObject {
+            put("id", config.id)
+            put("name", config.name)
+            put("description", config.description)
+            put("modelProvider", config.modelProvider)
+            put("modelId", config.modelId)
+            put("supportedLayers", JsonArray(config.supportedLayers.map { JsonPrimitive(it.name) }))
+            put("maxContextTokens", config.maxContextTokens)
+            put("isDefault", config.isDefault)
+        }
         
         return JsonRpcSuccessResponse(
             jsonrpc = "2.0",
@@ -322,6 +391,7 @@ class AgentJsonRpcHandler(
     
     /**
      * Handle updateConfiguration method.
+     * Note: This is a placeholder - actual implementation depends on provider capabilities.
      */
     private suspend fun handleUpdateConfiguration(params: JsonObject?, id: Long?): JsonRpcResponse {
         val configId = params?.get("configId")?.jsonPrimitive?.content
@@ -331,19 +401,12 @@ class AgentJsonRpcHandler(
                 id = id
             )
         
-        val configJson = params?.get("configuration")
-            ?: return JsonRpcErrorResponse(
-                jsonrpc = "2.0",
-                error = JsonRpcError(code = JsonRpcError.INVALID_PARAMS, message = "configuration is required"),
-                id = id
-            )
-        
-        val config = jsonConfigToAgentConfig(configId, configJson)
-        sessionManager.updateConfiguration(config)
-        
+        // For now, just acknowledge the request
+        // Actual implementation would require provider to support dynamic configuration updates
         val result = buildJsonObject {
-            put("status", "updated")
+            put("status", "acknowledged")
             put("configId", configId)
+            put("note", "Configuration updates require provider-specific implementation")
         }
         
         return JsonRpcSuccessResponse(
@@ -423,12 +486,12 @@ class AgentJsonRpcHandler(
             displayName = obj["displayName"]?.jsonPrimitive?.content ?: configId,
             description = obj["description"]?.jsonPrimitive?.contentOrNull,
             layer = VslfcLayer.valueOf(obj["layer"]?.jsonPrimitive?.content?.uppercase() ?: "KOOG"),
-            modelProvider = obj["modelProvider"]?.jsonPrimitive?.contentOrNull,
-            modelId = obj["modelId"]?.jsonPrimitive?.contentOrNull,
-            maxContextTokens = obj["maxContextTokens"]?.jsonPrimitive?.longOrNull,
-            toolTimeoutSeconds = obj["toolTimeoutSeconds"]?.jsonPrimitive?.longOrNull,
+            modelProvider = obj["modelProvider"]?.jsonPrimitive?.content ?: "openai",
+            modelId = obj["modelId"]?.jsonPrimitive?.content ?: "gpt-4",
+            maxContextTokens = obj["maxContextTokens"]?.jsonPrimitive?.intOrNull ?: 8192,
+            toolTimeoutSeconds = obj["toolTimeoutSeconds"]?.jsonPrimitive?.longOrNull ?: 30,
             maxToolRetries = obj["maxToolRetries"]?.jsonPrimitive?.intOrNull,
-            enableKickstart = obj["enableKickstart"]?.jsonPrimitive?.booleanOrNull,
+            enableKickstart = obj["enableKickstart"]?.jsonPrimitive?.booleanOrNull ?: true,
             maxKickstarts = obj["maxKickstarts"]?.jsonPrimitive?.intOrNull
         )
     }

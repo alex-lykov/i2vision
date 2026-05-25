@@ -40,6 +40,7 @@ package com.i2vision.agent
  * @property reasoningTrace Reasoning trace for debugging and UI display
  * @property errors Any errors that occurred during execution
  * @property timestamp Response timestamp
+ * @property usage Token usage statistics (if available)
  */
 data class AgentResponse(
     val requestId: String,
@@ -51,7 +52,8 @@ data class AgentResponse(
     val durationMs: Long,
     val reasoningTrace: List<ReasoningStep> = emptyList(),
     val errors: List<AgentError> = emptyList(),
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val usage: TokenUsage? = null
 ) {
     /**
      * Check if the task completed successfully.
@@ -236,9 +238,28 @@ data class AgentError(
     val iteration: Int? = null,
     val recoverable: Boolean = false
 ) {
+    /**
+     * Common error codes for agent execution.
+     */
+    enum class Codes {
+        TOOL_NOT_FOUND,
+        TOOL_TIMEOUT,
+        TOOL_EXECUTION_FAILED,
+        LLM_ERROR,
+        CONTEXT_LIMIT_EXCEEDED,
+        CANCELLED,
+        INVALID_REQUEST,
+        CONFIGURATION_ERROR,
+        FILE_NOT_FOUND,
+        PERMISSION_DENIED,
+        BUILD_FAILED,
+        CONTRACT_VIOLATION,
+        UNKNOWN
+    }
+    
     companion object {
         /**
-         * Common error codes for agent execution.
+         * Common error codes as strings (legacy compatibility).
          */
         object Codes {
             const val TOOL_NOT_FOUND = "TOOL_NOT_FOUND"
@@ -257,3 +278,16 @@ data class AgentError(
         }
     }
 }
+
+/**
+ * Token usage statistics from LLM API.
+ * 
+ * @property promptTokens Number of tokens in the prompt
+ * @property completionTokens Number of tokens in the completion
+ * @property totalTokens Total tokens used
+ */
+data class TokenUsage(
+    val promptTokens: Int,
+    val completionTokens: Int,
+    val totalTokens: Int
+)

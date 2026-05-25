@@ -344,7 +344,7 @@ class I2VisionGraphStrategy(
             emit(AgentChunk.ChunkError(
                 requestId = request.id,
                 error = AgentError(
-                    code = AgentError.Codes.UNKNOWN,
+                    code = AgentError.Codes.UNKNOWN.name,
                     message = e.message ?: "Unknown error",
                     iteration = state.iteration,
                     recoverable = false

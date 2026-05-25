@@ -311,7 +311,19 @@ data class SafetyConfig(
     val maxFileSize: Long = 1024 * 1024, // 1MB
     
     @SerialName("requireBackupBeforeWrite")
-    val requireBackupBeforeWrite: Boolean = true
+    val requireBackupBeforeWrite: Boolean = true,
+    
+    @SerialName("blockGeneratedPaths")
+    val blockGeneratedPaths: List<String> = listOf("build", "target", "dist", "out", ".gradle"),
+    
+    @SerialName("protectedPaths")
+    val protectedPaths: List<String> = emptyList(),
+    
+    @SerialName("allowHiddenFileWrites")
+    val allowHiddenFileWrites: Boolean = false,
+    
+    @SerialName("maxFileSizeBytes")
+    val maxFileSizeBytes: Long = 1024 * 1024 // 1MB
 )
 
 /**

@@ -9,6 +9,8 @@ package com.i2vision.agent
 
 import kotlinx.coroutines.flow.Flow
 
+// Import AgentError for error codes
+
 /**
  * Core interface for all i2vision agents.
  * 
@@ -216,7 +218,7 @@ interface I2VisionAgent {
 class AgentExecutionException(
     message: String,
     cause: Throwable? = null,
-    val errorCode: String = AgentError.Codes.UNKNOWN,
+    val errorCode: String = AgentError.Codes.UNKNOWN.name,
     val recoverable: Boolean = false
 ) : Exception(message, cause)
 

@@ -60,7 +60,7 @@ class AgentSession(
      */
     suspend fun process(task: String): AgentResponse {
         lastActivityAt = System.currentTimeMillis()
-        return agent.process(AgentRequest(task = task))
+        return agent.process(AgentRequest.simple(task = task, workspaceRoot = "", sessionId = id))
     }
     
     /**
@@ -74,7 +74,7 @@ class AgentSession(
         
         currentJob?.cancel()
         currentJob = CoroutineScope(Dispatchers.Default).launch {
-            agent.processStreaming(AgentRequest(task = task)).collect(collector)
+            agent.processStreaming(AgentRequest.simple(task = task, workspaceRoot = "", sessionId = id)).collect(collector)
         }
         currentJob?.join()
     }

@@ -49,7 +49,7 @@ export function activate(context: vscode.ExtensionContext) {
     // Initialize agent tab manager
     agentManager = new AgentTabManager(context, outputChannel);
     
-    // Initialize the agent manager (and provider)
+    // Initialize the agent manager (and provider) - non-blocking
     agentManager.initialize().catch(err => {
         outputChannel.appendLine(`Warning: Agent manager initialization failed: ${err.message}`);
     });
@@ -64,8 +64,11 @@ export function activate(context: vscode.ExtensionContext) {
     // Register commands
     registerCommands(context, workspaceRoot);
 
-    // Check CLI availability
-    checkCLIAvailability(workspaceRoot);
+    // NON-BLOCKING CLI check - moved to background to prevent extension host hang
+    // This was causing "Extension host is unresponsive" errors
+    checkCLIAvailability(workspaceRoot).catch(err => {
+        outputChannel.appendLine(`CLI check failed (non-blocking): ${err.message}`);
+    });
 
     // Scan workspace on startup (optional)
     scanWorkspaceOnStartup(workspaceRoot);
@@ -271,15 +274,16 @@ async function handleCreateProject(workspaceRoot: string) {
         return;
     }
 
-    outputChannel.appendLine(`Selected template: ${selected.label}`);
-
     // Get project name
     const projectName = await vscode.window.showInputBox({
         prompt: 'Enter project name',
-        placeHolder: 'My Project',
-        validateInput: (value) => {
+        placeHolder: 'my-project',
+        validateInput: value => {
             if (!value || value.trim().length === 0) {
                 return 'Project name is required';
+            }
+            if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(value)) {
+                return 'Project name must start with a letter and contain only letters, numbers, underscores, and hyphens';
             }
             return null;
         }
@@ -289,55 +293,34 @@ async function handleCreateProject(workspaceRoot: string) {
         return;
     }
 
-    // Collect template variables
-    const variables: Record<string, string> = {
-        projectName: projectName
-    };
-
+    // Get template variables
+    const variables: Record<string, string> = {};
     for (const variable of selected.template.variables) {
         if (variable.required || variable.defaultValue) {
             const value = await vscode.window.showInputBox({
-                prompt: `${variable.description}${variable.required ? ' (required)' : ''}`,
+                prompt: `${variable.description}`,
                 placeHolder: variable.defaultValue,
                 value: variable.defaultValue,
-                validateInput: (val) => {
-                    if (variable.required && (!val || val.trim().length === 0)) {
-                        return `${variable.name} is required`;
-                    }
-                    return null;
-                }
+                ignoreFocusOut: true
             });
-
-            if (value !== undefined) {
-                variables[variable.name] = value;
-            } else if (variable.required) {
+            
+            if (variable.required && !value) {
                 vscode.window.showErrorMessage(`${variable.name} is required`);
                 return;
+            }
+            
+            if (value) {
+                variables[variable.name] = value;
             }
         }
     }
 
     // Create the project
-    outputChannel.appendLine(`Creating project: ${projectName} from template: ${selected.template.name}`);
-    
     const success = await cli.createProject(selected.template.name, projectName, variables);
     
     if (success) {
-        vscode.window.showInformationMessage(`Project "${projectName}" created successfully! 🎉`);
+        vscode.window.showInformationMessage(`Project '${projectName}' created successfully!`);
         treeProvider.refresh();
-        
-        // Ask to open the new project
-        const openChoice = await vscode.window.showInformationMessage(
-            `Open project "${projectName}"?`,
-            'Open',
-            'Later'
-        );
-
-        if (openChoice === 'Open') {
-            vscode.commands.executeCommand('vscode.openFolder', 
-                vscode.Uri.file(`${workspaceRoot}/${projectName}`)
-            );
-        }
     }
 }
 
@@ -348,25 +331,27 @@ async function handleOpenProject(item?: I2VisionTreeItem) {
     outputChannel.appendLine('Open project command invoked');
 
     if (item && item.metadata?.component) {
-        const component = item.metadata.component;
-        if (component.path) {
-            await handleOpenFile(component.path);
-        }
-    } else if (item && item.metadata?.file) {
-        const file = item.metadata.file;
-        if (file.path) {
-            await handleOpenFile(file.path);
+        const componentPath = item.metadata.component.path;
+        outputChannel.appendLine(`Opening project: ${componentPath}`);
+        
+        try {
+            const uri = vscode.Uri.file(componentPath);
+            await vscode.commands.executeCommand('vscode.openFolder', uri, { forceNewWindow: false });
+        } catch (error: any) {
+            outputChannel.appendLine(`Error opening project: ${error.message}`);
+            vscode.window.showErrorMessage(`Could not open project: ${error.message}`);
         }
     } else {
-        // Open project selection
-        const discovery = treeProvider.getDiscoveryCache();
-        const fsProject = treeProvider.getFileSystemCache();
+        // Open folder picker
+        const uris = await vscode.window.showOpenDialog({
+            canSelectFolders: true,
+            canSelectFiles: false,
+            canSelectMany: false,
+            openLabel: 'Open Project'
+        });
         
-        if (fsProject) {
-            outputChannel.appendLine(`Opening project: ${fsProject.name}`);
-            vscode.window.showInformationMessage(`Project: ${fsProject.name}`);
-        } else {
-            vscode.window.showInformationMessage('No project loaded. Use the tree view to explore.');
+        if (uris && uris.length > 0) {
+            await vscode.commands.executeCommand('vscode.openFolder', uris[0], { forceNewWindow: false });
         }
     }
 }
@@ -380,7 +365,7 @@ async function handleOpenFile(filePath: string) {
     try {
         const uri = vscode.Uri.file(filePath);
         const doc = await vscode.workspace.openTextDocument(uri);
-        await vscode.window.showTextDocument(doc);
+        await vscode.window.showTextDocument(doc, { preview: false });
         outputChannel.appendLine(`File opened: ${filePath}`);
     } catch (error: any) {
         outputChannel.appendLine(`Error opening file: ${error.message}`);
@@ -394,23 +379,109 @@ async function handleOpenFile(filePath: string) {
 async function showDiscoveryResults(workspaceRoot: string) {
     outputChannel.appendLine('Showing discovery results...');
 
-    const discovery = treeProvider.getDiscoveryCache();
+    const cli = new I2VisionCLI(workspaceRoot, outputChannel);
     
-    if (!discovery) {
-        vscode.window.showInformationMessage('No discovery results available. Run a scan first.');
-        return;
-    }
+    vscode.window.withProgress(
+        {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Running discovery...',
+            cancellable: true
+        },
+        async (progress, token) => {
+            try {
+                progress.report({ message: 'Analyzing project structure...' });
+                
+                const result = await cli.runDiscovery();
+                
+                progress.report({ message: 'Preparing results...' });
+                
+                // Create a webview panel to display results
+                const panel = vscode.window.createWebviewPanel(
+                    'i2visionDiscovery',
+                    'i2-Vision Discovery Results',
+                    vscode.ViewColumn.One,
+                    { enableScripts: true }
+                );
 
-    // Show discovery summary
-    const summary = [
-        `Project: ${discovery.projectName}`,
-        `Components: ${discovery.components?.length || 0}`,
-        `Relationships: ${discovery.relationships?.length || 0}`,
-        `Layers: ${discovery.layers?.length || 0}`
-    ].join('\n');
+                const html = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Discovery Results</title>
+    <style>
+        body { font-family: var(--vscode-font-family); padding: 20px; }
+        h1 { color: var(--vscode-foreground); }
+        h2 { color: var(--vscode-descriptionForeground); margin-top: 20px; }
+        .component { background: var(--vscode-editor-background); padding: 10px; margin: 5px 0; border-radius: 4px; }
+        .layer { border-left: 3px solid var(--vscode-button-background); padding-left: 10px; margin: 10px 0; }
+        .violation-error { border-left: 3px solid var(--vscode-errorForeground); }
+        .violation-warning { border-left: 3px solid var(--vscode-warningForeground); }
+        .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 10px 0; }
+        .metric { background: var(--vscode-editor-background); padding: 10px; text-align: center; border-radius: 4px; }
+        .metric-value { font-size: 24px; font-weight: bold; color: var(--vscode-button-foreground); }
+        .metric-label { font-size: 12px; color: var(--vscode-descriptionForeground); }
+    </style>
+</head>
+<body>
+    <h1>🔍 Discovery Results: ${result.projectName}</h1>
+    
+    <div class="metrics">
+        <div class="metric">
+            <div class="metric-value">${result.components.length}</div>
+            <div class="metric-label">Components</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value">${result.relationships.length}</div>
+            <div class="metric-label">Relationships</div>
+        </div>
+        <div class="metric">
+            <div class="metric-value">${result.layers.length}</div>
+            <div class="metric-label">Layers</div>
+        </div>
+    </div>
 
-    vscode.window.showInformationMessage(summary);
-    outputChannel.appendLine(`Discovery: ${summary}`);
+    <h2>📦 Components</h2>
+    ${result.components.map(c => `
+        <div class="component">
+            <strong>${c.name}</strong> (${c.type})<br>
+            <small>Path: ${c.path}</small><br>
+            ${c.layer ? `<small>Layer: ${c.layer}</small>` : ''}
+        </div>
+    `).join('')}
+
+    <h2>🏗️ Architecture Layers</h2>
+    ${result.layers.map(l => `
+        <div class="layer">
+            <strong>${l.name}</strong> (Level ${l.level})<br>
+            <small>Components: ${l.components.join(', ')}</small>
+        </div>
+    `).join('')}
+
+    ${result.violations && result.violations.length > 0 ? `
+        <h2>⚠️ Architecture Violations</h2>
+        ${result.violations.map(v => `
+            <div class="violation-${v.severity}">
+                <strong>${v.severity.toUpperCase()}</strong>: ${v.message}<br>
+                <small>${v.source} → ${v.target}</small><br>
+                <small>Rule: ${v.rule}</small>
+            </div>
+        `).join('')}
+    ` : ''}
+</body>
+</html>
+                `;
+
+                panel.webview.html = html;
+                
+                vscode.window.showInformationMessage('Discovery results displayed');
+            } catch (error: any) {
+                vscode.window.showErrorMessage(`Discovery failed: ${error.message}`);
+                outputChannel.appendLine(`Discovery error: ${error.message}`);
+            }
+        }
+    );
 }
 
 /**
@@ -419,25 +490,41 @@ async function showDiscoveryResults(workspaceRoot: string) {
 async function analyzeArchitecture(workspaceRoot: string) {
     outputChannel.appendLine('Analyzing architecture...');
 
-    const discovery = treeProvider.getDiscoveryCache();
+    const cli = new I2VisionCLI(workspaceRoot, outputChannel);
     
-    if (!discovery) {
-        vscode.window.showInformationMessage('No architecture data available. Run a scan first.');
-        return;
-    }
-
-    // Create a simple architecture view
-    const architectureText = `# Architecture Overview\n\n` +
-        `## Layers\n${(discovery.layers || []).map((l: any) => `- ${l.name} (Level ${l.level})`).join('\n')}\n\n` +
-        `## Components\n${(discovery.components || []).map((c: any) => `- ${c.name} (${c.type})`).join('\n')}`;
-
-    const doc = await vscode.workspace.openTextDocument({
-        content: architectureText,
-        language: 'markdown'
-    });
-
-    await vscode.window.showTextDocument(doc);
-    outputChannel.appendLine('Architecture view opened');
+    vscode.window.withProgress(
+        {
+            location: vscode.ProgressLocation.Notification,
+            title: 'Analyzing architecture...',
+            cancellable: true
+        },
+        async (progress, token) => {
+            try {
+                progress.report({ message: 'Checking for violations...' });
+                
+                const violations = await cli.analyzeViolations();
+                
+                if (violations.length === 0) {
+                    vscode.window.showInformationMessage('✅ No architecture violations found!');
+                } else {
+                    const errorCount = violations.filter(v => v.severity === 'error').length;
+                    const warningCount = violations.filter(v => v.severity === 'warning').length;
+                    
+                    const message = `Found ${violations.length} violations (${errorCount} errors, ${warningCount} warnings)`;
+                    vscode.window.showWarningMessage(message, 'View Details').then(selection => {
+                        if (selection === 'View Details') {
+                            showDiscoveryResults(workspaceRoot);
+                        }
+                    });
+                }
+                
+                outputChannel.appendLine(`Analysis complete: ${violations.length} violations`);
+            } catch (error: any) {
+                vscode.window.showErrorMessage(`Analysis failed: ${error.message}`);
+                outputChannel.appendLine(`Analysis error: ${error.message}`);
+            }
+        }
+    );
 }
 
 /**
@@ -446,20 +533,12 @@ async function analyzeArchitecture(workspaceRoot: string) {
 async function viewDocumentation() {
     outputChannel.appendLine('Opening documentation...');
 
-    const docPath = vscode.Uri.file(
-        require('path').join(extensionContext.extensionPath, 'README.md')
-    );
-
-    try {
-        const doc = await vscode.workspace.openTextDocument(docPath);
-        await vscode.window.showTextDocument(doc);
-    } catch (error: any) {
-        vscode.window.showInformationMessage('Documentation not found. Check the extension README.');
-    }
+    const docUri = vscode.Uri.parse('https://github.com/i2-vision/i2-vision/blob/main/README.md');
+    await vscode.env.openExternal(docUri);
 }
 
 /**
- * Check CLI availability
+ * Check CLI availability (non-blocking)
  */
 async function checkCLIAvailability(workspaceRoot: string) {
     outputChannel.appendLine('Checking CLI availability...');

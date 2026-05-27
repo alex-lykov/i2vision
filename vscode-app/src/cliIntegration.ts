@@ -5,11 +5,61 @@
  * for real-time discovery, context extraction, and analysis.
  */
 
-import { exec } from 'child_process';
+import { exec, spawn } from 'child_process';
 import { promisify } from 'util';
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
 
 const execAsync = promisify(exec);
+
+/**
+ * Execute a command with stdin input
+ */
+function execWithInput(command: string, input: string, options: { cwd?: string, timeout?: number } = {}): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const [cmd, ...args] = command.split(' ');
+    const child = spawn(cmd, args, {
+      cwd: options.cwd,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+
+    child.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+
+    child.on('error', (err) => {
+      reject(err);
+    });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout);
+      } else {
+        reject(new Error(`Command failed with code ${code}: ${stderr}`));
+      }
+    });
+
+    // Write input to stdin
+    child.stdin.write(input);
+    child.stdin.end();
+
+    // Timeout handling
+    if (options.timeout) {
+      setTimeout(() => {
+        child.kill('SIGTERM');
+        reject(new Error('Command timed out'));
+      }, options.timeout);
+    }
+  });
+}
 
 /**
  * Discovery result from i2vision CLI
@@ -117,21 +167,61 @@ export class I2VisionCLI {
 
   constructor(workspaceRoot: string, outputChannel?: vscode.OutputChannel) {
     this.workspaceRoot = workspaceRoot;
-    // Try to find i2vision-cli in PATH or use gradle wrapper
-    this.cliPath = this.detectCLIPath();
+    // Initialize outputChannel FIRST - detectCLIPath() calls this.log() which needs it
     this.outputChannel = outputChannel || vscode.window.createOutputChannel('i2-Vision CLI');
+    this.cliPath = this.detectCLIPath();
   }
 
   /**
    * Detect the i2vision CLI path
    */
   private detectCLIPath(): string {
-    // First, try to find i2vision-cli in PATH
-    // If not found, use gradle wrapper from project root
+    // First, check VSCode settings for custom path
+    const config = vscode.workspace.getConfiguration('i2vision');
+    const customPath = config.get<string>('cli.path');
+    if (customPath && fs.existsSync(customPath)) {
+      this.log(`Using custom CLI path: ${customPath}`);
+      return `java -jar "${customPath}"`;
+    }
+
+    // Second, try to find the shadow JAR
     const projectRoot = this.findProjectRoot();
     if (projectRoot) {
-      return `cd "${projectRoot}" && ./gradlew :i2vision-cli:run --args=`;
+      const shadowJar = path.join(
+        projectRoot,
+        'i2vision-cli',
+        'build',
+        'libs',
+        'i2vision-cli-1.0.0-all.jar'
+      );
+      
+      if (fs.existsSync(shadowJar)) {
+        this.log(`Using shadow JAR: ${shadowJar}`);
+        return `java -jar "${shadowJar}"`;
+      }
+
+      // Fallback to installed distribution
+      const installedCli = path.join(
+        projectRoot,
+        'i2vision-cli',
+        'build',
+        'install',
+        'i2vision-cli',
+        'bin',
+        'i2vision-cli.bat'
+      );
+      
+      if (fs.existsSync(installedCli)) {
+        this.log(`Using installed CLI: ${installedCli}`);
+        return `"${installedCli}"`;
+      }
+
+      // Last fallback: gradle wrapper
+      this.log('Using gradle wrapper for CLI');
+      return `cd "${projectRoot}" && .\\gradlew.bat :i2vision-cli:run --args=`;
     }
+
+    // Last resort: try PATH
     return 'i2vision-cli';
   }
 
@@ -139,10 +229,6 @@ export class I2VisionCLI {
    * Find the i2-vision project root
    */
   private findProjectRoot(): string | null {
-    // Look for settings.gradle.kts or build.gradle.kts
-    const fs = require('fs');
-    const path = require('path');
-    
     let currentDir = this.workspaceRoot;
     const maxDepth = 5;
     let depth = 0;
@@ -169,7 +255,7 @@ export class I2VisionCLI {
     this.log('Running discovery...');
     
     try {
-      const command = `${this.cliPath} 'discover --json --dir "${this.workspaceRoot}"'`;
+      const command = `${this.cliPath} discover --json --dir "${this.workspaceRoot}"`;
       const { stdout, stderr } = await execAsync(command, {
         cwd: this.workspaceRoot,
         maxBuffer: 10 * 1024 * 1024 // 10MB buffer
@@ -196,7 +282,7 @@ export class I2VisionCLI {
     this.log(`Getting context for: ${filePath}`);
 
     try {
-      const command = `${this.cliPath} 'context --file "${filePath}" --json'`;
+      const command = `${this.cliPath} context file --path "${filePath}" --json`;
       const { stdout, stderr } = await execAsync(command, {
         cwd: this.workspaceRoot
       });
@@ -220,7 +306,7 @@ export class I2VisionCLI {
     this.log('Listing templates...');
 
     try {
-      const command = `${this.cliPath} 'templates --list --json'`;
+      const command = `${this.cliPath} presets --list --json`;
       const { stdout, stderr } = await execAsync(command, {
         cwd: this.workspaceRoot
       });
@@ -248,7 +334,7 @@ export class I2VisionCLI {
         .map(([k, v]) => `--var ${k}="${v}"`)
         .join(' ');
 
-      const command = `${this.cliPath} 'create --template "${templateName}" --name "${projectName}" ${varsString}'`;
+      const command = `${this.cliPath} create --template "${templateName}" --name "${projectName}" ${varsString}`;
       const { stdout, stderr } = await execAsync(command, {
         cwd: this.workspaceRoot
       });
@@ -273,7 +359,7 @@ export class I2VisionCLI {
     this.log('Analyzing architecture violations...');
 
     try {
-      const command = `${this.cliPath} 'analyze --violations --json'`;
+      const command = `${this.cliPath} analyze --violations --json`;
       const { stdout, stderr } = await execAsync(command, {
         cwd: this.workspaceRoot
       });
@@ -295,13 +381,157 @@ export class I2VisionCLI {
    */
   async isAvailable(): Promise<boolean> {
     try {
-      await execAsync(`${this.cliPath} 'version'`, {
+      await execAsync(`${this.cliPath} --help`, {
         cwd: this.workspaceRoot,
         timeout: 5000
       });
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Get loaded models from CLI
+   */
+  async getLoadedModels(): Promise<Array<{name: string, provider: string}>> {
+    try {
+      const command = `${this.cliPath} models --list --json`;
+      const { stdout } = await execAsync(command, {
+        cwd: this.workspaceRoot,
+        timeout: 5000
+      });
+      return JSON.parse(stdout) as Array<{name: string, provider: string}>;
+    } catch (error: any) {
+      this.log(`Failed to get models: ${error.message}`);
+      return [];
+    }
+  }
+
+  /**
+   * Call LLM through CLI
+   */
+  async callLLM(
+    modelId: string,
+    messages: Array<{role: string, content: string}>,
+    options: {temperature?: number, top_p?: number, max_tokens?: number},
+    tools?: Array<{
+      type: string;
+      function: {
+        name: string;
+        description: string;
+        parameters: {
+          type: string;
+          properties: Record<string, any>;
+          required?: string[];
+        };
+      };
+    }>
+  ): Promise<string> {
+    try {
+      const payload = {
+        model: modelId,
+        messages,
+        options,
+        tools
+      };
+
+      const command = `${this.cliPath} llm --json`;
+      const stdout = await execWithInput(command, JSON.stringify(payload), {
+        cwd: this.workspaceRoot,
+        timeout: 60000
+      });
+
+      return stdout;
+    } catch (error: any) {
+      this.log(`LLM call error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Read file through CLI
+   */
+  async readFile(filePath: string): Promise<string> {
+    try {
+      const command = `${this.cliPath} read --file "${filePath}"`;
+      const { stdout } = await execAsync(command, {
+        cwd: this.workspaceRoot
+      });
+      return stdout;
+    } catch (error: any) {
+      this.log(`Read file error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Write file through CLI
+   */
+  async writeFile(filePath: string, content: string): Promise<string> {
+    try {
+      const command = `${this.cliPath} write --file "${filePath}"`;
+      const stdout = await execWithInput(command, content, {
+        cwd: this.workspaceRoot
+      });
+      return stdout;
+    } catch (error: any) {
+      this.log(`Write file error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Edit file through CLI
+   */
+  async editFile(filePath: string, oldString: string, newString: string): Promise<string> {
+    try {
+      const payload = {
+        path: filePath,
+        old_string: oldString,
+        new_string: newString
+      };
+
+      const command = `${this.cliPath} edit --json`;
+      const stdout = await execWithInput(command, JSON.stringify(payload), {
+        cwd: this.workspaceRoot
+      });
+      return stdout;
+    } catch (error: any) {
+      this.log(`Edit file error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * List directory through CLI
+   */
+  async listDirectory(dirPath: string): Promise<string> {
+    try {
+      const command = `${this.cliPath} list --dir "${dirPath}"`;
+      const { stdout } = await execAsync(command, {
+        cwd: this.workspaceRoot
+      });
+      return stdout;
+    } catch (error: any) {
+      this.log(`List directory error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Regex search through CLI
+   */
+  async regexSearch(pattern: string, searchPath: string): Promise<string> {
+    try {
+      const command = `${this.cliPath} search --pattern "${pattern}" --path "${searchPath}"`;
+      const { stdout } = await execAsync(command, {
+        cwd: this.workspaceRoot
+      });
+      return stdout;
+    } catch (error: any) {
+      this.log(`Regex search error: ${error.message}`);
+      throw error;
     }
   }
 
@@ -397,15 +627,15 @@ export class I2VisionCLI {
   private getMockContext(filePath: string): VSLFContext {
     return {
       filePath,
-      component: filePath.includes('app') ? 'app' : 'unknown',
-      layer: filePath.includes('core') ? 'infrastructure' : 'application',
-      responsibilities: ['Process requests', 'Manage data'],
-      dependencies: ['storage-core'],
-      dependents: ['vscode-app'],
+      component: path.basename(filePath),
+      layer: 'unknown',
+      responsibilities: ['Mock responsibility'],
+      dependencies: [],
+      dependents: [],
       metrics: {
-        complexity: 15,
+        complexity: 5,
         coupling: 3,
-        cohesion: 8
+        cohesion: 7
       }
     };
   }
@@ -413,269 +643,19 @@ export class I2VisionCLI {
   private getMockTemplates(): TemplateInfo[] {
     return [
       {
-        name: 'Basic Template',
-        description: 'Simple project structure for small applications',
+        name: 'basic-kotlin',
+        description: 'Basic Kotlin project structure',
         category: 'basic',
         files: [
-          { path: 'src/main.kt', content: 'fun main() { println("Hello") }', template: false },
-          { path: 'build.gradle.kts', content: '// Build config', template: false }
+          { path: 'build.gradle.kts', content: '// Build file', template: false },
+          { path: 'settings.gradle.kts', content: '// Settings', template: false },
+          { path: 'src/main/kotlin/Main.kt', content: 'fun main() {}', template: false }
         ],
         variables: [
           { name: 'projectName', description: 'Project name', required: true },
-          { name: 'version', description: 'Initial version', defaultValue: '1.0.0', required: false }
-        ]
-      },
-      {
-        name: 'Advanced Template',
-        description: 'Multi-module project with architecture layers',
-        category: 'advanced',
-        files: [
-          { path: 'app/src/main.kt', content: '// Application layer', template: false },
-          { path: 'core/src/main.kt', content: '// Core layer', template: false },
-          { path: 'settings.gradle.kts', content: '// Settings', template: false }
-        ],
-        variables: [
-          { name: 'projectName', description: 'Project name', required: true },
-          { name: 'packageName', description: 'Base package name', required: true },
-          { name: 'version', description: 'Initial version', defaultValue: '1.0.0', required: false }
-        ]
-      },
-      {
-        name: 'Enterprise Template',
-        description: 'Full enterprise architecture with all layers',
-        category: 'enterprise',
-        files: [
-          { path: 'presentation/src/main.kt', content: '// Presentation layer', template: false },
-          { path: 'application/src/main.kt', content: '// Application layer', template: false },
-          { path: 'domain/src/main.kt', content: '// Domain layer', template: false },
-          { path: 'infrastructure/src/main.kt', content: '// Infrastructure layer', template: false }
-        ],
-        variables: [
-          { name: 'projectName', description: 'Project name', required: true },
-          { name: 'organization', description: 'Organization name', required: true },
-          { name: 'version', description: 'Initial version', defaultValue: '1.0.0', required: false }
-        ]
-      },
-      {
-        name: 'Microservice Template',
-        description: 'Containerized microservice with API and database',
-        category: 'microservice',
-        files: [
-          { path: 'src/main.kt', content: '// Service entry point', template: false },
-          { path: 'Dockerfile', content: 'FROM openjdk:21', template: false },
-          { path: 'docker-compose.yml', content: 'version: "3.8"', template: false }
-        ],
-        variables: [
-          { name: 'serviceName', description: 'Service name', required: true },
-          { name: 'port', description: 'Service port', defaultValue: '8080', required: false },
-          { name: 'database', description: 'Database type', defaultValue: 'postgresql', required: false }
+          { name: 'groupId', description: 'Maven group ID', defaultValue: 'com.example', required: false }
         ]
       }
     ];
   }
-
-  /**
-   * Call LLM through CLI
-   */
-  async callLLM(
-    modelId: string,
-    messages: Array<{role: string, content: string}>,
-    options?: { temperature?: number; top_p?: number; max_tokens?: number },
-    tools?: Array<any>
-  ): Promise<string> {
-    this.log(`Calling LLM: ${modelId}`);
-    
-    // For now, return a mock response - this would integrate with the actual CLI
-    const systemMsg = messages.find(m => m.role === 'system');
-    const userMsg = messages.find(m => m.role === 'user');
-    
-    this.log(`System prompt: ${systemMsg?.content?.substring(0, 100)}...`);
-    this.log(`User input: ${userMsg?.content?.substring(0, 100)}...`);
-    
-    // Mock response for testing
-    return `reasoning: I understand your request. Let me analyze the codebase.
-tool_call: {"tool": "i2vision_get_context", "args": {}}
-EOS`;
-  }
-
-  /**
-   * Read a file
-   */
-  async readFile(filePath: string): Promise<string> {
-    this.log(`Reading file: ${filePath}`);
-    
-    try {
-      const fs = require('fs');
-      const content = fs.readFileSync(filePath, 'utf-8');
-      return content;
-    } catch (error: any) {
-      throw new Error(`Failed to read file: ${error.message}`);
-    }
-  }
-
-  /**
-   * Write a file
-   */
-  async writeFile(filePath: string, content: string): Promise<string> {
-    this.log(`Writing file: ${filePath}`);
-    
-    try {
-      const fs = require('fs');
-      const path = require('path');
-      
-      // Ensure directory exists
-      const dir = path.dirname(filePath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-      
-      fs.writeFileSync(filePath, content, 'utf-8');
-      return `File written successfully: ${filePath}`;
-    } catch (error: any) {
-      throw new Error(`Failed to write file: ${error.message}`);
-    }
-  }
-
-  /**
-   * Edit a file (replace text)
-   */
-  async editFile(filePath: string, oldString: string, newString: string): Promise<string> {
-    this.log(`Editing file: ${filePath}`);
-    
-    try {
-      const fs = require('fs');
-      const content = fs.readFileSync(filePath, 'utf-8');
-      
-      if (!content.includes(oldString)) {
-        throw new Error('Old string not found in file');
-      }
-      
-      const newContent = content.replace(oldString, newString);
-      fs.writeFileSync(filePath, newContent, 'utf-8');
-      
-      return `File edited successfully: ${filePath}`;
-    } catch (error: any) {
-      throw new Error(`Failed to edit file: ${error.message}`);
-    }
-  }
-
-  /**
-   * List directory contents
-   */
-  async listDirectory(dirPath: string): Promise<string> {
-    this.log(`Listing directory: ${dirPath}`);
-    
-    try {
-      const fs = require('fs');
-      const items = fs.readdirSync(dirPath, { withFileTypes: true });
-      
-      const result = items.map((item: any) => {
-        const type = item.isDirectory() ? '[DIR]' : '[FILE]';
-        return `${type} ${item.name}`;
-      }).join('\n');
-      
-      return result;
-    } catch (error: any) {
-      throw new Error(`Failed to list directory: ${error.message}`);
-    }
-  }
-
-  /**
-   * Regex search in files
-   */
-  async regexSearch(pattern: string, path?: string): Promise<string> {
-    this.log(`Regex search: ${pattern} in ${path || 'workspace'}`);
-    
-    try {
-      const fs = require('fs');
-      const pathModule = require('path');
-      
-      const searchDir = path || this.workspaceRoot;
-      const results: string[] = [];
-      const regex = new RegExp(pattern, 'g');
-      
-      const searchRecursive = (dir: string) => {
-        const items = fs.readdirSync(dir, { withFileTypes: true });
-        
-        for (const item of items as any[]) {
-          const fullPath = pathModule.join(dir, item.name);
-          
-          // Skip common directories
-          if (item.name === 'node_modules' || item.name === 'build' || item.name === '.git') {
-            continue;
-          }
-          
-          if (item.isDirectory()) {
-            searchRecursive(fullPath);
-          } else if (item.isFile() && /\.(kt|java|ts|js|py|yaml|yml|json|xml|gradle)$/.test(item.name)) {
-            try {
-              const content = fs.readFileSync(fullPath, 'utf-8');
-              const matches = content.match(regex);
-              
-              if (matches) {
-                results.push(`${fullPath}: ${matches.length} match(es)`);
-              }
-            } catch (e) {
-              // Skip binary files
-            }
-          }
-        }
-      };
-      
-      searchRecursive(searchDir);
-      
-      return results.join('\n') || 'No matches found';
-    } catch (error: any) {
-      throw new Error(`Failed to search: ${error.message}`);
-    }
-  }
-
-  /**
-   * Get loaded models from Ollama
-   */
-  async getLoadedModels(): Promise<Array<{name: string, provider: string}>> {
-    this.log('Getting loaded models');
-    
-    try {
-      // Try to get models from Ollama
-      const { exec } = require('child_process');
-      
-      return new Promise((resolve) => {
-        exec('ollama list', (error: any, stdout: string) => {
-          if (error) {
-            this.log(`Ollama command failed: ${error.message}`);
-            resolve([]);
-            return;
-          }
-          
-          const models = stdout
-            .split('\n')
-            .filter(line => line.trim().length > 0 && !line.startsWith('NAME'))
-            .map(line => {
-              const parts = line.split(/\s+/);
-              return {
-                name: parts[0],
-                provider: 'ollama'
-              };
-            });
-          
-          this.log(`Found ${models.length} models`);
-          resolve(models);
-        });
-      });
-    } catch (error: any) {
-      this.log(`Error getting models: ${error.message}`);
-      return [];
-    }
-  }
-
-  /**
-   * Get discovery results
-   */
-  async getDiscovery(): Promise<DiscoveryResult> {
-    this.log('Getting discovery results');
-    return await this.runDiscovery();
-  }
 }
-
-

@@ -330,7 +330,7 @@ export class AgentBridge {
     try {
       // Step 1: Get project context
       this.log('Getting project context...');
-      const projectContext = await this.cli.getDiscovery();
+      const projectContext = await this.cli.runDiscovery();
       
       // Step 2: Build messages for LLM
       const messages = [
@@ -409,7 +409,7 @@ export class AgentBridge {
         top_p: this.config.model.topP,
         max_tokens: this.config.model.maxOutputTokens
       },
-      tools  // Pass tools to CLI
+      tools
     );
     
     return response;
@@ -665,10 +665,10 @@ export class AgentBridge {
         return await this.cli.regexSearch(args.pattern, args.path);
       
       case 'i2vision_get_context':
-        return JSON.stringify(await this.cli.getDiscovery());
+        return JSON.stringify(await this.cli.runDiscovery());
       
       case 'i2vision_discover':
-        return JSON.stringify(await this.cli.getDiscovery());
+        return JSON.stringify(await this.cli.runDiscovery());
       
       default:
         throw new Error(`Unknown tool: ${toolName}`);

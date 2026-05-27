@@ -526,7 +526,7 @@ private fun String.countOccurrences(substring: String): Int {
     var index = 0
     
     while (index <= length - substring.length) {
-        if (this[index until index + substring.length] == substring) {
+        if (this.substring(index, index + substring.length) == substring) {
             count++
             index += substring.length
         } else {

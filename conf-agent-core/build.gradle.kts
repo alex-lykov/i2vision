@@ -38,6 +38,12 @@ dependencies {
     // LLM Client
     implementation(project(":llm-client"))
 
+    // i2vision modules (needed for DefaultAgentProvider)
+    implementation(project(":storage-core"))
+    implementation(project(":discovery-api"))
+    implementation(project(":discovery-engine"))
+    implementation(project(":i2vision-instant"))
+
     // Ktor Server (for JSON-RPC HTTP server)
     implementation("io.ktor:ktor-server-core:2.3.7")
     implementation("io.ktor:ktor-server-cio:2.3.7")
@@ -59,7 +65,7 @@ tasks.test {
 }
 
 kotlin {
-    jvmToolchain(17)
+    jvmToolchain(21)
 }
 
 // Configure source sets to include jvmMain

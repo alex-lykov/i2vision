@@ -9,10 +9,10 @@ package com.i2vision.agent.koog
 
 import com.i2vision.agent.*
 import com.i2vision.agent.config.ParserType
-import com.i2vision.agent.config.ParsingConfig
+import com.i2vision.agent.config.KoogParsingConfig
+import com.i2vision.agent.TaskType
 import com.i2vision.agent.tools.DiscoveryCache
 import com.i2vision.agent.tools.InstantContextProvider
-import com.i2vision.agent.tools.TaskType
 
 /**
  * Individual node logic components extracted for testability and reuse.
@@ -166,7 +166,7 @@ class PromptBuilder(
  * @property parsingConfig Parsing configuration
  */
 class OutputParser(
-    private val parsingConfig: ParsingConfig
+    private val parsingConfig: KoogParsingConfig
 ) {
     
     /**
@@ -183,6 +183,7 @@ class OutputParser(
                 ParserType.NAKED_JSON -> parseNakedJson(rawOutput)
                 ParserType.XML_INVOKE -> parseXmlInvoke(rawOutput)
                 ParserType.QUOTED_JSON -> parseQuotedJson(rawOutput)
+                ParserType.MARKDOWN_JSON -> parseMarkdownJson(rawOutput)
             }
             if (result != null) return result
         }
@@ -310,6 +311,32 @@ class OutputParser(
         val match = quotedJsonRegex.find(rawOutput) ?: return null
         
         val jsonStr = match.groupValues[1].replace("\\\"", "\"")
+        val toolCall = parseToolCallJson(jsonStr) ?: return null
+        
+        val prose = rawOutput.replace(match.value, "").trim()
+        
+        return ParsedOutput(
+            rawText = rawOutput,
+            reasoning = prose.ifEmpty { null },
+            toolCall = toolCall,
+            isComplete = false,
+            isMalformed = false
+        )
+    }
+    
+    /**
+     * Parse markdown code block with JSON.
+     * 
+     * Expected format:
+     * ```json
+     * {"tool": "read_file", "args": {"path": "src/main.kt"}}
+     * ```
+     */
+    private fun parseMarkdownJson(rawOutput: String): ParsedOutput? {
+        val markdownJsonRegex = Regex("```(?:json)?\\s*(\\{.*?})\\s*```", RegexOption.DOT_MATCHES_ALL)
+        val match = markdownJsonRegex.find(rawOutput) ?: return null
+        
+        val jsonStr = match.groupValues[1]
         val toolCall = parseToolCallJson(jsonStr) ?: return null
         
         val prose = rawOutput.replace(match.value, "").trim()

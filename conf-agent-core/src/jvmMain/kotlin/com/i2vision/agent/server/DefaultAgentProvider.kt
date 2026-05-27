@@ -8,14 +8,21 @@
 package com.i2vision.agent.server
 
 import com.i2vision.agent.*
+import com.i2vision.agent.config.AgentPromptConfiguration
 import com.i2vision.agent.config.ConfigurationAdapter
+import com.i2vision.agent.config.DefaultConfigs
 import com.i2vision.agent.config.YamlConfigLoader
 import com.i2vision.agent.koog.I2VisionKoogAgent
+import com.i2vision.agent.tools.DiscoveryCache
+import com.i2vision.agent.tools.DiscoveryCacheFactory
+import com.i2vision.agent.tools.DiscoveryEngine
+import com.i2vision.agent.tools.DiscoveryEngineFactory
 import com.i2vision.agent.tools.I2VisionToolRegistry
-import com.i2vision.discovery.engine.DiscoveryEngine
-import com.i2vision.discovery.engine.cache.DiscoveryCache
-import com.i2vision.instant.context.InstantContextProvider
+import com.i2vision.agent.tools.InstantContextProvider
+import com.i2vision.agent.tools.InstantContextProviderFactory
 import com.i2vision.llm.OllamaLlmClient
+import com.i2vision.llm.ToolRegistry as KoogToolRegistry
+import com.i2vision.agent.tools.ToolRegistry as I2VisionToolRegistryImpl
 import com.i2vision.storage.I2VisionPaths
 import com.i2vision.storage.impl.FileCacheStore
 import java.io.File
@@ -35,9 +42,9 @@ class DefaultAgentProvider(
     private val configDir: Path,
     private val workspaceRoot: String,
     private val llmClient: OllamaLlmClient = OllamaLlmClient(),
-    private val instantContextProvider: InstantContextProvider = InstantContextProvider.create(workspaceRoot),
-    private val discoveryCache: DiscoveryCache = DiscoveryCache.create(
-        cacheStore = FileCacheStore(File(I2VisionPaths.getProjectCacheDir(workspaceRoot)))
+    private val instantContextProvider: InstantContextProvider = InstantContextProviderFactory.create(workspaceRoot),
+    private val discoveryCache: DiscoveryCache = DiscoveryCacheFactory.create(
+        cacheStore = FileCacheStore(I2VisionPaths.getProjectCacheDir(workspaceRoot))
     )
 ) : I2VisionAgentProvider {
 
@@ -45,8 +52,7 @@ class DefaultAgentProvider(
     override val type: String = "kotlin"
     override val displayName: String = createProviderDisplayName("Kotlin", "Koog")
 
-    private val discoveryEngine = DiscoveryEngine.create(workspaceRoot)
-    private val configLoader = YamlConfigLoader()
+    private val discoveryEngine = DiscoveryEngineFactory.create(workspaceRoot)
 
     override suspend fun ping(): Boolean {
         return try {
@@ -62,17 +68,17 @@ class DefaultAgentProvider(
         
         return configFiles.mapNotNull { file ->
             try {
-                val yamlConfig = configLoader.load(file.absolutePath)
+                val yamlConfig = YamlConfigLoader.load(file.absolutePath)
                 val agentConfig = ConfigurationAdapter().toAgentConfig(yamlConfig)
                 
                 AgentConfigSummary(
                     id = yamlConfig.key,
-                    name = yamlConfig.name ?: yamlConfig.key,
-                    description = yamlConfig.description ?: "",
-                    modelProvider = agentConfig.model.provider,
-                    modelId = agentConfig.model.id,
-                    supportedLayers = listOf(VslfcLayer.fromString(yamlConfig.layer)),
-                    maxContextTokens = agentConfig.model.contextLength.toLong(),
+                    name = yamlConfig.key,
+                    description = "",
+                    modelProvider = agentConfig.modelProvider,
+                    modelId = agentConfig.modelId,
+                    supportedLayers = listOf(VslfcLayer.fromString(yamlConfig.agentType)),
+                    maxContextTokens = agentConfig.maxContextTokens.toLong(),
                     isDefault = false
                 )
             } catch (e: Exception) {
@@ -86,13 +92,7 @@ class DefaultAgentProvider(
         config: AgentConfig?
     ): I2VisionAgent {
         // If no config provided, use default for layer
-        val yamlConfig = if (config != null) {
-            // Convert AgentConfig back to YAML config (simplified)
-            DefaultConfigs.forLayer(layer)
-        } else {
-            DefaultConfigs.forLayer(layer)
-        }
-
+        val yamlConfig = DefaultConfigs.forLayer(layer)
         return createAgentFromYamlConfig(layer, yamlConfig)
     }
 
@@ -105,19 +105,20 @@ class DefaultAgentProvider(
             throw AgentProviderException("Configuration not found: $configurationId")
         }
 
-        val yamlConfig = configLoader.load(configPath.toString())
+        val yamlConfig = YamlConfigLoader.load(configPath.toString())
         return createAgentFromYamlConfig(layer, yamlConfig)
     }
 
     private suspend fun createAgentFromYamlConfig(
         layer: VslfcLayer,
-        yamlConfig: YamlConfigLoader.Config
+        yamlConfig: AgentPromptConfiguration
     ): I2VisionAgent {
         // Convert to agent config
-        val agentConfig = ConfigurationAdapter().toAgentConfig(yamlConfig)
+        val adapter = ConfigurationAdapter()
+        val agentConfig = adapter.toAgentConfig(yamlConfig)
 
-        // Create tool registry
-        val toolRegistry = I2VisionToolRegistry.create(
+        // Create Koog tool registry (wrapper around i2vision tools)
+        val toolRegistry = createKoogToolRegistry(
             config = agentConfig,
             layer = layer,
             workspaceRoot = workspaceRoot,
@@ -137,9 +138,43 @@ class DefaultAgentProvider(
         )
     }
 
+    private fun createKoogToolRegistry(
+        config: AgentConfig,
+        layer: VslfcLayer,
+        workspaceRoot: String,
+        instantContext: InstantContextProvider,
+        discoveryEngine: DiscoveryEngine,
+        discoveryCache: DiscoveryCache
+    ): KoogToolRegistry {
+        // Create i2vision tool registry
+        val toolRegistry = I2VisionToolRegistry.create(
+            config = config,
+            layer = layer,
+            workspaceRoot = workspaceRoot,
+            instantContext = instantContext,
+            discoveryEngine = discoveryEngine,
+            discoveryCache = discoveryCache
+        )
+        
+        // Wrap it as a Koog ToolRegistry
+        return KoogToolRegistryWrapper(toolRegistry)
+    }
+
     override suspend fun dispose() {
         discoveryEngine.close()
         discoveryCache.close()
+    }
+}
+
+/**
+ * Wrapper to adapt ToolRegistry to Koog ToolRegistry interface.
+ */
+class KoogToolRegistryWrapper(
+    private val toolRegistry: I2VisionToolRegistryImpl
+) : KoogToolRegistry {
+    override suspend fun execute(toolName: String, args: Map<String, Any>): Any {
+        val result = toolRegistry.execute(toolName, args)
+        return result.output ?: result.error ?: ""
     }
 }
 
@@ -148,87 +183,137 @@ class DefaultAgentProvider(
  */
 object DefaultConfigs {
 
-    fun forLayer(layer: VslfcLayer): YamlConfigLoader.Config {
+    fun forLayer(layer: VslfcLayer): AgentPromptConfiguration {
         return when (layer) {
-            VslfcLayer.VISION -> YamlConfigLoader.Config(
+            VslfcLayer.VISION -> createDefaultConfig(
                 key = "vision-default",
-                name = "Vision Layer Default",
-                description = "Default configuration for vision layer analysis",
                 layer = "VISION",
-                strategy = "hierarchical",
-                promptTemplate = "default",
-                tools = listOf(
-                    "file_search",
-                    "artifact_discovery",
-                    "contract_validation"
-                ),
-                maxIterations = 10,
-                temperature = 0.7
+                tools = listOf("file_search", "artifact_discovery", "contract_validation")
             )
 
-            VslfcLayer.STRUCTURE -> YamlConfigLoader.Config(
+            VslfcLayer.STRUCTURE -> createDefaultConfig(
                 key = "structure-default",
-                name = "Structure Layer Default",
-                description = "Default configuration for structure layer analysis",
                 layer = "STRUCTURE",
-                strategy = "depth-first",
-                promptTemplate = "default",
-                tools = listOf(
-                    "file_search",
-                    "symbol_analysis",
-                    "call_hierarchy"
-                ),
-                maxIterations = 15,
-                temperature = 0.5
+                tools = listOf("file_search", "symbol_analysis", "call_hierarchy")
             )
 
-            VslfcLayer.LOGIC -> YamlConfigLoader.Config(
+            VslfcLayer.LOGIC -> createDefaultConfig(
                 key = "logic-default",
-                name = "Logic Layer Default",
-                description = "Default configuration for logic layer analysis",
                 layer = "LOGIC",
-                strategy = "breadth-first",
-                promptTemplate = "default",
-                tools = listOf(
-                    "file_search",
-                    "code_analysis",
-                    "dependency_analysis"
-                ),
-                maxIterations = 20,
-                temperature = 0.3
+                tools = listOf("file_search", "code_analysis", "dependency_analysis")
             )
 
-            VslfcLayer.FLOW -> YamlConfigLoader.Config(
+            VslfcLayer.FLOW -> createDefaultConfig(
                 key = "flow-default",
-                name = "Flow Layer Default",
-                description = "Default configuration for flow layer analysis",
                 layer = "FLOW",
-                strategy = "focused",
-                promptTemplate = "default",
-                tools = listOf(
-                    "file_read",
-                    "symbol_search",
-                    "reference_search"
-                ),
-                maxIterations = 25,
-                temperature = 0.2
+                tools = listOf("file_read", "symbol_search", "reference_search")
             )
 
-            VslfcLayer.CODE -> YamlConfigLoader.Config(
+            VslfcLayer.CODE -> createDefaultConfig(
                 key = "code-default",
-                name = "Code Layer Default",
-                description = "Default configuration for code layer analysis",
                 layer = "CODE",
-                strategy = "focused",
-                promptTemplate = "default",
-                tools = listOf(
-                    "file_read",
-                    "symbol_search",
-                    "reference_search"
-                ),
-                maxIterations = 25,
-                temperature = 0.2
+                tools = listOf("file_read", "symbol_search", "reference_search")
             )
         }
+    }
+    
+    private fun createDefaultConfig(
+        key: String,
+        layer: String,
+        tools: List<String>
+    ): AgentPromptConfiguration {
+        return AgentPromptConfiguration(
+            key = key,
+            agentType = layer,
+            version = "1.0.0",
+            isActive = true,
+            systemPromptTemplate = "You are a $layer layer agent.",
+            templateVariables = emptyMap(),
+            ruleSetKeys = emptyList(),
+            model = com.i2vision.agent.config.ModelConfig(
+                provider = "Ollama",
+                id = "llama3.2:3b",
+                contextLength = 8192,
+                temperature = 0.7,
+                topP = 0.9,
+                topK = 40,
+                maxTokens = 4096
+            ),
+            llm = com.i2vision.agent.config.LlmConfig(
+                retries = 3,
+                timeoutSeconds = 60,
+                streaming = true
+            ),
+            formattingRules = com.i2vision.agent.config.FormattingRulesConfig(
+                indentSize = 4,
+                useTabs = false,
+                maxLineLength = 120,
+                trimTrailingWhitespace = true,
+                insertFinalNewline = true
+            ),
+            iterationSettings = com.i2vision.agent.config.IterationConfig(
+                maxIterations = 10,
+                maxConsecutiveToolCalls = 12,
+                enableKickstart = true,
+                kickstartMinInvalidOutputs = 2,
+                reflectionEnabled = true,
+                selfCorrectionEnabled = true
+            ),
+            toolSelection = com.i2vision.agent.config.ToolSelectionConfig(
+                enabledTools = tools,
+                disabledTools = emptyList(),
+                toolTimeoutSeconds = 30,
+                requireConfirmationFor = emptyList(),
+                readOnlyMode = false
+            ),
+            safety = com.i2vision.agent.config.SafetyConfig(
+                allowFileWrites = true,
+                allowedDirectories = emptyList(),
+                forbiddenDirectories = emptyList(),
+                enableBuildVerification = false,
+                maxFileSize = 1024 * 1024,
+                requireBackupBeforeWrite = true,
+                blockGeneratedPaths = listOf("build", "target", "dist", "out", ".gradle"),
+                protectedPaths = emptyList(),
+                allowHiddenFileWrites = false,
+                maxFileSizeBytes = 1024 * 1024
+            ),
+            parsing = com.i2vision.agent.config.ParsingConfig(
+                enabledParsers = listOf(
+                    com.i2vision.agent.config.ParserType.HEADER,
+                    com.i2vision.agent.config.ParserType.NAKED_JSON,
+                    com.i2vision.agent.config.ParserType.XML_INVOKE
+                ),
+                strictJsonParsing = true,
+                allowMarkdownCodeBlocks = true,
+                fallbackToPlainText = true,
+                maxParseAttempts = 3
+            ),
+            discovery = com.i2vision.agent.config.DiscoveryConfig(
+                enableClusterContext = true,
+                cachePath = null,
+                autoRefresh = false
+            ),
+            execution = com.i2vision.agent.config.ExecutionConfig(
+                buildCommand = "",
+                fileOperationMode = "DIRECT",
+                workingDirectory = null
+            ),
+            formatting = com.i2vision.agent.config.FormattingConfig(
+                includeReasoningTrace = true,
+                includeToolCallDetails = true,
+                compactMode = false,
+                syntaxHighlighting = true
+            ),
+            streaming = com.i2vision.agent.config.StreamingConfig(
+                enabled = true,
+                chunkSize = 100
+            ),
+            mcp = com.i2vision.agent.config.McpConfig(
+                enabled = false,
+                servers = emptyList(),
+                injectClusterContext = false
+            )
+        )
     }
 }

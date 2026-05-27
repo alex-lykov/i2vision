@@ -48,7 +48,6 @@ dependencies {
     implementation(project(":contracts"))
     implementation(project(":intent-parser"))
     implementation(project(":discovery-api"))
-    implementation(project(":conf-agent-core"))
     implementation(project(":storage-core"))
     implementation(project(":index-provider"))
     implementation(project(":link-service"))

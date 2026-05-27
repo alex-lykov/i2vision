@@ -480,7 +480,8 @@ export class I2VisionCLI {
   async callLLM(
     modelId: string,
     messages: Array<{role: string, content: string}>,
-    options?: { temperature?: number; top_p?: number; max_tokens?: number }
+    options?: { temperature?: number; top_p?: number; max_tokens?: number },
+    tools?: Array<any>
   ): Promise<string> {
     this.log(`Calling LLM: ${modelId}`);
     
@@ -676,3 +677,5 @@ EOS`;
     return await this.runDiscovery();
   }
 }
+
+

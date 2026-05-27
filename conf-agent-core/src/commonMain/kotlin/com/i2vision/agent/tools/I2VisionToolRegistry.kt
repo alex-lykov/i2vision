@@ -8,8 +8,6 @@
 package com.i2vision.agent.tools
 
 import com.i2vision.agent.*
-import com.i2vision.agent.config.AgentConfig
-import com.i2vision.agent.config.KoogToolRegistryConfig
 
 /**
  * Builds a complete tool registry combining i2vision, MCP, and file system tools.
@@ -337,8 +335,8 @@ data class ToolResult(
         fun success(output: String, metadata: Map<String, String> = emptyMap()) =
             ToolResult(success = true, output = output, metadata = metadata)
         
-        fun failure(error: String, signal: ToolSignal = ToolSignal.NONE) =
-            ToolResult(success = false, error = error, signal = signal)
+        fun failure(error: String, signal: ToolSignal = ToolSignal.NONE, metadata: Map<String, String> = emptyMap()) =
+            ToolResult(success = false, error = error, signal = signal, metadata = metadata)
     }
 }
 

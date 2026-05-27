@@ -14,6 +14,7 @@ import com.i2vision.llm.ModelProvider
 import com.i2vision.llm.ToolRegistry
 import com.i2vision.agent.tools.DiscoveryCache
 import com.i2vision.agent.tools.InstantContextProvider
+import com.i2vision.agent.tools.ToolCategory
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -78,7 +79,7 @@ class I2VisionKoogAgent(
     )
     
     private val graph = strategyGraph.build()
-    private val activeRequests = mutableMapOf<String, KoogExecution>()
+    private val activeExecutions = mutableMapOf<String, KoogExecution>()
     
     /**
      * Process a task synchronously.
@@ -90,7 +91,7 @@ class I2VisionKoogAgent(
      */
     override suspend fun process(request: AgentRequest): AgentResponse {
         val execution = graph.execute(request)
-        activeRequests[request.id] = KoogExecution(execution)
+        activeExecutions[request.id] = KoogExecution(execution)
         
         return execution
     }
@@ -104,13 +105,7 @@ class I2VisionKoogAgent(
      * @return Flow of streaming chunks
      */
     override fun processStreaming(request: AgentRequest): Flow<AgentChunk> {
-        val execution = graph.executeStreaming(request)
-        activeRequests[request.id] = KoogExecution(execution)
-        
-        return execution.map { event ->
-            // Events are already AgentChunks from executeStreaming
-            event
-        }
+        return graph.executeStreaming(request)
     }
     
     /**
@@ -120,9 +115,9 @@ class I2VisionKoogAgent(
      * @return true if cancelled, false if not found
      */
     override suspend fun cancel(requestId: String): Boolean {
-        val execution = activeRequests[requestId] ?: return false
+        val execution = activeExecutions[requestId] ?: return false
         execution.cancel()
-        activeRequests.remove(requestId)
+        activeExecutions.remove(requestId)
         return true
     }
     
@@ -149,8 +144,8 @@ class I2VisionKoogAgent(
      * Cancels all active requests and cleans up.
      */
     override suspend fun dispose() {
-        activeRequests.values.forEach { it.cancel() }
-        activeRequests.clear()
+        activeExecutions.values.forEach { it.cancel() }
+        activeExecutions.clear()
     }
     
     companion object {
@@ -201,8 +196,7 @@ class I2VisionKoogAgent(
             )
             
             val promptBuilder = PromptBuilder(
-                promptTemplate = koogConfigs.promptConfig,
-                config = yamlConfig
+                promptTemplate = koogConfigs.promptConfig
             )
             
             val modelInvoker = ModelInvoker(
@@ -288,8 +282,7 @@ class I2VisionKoogAgent(
             )
             
             val promptBuilder = PromptBuilder(
-                promptTemplate = koogConfigs.promptConfig,
-                config = yamlConfig
+                promptTemplate = koogConfigs.promptConfig
             )
             
             val modelInvoker = ModelInvoker(
@@ -373,7 +366,7 @@ fun com.i2vision.agent.tools.Tool.toToolInfo(): com.i2vision.agent.ToolInfo =
     com.i2vision.agent.ToolInfo(
         name = name,
         description = description,
-        category = category,
+        category = category.toAgentToolCategory(),
         isReadOnly = isReadOnly
     )
 
@@ -384,6 +377,6 @@ fun String.toToolInfo(): com.i2vision.agent.ToolInfo =
     com.i2vision.agent.ToolInfo(
         name = this,
         description = "Tool: $this",
-        category = com.i2vision.agent.ToolCategory.CONTROL,
+        category = com.i2vision.agent.tools.ToolCategory.CONTROL.toAgentToolCategory(),
         isReadOnly = false
     )

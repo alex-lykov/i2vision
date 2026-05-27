@@ -293,6 +293,18 @@ export class AgentBridge {
       prompt = prompt.replace(new RegExp(`\\$\\{${key}\\}`, 'g'), value);
     }
     
+    // Append strong formatting instructions with examples
+    prompt += '\n\n--- OUTPUT FORMAT (STRICT) ---';
+    prompt += '\nYou MUST use this exact format:';
+    prompt += '\n\nExample 1 (with tool):';
+    prompt += '\nreasoning: I need to read the file to understand its contents.';
+    prompt += '\ntool_call: {"tool":"read_file","args":{"path":"vscode-app/src/extension.ts"}}';
+    prompt += '\nEOS';
+    prompt += '\n\nExample 2 (no tool needed):';
+    prompt += '\nreasoning: The answer is 42.';
+    prompt += '\nEOS';
+    prompt += '\n\nIMPORTANT: Always start with "reasoning:" and use "tool_call:" if you need to use a tool.';
+    
     return prompt;
   }
 
@@ -311,7 +323,7 @@ export class AgentBridge {
 
     // For initial testing, we'll use a simplified approach:
     // 1. Get context from i2vision
-    // 2. Call LLM with system prompt + user input
+    // 2. Call LLM with system prompt + user input + tools
     // 3. Parse response for tool calls
     // 4. Execute tools and repeat if needed
 
@@ -326,9 +338,11 @@ export class AgentBridge {
         { role: 'user', content: userInput }
       ];
 
-      // Step 3: Call LLM
+      // Step 3: Call LLM with tools
       this.log(`Calling model: ${this.config.model.id}`);
-      const llmResponse = await this.callLLM(messages);
+      const tools = this.getAvailableTools();
+      this.log(`Passing ${tools.length} tools to LLM`);
+      const llmResponse = await this.callLLM(messages, tools);
       
       // Step 4: Parse response for tool calls
       const parsed = this.parseLLMResponse(llmResponse);
@@ -371,7 +385,21 @@ export class AgentBridge {
   /**
    * Call LLM through CLI
    */
-  private async callLLM(messages: Array<{role: string, content: string}>): Promise<string> {
+  private async callLLM(
+    messages: Array<{role: string, content: string}>,
+    tools?: Array<{
+      type: string;
+      function: {
+        name: string;
+        description: string;
+        parameters: {
+          type: string;
+          properties: Record<string, any>;
+          required?: string[];
+        };
+      };
+    }>
+  ): Promise<string> {
     // Use the CLI to call the LLM
     const response = await this.cli.callLLM(
       this.config.model.id,
@@ -380,10 +408,175 @@ export class AgentBridge {
         temperature: this.config.model.temperature,
         top_p: this.config.model.topP,
         max_tokens: this.config.model.maxOutputTokens
-      }
+      },
+      tools  // Pass tools to CLI
     );
     
     return response;
+  }
+
+  /**
+   * Get the list of tools the agent can use.
+   * These are sent to the LLM so it knows what tools are available.
+   */
+  private getAvailableTools(): Array<{
+    type: string;
+    function: {
+      name: string;
+      description: string;
+      parameters: {
+        type: string;
+        properties: Record<string, any>;
+        required?: string[];
+      };
+    };
+  }> {
+    return [
+      {
+        type: "function",
+        function: {
+          name: "i2vision_discover",
+          description: "Run full VSLFC discovery on the project. Returns architecture patterns, flows, business rules, and components across all modules.",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { 
+                type: "string", 
+                description: "Project root path to discover" 
+              },
+              intent: { 
+                type: "string",
+                enum: ["full_discovery", "quick_overview", "architecture_audit", "flow_mapping"],
+                description: "Discovery intent"
+              }
+            },
+            required: ["path"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "i2vision_get_context",
+          description: "Get VSLFC architectural context for a specific file. Returns symbols, related files, business rules, flows, and complexity metrics.",
+          parameters: {
+            type: "object",
+            properties: {
+              file: { 
+                type: "string", 
+                description: "File path relative to workspace root" 
+              },
+              task: { 
+                type: "string", 
+                description: "Task type: debug, refactor, add_feature, fix_bug, optimize, discovery" 
+              }
+            },
+            required: ["file"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "read_file",
+          description: "Read the contents of a file",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { 
+                type: "string", 
+                description: "File path relative to workspace root" 
+              }
+            },
+            required: ["path"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "list_directory",
+          description: "List contents of a directory",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { 
+                type: "string", 
+                description: "Directory path relative to workspace root" 
+              }
+            },
+            required: ["path"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "regex_search",
+          description: "Search for a regex pattern across files",
+          parameters: {
+            type: "object",
+            properties: {
+              pattern: { 
+                type: "string", 
+                description: "Regex pattern to search for" 
+              },
+              path: { 
+                type: "string", 
+                description: "Directory or file to search in" 
+              }
+            },
+            required: ["pattern", "path"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "write_file",
+          description: "Write content to a file (creates or overwrites)",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { 
+                type: "string", 
+                description: "File path relative to workspace root" 
+              },
+              content: { 
+                type: "string", 
+                description: "Content to write to the file" 
+              }
+            },
+            required: ["path", "content"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "edit_file",
+          description: "Edit a file by replacing exact string match",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { 
+                type: "string", 
+                description: "File path relative to workspace root" 
+              },
+              old_string: { 
+                type: "string", 
+                description: "The exact text to find in the file" 
+              },
+              new_string: { 
+                type: "string", 
+                description: "The replacement text" 
+              }
+            },
+            required: ["path", "old_string", "new_string"]
+          }
+        }
+      }
+    ];
   }
 
   /**
@@ -392,6 +585,8 @@ export class AgentBridge {
   private parseLLMResponse(response: string): { reasoning: string, toolCalls: ToolCall[] } {
     const toolCalls: ToolCall[] = [];
     let reasoning = response;
+    
+    this.log(`Parsing LLM response (${response.length} chars)`);
     
     // Try to extract tool calls using the configured pattern
     const toolCallPattern = new RegExp(this.config.parsing.toolCallPattern, 'g');
@@ -405,6 +600,7 @@ export class AgentBridge {
         
         if (jsonStart !== -1 && jsonEnd !== -1) {
           const jsonStr = response.substring(jsonStart, jsonEnd + 1);
+          this.log(`Found tool call JSON: ${jsonStr.substring(0, 100)}`);
           const parsed = JSON.parse(jsonStr);
           
           toolCalls.push({
@@ -412,16 +608,35 @@ export class AgentBridge {
             args: parsed.args || {}
           });
         }
-      } catch (error) {
-        this.log(`Failed to parse tool call: ${error}`);
+      } catch (error: any) {
+        this.log(`Failed to parse tool call: ${error.message}`);
       }
     }
     
     // Extract reasoning (everything before first tool_call or after last tool_call)
-    const toolCallIndex = response.indexOf(this.config.formattingRules.toolCallHeader);
+    const toolCallHeader = this.config.formattingRules.toolCallHeader;
+    const toolCallIndex = response.indexOf(toolCallHeader);
     if (toolCallIndex !== -1) {
       reasoning = response.substring(0, toolCallIndex).trim();
+      // Remove "reasoning:" prefix if present
+      const reasoningPrefix = this.config.formattingRules.reasoningHeader;
+      if (reasoning.startsWith(reasoningPrefix)) {
+        reasoning = reasoning.substring(reasoningPrefix.length).trim();
+      }
     }
+    
+    // Also try to extract reasoning after tool calls (for multi-turn responses)
+    const eosMarker = this.config.formattingRules.eosMarker;
+    const eosIndex = response.indexOf(eosMarker);
+    if (eosIndex !== -1 && toolCallIndex !== -1 && eosIndex > toolCallIndex) {
+      // There might be more content between tool_call and EOS
+      const betweenContent = response.substring(toolCallIndex + toolCallHeader.length, eosIndex).trim();
+      if (betweenContent && !toolCalls.some(tc => betweenContent.includes(JSON.stringify(tc.args)))) {
+        reasoning += '\n' + betweenContent;
+      }
+    }
+    
+    this.log(`Parsed ${toolCalls.length} tool calls, reasoning: ${reasoning.substring(0, 100)}...`);
     
     return { reasoning, toolCalls };
   }

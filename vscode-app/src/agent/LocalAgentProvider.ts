@@ -6,400 +6,473 @@
  */
 
 /**
- * LocalI2VisionAgent - TypeScript implementation of I2VisionAgent
- *
- * This agent runs entirely in-process using the existing AgentBridge
- * infrastructure. It communicates directly with Ollama via the CLI
- * integration, bypassing the need for a Kotlin backend.
- *
+ * LocalAgentProvider - Factory for creating LocalI2VisionAgent instances
+ * 
+ * This provider loads agent configurations from YAML files and creates
+ * LocalI2VisionAgent instances. It manages the lifecycle of agent configs
+ * and provides a clean API for agent creation.
+ * 
  * Features:
- * - Implements I2VisionAgent interface (compatible with Kotlin agent)
- * - Direct Ollama API calls via AgentBridge
- * - No JSON-RPC overhead (in-process)
- * - Streaming support via AgentBridge
- * - Same configuration structure as Kotlin agent
- *
- * Use this for:
- * - Rapid prototyping and testing
- * - Development without Kotlin compilation
- * - Validating agent behavior before Kotlin integration
- *
- * Future: Swap to KotlinAgentProvider for production
+ * - Loads YAML configurations from .vscode/i2vision/agents/
+ * - Creates LocalI2VisionAgent instances with proper config
+ * - Manages config caching and reloading
+ * - Provides default configs if YAML files are missing
  */
 
 import * as vscode from 'vscode';
-import { AgentBridge, AgentConfig, AgentResponse as BridgeAgentResponse } from './AgentBridge';
+import * as path from 'path';
+import * as fs from 'fs';
+import * as yaml from 'js-yaml';
+import { LocalI2VisionAgent, VslfcLayer } from './LocalI2VisionAgent';
+import { AgentConfig } from './AgentBridge';
 
 /**
- * VSLFC Layer enumeration (matches Kotlin VslfcLayer)
+ * LocalAgentProvider - Creates and manages LocalI2VisionAgent instances
  */
-export enum VslfcLayer {
-  VISION = 'VISION',
-  STRUCTURE = 'STRUCTURE',
-  LOGIC = 'LOGIC',
-  FLOW = 'FLOW',
-  CODE = 'CODE'
-}
-
-/**
- * Get display name for a VSLFC layer
- */
-export function getLayerDisplayName(layer: VslfcLayer): string {
-  const displayNames: Record<VslfcLayer, string> = {
-    [VslfcLayer.VISION]: 'Vision',
-    [VslfcLayer.STRUCTURE]: 'Structure',
-    [VslfcLayer.LOGIC]: 'Logic',
-    [VslfcLayer.FLOW]: 'Flow',
-    [VslfcLayer.CODE]: 'Code'
-  };
-  return displayNames[layer];
-}
-
-/**
- * Get layer name (lowercase) for file naming
- */
-export function getLayerName(layer: VslfcLayer): string {
-  return layer.toLowerCase();
-}
-
-/**
- * Agent capabilities declaration
- */
-export interface AgentCapabilities {
-  supportsStreaming: boolean;
-  supportsCancellation: boolean;
-  maxIterations: number;
-  availableTools: string[];
-}
-
-/**
- * Agent request (matches Kotlin AgentRequest)
- */
-export interface AgentRequest {
-  id: string;
-  task: string;
-  context: AgentContext;
-  config?: Partial<AgentConfig>;
-}
-
-/**
- * Agent context (matches Kotlin AgentContext)
- */
-export interface AgentContext {
-  workspaceRoot: string;
-  currentFile?: string;
-  sessionId?: string;
-  [key: string]: any;
-}
-
-/**
- * Agent response chunk for streaming (matches Kotlin AgentChunk)
- */
-export type AgentChunk =
-    | { type: 'reasoning'; text: string; timestamp: number }
-    | { type: 'tool_call_started'; toolName: string; args: any; timestamp: number }
-    | { type: 'tool_call_completed'; toolName: string; result: string; timestamp: number }
-    | { type: 'text'; text: string; timestamp: number }
-    | { type: 'done'; outcome: string; timestamp: number }
-    | { type: 'error'; error: string; timestamp: number };
-
-/**
- * Agent configuration overrides (matches Kotlin AgentConfigOverrides)
- */
-export interface AgentConfigOverrides {
-  maxIterations?: number;
-  toolTimeoutSeconds?: number;
-  enableBuildVerification?: boolean;
-  [key: string]: any;
-}
-
-/**
- * LocalI2VisionAgent - In-process TypeScript agent
- */
-export class LocalI2VisionAgent implements vscode.Disposable {
-  /** Unique agent instance identifier */
-  readonly id: string;
-
-  /** VSLFC layer this agent specializes in */
-  readonly layer: VslfcLayer;
-
-  /** Human-readable name for UI display */
-  readonly displayName: string;
-
-  /** Agent capabilities declaration */
-  readonly capabilities: AgentCapabilities;
-
-  private config: AgentConfig;
-  private bridge: AgentBridge;
-  private isInitialized: boolean = false;
-  private outputChannel?: vscode.OutputChannel;
-  private pendingRequests: Map<string, boolean> = new Map();
+export class LocalAgentProvider {
+  private configCache: Map<string, AgentConfig> = new Map();
+  private outputChannel: vscode.OutputChannel;
+  private context: vscode.ExtensionContext;
+  private workspaceRoot: string;
 
   constructor(
-      layer: VslfcLayer,
-      config: AgentConfig,
-      outputChannel?: vscode.OutputChannel
+    context: vscode.ExtensionContext,
+    outputChannel: vscode.OutputChannel
   ) {
-    this.id = this.generateAgentId(layer);
-    this.layer = layer;
-    this.config = config;
+    this.context = context;
     this.outputChannel = outputChannel;
-
-    // Create display name
-    this.displayName = `${getLayerDisplayName(layer)} Agent (Ollama ${config.model.id})`;
-
-    // Declare capabilities
-    this.capabilities = {
-      supportsStreaming: config.streaming.enabled,
-      supportsCancellation: true,
-      maxIterations: config.iterationSettings.maxIterations,
-      availableTools: this.extractAvailableTools(config)
-    };
-
-    // Create the agent bridge
-    this.bridge = new AgentBridge(config, outputChannel);
-
-    this.log(`LocalI2VisionAgent created: ${this.id}`);
+    this.workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+    
+    this.log('LocalAgentProvider initialized');
   }
 
   /**
-   * Initialize the agent
+   * Initialize the provider
    */
   async initialize(): Promise<void> {
-    if (this.isInitialized) {
-      return;
-    }
-
-    this.log(`Initializing agent: ${this.displayName}`);
-    await this.bridge.initialize();
-    this.isInitialized = true;
-    this.log(`Agent initialized: ${this.id}`);
+    this.log('LocalAgentProvider initialization complete');
   }
 
   /**
-   * Process a task synchronously
+   * Create an agent for a specific VSLFC layer
    */
-  async process(request: AgentRequest): Promise<BridgeAgentResponse> {
-    if (!this.isInitialized) {
-      await this.initialize();
-    }
-
-    this.log(`Processing request [${request.id}]: "${request.task.substring(0, 50)}..."`);
-    this.pendingRequests.set(request.id, true);
-
+  async createAgent(layer: VslfcLayer): Promise<LocalI2VisionAgent> {
+    this.log(`Creating agent for layer: ${layer}`);
+    
     try {
-      // Apply config overrides if provided
-      if (request.config) {
-        await this.updateConfig(request.config);
-      }
-
-      // Process through the bridge
-      const response = await this.bridge.process(request.task, {
-        currentFile: request.context.currentFile,
-        projectName: vscode.workspace.workspaceFolders?.[0]?.name,
-        task: request.task
-      });
-
-      this.log(`Request completed [${request.id}]: ${response.iterations} iterations, ${response.durationMs}ms`);
-      return response;
+      // Load configuration
+      const config = await this.loadConfigForLayer(layer);
+      
+      // Create the agent
+      const agent = new LocalI2VisionAgent(layer, config, this.outputChannel);
+      
+      this.log(`Created agent: ${agent.id} (${agent.displayName})`);
+      return agent;
     } catch (error: any) {
-      this.log(`Request failed [${request.id}]: ${error.message}`);
+      this.log(`Error creating agent: ${error.message}`);
       throw error;
-    } finally {
-      this.pendingRequests.delete(request.id);
     }
   }
 
   /**
-   * Process a task with streaming responses
+   * Load configuration for a specific layer
    */
-  async *processStreaming(request: AgentRequest): AsyncGenerator<AgentChunk> {
-    if (!this.isInitialized) {
-      await this.initialize();
+  private async loadConfigForLayer(layer: VslfcLayer): Promise<AgentConfig> {
+    const layerName = layer.toLowerCase();
+    const cacheKey = `agent-${layerName}`;
+    
+    // Check cache first
+    const cached = this.configCache.get(cacheKey);
+    if (cached) {
+      this.log(`Using cached config for ${layerName}`);
+      return cached;
     }
-
-    this.log(`Starting streaming request [${request.id}]`);
-    this.pendingRequests.set(request.id, true);
-
+    
+    // Try to load from YAML file
+    const configPath = path.join(
+      this.workspaceRoot,
+      '.vscode', 'i2vision', 'agents', `${layerName}-agent.yaml`
+    );
+    
     try {
-      const startTime = Date.now();
+      const config = await this.loadYamlConfig(configPath);
+      this.configCache.set(cacheKey, config);
+      this.log(`Loaded config from ${configPath}`);
+      return config;
+    } catch (error: any) {
+      this.log(`Config file not found, using defaults: ${error.message}`);
+      
+      // Use default configuration
+      const config = this.createDefaultConfig(layer);
+      this.configCache.set(cacheKey, config);
+      return config;
+    }
+  }
 
-      // Emit reasoning start
-      yield {
-        type: 'reasoning',
-        text: `Starting task: ${request.task}`,
-        timestamp: Date.now()
-      };
-
-      // Process through the bridge (currently non-streaming)
-      const response = await this.bridge.process(request.task, {
-        currentFile: request.context.currentFile,
-        projectName: vscode.workspace.workspaceFolders?.[0]?.name,
-        task: request.task
+  /**
+   * Load configuration from YAML file
+   */
+  private async loadYamlConfig(configPath: string): Promise<AgentConfig> {
+    return new Promise((resolve, reject) => {
+      fs.readFile(configPath, 'utf8', (err, data) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        
+        try {
+          const yamlConfig = yaml.load(data) as any;
+          const config = this.convertYamlToAgentConfig(yamlConfig);
+          resolve(config);
+        } catch (error: any) {
+          reject(new Error(`Failed to parse YAML: ${error.message}`));
+        }
       });
+    });
+  }
 
-      // Emit tool calls if any
-      if (response.toolCalls && response.toolCalls.length > 0) {
-        for (const toolCall of response.toolCalls) {
-          yield {
-            type: 'tool_call_started',
-            toolName: toolCall.toolName,
-            args: toolCall.args,
-            timestamp: Date.now()
-          };
+  /**
+   * Convert YAML config to AgentConfig
+   */
+  private convertYamlToAgentConfig(yamlConfig: any): AgentConfig {
+    const config: AgentConfig = {
+      key: yamlConfig.key || 'agent',
+      agentType: yamlConfig.agentType || 'configurable',
+      version: yamlConfig.version || '1.0.0',
+      isActive: yamlConfig.isActive ?? true,
+      
+      // Prompt section
+      systemPromptTemplate: yamlConfig.prompt?.systemPromptTemplate || 'You are an AI assistant.',
+      templateVariables: yamlConfig.prompt?.templateVariables || {},
+      ruleSetKeys: yamlConfig.prompt?.ruleSetKeys,
+      parserTemplateName: yamlConfig.prompt?.parserTemplateName,
+      
+      // Model section
+      model: {
+        id: yamlConfig.model?.id || 'qwen2.5-coder:32b',
+        provider: yamlConfig.model?.provider || 'ollama',
+        contextLength: yamlConfig.model?.contextLength || 32768,
+        maxOutputTokens: yamlConfig.model?.maxOutputTokens || 4096,
+        temperature: yamlConfig.model?.temperature || 0.7,
+        topP: yamlConfig.model?.topP || 0.9
+      },
+      
+      // LLM behavior section
+      llm: {
+        timeoutSeconds: yamlConfig.llm?.timeoutSeconds || 120,
+        modificationTimeoutSeconds: yamlConfig.llm?.modificationTimeoutSeconds || 300,
+        finalTurnBonusSeconds: yamlConfig.llm?.finalTurnBonusSeconds || 60,
+        maxRetries: yamlConfig.llm?.maxRetries || 3,
+        retryBackoffMs: yamlConfig.llm?.retryBackoffMs || [1000, 2000, 4000]
+      },
+      
+      // Formatting rules section
+      formattingRules: {
+        rules: yamlConfig.formattingRules?.rules || '',
+        brief: yamlConfig.formattingRules?.brief || '',
+        reasoningHeader: yamlConfig.formattingRules?.reasoningHeader || '## Reasoning',
+        toolCallHeader: yamlConfig.formattingRules?.toolCallHeader || '## Tool Calls',
+        eosMarker: yamlConfig.formattingRules?.eosMarker || '### END'
+      },
+      
+      // Iteration section
+      iterationSettings: {
+        maxIterations: yamlConfig.iterationSettings?.maxIterations || 10,
+        maxConsecutiveToolCalls: yamlConfig.iterationSettings?.maxConsecutiveToolCalls || 5,
+        enableKickstart: yamlConfig.iterationSettings?.enableKickstart ?? false,
+        kickstartMinInvalidOutputs: yamlConfig.iterationSettings?.kickstartMinInvalidOutputs || 3
+      },
+      
+      // Tool selection section
+      toolSelection: {
+        requiredToolsForModification: yamlConfig.toolSelection?.requiredToolsForModification || [],
+        defaultRelevanceThreshold: yamlConfig.toolSelection?.defaultRelevanceThreshold || 0.5,
+        maxToolsPerTask: yamlConfig.toolSelection?.maxToolsPerTask || 10,
+        toolTimeoutSeconds: yamlConfig.toolSelection?.toolTimeoutSeconds || 60
+      },
+      
+      // Safety section
+      safety: {
+        modificationKeywords: yamlConfig.safety?.modificationKeywords || [],
+        listingKeywords: yamlConfig.safety?.listingKeywords || [],
+        listingModificationExclusions: yamlConfig.safety?.listingModificationExclusions || [],
+        blockGeneratedPaths: yamlConfig.safety?.blockGeneratedPaths || [],
+        allowNewFileCreationPatterns: yamlConfig.safety?.allowNewFileCreationPatterns || []
+      },
+      
+      // Parsing section
+      parsing: {
+        enabledParsers: yamlConfig.parsing?.enabledParsers || ['tool-call'],
+        headerPattern: yamlConfig.parsing?.headerPattern || '',
+        toolCallPattern: yamlConfig.parsing?.toolCallPattern || '',
+        malformedPattern: yamlConfig.parsing?.malformedPattern || '',
+        maxResponseSize: yamlConfig.parsing?.maxResponseSize || 32768,
+        maxProseChars: yamlConfig.parsing?.maxProseChars || 16384
+      },
+      
+      // Repair strategies section
+      repairStrategies: yamlConfig.repairStrategies || [],
+      
+      // Discovery section
+      discovery: {
+        maxSearchTerms: yamlConfig.discovery?.maxSearchTerms || 5,
+        maxCandidates: yamlConfig.discovery?.maxCandidates || 10,
+        frameworkProfiles: yamlConfig.discovery?.frameworkProfiles || {}
+      },
+      
+      // Execution section
+      execution: {
+        enableBuildVerification: yamlConfig.execution?.enableBuildVerification ?? true,
+        buildCommand: yamlConfig.execution?.buildCommand || './gradlew build',
+        buildTimeoutSeconds: yamlConfig.execution?.buildTimeoutSeconds || 120,
+        enableSynthesis: yamlConfig.execution?.enableSynthesis ?? true,
+        synthesisOnlyForNonModification: yamlConfig.execution?.synthesisOnlyForNonModification ?? false,
+        fileOperations: {
+          mode: yamlConfig.execution?.fileOperations?.mode || 'shell',
+          shell: {
+            executable: yamlConfig.execution?.fileOperations?.shell?.executable || 'bash',
+            useNoProfile: yamlConfig.execution?.fileOperations?.shell?.useNoProfile ?? true,
+            readFileEnabled: yamlConfig.execution?.fileOperations?.shell?.readFileEnabled ?? true,
+            writeFileEnabled: yamlConfig.execution?.fileOperations?.shell?.writeFileEnabled ?? true,
+            listDirectoryEnabled: yamlConfig.execution?.fileOperations?.shell?.listDirectoryEnabled ?? true,
+            regexSearchEnabled: yamlConfig.execution?.fileOperations?.shell?.regexSearchEnabled ?? true
+          }
+        }
+      },
+      
+      // Formatting section
+      formatting: {
+        chunkSize: yamlConfig.formatting?.chunkSize || 100,
+        delayMs: yamlConfig.formatting?.delayMs || 50,
+        maxObservationChars: yamlConfig.formatting?.maxObservationChars || 8192
+      },
+      
+      // Streaming section
+      streaming: {
+        enabled: yamlConfig.streaming?.enabled ?? true,
+        methodCandidates: yamlConfig.streaming?.methodCandidates || ['sse', 'websocket'],
+        fallbackToNonStreaming: yamlConfig.streaming?.fallbackToNonStreaming ?? true,
+        fallbackChunkSize: yamlConfig.streaming?.fallbackChunkSize || 100,
+        fallbackChunkDelayMs: yamlConfig.streaming?.fallbackChunkDelayMs || 50
+      },
+      
+      // MCP section
+      mcp: {
+        enabled: yamlConfig.mcp?.enabled ?? false,
+        injectClusterContext: yamlConfig.mcp?.injectClusterContext ?? false,
+        directCliEnabled: yamlConfig.mcp?.directCliEnabled ?? true,
+        allowedToolPrefixes: yamlConfig.mcp?.allowedToolPrefixes || [],
+        strictToolNamePolicy: yamlConfig.mcp?.strictToolNamePolicy ?? false
+      }
+    };
+    
+    return config;
+  }
 
-          yield {
-            type: 'tool_call_completed',
-            toolName: toolCall.toolName,
-            result: toolCall.result || toolCall.error || 'No result',
-            timestamp: Date.now()
-          };
+  /**
+   * Create default configuration for a layer
+   */
+  private createDefaultConfig(layer: VslfcLayer): AgentConfig {
+    const config: AgentConfig = {
+      key: `agent-${layer.toLowerCase()}`,
+      agentType: 'configurable',
+      version: '1.0.0',
+      isActive: true,
+      
+      // Prompt section
+      systemPromptTemplate: 'You are an AI assistant specialized in ${layer} layer tasks.',
+      templateVariables: {
+        layer: layer,
+        currentFile: '',
+        task: ''
+      },
+      
+      // Model section
+      model: {
+        id: 'qwen2.5-coder:32b',
+        provider: 'ollama',
+        contextLength: 32768,
+        maxOutputTokens: 4096,
+        temperature: 0.7,
+        topP: 0.9
+      },
+      
+      // LLM behavior section
+      llm: {
+        timeoutSeconds: 120,
+        modificationTimeoutSeconds: 300,
+        finalTurnBonusSeconds: 60,
+        maxRetries: 3,
+        retryBackoffMs: [1000, 2000, 4000]
+      },
+      
+      // Formatting rules section
+      formattingRules: {
+        rules: '',
+        brief: '',
+        reasoningHeader: '## Reasoning',
+        toolCallHeader: '## Tool Calls',
+        eosMarker: '### END'
+      },
+      
+      // Iteration section
+      iterationSettings: {
+        maxIterations: 10,
+        maxConsecutiveToolCalls: 5,
+        enableKickstart: false,
+        kickstartMinInvalidOutputs: 3
+      },
+      
+      // Tool selection section
+      toolSelection: {
+        requiredToolsForModification: [],
+        defaultRelevanceThreshold: 0.5,
+        maxToolsPerTask: 10,
+        toolTimeoutSeconds: 60
+      },
+      
+      // Safety section
+      safety: {
+        modificationKeywords: [],
+        listingKeywords: [],
+        listingModificationExclusions: [],
+        blockGeneratedPaths: [],
+        allowNewFileCreationPatterns: []
+      },
+      
+      // Parsing section
+      parsing: {
+        enabledParsers: ['tool-call'],
+        headerPattern: '',
+        toolCallPattern: '',
+        malformedPattern: '',
+        maxResponseSize: 32768,
+        maxProseChars: 16384
+      },
+      
+      // Repair strategies section
+      repairStrategies: [],
+      
+      // Discovery section
+      discovery: {
+        maxSearchTerms: 5,
+        maxCandidates: 10,
+        frameworkProfiles: {}
+      },
+      
+      // Execution section
+      execution: {
+        enableBuildVerification: true,
+        buildCommand: './gradlew build',
+        buildTimeoutSeconds: 120,
+        enableSynthesis: true,
+        synthesisOnlyForNonModification: false,
+        fileOperations: {
+          mode: 'shell',
+          shell: {
+            executable: 'bash',
+            useNoProfile: true,
+            readFileEnabled: true,
+            writeFileEnabled: true,
+            listDirectoryEnabled: true,
+            regexSearchEnabled: true
+          }
+        }
+      },
+      
+      // Formatting section
+      formatting: {
+        chunkSize: 100,
+        delayMs: 50,
+        maxObservationChars: 8192
+      },
+      
+      // Streaming section
+      streaming: {
+        enabled: true,
+        methodCandidates: ['sse', 'websocket'],
+        fallbackToNonStreaming: true,
+        fallbackChunkSize: 100,
+        fallbackChunkDelayMs: 50
+      },
+      
+      // MCP section
+      mcp: {
+        enabled: false,
+        injectClusterContext: false,
+        directCliEnabled: true,
+        allowedToolPrefixes: [],
+        strictToolNamePolicy: false
+      }
+    };
+    
+    this.log(`Created default config for ${layer}`);
+    return config;
+  }
+
+  /**
+   * Reload configuration from disk
+   */
+  async reloadConfig(layer: VslfcLayer): Promise<AgentConfig> {
+    const layerName = layer.toLowerCase();
+    const cacheKey = `agent-${layerName}`;
+    
+    // Remove from cache
+    this.configCache.delete(cacheKey);
+    
+    // Reload
+    const config = await this.loadConfigForLayer(layer);
+    this.log(`Reloaded config for ${layerName}`);
+    return config;
+  }
+
+  /**
+   * Get all available layer configurations
+   */
+  async getAvailableLayers(): Promise<VslfcLayer[]> {
+    const layers: VslfcLayer[] = [];
+    const agentsDir = path.join(this.workspaceRoot, '.vscode', 'i2vision', 'agents');
+    
+    try {
+      const files = fs.readdirSync(agentsDir);
+      
+      for (const file of files) {
+        if (file.endsWith('-agent.yaml')) {
+          const layerName = file.replace('-agent.yaml', '').toUpperCase();
+          try {
+            const layer = VslfcLayer[layerName as keyof typeof VslfcLayer];
+            if (layer) {
+              layers.push(layer);
+            }
+          } catch {
+            // Ignore invalid layer names
+          }
         }
       }
-
-      // Emit final text
-      if (response.finalText) {
-        yield {
-          type: 'text',
-          text: response.finalText,
-          timestamp: Date.now()
-        };
-      }
-
-      // Emit done
-      yield {
-        type: 'done',
-        outcome: response.success ? 'success' : 'error',
-        timestamp: Date.now()
-      };
-
-      this.log(`Streaming completed [${request.id}]: ${response.iterations} iterations, ${Date.now() - startTime}ms`);
     } catch (error: any) {
-      this.log(`Streaming failed [${request.id}]: ${error.message}`);
-      yield {
-        type: 'error',
-        error: error.message,
-        timestamp: Date.now()
-      };
-    } finally {
-      this.pendingRequests.delete(request.id);
+      this.log(`Error reading agents directory: ${error.message}`);
     }
-  }
-
-  /**
-   * Cancel a running task
-   */
-  async cancel(requestId: string): Promise<boolean> {
-    const isPending = this.pendingRequests.get(requestId);
-
-    if (isPending) {
-      this.log(`Cancelling request [${requestId}]`);
-      this.pendingRequests.delete(requestId);
-      // Note: AgentBridge doesn't support cancellation yet
-      return true;
+    
+    // If no config files found, return all layers
+    if (layers.length === 0) {
+      return Object.values(VslfcLayer);
     }
-
-    return false;
-  }
-
-  /**
-   * Get the agent's current configuration
-   */
-  getConfig(): AgentConfig {
-    return { ...this.config };
-  }
-
-  /**
-   * Update runtime configuration
-   */
-  async updateConfig(overrides: AgentConfigOverrides): Promise<AgentConfig> {
-    this.log(`Updating config with overrides: ${JSON.stringify(overrides)}`);
-
-    // Apply overrides
-    if (overrides.maxIterations !== undefined) {
-      this.config.iterationSettings.maxIterations = overrides.maxIterations;
-    }
-    if (overrides.toolTimeoutSeconds !== undefined) {
-      this.config.toolSelection.toolTimeoutSeconds = overrides.toolTimeoutSeconds;
-    }
-    if (overrides.enableBuildVerification !== undefined) {
-      this.config.execution.enableBuildVerification = overrides.enableBuildVerification;
-    }
-
-    // Reinitialize bridge with new config
-    await this.bridge.initialize();
-
-    this.log(`Config updated successfully`);
-    return { ...this.config };
-  }
-
-  /**
-   * Dispose of agent resources
-   */
-  async dispose(): Promise<void> {
-    this.log(`Disposing agent: ${this.id}`);
-
-    // Cancel pending requests
-    for (const [requestId] of this.pendingRequests) {
-      await this.cancel(requestId);
-    }
-
-    // Dispose bridge
-    this.bridge.dispose();
-
-    this.log(`Agent disposed: ${this.id}`);
-  }
-
-  /**
-   * Generate a unique agent ID
-   */
-  private generateAgentId(layer: VslfcLayer): string {
-    const timestamp = Date.now();
-    const random = Math.random().toString(16).substring(2, 6);
-    return `agent-${layer}-${timestamp}-${random}`;
-  }
-
-  /**
-   * Extract available tools from config
-   */
-  private extractAvailableTools(config: AgentConfig): string[] {
-    const tools: string[] = [];
-
-    // FileSystem tools
-    if (config.execution.fileOperations.shell.readFileEnabled) {
-      tools.push('read_file');
-    }
-    if (config.execution.fileOperations.shell.writeFileEnabled) {
-      tools.push('write_file');
-    }
-    if (config.execution.fileOperations.shell.listDirectoryEnabled) {
-      tools.push('list_directory');
-    }
-    if (config.execution.fileOperations.shell.regexSearchEnabled) {
-      tools.push('regex_search');
-    }
-
-    // Build tool
-    if (config.execution.enableBuildVerification) {
-      tools.push('run_build');
-    }
-
-    return tools;
+    
+    return layers;
   }
 
   /**
    * Log a message
    */
   private log(message: string): void {
-    const timestamp = new Date().toISOString();
-    const logMessage = `[${timestamp}] [LocalAgent:${this.id}] ${message}`;
+    this.outputChannel.appendLine(`[LocalAgentProvider] ${message}`);
+  }
 
-    if (this.outputChannel) {
-      this.outputChannel.appendLine(logMessage);
-    } else {
-      console.log(logMessage);
-    }
+  /**
+   * Dispose of provider resources
+   */
+  dispose(): void {
+    this.log('Disposing LocalAgentProvider');
+    this.configCache.clear();
   }
 }
-
-

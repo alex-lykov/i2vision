@@ -8,7 +8,6 @@
 package com.i2vision.agent.server
 
 import com.i2vision.agent.*
-import com.sun.tools.jdeprscan.Main.call
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
 import io.ktor.server.application.*
@@ -62,7 +61,7 @@ class AgentJsonRpcServer(
     /**
      * Ktor server engine.
      */
-    private var server: ApplicationEngine? = null
+    private var server: EmbeddedServer<*, *>? = null
     
     /**
      * Scope for server coroutines.
@@ -99,7 +98,7 @@ class AgentJsonRpcServer(
      * 
      * @throws Exception if the server fails to start
      */
-    suspend fun start() {
+    fun start() {
         if (isRunning) {
             throw IllegalStateException("Server is already running")
         }
@@ -110,7 +109,9 @@ class AgentJsonRpcServer(
         handler = AgentJsonRpcHandler(sessionManager, json)
         handler.onNotification = { notification ->
             // Broadcast to all WebSocket clients
-            broadcastNotification(notification)
+            serverScope.launch {
+                broadcastNotification(notification)
+            }
         }
         
         // Configure and start Ktor server
@@ -154,7 +155,7 @@ class AgentJsonRpcServer(
             
             // JSON-RPC HTTP endpoint
             post("/rpc") {
-                handleHttpRpc()
+                this@AgentJsonRpcServer.handleHttpRpc(call)
             }
             
             // WebSocket endpoint for streaming
@@ -175,7 +176,7 @@ class AgentJsonRpcServer(
     /**
      * Handle HTTP JSON-RPC request.
      */
-    private suspend fun PipelineContext<*, ApplicationCall>.handleHttpRpc() {
+    private suspend fun handleHttpRpc(call: ApplicationCall) {
         try {
             val requestBody = call.receiveText()
             println("Received RPC request: $requestBody")
@@ -324,7 +325,16 @@ class AgentJsonRpcServerBuilder {
 }
 
 /**
- * Create a new AgentJsonRpcServer builder.
+ * DSL function for building AgentJsonRpcServer with a builder.
+ * 
+ * Example:
+ * ```
+ * val server = agentJsonRpcServer {
+ *     port = 8080
+ *     host = "localhost"
+ *     agentProvider = myProvider
+ * }
+ * ```
  */
 fun agentJsonRpcServer(block: AgentJsonRpcServerBuilder.() -> Unit): AgentJsonRpcServer {
     return AgentJsonRpcServerBuilder().apply(block).build()

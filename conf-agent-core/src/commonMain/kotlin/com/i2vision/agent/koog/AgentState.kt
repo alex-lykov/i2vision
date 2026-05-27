@@ -8,6 +8,10 @@
 package com.i2vision.agent.koog
 
 import com.i2vision.agent.*
+import com.i2vision.agent.tools.SymbolInfo
+import com.i2vision.agent.tools.FlowInfo
+import com.i2vision.agent.tools.BusinessRuleInfo
+import com.i2vision.agent.tools.ArchitectureInfo
 
 /**
  * Mutable state maintained during graph execution.
@@ -256,48 +260,12 @@ data class EnrichedContext(
 }
 
 /**
- * Symbol information from i2vision-instant.
- */
-data class SymbolInfo(
-    val name: String,
-    val kind: String,
-    val location: String,
-    val signature: String? = null
-)
-
-/**
- * Architecture information from discovery cache.
- */
-data class ArchitectureInfo(
-    val description: String,
-    val components: List<String> = emptyList(),
-    val layers: List<String> = emptyList()
-)
-
-/**
  * Contract information from VSLFC validation.
  */
 data class ContractInfo(
     val layer: VslfcLayer,
     val description: String,
     val isViolated: Boolean = false
-)
-
-/**
- * Flow information from i2vision-instant.
- */
-data class FlowInfo(
-    val name: String,
-    val description: String,
-    val steps: List<String> = emptyList()
-)
-
-/**
- * Business rule information from i2vision-instant.
- */
-data class BusinessRuleInfo(
-    val description: String,
-    val source: String? = null
 )
 
 /**

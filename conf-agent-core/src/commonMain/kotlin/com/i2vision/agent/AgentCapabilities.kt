@@ -8,6 +8,7 @@
 package com.i2vision.agent
 
 import com.i2vision.agent.tools.Tool
+import com.i2vision.agent.tools.ToolCategory
 
 /**
  * Declares what an agent instance can do.
@@ -70,34 +71,6 @@ data class ToolInfo(
 )
 
 /**
- * Categories for organizing agent tools.
- * 
- * This is the canonical ToolCategory enum used throughout the agent system.
- */
-enum class ToolCategory {
-    /** File system operations: read_file, write_file, list_directory, etc. */
-    FILE_SYSTEM,
-    
-    /** Discovery operations: i2vision_discover, i2vision_get_context */
-    DISCOVERY,
-    
-    /** Analysis operations: i2vision_search_symbols, i2vision_analyze_dependencies */
-    ANALYSIS,
-    
-    /** Contract validation: i2vision_validate_contracts */
-    CONTRACT,
-    
-    /** Code analysis: i2vision_search_symbols, i2vision_analyze_dependencies */
-    CODE_ANALYSIS,
-    
-    /** Control operations: task_complete, cancel_request */
-    CONTROL,
-    
-    /** MCP operations: Tools from MCP servers */
-    MCP
-}
-
-/**
  * Convert tools ToolCategory to agent ToolCategory.
  */
 fun com.i2vision.agent.tools.ToolCategory.toAgentToolCategory(): ToolCategory = when (this) {
@@ -117,6 +90,4 @@ fun ToolCategory.toToolsToolCategory(): com.i2vision.agent.tools.ToolCategory = 
     ToolCategory.ANALYSIS -> com.i2vision.agent.tools.ToolCategory.ANALYSIS
     ToolCategory.CONTROL -> com.i2vision.agent.tools.ToolCategory.CONTROL
     ToolCategory.MCP -> com.i2vision.agent.tools.ToolCategory.MCP
-    ToolCategory.CONTRACT -> com.i2vision.agent.tools.ToolCategory.ANALYSIS
-    ToolCategory.CODE_ANALYSIS -> com.i2vision.agent.tools.ToolCategory.ANALYSIS
 }

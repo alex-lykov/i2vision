@@ -8,6 +8,7 @@
 package com.i2vision.agent.tools
 
 import com.i2vision.agent.*
+import com.i2vision.agent.VslfcLayer
 
 /**
  * i2vision analysis tools.

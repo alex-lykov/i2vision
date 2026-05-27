@@ -39,7 +39,7 @@ import java.io.File
  */
 object YamlConfigLoader {
     
-    private val yaml = Yaml(SafeConstructor())
+    private val yaml = Yaml()
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true

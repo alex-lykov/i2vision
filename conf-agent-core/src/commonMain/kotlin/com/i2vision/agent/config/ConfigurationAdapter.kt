@@ -10,9 +10,9 @@ package com.i2vision.agent.config
 import com.i2vision.agent.AgentCapabilities
 import com.i2vision.agent.AgentConfig
 import com.i2vision.agent.FileOperationMode
-import com.i2vision.agent.ToolCategory
 import com.i2vision.agent.ToolInfo
 import com.i2vision.agent.VslfcLayer
+import com.i2vision.agent.tools.ToolCategory
 
 /**
  * Bridges legacy AgentPromptConfiguration to new I2VisionAgent interfaces.
@@ -134,6 +134,7 @@ class ConfigurationAdapter {
                 insertFinalNewline = yaml.formattingRules.insertFinalNewline
             ),
             parsingConfig = KoogParsingConfig(
+                enabledParsers = yaml.parsing.enabledParsers,
                 strictJsonParsing = yaml.parsing.strictJsonParsing,
                 allowMarkdownCodeBlocks = yaml.parsing.allowMarkdownCodeBlocks,
                 fallbackToPlainText = yaml.parsing.fallbackToPlainText,
@@ -219,8 +220,8 @@ class ConfigurationAdapter {
     private fun categorizeTool(toolName: String): ToolCategory = when {
         toolName in listOf("read_file", "write_file", "list_directory") -> ToolCategory.FILE_SYSTEM
         toolName in listOf("i2vision_discover", "i2vision_get_context") -> ToolCategory.DISCOVERY
-        toolName == "i2vision_validate_contracts" -> ToolCategory.CONTRACT
-        toolName in listOf("i2vision_search_symbols", "i2vision_analyze_dependencies") -> ToolCategory.CODE_ANALYSIS
+        toolName == "i2vision_validate_contracts" -> ToolCategory.ANALYSIS
+        toolName in listOf("i2vision_search_symbols", "i2vision_analyze_dependencies") -> ToolCategory.ANALYSIS
         else -> ToolCategory.CONTROL
     }
     
@@ -291,6 +292,7 @@ data class KoogFormattingRules(
  * Koog parsing configuration.
  */
 data class KoogParsingConfig(
+    val enabledParsers: List<ParserType> = listOf(ParserType.HEADER, ParserType.NAKED_JSON, ParserType.XML_INVOKE),
     val strictJsonParsing: Boolean,
     val allowMarkdownCodeBlocks: Boolean,
     val fallbackToPlainText: Boolean,

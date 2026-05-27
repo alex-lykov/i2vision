@@ -8,6 +8,8 @@
 package com.i2vision.agent.tools
 
 import com.i2vision.agent.*
+import com.i2vision.agent.VslfcLayer
+import com.i2vision.agent.koog.ContractInfo
 
 /**
  * i2vision discovery and context tools.
@@ -248,7 +250,7 @@ class DiscoveryTools(
                 )
             } catch (e: Exception) {
                 return@Tool ToolResult.failure(
-                    error = "Related files lookup failed: ${e.message}",
+                    error = "Related files retrieval failed: ${e.message}",
                     metadata = mapOf("file" to file)
                 )
             }
@@ -257,85 +259,12 @@ class DiscoveryTools(
                 output = related.toSummary(),
                 metadata = mapOf(
                     "file" to file,
-                    "totalRelated" to related.files.size.toString(),
-                    "relationType" to relationType
+                    "relationType" to relationType,
+                    "count" to related.files.size.toString()
                 )
             )
         }
     )
-}
-
-/**
- * Discovery intent for configuring discovery behavior.
- */
-enum class DiscoveryIntent {
-    FULL_DISCOVERY,
-    REFACTORING_ANALYSIS,
-    QUICK_OVERVIEW,
-    ARCHITECTURE_AUDIT,
-    FLOW_MAPPING,
-    DOCUMENTATION_GENERATION;
-    
-    companion object {
-        fun fromString(value: String): DiscoveryIntent =
-            when (value.lowercase()) {
-                "full_discovery" -> FULL_DISCOVERY
-                "refactoring_analysis" -> REFACTORING_ANALYSIS
-                "quick_overview" -> QUICK_OVERVIEW
-                "architecture_audit" -> ARCHITECTURE_AUDIT
-                "flow_mapping" -> FLOW_MAPPING
-                "documentation_generation" -> DOCUMENTATION_GENERATION
-                else -> QUICK_OVERVIEW
-            }
-    }
-}
-
-/**
- * Task type for context optimization.
- */
-enum class TaskType {
-    DEBUG,
-    REFACTOR,
-    ADD_FEATURE,
-    FIX_BUG,
-    OPTIMIZE,
-    DISCOVERY;
-    
-    companion object {
-        fun fromString(value: String): TaskType =
-            when (value.lowercase()) {
-                "debug" -> DEBUG
-                "refactor" -> REFACTOR
-                "add_feature" -> ADD_FEATURE
-                "fix_bug" -> FIX_BUG
-                "optimize" -> OPTIMIZE
-                "discovery" -> DISCOVERY
-                else -> DISCOVERY
-            }
-    }
-}
-
-/**
- * Relation type for finding related files.
- */
-enum class RelationType {
-    IMPORTS,
-    IMPORTED_BY,
-    CALLS,
-    CALLED_BY,
-    ALL;
-    
-    companion object {
-        fun fromString(value: String): RelationType =
-            when (value.lowercase()) {
-                "imports" -> IMPORTS
-                "imported_by" -> IMPORTED_BY
-                "calls" -> CALLS
-                "called_by" -> CALLED_BY
-                "all" -> ALL
-                else -> ALL
-            }
-    }
 }
 
 /**
@@ -348,6 +277,7 @@ data class DiscoveryResult(
     val duration: Long,
     val timestamp: Long = System.currentTimeMillis(),
     val architecture: ArchitectureInfo? = null,
+    val contracts: List<ContractInfo> = emptyList(),
     val flows: List<FlowInfo> = emptyList(),
     val businessRules: List<BusinessRuleInfo> = emptyList()
 ) {
@@ -373,6 +303,17 @@ data class DiscoveryResult(
         if (architecture != null) {
             appendLine("### Architecture")
             appendLine(architecture.description)
+            appendLine()
+        }
+        
+        if (contracts.isNotEmpty()) {
+            appendLine("### Contracts")
+            contracts.take(5).forEach { contract ->
+                appendLine("- ${contract.layer}: ${contract.description.take(100)}")
+            }
+            if (contracts.size > 5) {
+                appendLine("- ... and ${contracts.size - 5} more")
+            }
             appendLine()
         }
         
@@ -409,6 +350,15 @@ data class DiscoveryResult(
 }
 
 /**
+ * Architecture information from discovery cache.
+ */
+data class ArchitectureInfo(
+    val description: String,
+    val components: List<String> = emptyList(),
+    val layers: List<String> = emptyList()
+)
+
+/**
  * Cluster information from discovery.
  */
 data class ClusterInfo(
@@ -441,6 +391,11 @@ interface DiscoveryCache {
      * Clear all cache.
      */
     fun clearAll()
+    
+    /**
+     * Close the cache and release resources.
+     */
+    fun close()
 }
 
 /**
@@ -451,6 +406,11 @@ interface DiscoveryEngine {
      * Run discovery on a path.
      */
     suspend fun discover(path: String, intent: DiscoveryIntent): DiscoveryResult
+    
+    /**
+     * Close the engine and release resources.
+     */
+    fun close()
 }
 
 /**
@@ -466,6 +426,11 @@ interface InstantContextProvider {
      * Get related files.
      */
     suspend fun getRelatedFiles(file: String, relationType: RelationType): RelatedFiles
+    
+    /**
+     * Close the provider and release resources.
+     */
+    fun close()
 }
 
 /**

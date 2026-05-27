@@ -141,5 +141,42 @@ enum class TaskType {
     VALIDATE,
     
     /** Catch-all for tasks that don't fit other categories */
-    GENERAL
+    GENERAL;
+    
+    companion object {
+        /**
+         * Parse TaskType from string.
+         */
+        fun fromString(value: String): TaskType =
+            entries.find { it.name.equals(value, ignoreCase = true) } ?: GENERAL
+    }
 }
+
+/**
+ * Relation type for finding related files.
+ */
+enum class RelationType {
+    /** Files that this file imports */
+    IMPORTS,
+    
+    /** Files that import this file */
+    IMPORTED_BY,
+    
+    /** Files that this file calls */
+    CALLS,
+    
+    /** Files that call this file */
+    CALLED_BY,
+    
+    /** All relation types */
+    ALL;
+    
+    companion object {
+        /**
+         * Parse RelationType from string.
+         */
+        fun fromString(value: String): RelationType =
+            entries.find { it.name.equals(value, ignoreCase = true) } ?: ALL
+    }
+}
+

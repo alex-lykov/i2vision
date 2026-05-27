@@ -13,7 +13,7 @@ import * as fs from 'fs';
 import * as yaml from 'js-yaml';
 import { LocalAgentProvider } from './LocalAgentProvider';
 import { LocalI2VisionAgent, VslfcLayer, AgentContext } from './LocalI2VisionAgent';
-import { AgentConfig, InteractionRecord } from './AgentBridge';
+import { AgentConfig, InteractionRecord, ToolCall } from './AgentBridge';
 
 /**
  * Agent tab representation
@@ -390,6 +390,68 @@ export class AgentTabManager {
       color: var(--vscode-descriptionForeground);
       margin-bottom: 10px;
     }
+    .tool-calls {
+      margin-top: 10px;
+      padding: 10px;
+      background-color: var(--vscode-editor-selectionBackground);
+      border-radius: 4px;
+      border-left: 3px solid var(--vscode-button-background);
+    }
+    .tool-calls h4 {
+      margin: 0 0 8px 0;
+      font-size: 13px;
+      color: var(--vscode-button-foreground);
+    }
+    .tool-call {
+      margin-bottom: 8px;
+      padding: 6px;
+      background-color: var(--vscode-editor-background);
+      border-radius: 3px;
+      font-size: 12px;
+    }
+    .tool-call-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+    .tool-name {
+      font-weight: bold;
+      color: var(--vscode-textLink-foreground);
+    }
+    .tool-status {
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 3px;
+    }
+    .tool-status.success {
+      background-color: rgba(0, 255, 0, 0.2);
+      color: #4caf50;
+    }
+    .tool-status.error {
+      background-color: rgba(255, 0, 0, 0.2);
+      color: #f44336;
+    }
+    .tool-args, .tool-result {
+      margin-top: 4px;
+      font-family: monospace;
+      font-size: 11px;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .tool-args {
+      color: var(--vscode-descriptionForeground);
+    }
+    .tool-result {
+      color: var(--vscode-editor-foreground);
+      background-color: var(--vscode-editor-selectionBackground);
+      padding: 4px;
+      border-radius: 2px;
+    }
+    .reasoning {
+      margin-bottom: 10px;
+      white-space: pre-wrap;
+    }
   </style>
 </head>
 <body>
@@ -429,12 +491,63 @@ export class AgentTabManager {
       inputEl.value = '';
     }
     
-    function addMessage(text, type) {
+    function addMessage(text, type, toolCalls) {
       const div = document.createElement('div');
       div.className = 'message ' + type;
-      div.textContent = text;
+      
+      if (type === 'agent' && toolCalls && toolCalls.length > 0) {
+        // Split reasoning from tool results if present
+        let reasoning = text;
+        const toolResultsIndex = text.indexOf('\\n\\nTool results:\\n');
+        if (toolResultsIndex !== -1) {
+          reasoning = text.substring(0, toolResultsIndex);
+        }
+        
+        let html = '<div class="reasoning">' + escapeHtml(reasoning) + '</div>';
+        html += '<div class="tool-calls"><h4>🛠️ Tools Used (' + toolCalls.length + ')</h4>';
+        
+        for (const tc of toolCalls) {
+          html += '<div class="tool-call">';
+          html += '<div class="tool-call-header">';
+          html += '<span class="tool-name">' + escapeHtml(tc.toolName) + '</span>';
+          if (tc.error) {
+            html += '<span class="tool-status error">❌ Error</span>';
+          } else {
+            html += '<span class="tool-status success">✅ Success</span>';
+          }
+          html += '</div>';
+          
+          if (tc.args && Object.keys(tc.args).length > 0) {
+            html += '<div class="tool-args"><strong>Args:</strong> ' + escapeHtml(JSON.stringify(tc.args, null, 2)) + '</div>';
+          }
+          
+          if (tc.result) {
+            const preview = tc.result.length > 200 ? tc.result.substring(0, 200) + '...' : tc.result;
+            html += '<div class="tool-result"><strong>Result:</strong> ' + escapeHtml(preview) + '</div>';
+          }
+          
+          if (tc.error) {
+            html += '<div class="tool-result" style="color: #f44336;"><strong>Error:</strong> ' + escapeHtml(tc.error) + '</div>';
+          }
+          
+          html += '</div>';
+        }
+        
+        html += '</div>';
+        div.innerHTML = html;
+      } else {
+        div.textContent = text || '';
+      }
+      
       messagesEl.appendChild(div);
       messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+    
+    function escapeHtml(text) {
+      if (!text) return '';
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
     }
     
     function clearHistory() {
@@ -456,21 +569,21 @@ export class AgentTabManager {
       
       switch (message.command) {
         case 'processing':
-          addMessage('Processing...', 'agent');
+          addMessage('Processing...', 'agent', null);
           break;
           
         case 'response':
           isProcessing = false;
           sendBtn.disabled = false;
-          if (message.response.text) {
-            addMessage(message.response.text, 'agent');
+          if (message.response.text || (message.response.toolCalls && message.response.toolCalls.length > 0)) {
+            addMessage(message.response.text, 'agent', message.response.toolCalls);
           }
           break;
           
         case 'error':
           isProcessing = false;
           sendBtn.disabled = false;
-          addMessage('Error: ' + message.error, 'agent');
+          addMessage('Error: ' + message.error, 'agent', null);
           break;
           
         case 'configReloaded':
@@ -498,13 +611,16 @@ export class AgentTabManager {
     this.log('Disposing AgentTabManager...');
     
     // Close all tabs
-    for (const tabId of this.tabs.keys()) {
-      await this.closeTab(tabId);
+    for (const tab of this.tabs.values()) {
+      try {
+        await tab.agent.dispose();
+      } catch (error: any) {
+        this.log(`Error disposing agent ${tab.id}: ${error.message}`);
+      }
+      tab.panel.dispose();
     }
     
-    // Dispose provider
-    await this.provider.dispose();
-    
+    this.tabs.clear();
     this.log('AgentTabManager disposed');
   }
 }

@@ -7,9 +7,14 @@
 
 package com.i2vision.agent.server
 
+import com.i2vision.agent.tools.DiscoveryCache
+import com.i2vision.agent.tools.DiscoveryCacheFactory
+import com.i2vision.agent.tools.InstantContextProvider
+import com.i2vision.agent.tools.InstantContextProviderFactory
 import com.i2vision.llm.OllamaLlmClient
 import com.i2vision.storage.I2VisionPaths
 import com.i2vision.storage.impl.FileCacheStore
+import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.nio.file.Path
 
@@ -57,9 +62,9 @@ fun main(args: Array<String>) {
     try {
         // Create dependencies
         val llmClient = OllamaLlmClient()
-        val instantContextProvider = InstantContextProvider.create(workspaceRoot)
-        val discoveryCache = DiscoveryCache.create(
-            cacheStore = FileCacheStore(File(I2VisionPaths.getProjectCacheDir(workspaceRoot)))
+        val instantContextProvider = InstantContextProviderFactory.create(workspaceRoot)
+        val discoveryCache = DiscoveryCacheFactory.create(
+            FileCacheStore(I2VisionPaths.getProjectCacheDir(workspaceRoot))
         )
 
         // Create agent provider
@@ -73,29 +78,33 @@ fun main(args: Array<String>) {
 
         // Create and start server
         val server = agentJsonRpcServer {
-            this.port = port
-            this.host = host
-            this.agentProvider = agentProvider
+            port(port)
+            host(host)
+            agentProvider(agentProvider)
         }
 
         // Add shutdown hook for graceful cleanup
         Runtime.getRuntime().addShutdownHook(Thread {
             println("\n🛑 Shutting down i2Vision Agent Server...")
-            server.stop()
+            runBlocking {
+                runCatching { server.stop() }
+            }
         })
 
         // Start server
         println("\n✅ Server starting...")
-        server.start()
-        
-        println("\n🚀 Server is running!")
-        println("   Health:    http://$host:$port/health")
-        println("   RPC:       http://$host:$port/rpc")
-        println("   WebSocket: ws://$host:$port/ws")
-        println("\n   Press Ctrl+C to stop\n")
+        runBlocking {
+            server.start()
+            
+            println("\n🚀 Server is running!")
+            println("   Health:    http://$host:$port/health")
+            println("   RPC:       http://$host:$port/rpc")
+            println("   WebSocket: ws://$host:$port/ws")
+            println("\n   Press Ctrl+C to stop\n")
 
-        // Keep server running
-        Thread.sleep(Long.MAX_VALUE)
+            // Keep server running
+            Thread.sleep(Long.MAX_VALUE)
+        }
 
     } catch (e: Exception) {
         println("❌ Error starting server: ${e.message}")

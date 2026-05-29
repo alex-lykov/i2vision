@@ -429,22 +429,47 @@ export class I2VisionCLI {
     }>
   ): Promise<string> {
     try {
-      const payload = {
+      this.log(`Calling Ollama API directly: ${modelId}`);
+      
+      // Build Ollama API request
+      const requestBody: any = {
         model: modelId,
-        messages,
-        options,
-        tools
+        messages: messages,
+        stream: false,
+        options: {
+          temperature: options.temperature ?? 0.7,
+          top_p: options.top_p ?? 0.9,
+          num_predict: options.max_tokens ?? 2048
+        }
       };
 
-      const command = `${this.cliPath} llm --json`;
-      const stdout = await execWithInput(command, JSON.stringify(payload), {
-        cwd: this.workspaceRoot,
-        timeout: 60000
+      // Include tools if provided
+      if (tools && tools.length > 0) {
+        this.log(`Including ${tools.length} tools in request`);
+        requestBody.tools = tools;
+      }
+
+      // Direct HTTP call to Ollama REST API - no shell, no spawn, no cd
+      const response = await fetch('http://localhost:11434/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
       });
 
-      return stdout;
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Ollama API error: ${response.status} ${response.statusText} - ${errorText}`);
+      }
+
+      const data: any = await response.json();
+      this.log(`Ollama response received: ${JSON.stringify(data).length} chars`);
+      
+      // Return the full message object as JSON so AgentBridge can extract tool_calls
+      // Include both content and tool_calls if present
+      return JSON.stringify(data.message);
     } catch (error: any) {
       this.log(`LLM call error: ${error.message}`);
+      this.log(`Stack: ${error.stack}`);
       throw error;
     }
   }

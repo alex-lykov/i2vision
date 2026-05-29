@@ -129,6 +129,21 @@
         "command": "i2vision.newFlowAgent",
         "title": "New Flow Agent Tab",
         "category": "i2-Vision Agents"
+      },
+      {
+        "command": "i2vision.debugToolCalls",
+        "title": "Debug Tool Calls",
+        "category": "i2-Vision Debug"
+      },
+      {
+        "command": "i2vision.verifyTools",
+        "title": "Verify Tool Definitions",
+        "category": "i2-Vision Debug"
+      },
+      {
+        "command": "i2vision.checkAgentConfig",
+        "title": "Check Agent Configuration",
+        "category": "i2-Vision Debug"
       }
     ],
     "menus": {

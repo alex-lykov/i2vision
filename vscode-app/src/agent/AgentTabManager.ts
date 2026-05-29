@@ -5,6 +5,7 @@
  * using LocalAgentProvider to create agents dynamically.
  * 
  * Updated for Option C: Uses LocalAgentProvider instead of direct AgentBridge
+ * FIXED: Tool card display with proper emoji encoding and better tool result visualization
  */
 
 import * as vscode from 'vscode';
@@ -188,13 +189,14 @@ export class AgentTabManager {
       
       tab.history.push(record);
       this.log(`Interaction recorded: ${record.iterations} iterations, ${record.durationMs}ms`);
+      this.log(`Tool calls: ${response.toolCalls?.map(tc => tc.toolName).join(', ') || 'none'}`);
       
-      // Update webview with result
+      // Update webview with result - include full tool call data
       tab.panel.webview.postMessage({
         command: 'response',
         response: {
           text: response.finalText,
-          toolCalls: response.toolCalls,
+          toolCalls: response.toolCalls, // Send full tool call objects, not just names
           iterations: response.iterations,
           durationMs: response.durationMs,
           success: response.success
@@ -452,6 +454,11 @@ export class AgentTabManager {
       margin-bottom: 10px;
       white-space: pre-wrap;
     }
+    .iteration-info {
+      font-size: 11px;
+      color: var(--vscode-descriptionForeground);
+      margin-top: 5px;
+    }
   </style>
 </head>
 <body>
@@ -522,7 +529,7 @@ export class AgentTabManager {
           }
           
           if (tc.result) {
-            const preview = tc.result.length > 200 ? tc.result.substring(0, 200) + '...' : tc.result;
+            const preview = tc.result.length > 500 ? tc.result.substring(0, 500) + '... (truncated)' : tc.result;
             html += '<div class="tool-result"><strong>Result:</strong> ' + escapeHtml(preview) + '</div>';
           }
           
@@ -578,6 +585,12 @@ export class AgentTabManager {
           if (message.response.text || (message.response.toolCalls && message.response.toolCalls.length > 0)) {
             addMessage(message.response.text, 'agent', message.response.toolCalls);
           }
+          // Show iteration info
+          const infoDiv = document.createElement('div');
+          infoDiv.className = 'iteration-info';
+          infoDiv.textContent = '⏱️ ' + message.response.durationMs + 'ms | Iterations: ' + message.response.iterations;
+          messagesEl.appendChild(infoDiv);
+          messagesEl.scrollTop = messagesEl.scrollHeight;
           break;
           
         case 'error':
@@ -588,6 +601,14 @@ export class AgentTabManager {
           
         case 'configReloaded':
           console.log('Config reloaded:', message.config);
+          break;
+          
+        case 'updateHistory':
+          messagesEl.innerHTML = '';
+          for (const record of message.history) {
+            addMessage(record.userInput, 'user');
+            addMessage(record.agentResponse, 'agent', null);
+          }
           break;
       }
     });
@@ -602,25 +623,5 @@ export class AgentTabManager {
   </script>
 </body>
 </html>`;
-  }
-
-  /**
-   * Dispose of all resources
-   */
-  async dispose(): Promise<void> {
-    this.log('Disposing AgentTabManager...');
-    
-    // Close all tabs
-    for (const tab of this.tabs.values()) {
-      try {
-        await tab.agent.dispose();
-      } catch (error: any) {
-        this.log(`Error disposing agent ${tab.id}: ${error.message}`);
-      }
-      tab.panel.dispose();
-    }
-    
-    this.tabs.clear();
-    this.log('AgentTabManager disposed');
   }
 }

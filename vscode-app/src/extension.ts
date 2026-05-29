@@ -10,6 +10,7 @@ import { I2VisionTreeProvider, I2VisionTreeItem } from './treeViewProvider';
 import { I2VisionCLI } from './cliIntegration';
 import { FileSystemIntegration, FSUtils } from './fileSystemIntegration';
 import { AgentTabManager } from './agent/AgentTabManager';
+import { registerDebugCommands } from './agent/ToolCallDebugger';
 
 /**
  * Extension context
@@ -220,6 +221,11 @@ function registerCommands(context: vscode.ExtensionContext, workspaceRoot: strin
         }
     });
     context.subscriptions.push(flowAgentCmd);
+
+    // === DEBUGGING COMMANDS ===
+    
+    // Register tool call debugging commands
+    registerDebugCommands(context, outputChannel);
 }
 
 /**

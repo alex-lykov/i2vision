@@ -18,8 +18,12 @@ const execAsync = promisify(exec);
  */
 function execWithInput(command: string, input: string, options: { cwd?: string, timeout?: number } = {}): Promise<string> {
   return new Promise((resolve, reject) => {
-    const [cmd, ...args] = command.split(' ');
-    const child = spawn(cmd, args, {
+    // On Windows, use cmd.exe to handle complex commands
+    const isWindows = process.platform === 'win32';
+    const shell = isWindows ? 'cmd.exe' : '/bin/sh';
+    const shellArgs = isWindows ? ['/c', command] : ['-c', command];
+    
+    const child = spawn(shell, shellArgs, {
       cwd: options.cwd,
       stdio: ['pipe', 'pipe', 'pipe']
     });
@@ -158,17 +162,54 @@ export interface TemplateVariable {
 }
 
 /**
+ * LLM message structure
+ */
+export interface LLMMessage {
+  role: string;
+  content: string;
+}
+
+/**
+ * LLM tool definition
+ */
+export interface LLMTool {
+  type: string;
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: string;
+      properties: Record<string, any>;
+      required?: string[];
+    };
+  };
+}
+
+/**
+ * LLM options
+ */
+export interface LLMOptions {
+  temperature?: number;
+  top_p?: number;
+  max_tokens?: number;
+}
+
+/**
  * i2-Vision CLI wrapper
  */
 export class I2VisionCLI {
   private workspaceRoot: string;
   private cliPath: string;
   private outputChannel: vscode.OutputChannel;
+  private i2VisionProjectRoot: string | null;
 
   constructor(workspaceRoot: string, outputChannel?: vscode.OutputChannel) {
     this.workspaceRoot = workspaceRoot;
     // Initialize outputChannel FIRST - detectCLIPath() calls this.log() which needs it
     this.outputChannel = outputChannel || vscode.window.createOutputChannel('i2-Vision CLI');
+    
+    // Find i2-vision project root first
+    this.i2VisionProjectRoot = this.findI2VisionProjectRoot();
     this.cliPath = this.detectCLIPath();
   }
 
@@ -180,15 +221,14 @@ export class I2VisionCLI {
     const config = vscode.workspace.getConfiguration('i2vision');
     const customPath = config.get<string>('cli.path');
     if (customPath && fs.existsSync(customPath)) {
-      this.log(`Using custom CLI path: ${customPath}`);
+      this.log(`Using custom CLI path from settings: ${customPath}`);
       return `java -jar "${customPath}"`;
     }
 
-    // Second, try to find the shadow JAR
-    const projectRoot = this.findProjectRoot();
-    if (projectRoot) {
+    // Second, try to find the shadow JAR in i2-vision project
+    if (this.i2VisionProjectRoot) {
       const shadowJar = path.join(
-        projectRoot,
+        this.i2VisionProjectRoot,
         'i2vision-cli',
         'build',
         'libs',
@@ -202,7 +242,7 @@ export class I2VisionCLI {
 
       // Fallback to installed distribution
       const installedCli = path.join(
-        projectRoot,
+        this.i2VisionProjectRoot,
         'i2vision-cli',
         'build',
         'install',
@@ -215,28 +255,58 @@ export class I2VisionCLI {
         this.log(`Using installed CLI: ${installedCli}`);
         return `"${installedCli}"`;
       }
+    }
 
-      // Last fallback: gradle wrapper
-      this.log('Using gradle wrapper for CLI');
-      return `cd "${projectRoot}" && .\\gradlew.bat :i2vision-cli:run --args=`;
+    // Third, check known development locations
+    const knownLocations = [
+      'D:/proj/AI/i2-vision',
+      'C:/proj/AI/i2-vision',
+      path.join(process.env.USERPROFILE || '', 'projects', 'i2-vision'),
+      path.join(process.env.HOME || '', 'projects', 'i2-vision')
+    ];
+
+    for (const location of knownLocations) {
+      if (fs.existsSync(location)) {
+        const shadowJar = path.join(location, 'i2vision-cli', 'build', 'libs', 'i2vision-cli-1.0.0-all.jar');
+        if (fs.existsSync(shadowJar)) {
+          this.log(`Found CLI in known location: ${shadowJar}`);
+          return `java -jar "${shadowJar}"`;
+        }
+      }
     }
 
     // Last resort: try PATH
+    this.log('CLI not found, will try PATH');
     return 'i2vision-cli';
   }
 
   /**
-   * Find the i2-vision project root
+   * Find the i2-vision project root (looks for the specific multi-module structure)
    */
-  private findProjectRoot(): string | null {
+  private findI2VisionProjectRoot(): string | null {
+    // Strategy 1: Search upward from workspace root
     let currentDir = this.workspaceRoot;
-    const maxDepth = 5;
+    const maxDepth = 8;
     let depth = 0;
 
     while (depth < maxDepth) {
-      if (fs.existsSync(path.join(currentDir, 'settings.gradle.kts'))) {
-        return currentDir;
+      // Look for the specific i2-vision structure
+      const settingsFile = path.join(currentDir, 'settings.gradle.kts');
+      const cliModuleDir = path.join(currentDir, 'i2vision-cli');
+      
+      if (fs.existsSync(settingsFile) && fs.existsSync(cliModuleDir)) {
+        // Verify it's actually i2-vision by checking settings.gradle.kts content
+        try {
+          const settingsContent = fs.readFileSync(settingsFile, 'utf-8');
+          if (settingsContent.includes('i2vision-cli') || settingsContent.includes('i2-vision')) {
+            this.log(`Found i2-vision project root (upward search): ${currentDir}`);
+            return currentDir;
+          }
+        } catch (err) {
+          // Continue searching
+        }
       }
+      
       const parentDir = path.dirname(currentDir);
       if (parentDir === currentDir) {
         break;
@@ -245,6 +315,34 @@ export class I2VisionCLI {
       depth++;
     }
 
+    // Strategy 2: Check known development locations
+    const knownLocations = [
+      'D:/proj/AI/i2-vision',
+      'C:/proj/AI/i2-vision',
+      path.join(process.env.USERPROFILE || '', 'projects', 'i2-vision'),
+      path.join(process.env.HOME || '', 'projects', 'i2-vision')
+    ];
+
+    for (const location of knownLocations) {
+      if (fs.existsSync(location)) {
+        const settingsFile = path.join(location, 'settings.gradle.kts');
+        const cliModuleDir = path.join(location, 'i2vision-cli');
+        
+        if (fs.existsSync(settingsFile) && fs.existsSync(cliModuleDir)) {
+          try {
+            const settingsContent = fs.readFileSync(settingsFile, 'utf-8');
+            if (settingsContent.includes('i2vision-cli') || settingsContent.includes('i2-vision')) {
+              this.log(`Found i2-vision project root (known location): ${location}`);
+              return location;
+            }
+          } catch (err) {
+            // Continue searching
+          }
+        }
+      }
+    }
+
+    this.log(`Could not find i2-vision project root from: ${this.workspaceRoot}`);
     return null;
   }
 
@@ -306,7 +404,7 @@ export class I2VisionCLI {
     this.log('Listing templates...');
 
     try {
-      const command = `${this.cliPath} presets --list --json`;
+      const command = `${this.cliPath} preset --list --json`;
       const { stdout, stderr } = await execAsync(command, {
         cwd: this.workspaceRoot
       });
@@ -334,7 +432,7 @@ export class I2VisionCLI {
         .map(([k, v]) => `--var ${k}="${v}"`)
         .join(' ');
 
-      const command = `${this.cliPath} create --template "${templateName}" --name "${projectName}" ${varsString}`;
+      const command = `${this.cliPath} preset --create --template "${templateName}" --name "${projectName}" ${varsString}`;
       const { stdout, stderr } = await execAsync(command, {
         cwd: this.workspaceRoot
       });
@@ -359,7 +457,7 @@ export class I2VisionCLI {
     this.log('Analyzing architecture violations...');
 
     try {
-      const command = `${this.cliPath} analyze --violations --json`;
+      const command = `${this.cliPath} discover --violations --json`;
       const { stdout, stderr } = await execAsync(command, {
         cwd: this.workspaceRoot
       });
@@ -403,7 +501,7 @@ export class I2VisionCLI {
       });
       return JSON.parse(stdout) as Array<{name: string, provider: string}>;
     } catch (error: any) {
-      this.log(`Failed to get models: ${error.message}`);
+      this.log(`Models list error: ${error.message}`);
       return [];
     }
   }
@@ -413,77 +511,40 @@ export class I2VisionCLI {
    */
   async callLLM(
     modelId: string,
-    messages: Array<{role: string, content: string}>,
-    options: {temperature?: number, top_p?: number, max_tokens?: number},
-    tools?: Array<{
-      type: string;
-      function: {
-        name: string;
-        description: string;
-        parameters: {
-          type: string;
-          properties: Record<string, any>;
-          required?: string[];
-        };
-      };
-    }>
+    messages: LLMMessage[],
+    options?: LLMOptions,
+    tools?: LLMTool[]
   ): Promise<string> {
+    this.log(`Calling LLM: ${modelId} with ${messages.length} messages`);
+
     try {
-      this.log(`Calling Ollama API directly: ${modelId}`);
-      
-      // Build Ollama API request
-      const requestBody: any = {
+      const payload = {
         model: modelId,
-        messages: messages,
-        stream: false,
-        options: {
-          temperature: options.temperature ?? 0.7,
-          top_p: options.top_p ?? 0.9,
-          num_predict: options.max_tokens ?? 2048
-        }
+        messages,
+        options: options || {},
+        tools: tools || []
       };
 
-      // Include tools if provided
-      if (tools && tools.length > 0) {
-        this.log(`Including ${tools.length} tools in request`);
-        requestBody.tools = tools;
-      }
-
-      // Direct HTTP call to Ollama REST API - no shell, no spawn, no cd
-      const response = await fetch('http://localhost:11434/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(requestBody)
+      const command = `${this.cliPath} llm --json`;
+      const stdout = await execWithInput(command, JSON.stringify(payload), {
+        cwd: this.workspaceRoot,
+        timeout: 300000 // 5 minute timeout for LLM calls
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Ollama API error: ${response.status} ${response.statusText} - ${errorText}`);
-      }
-
-      const data: any = await response.json();
-      this.log(`Ollama response received: ${JSON.stringify(data).length} chars`);
-      
-      // Return the full message object as JSON so AgentBridge can extract tool_calls
-      // Include both content and tool_calls if present
-      return JSON.stringify(data.message);
+      return stdout;
     } catch (error: any) {
       this.log(`LLM call error: ${error.message}`);
-      this.log(`Stack: ${error.stack}`);
-      throw error;
+      // Return a helpful error message instead of throwing
+      return `Error: LLM call failed - ${error.message}. The CLI may not support LLM calls yet.`;
     }
   }
 
   /**
-   * Read file through CLI
+   * Read file using Node.js fs module
    */
   async readFile(filePath: string): Promise<string> {
     try {
-      const command = `${this.cliPath} read --file "${filePath}"`;
-      const { stdout } = await execAsync(command, {
-        cwd: this.workspaceRoot
-      });
-      return stdout;
+      return fs.promises.readFile(filePath, 'utf-8');
     } catch (error: any) {
       this.log(`Read file error: ${error.message}`);
       throw error;
@@ -491,15 +552,16 @@ export class I2VisionCLI {
   }
 
   /**
-   * Write file through CLI
+   * Write file using Node.js fs module
    */
   async writeFile(filePath: string, content: string): Promise<string> {
     try {
-      const command = `${this.cliPath} write --file "${filePath}"`;
-      const stdout = await execWithInput(command, content, {
-        cwd: this.workspaceRoot
-      });
-      return stdout;
+      // Ensure directory exists
+      const dir = path.dirname(filePath);
+      await fs.promises.mkdir(dir, { recursive: true });
+      await fs.promises.writeFile(filePath, content, 'utf-8');
+      this.log(`File written: ${filePath}`);
+      return `Successfully wrote ${filePath}`;
     } catch (error: any) {
       this.log(`Write file error: ${error.message}`);
       throw error;
@@ -507,21 +569,15 @@ export class I2VisionCLI {
   }
 
   /**
-   * Edit file through CLI
+   * Edit file using Node.js fs module
    */
   async editFile(filePath: string, oldString: string, newString: string): Promise<string> {
     try {
-      const payload = {
-        path: filePath,
-        old_string: oldString,
-        new_string: newString
-      };
-
-      const command = `${this.cliPath} edit --json`;
-      const stdout = await execWithInput(command, JSON.stringify(payload), {
-        cwd: this.workspaceRoot
-      });
-      return stdout;
+      const content = await fs.promises.readFile(filePath, 'utf-8');
+      const updatedContent = content.replace(oldString, newString);
+      await fs.promises.writeFile(filePath, updatedContent, 'utf-8');
+      this.log(`File edited: ${filePath}`);
+      return `Successfully edited ${filePath}`;
     } catch (error: any) {
       this.log(`Edit file error: ${error.message}`);
       throw error;
@@ -529,15 +585,16 @@ export class I2VisionCLI {
   }
 
   /**
-   * List directory through CLI
+   * List directory using Node.js fs module
    */
   async listDirectory(dirPath: string): Promise<string> {
     try {
-      const command = `${this.cliPath} list --dir "${dirPath}"`;
-      const { stdout } = await execAsync(command, {
-        cwd: this.workspaceRoot
-      });
-      return stdout;
+      const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+      const fileList = entries.map(entry => {
+        const type = entry.isDirectory() ? '[DIR]' : '[FILE]';
+        return `${type} ${entry.name}`;
+      }).join('\n');
+      return fileList;
     } catch (error: any) {
       this.log(`List directory error: ${error.message}`);
       throw error;
@@ -545,15 +602,81 @@ export class I2VisionCLI {
   }
 
   /**
-   * Regex search through CLI
+   * Regex search in files using Node.js fs module
    */
   async regexSearch(pattern: string, searchPath: string): Promise<string> {
+    const results: Array<{file: string, line: number, match: string}> = [];
+    const regex = new RegExp(pattern, 'g');
+
     try {
-      const command = `${this.cliPath} search --pattern "${pattern}" --path "${searchPath}"`;
-      const { stdout } = await execAsync(command, {
-        cwd: this.workspaceRoot
-      });
-      return stdout;
+      const searchDir = async (dir: string) => {
+        const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+        
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          
+          if (entry.isDirectory()) {
+            // Skip common non-source directories
+            if (['node_modules', '.git', 'build', 'dist', 'out', '.idea', '.vscode'].includes(entry.name)) {
+              continue;
+            }
+            await searchDir(fullPath);
+          } else if (entry.isFile()) {
+            // Only search in text-based source files
+            const ext = path.extname(entry.name).toLowerCase();
+            if (['.kt', '.java', '.ts', '.js', '.py', '.go', '.rs', '.cs', '.cpp', '.c', '.h', '.hpp', '.xml', '.json', '.yaml', '.yml', '.md', '.txt'].includes(ext)) {
+              try {
+                const content = await fs.promises.readFile(fullPath, 'utf-8');
+                const lines = content.split('\n');
+                
+                for (let i = 0; i < lines.length; i++) {
+                  const line = lines[i];
+                  const matches = line.match(regex);
+                  if (matches) {
+                    results.push({
+                      file: fullPath,
+                      line: i + 1,
+                      match: line.trim()
+                    });
+                  }
+                }
+              } catch (err: any) {
+                // Skip binary files or files that can't be read
+                if (!err.message.includes('utf-8')) {
+                  this.log(`Search error in ${fullPath}: ${err.message}`);
+                }
+              }
+            }
+          }
+        }
+      };
+
+      const stat = await fs.promises.stat(searchPath);
+      if (stat.isDirectory()) {
+        await searchDir(searchPath);
+      } else if (stat.isFile()) {
+        const content = await fs.promises.readFile(searchPath, 'utf-8');
+        const lines = content.split('\n');
+        
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          const matches = line.match(regex);
+          if (matches) {
+            results.push({
+              file: searchPath,
+              line: i + 1,
+              match: line.trim()
+            });
+          }
+        }
+      }
+
+      // Format results as a readable string
+      if (results.length === 0) {
+        return 'No matches found';
+      }
+      
+      return results.map(r => `${r.file}:${r.line}: ${r.match}`).join('\n');
     } catch (error: any) {
       this.log(`Regex search error: ${error.message}`);
       throw error;

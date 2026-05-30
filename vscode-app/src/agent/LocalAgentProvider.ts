@@ -12,11 +12,17 @@
  * LocalI2VisionAgent instances. It manages the lifecycle of agent configs
  * and provides a clean API for agent creation.
  * 
+ * Architecture:
+ * - Base defaults: conf-agent-core/src/commonMain/resources/default-agent-config.yaml
+ * - Layer overrides: {workspace}/.vision-ai/{layer}-agent.yaml
+ * - Final config = defaults merged with layer-specific overrides
+ * 
  * Features:
- * - Loads YAML configurations from .vscode/i2vision/agents/
- * - Creates LocalI2VisionAgent instances with proper config
+ * - Loads default config from extension resources
+ * - Loads layer-specific YAML from {workspace}/.vision-ai/{layer}-agent.yaml
+ * - Merges configs (layer overrides defaults)
  * - Manages config caching and reloading
- * - Provides default configs if YAML files are missing
+ * - Provides fallback if no config exists
  */
 
 import * as vscode from 'vscode';
@@ -33,7 +39,8 @@ export class LocalAgentProvider {
   private configCache: Map<string, AgentConfig> = new Map();
   private outputChannel: vscode.OutputChannel;
   private context: vscode.ExtensionContext;
-  private workspaceRoot: string;
+  private visionAiDir: string;
+  private defaultConfig: AgentConfig | null = null;
 
   constructor(
     context: vscode.ExtensionContext,
@@ -41,16 +48,60 @@ export class LocalAgentProvider {
   ) {
     this.context = context;
     this.outputChannel = outputChannel;
-    this.workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+    // Load agent configs from workspace's .vision-ai directory
+    // Config path: {workspace}/.vision-ai/{layer}-agent.yaml
+    this.visionAiDir = path.join(
+      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '',
+      '.vision-ai'
+    );
     
-    this.log('LocalAgentProvider initialized');
+    this.log(`LocalAgentProvider initialized. Config dir: ${this.visionAiDir}`);
   }
 
   /**
-   * Initialize the provider
+   * Initialize the provider - loads default configuration
    */
   async initialize(): Promise<void> {
-    this.log('LocalAgentProvider initialization complete');
+    try {
+      // Load default config from extension resources
+      this.defaultConfig = await this.loadDefaultConfig();
+      this.log('Default configuration loaded successfully');
+      this.log('LocalAgentProvider initialization complete');
+    } catch (error: any) {
+      this.log(`Warning: Failed to load default config: ${error.message}`);
+      this.log('Will use hardcoded defaults instead');
+    }
+  }
+
+  /**
+   * Load default configuration from extension resources
+   */
+  private async loadDefaultConfig(): Promise<AgentConfig> {
+    const defaultConfigPath = path.join(
+      this.context.extensionPath,
+      'conf-agent-core',
+      'src',
+      'commonMain',
+      'resources',
+      'default-agent-config.yaml'
+    );
+    
+    return new Promise((resolve, reject) => {
+      fs.readFile(defaultConfigPath, 'utf8', (err, data) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        
+        try {
+          const yamlConfig = yaml.load(data) as any;
+          const config = this.convertYamlToAgentConfig(yamlConfig);
+          resolve(config);
+        } catch (error: any) {
+          reject(new Error(`Failed to parse default config YAML: ${error.message}`));
+        }
+      });
+    });
   }
 
   /**
@@ -60,7 +111,11 @@ export class LocalAgentProvider {
     this.log(`Creating agent for layer: ${layer}`);
     
     try {
-      // Load configuration
+      // Clear cache to ensure fresh config is loaded on each agent creation
+      // This ensures any YAML changes are picked up immediately
+      this.clearConfigCache();
+      
+      // Load configuration (defaults merged with layer overrides)
       const config = await this.loadConfigForLayer(layer);
       
       // Create the agent
@@ -75,7 +130,17 @@ export class LocalAgentProvider {
   }
 
   /**
+   * Clear the config cache to force reload from disk
+   */
+  clearConfigCache(): void {
+    const size = this.configCache.size;
+    this.configCache.clear();
+    this.log(`Config cache cleared: ${size} entries removed`);
+  }
+
+  /**
    * Load configuration for a specific layer
+   * Merges default config with layer-specific overrides
    */
   private async loadConfigForLayer(layer: VslfcLayer): Promise<AgentConfig> {
     const layerName = layer.toLowerCase();
@@ -88,25 +153,65 @@ export class LocalAgentProvider {
       return cached;
     }
     
-    // Try to load from YAML file
+    // Load layer-specific overrides from YAML file: .vision-ai/{layer}-agent.yaml
     const configPath = path.join(
-      this.workspaceRoot,
-      '.vscode', 'i2vision', 'agents', `${layerName}-agent.yaml`
+      this.visionAiDir,
+      `${layerName}-agent.yaml`
     );
     
+    let layerConfig: AgentConfig | null = null;
+    
     try {
-      const config = await this.loadYamlConfig(configPath);
-      this.configCache.set(cacheKey, config);
-      this.log(`Loaded config from ${configPath}`);
-      return config;
+      layerConfig = await this.loadYamlConfig(configPath);
+      this.log(`Loaded layer config from ${configPath}`);
     } catch (error: any) {
-      this.log(`Config file not found, using defaults: ${error.message}`);
-      
-      // Use default configuration
-      const config = this.createDefaultConfig(layer);
-      this.configCache.set(cacheKey, config);
-      return config;
+      this.log(`Layer config not found at ${configPath}, using defaults only`);
     }
+    
+    // Merge configs: layer overrides take precedence
+    const finalConfig = layerConfig 
+      ? this.mergeConfigs(this.defaultConfig || this.createDefaultConfig(layer), layerConfig)
+      : (this.defaultConfig || this.createDefaultConfig(layer));
+    
+    this.configCache.set(cacheKey, finalConfig);
+    return finalConfig;
+  }
+
+  /**
+   * Merge two configs, with overrides taking precedence
+   */
+  private mergeConfigs(defaults: AgentConfig, overrides: AgentConfig): AgentConfig {
+    const merged: any = { ...defaults };
+    
+    // Deep merge nested objects
+    if (overrides.model) merged.model = { ...defaults.model, ...overrides.model };
+    if (overrides.llm) merged.llm = { ...defaults.llm, ...overrides.llm };
+    if (overrides.formattingRules) merged.formattingRules = { ...defaults.formattingRules, ...overrides.formattingRules };
+    if (overrides.iterationSettings) merged.iterationSettings = { ...defaults.iterationSettings, ...overrides.iterationSettings };
+    if (overrides.toolSelection) merged.toolSelection = { ...defaults.toolSelection, ...overrides.toolSelection };
+    if (overrides.safety) merged.safety = { ...defaults.safety, ...overrides.safety };
+    if (overrides.parsing) merged.parsing = { ...defaults.parsing, ...overrides.parsing };
+    if (overrides.discovery) merged.discovery = { ...defaults.discovery, ...overrides.discovery };
+    if (overrides.execution) {
+      merged.execution = { 
+        ...defaults.execution, 
+        ...overrides.execution,
+        fileOperations: {
+          ...defaults.execution?.fileOperations,
+          ...overrides.execution?.fileOperations,
+          shell: {
+            ...defaults.execution?.fileOperations?.shell,
+            ...overrides.execution?.fileOperations?.shell
+          }
+        }
+      };
+    }
+    if (overrides.formatting) merged.formatting = { ...defaults.formatting, ...overrides.formatting };
+    if (overrides.streaming) merged.streaming = { ...defaults.streaming, ...overrides.streaming };
+    if (overrides.mcp) merged.mcp = { ...defaults.mcp, ...overrides.mcp };
+    
+    // Shallow merge for top-level fields
+    return { ...merged, ...overrides };
   }
 
   /**
@@ -142,14 +247,14 @@ export class LocalAgentProvider {
       isActive: yamlConfig.isActive ?? true,
       
       // Prompt section
-      systemPromptTemplate: yamlConfig.prompt?.systemPromptTemplate || 'You are an AI assistant.',
-      templateVariables: yamlConfig.prompt?.templateVariables || {},
-      ruleSetKeys: yamlConfig.prompt?.ruleSetKeys,
-      parserTemplateName: yamlConfig.prompt?.parserTemplateName,
+      systemPromptTemplate: yamlConfig.systemPromptTemplate || 'You are an AI assistant.',
+      templateVariables: yamlConfig.templateVariables || {},
+      ruleSetKeys: yamlConfig.ruleSetKeys,
+      parserTemplateName: yamlConfig.parserTemplateName,
       
       // Model section
       model: {
-        id: yamlConfig.model?.id || 'qwen2.5-coder:32b',
+        id: yamlConfig.model?.id || 'qwen3:4b',
         provider: yamlConfig.model?.provider || 'ollama',
         contextLength: yamlConfig.model?.contextLength || 32768,
         maxOutputTokens: yamlConfig.model?.maxOutputTokens || 4096,
@@ -250,19 +355,19 @@ export class LocalAgentProvider {
       // Streaming section
       streaming: {
         enabled: yamlConfig.streaming?.enabled ?? true,
-        methodCandidates: yamlConfig.streaming?.methodCandidates || ['sse', 'websocket'],
+        methodCandidates: yamlConfig.streaming?.methodCandidates || [],
         fallbackToNonStreaming: yamlConfig.streaming?.fallbackToNonStreaming ?? true,
-        fallbackChunkSize: yamlConfig.streaming?.fallbackChunkSize || 100,
+        fallbackChunkSize: yamlConfig.streaming?.fallbackChunkSize || 200,
         fallbackChunkDelayMs: yamlConfig.streaming?.fallbackChunkDelayMs || 50
       },
       
       // MCP section
       mcp: {
-        enabled: yamlConfig.mcp?.enabled ?? false,
-        injectClusterContext: yamlConfig.mcp?.injectClusterContext ?? false,
-        directCliEnabled: yamlConfig.mcp?.directCliEnabled ?? true,
+        enabled: yamlConfig.mcp?.enabled ?? true,
+        injectClusterContext: yamlConfig.mcp?.injectClusterContext ?? true,
+        directCliEnabled: yamlConfig.mcp?.directCliEnabled ?? false,
         allowedToolPrefixes: yamlConfig.mcp?.allowedToolPrefixes || [],
-        strictToolNamePolicy: yamlConfig.mcp?.strictToolNamePolicy ?? false
+        strictToolNamePolicy: yamlConfig.mcp?.strictToolNamePolicy ?? true
       }
     };
     
@@ -270,26 +375,32 @@ export class LocalAgentProvider {
   }
 
   /**
-   * Create default configuration for a layer
+   * Create default configuration for a layer (fallback if resource file not found)
    */
   private createDefaultConfig(layer: VslfcLayer): AgentConfig {
-    const config: AgentConfig = {
-      key: `agent-${layer.toLowerCase()}`,
+    const layerName = layer.toLowerCase();
+    
+    return {
+      key: 'agent',
       agentType: 'configurable',
       version: '1.0.0',
       isActive: true,
       
       // Prompt section
-      systemPromptTemplate: 'You are an AI assistant specialized in ${layer} layer tasks.',
-      templateVariables: {
-        layer: layer,
-        currentFile: '',
-        task: ''
-      },
+      systemPromptTemplate: `You are the ${layerName} layer agent for the VSLFC architecture.
+Your role is to analyze and generate artifacts for the ${layerName} layer.
+
+Guidelines:
+- Maintain consistency with other layers
+- Follow VSLFC contract specifications
+- Generate clear, maintainable artifacts`,
+      templateVariables: {},
+      ruleSetKeys: undefined,
+      parserTemplateName: undefined,
       
       // Model section
       model: {
-        id: 'qwen2.5-coder:32b',
+        id: 'qwen3:4b',
         provider: 'ollama',
         contextLength: 32768,
         maxOutputTokens: 4096,
@@ -390,40 +501,21 @@ export class LocalAgentProvider {
       // Streaming section
       streaming: {
         enabled: true,
-        methodCandidates: ['sse', 'websocket'],
+        methodCandidates: [],
         fallbackToNonStreaming: true,
-        fallbackChunkSize: 100,
+        fallbackChunkSize: 200,
         fallbackChunkDelayMs: 50
       },
       
       // MCP section
       mcp: {
-        enabled: false,
-        injectClusterContext: false,
-        directCliEnabled: true,
+        enabled: true,
+        injectClusterContext: true,
+        directCliEnabled: false,
         allowedToolPrefixes: [],
-        strictToolNamePolicy: false
+        strictToolNamePolicy: true
       }
     };
-    
-    this.log(`Created default config for ${layer}`);
-    return config;
-  }
-
-  /**
-   * Reload configuration from disk
-   */
-  async reloadConfig(layer: VslfcLayer): Promise<AgentConfig> {
-    const layerName = layer.toLowerCase();
-    const cacheKey = `agent-${layerName}`;
-    
-    // Remove from cache
-    this.configCache.delete(cacheKey);
-    
-    // Reload
-    const config = await this.loadConfigForLayer(layer);
-    this.log(`Reloaded config for ${layerName}`);
-    return config;
   }
 
   /**
@@ -431,10 +523,10 @@ export class LocalAgentProvider {
    */
   async getAvailableLayers(): Promise<VslfcLayer[]> {
     const layers: VslfcLayer[] = [];
-    const agentsDir = path.join(this.workspaceRoot, '.vscode', 'i2vision', 'agents');
+    const visionAiDir = this.visionAiDir;
     
     try {
-      const files = fs.readdirSync(agentsDir);
+      const files = fs.readdirSync(visionAiDir);
       
       for (const file of files) {
         if (file.endsWith('-agent.yaml')) {
@@ -450,7 +542,7 @@ export class LocalAgentProvider {
         }
       }
     } catch (error: any) {
-      this.log(`Error reading agents directory: ${error.message}`);
+      this.log(`Error reading .vision-ai directory: ${error.message}`);
     }
     
     // If no config files found, return all layers
@@ -462,17 +554,10 @@ export class LocalAgentProvider {
   }
 
   /**
-   * Log a message
+   * Log a message to the output channel
    */
   private log(message: string): void {
-    this.outputChannel.appendLine(`[LocalAgentProvider] ${message}`);
-  }
-
-  /**
-   * Dispose of provider resources
-   */
-  dispose(): void {
-    this.log('Disposing LocalAgentProvider');
-    this.configCache.clear();
+    const timestamp = new Date().toISOString();
+    this.outputChannel.appendLine(`[${timestamp}] [LocalAgentProvider] ${message}`);
   }
 }

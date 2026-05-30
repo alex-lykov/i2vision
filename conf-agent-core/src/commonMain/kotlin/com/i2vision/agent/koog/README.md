@@ -231,7 +231,7 @@ class I2VisionKoogAgent(
 
 ```kotlin
 val agent = I2VisionKoogAgent.fromConfig(
-    configPath = ".vscode/i2vision/agents/coding-agent.yaml",
+    configPath = ".vision-ai/coding-agent.yaml",
     layer = VslfcLayer.CODE,
     modelProvider = myModelProvider,
     toolRegistry = myToolRegistry,

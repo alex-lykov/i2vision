@@ -157,12 +157,12 @@ class I2VisionKoogAgent(
          * Example:
          * ```kotlin
          * val agent = I2VisionKoogAgent.fromConfig(
-         *     configPath = ".vscode/i2vision/agents/coding-agent.yaml",
+         *     configPath = ".vision-ai/coding-agent.yaml",
          *     layer = VslfcLayer.CODE
          * )
          * ```
          * 
-         * @param configPath Path to YAML configuration file
+         * @param configPath Path to YAML configuration file (relative to workspace root)
          * @param layer VSLFC layer for the agent
          * @param modelProvider Model provider implementation
          * @param toolRegistry Tool registry implementation

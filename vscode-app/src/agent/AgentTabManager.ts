@@ -57,6 +57,14 @@ export class AgentTabManager {
   }
 
   /**
+   * Clear the config cache to force reload from disk
+   */
+  clearConfigCache(): void {
+    this.provider.clearConfigCache();
+    this.log('Config cache cleared - next agent creation will reload from disk');
+  }
+
+  /**
    * Create a new agent tab for a specific VSLFC layer
    */
   async createTab(layer: 'vision' | 'structure' | 'logic' | 'flow' | 'code'): Promise<string> {
@@ -219,7 +227,8 @@ export class AgentTabManager {
   private async openConfigFile(tab: AgentTab) {
     const configPath = path.join(
       vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '',
-      '.vscode', 'i2vision', 'agents', `${tab.layer}-agent.yaml`
+      '.vision-ai',
+      `${tab.layer.toLowerCase()}-agent.yaml`
     );
     
     try {
@@ -237,7 +246,11 @@ export class AgentTabManager {
    */
   private async reloadAgent(tab: AgentTab) {
     try {
-      // Create a new agent with the same layer
+      // Clear the config cache to force reload from disk
+      this.provider.clearConfigCache();
+      this.log('Config cache cleared before reload');
+      
+      // Create a new agent with the same layer (will load fresh config from disk)
       const vslfcLayer = VslfcLayer[tab.layer.toUpperCase() as keyof typeof VslfcLayer];
       const newAgent = await this.provider.createAgent(vslfcLayer);
       
@@ -248,6 +261,7 @@ export class AgentTabManager {
       tab.agent = newAgent;
       
       this.log(`Reloaded agent for tab: ${tab.id}`);
+      this.log(`New config - Model: ${newAgent.getConfig().model.id}, Max Iterations: ${newAgent.getConfig().iterationSettings.maxIterations}`);
       
       tab.panel.webview.postMessage({
         command: 'configReloaded',
@@ -257,7 +271,7 @@ export class AgentTabManager {
         }
       });
       
-      vscode.window.showInformationMessage(`${this.capitalize(tab.layer)} Agent configuration reloaded`);
+      vscode.window.showInformationMessage(`${this.capitalize(tab.layer)} Agent configuration reloaded from disk`);
     } catch (error: any) {
       this.log(`Error reloading agent: ${error.message}`);
       vscode.window.showErrorMessage(`Failed to reload agent: ${error.message}`);
@@ -472,6 +486,7 @@ export class AgentTabManager {
       <textarea id="input" placeholder="Ask the agent to analyze, explain, or modify code..."></textarea>
       <button id="send" onclick="sendMessage()">Send</button>
       <button id="clear" onclick="clearHistory()">Clear</button>
+      <button id="reload" onclick="reloadConfig()">♻️ Reload</button>
       <button id="config" onclick="openConfig()">Config</button>
     </div>
   </div>
@@ -600,6 +615,11 @@ export class AgentTabManager {
           break;
           
         case 'configReloaded':
+          // Update the status bar with new config
+          const statusEl = document.querySelector('.status');
+          if (statusEl && message.config) {
+            statusEl.textContent = 'Model: ' + message.config.model + ' | Max Iterations: ' + message.config.maxIterations;
+          }
           console.log('Config reloaded:', message.config);
           break;
           

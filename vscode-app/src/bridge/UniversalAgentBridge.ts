@@ -182,13 +182,14 @@ export abstract class UniversalAgentBridge {
    * Get config path for agent layer
    */
   private getConfigPath(layer?: string): string {
+    // Default config path: {workspace}/.vision-ai/{layer}-agent.yaml
     const config = vscode.workspace.getConfiguration('i2vision');
-    const configPath = config.get<string>('agents.configPath', '.vscode/i2vision/agents');
+    const configPath = config.get<string>('agents.configPath', '.vision-ai');
     
     if (layer) {
-      return `${configPath}/${layer}-agent.yaml`;
+      return path.join(configPath, `${layer.toLowerCase()}-agent.yaml`);
     }
-    return `${configPath}/coding-agent.yaml`;
+    return path.join(configPath, 'coding-agent.yaml');
   }
 
   /**

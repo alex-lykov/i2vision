@@ -199,7 +199,7 @@ When tool calling isn't working:
 
 Agent configuration files are in:
 ```
-.vscode/i2vision/agents/
+.vision-ai/
   - coding-agent.yaml
   - vision-agent.yaml
   - structure-agent.yaml
@@ -241,3 +241,4 @@ If issues persist after following this guide:
 
 **Last Updated**: 2024
 **Version**: 1.0
+

@@ -301,7 +301,7 @@ Add to `.vscode/settings.json`:
   "method": "process",
   "params": {
     "agent": {
-      "configPath": ".vscode/i2vision/agents/coding-agent.yaml",
+      "configPath": ".vision-ai/coding-agent.yaml",
       "layer": "code",
       "overrides": {
         "model": {

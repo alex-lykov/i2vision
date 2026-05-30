@@ -25,12 +25,12 @@ import java.nio.file.Path
  *   ./gradlew :conf-agent-core:runAgentServer --args="path/to/configs 8765"
  * 
  * Arguments:
- *   1. configDir - Directory containing agent YAML configurations (default: .vscode/i2vision/agents)
+ *   1. configDir - Directory containing agent YAML configurations (default: .vision-ai)
  *   2. port - Server port (default: 8765)
  *   3. workspaceRoot - Project workspace root (default: current directory)
  */
 fun main(args: Array<String>) {
-    val configDir = args.getOrElse(0) { ".vscode/i2vision/agents" }
+    val configDir = args.getOrElse(0) { ".vision-ai" }
     val port = args.getOrElse(1) { "8765" }.toInt()
     val host = args.getOrElse(2) { "localhost" }
     val workspaceRoot = args.getOrElse(3) { System.getProperty("user.dir") }

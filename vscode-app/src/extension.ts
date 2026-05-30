@@ -225,7 +225,16 @@ function registerCommands(context: vscode.ExtensionContext, workspaceRoot: strin
     // === DEBUGGING COMMANDS ===
     
     // Register tool call debugging commands
-    registerDebugCommands(context, outputChannel);
+    registerDebugCommands(context, outputChannel, agentManager);
+
+    // Reload agent config command (clears cache)
+    const reloadConfigCmd = vscode.commands.registerCommand('i2vision.reloadAgentConfig', async () => {
+        outputChannel.appendLine('🔄 Clearing agent config cache...');
+        agentManager.clearConfigCache();
+        outputChannel.appendLine('✅ Config cache cleared. Next agent creation will reload from disk.');
+        vscode.window.showInformationMessage('Agent config cache cleared. Create a new agent to reload config.');
+    });
+    context.subscriptions.push(reloadConfigCmd);
 }
 
 /**

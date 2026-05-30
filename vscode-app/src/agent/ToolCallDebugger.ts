@@ -120,7 +120,11 @@ EOS`,
   async checkConfig(): Promise<void> {
     this.outputChannel.appendLine('\n=== Configuration Check ===\n');
 
-    const configPath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath + '/.vscode/i2vision/agents/coding-agent.yaml';
+    const configPath = path.join(
+      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '',
+      '.vision-ai',
+      'coding-agent.yaml'
+    );
     
     try {
       const config = await vscode.workspace.openTextDocument(vscode.Uri.file(configPath!));
@@ -166,7 +170,11 @@ EOS`,
 /**
  * Register debugging commands
  */
-export function registerDebugCommands(context: vscode.ExtensionContext, outputChannel: vscode.OutputChannel): void {
+export function registerDebugCommands(
+  context: vscode.ExtensionContext,
+  outputChannel: vscode.OutputChannel,
+  agentManager?: any
+): void {
   const toolDebugger = new ToolCallDebugger(outputChannel);
 
   // Debug tool calls command
@@ -191,4 +199,5 @@ export function registerDebugCommands(context: vscode.ExtensionContext, outputCh
   outputChannel.appendLine('  - i2vision.debugToolCalls: Run all debugging checks');
   outputChannel.appendLine('  - i2vision.verifyTools: Verify tool definitions');
   outputChannel.appendLine('  - i2vision.checkAgentConfig: Check agent configuration');
+  outputChannel.appendLine('  - i2vision.reloadAgentConfig: Clear config cache (registered in extension.ts)');
 }

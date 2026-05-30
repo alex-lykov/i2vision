@@ -20,7 +20,7 @@ com.i2vision.agent.config/
 The configuration system bridges the legacy 15-section YAML format to the new `I2VisionAgent` interfaces:
 
 ```
-YAML File (.vscode/i2vision/agents/coding-agent.yaml)
+YAML File (.vision-ai/coding-agent.yaml)
     ↓
 YamlConfigLoader (kotlinx.serialization.yaml)
     ↓

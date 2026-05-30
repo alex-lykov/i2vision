@@ -9,6 +9,7 @@ plugins {
     kotlin("jvm")
     application
     `maven-publish`
+    id("com.github.johnrengelman.shadow") version "8.1.1"
 }
 
 group = "com.i2vision"
@@ -55,6 +56,12 @@ kotlin {
 
 application {
     mainClass.set("com.i2vision.cli.I2VisionCliKt")
+}
+
+tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJar") {
+    archiveBaseName.set("i2vision-cli")
+    archiveClassifier.set("all")
+    archiveVersion.set("1.0.0")
 }
 
 publishing {

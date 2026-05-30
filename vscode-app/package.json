@@ -201,8 +201,8 @@
       "properties": {
         "i2vision.agents.configPath": {
           "type": "string",
-          "default": ".vscode/i2vision/agents",
-          "description": "Path to agent YAML configuration files"
+          "default": ".vision-ai",
+          "description": "Path to agent YAML configuration files (relative to workspace root)"
         },
         "i2vision.cli.path": {
           "type": "string",

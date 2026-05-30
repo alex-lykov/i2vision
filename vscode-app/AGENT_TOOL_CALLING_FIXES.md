@@ -208,7 +208,7 @@ Comprehensive debugging guide covering:
 ## 🛠️ Configuration
 
 ### Agent Config File
-**Location**: `.vscode/i2vision/agents/coding-agent.yaml`
+**Location**: `.vision-ai/coding-agent.yaml`
 
 ### Key Settings:
 ```yaml

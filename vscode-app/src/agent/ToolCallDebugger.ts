@@ -13,13 +13,14 @@
  * 
  * Usage:
  * 1. Launch extension development host (F5)
- * 2. Open Output Channel (View → Output → i2-Vision)
+ * 2. Open Output Channel (View -> Output -> i2-Vision)
  * 3. Create an agent tab
  * 4. Send test messages
  * 5. Monitor logs for tool call activity
  */
 
 import * as vscode from 'vscode';
+import * as path from 'path';
 
 /**
  * Test tool call parsing with sample LLM responses
@@ -101,7 +102,7 @@ EOS`,
 
     this.outputChannel.appendLine('Expected tools available to LLM:');
     for (const tool of expectedTools) {
-      this.outputChannel.appendLine(`  ✓ ${tool}`);
+      this.outputChannel.appendLine(`  [OK] ${tool}`);
     }
 
     this.outputChannel.appendLine('\nTool descriptions:');
@@ -140,7 +141,7 @@ EOS`,
 
       for (const check of checks) {
         const found = check.pattern.test(content);
-        this.outputChannel.appendLine(`${found ? '✓' : '✗'} ${check.name}: ${found ? 'Found' : 'MISSING'}`);
+        this.outputChannel.appendLine(`${found ? '[OK]' : '[MISSING]'} ${check.name}: ${found ? 'Found' : 'MISSING'}`);
       }
     } catch (error: any) {
       this.outputChannel.appendLine(`Error reading config: ${error.message}`);
@@ -152,18 +153,50 @@ EOS`,
    */
   async runAllChecks(): Promise<void> {
     this.outputChannel.show();
-    this.outputChannel.appendLine('🔍 Starting Tool Call Debugging Session\n');
+    this.outputChannel.appendLine('=== Starting Tool Call Debugging Session ===\n');
     
     await this.verifyToolDefinitions();
     await this.checkConfig();
     await this.testParsing();
     
-    this.outputChannel.appendLine('\n✅ Debugging checks complete!');
+    this.outputChannel.appendLine('\n=== Debugging checks complete! ===');
     this.outputChannel.appendLine('\nNext steps:');
-    this.outputChannel.appendLine('1. Create an agent tab (Ctrl+Shift+P → i2-Vision: New Coding Agent)');
+    this.outputChannel.appendLine('1. Create an agent tab (Ctrl+Shift+P -> i2-Vision: New Coding Agent)');
     this.outputChannel.appendLine('2. Send a test message: "Read vscode-app/package.json"');
     this.outputChannel.appendLine('3. Watch the Output Channel for tool call logs');
     this.outputChannel.appendLine('4. Verify tool card appears in the agent tab');
+  }
+
+  /**
+   * Quick diagnostic - check extension activation status
+   */
+  async quickDiagnostic(): Promise<void> {
+    this.outputChannel.show();
+    this.outputChannel.appendLine('=== Quick Diagnostic ===\n');
+    
+    // Check workspace
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    this.outputChannel.appendLine(`Workspace: ${workspaceRoot || 'NO WORKSPACE OPEN'}`);
+    
+    // Check config file
+    const configPath = workspaceRoot ? path.join(workspaceRoot, '.vision-ai', 'coding-agent.yaml') : null;
+    if (configPath) {
+      try {
+        await vscode.workspace.openTextDocument(vscode.Uri.file(configPath));
+        this.outputChannel.appendLine(`Config file: [OK] ${configPath}`);
+      } catch {
+        this.outputChannel.appendLine(`Config file: [MISSING] ${configPath}`);
+      }
+    }
+    
+    // Check extension context
+    this.outputChannel.appendLine(`Extension active: YES`);
+    this.outputChannel.appendLine(`Output channel: [OK] i2-Vision`);
+    
+    this.outputChannel.appendLine('\n=== Diagnostic complete ===');
+    this.outputChannel.appendLine('\nIf all checks pass, try:');
+    this.outputChannel.appendLine('1. Ctrl+Shift+P -> i2-Vision: New Coding Agent');
+    this.outputChannel.appendLine('2. Send: "What files are in the project?"');
   }
 }
 
@@ -176,6 +209,12 @@ export function registerDebugCommands(
   agentManager?: any
 ): void {
   const toolDebugger = new ToolCallDebugger(outputChannel);
+
+  // Quick diagnostic command
+  const quickDiagCmd = vscode.commands.registerCommand('i2vision.quickDiagnostic', async () => {
+    await toolDebugger.quickDiagnostic();
+  });
+  context.subscriptions.push(quickDiagCmd);
 
   // Debug tool calls command
   const debugCmd = vscode.commands.registerCommand('i2vision.debugToolCalls', async () => {
@@ -195,7 +234,8 @@ export function registerDebugCommands(
   });
   context.subscriptions.push(checkCmd);
 
-  outputChannel.appendLine('🛠️ Tool call debugging commands registered');
+  outputChannel.appendLine('[OK] Tool call debugging commands registered');
+  outputChannel.appendLine('  - i2vision.quickDiagnostic: Quick health check (START HERE)');
   outputChannel.appendLine('  - i2vision.debugToolCalls: Run all debugging checks');
   outputChannel.appendLine('  - i2vision.verifyTools: Verify tool definitions');
   outputChannel.appendLine('  - i2vision.checkAgentConfig: Check agent configuration');

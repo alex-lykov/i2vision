@@ -353,7 +353,7 @@ export class I2VisionCLI {
     this.log('Running discovery...');
     
     try {
-      const command = `${this.cliPath} discover --json --dir "${this.workspaceRoot}"`;
+      const command = `${this.cliPath} discover --json "${this.workspaceRoot}"`;
       const { stdout, stderr } = await execAsync(command, {
         cwd: this.workspaceRoot,
         maxBuffer: 10 * 1024 * 1024 // 10MB buffer
@@ -490,16 +490,35 @@ export class I2VisionCLI {
   }
 
   /**
-   * Get loaded models from CLI
+   * Get available models from Ollama
    */
   async getLoadedModels(): Promise<Array<{name: string, provider: string}>> {
-    // Note: CLI does not have a models command yet
-    // Return empty array - model verification will be skipped
-    return [];
+    try {
+      const res = await fetch('http://localhost:11434/api/tags', {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      if (!res.ok) {
+        this.log(`Failed to fetch models: ${res.status}`);
+        return [];
+      }
+
+      const data = await res.json() as any;
+      const models = data.models || [];
+      
+      return models.map((m: any) => ({
+        name: m.name || m.model || 'unknown',
+        provider: 'ollama'
+      }));
+    } catch (error: any) {
+      this.log(`Error fetching models: ${error.message}`);
+      return [];
+    }
   }
 
   /**
-   * Call LLM through CLI
+   * Call LLM through Ollama HTTP API
    */
   async callLLM(
     modelId: string,
@@ -510,26 +529,40 @@ export class I2VisionCLI {
     this.log(`Calling LLM: ${modelId} with ${messages.length} messages`);
 
     try {
-      const payload = {
+      const body: any = {
         model: modelId,
         messages,
-        options: options || {},
-        tools: tools || []
+        stream: false,
+        options: {
+          temperature: options?.temperature || 0.2,
+          top_p: options?.top_p || 0.95,
+          num_predict: options?.max_tokens || 4096
+        }
       };
 
-      const command = `${this.cliPath} llm --json`;
-      const stdout = await execWithInput(command, JSON.stringify(payload), {
-        cwd: this.workspaceRoot,
-        timeout: 300000 // 5 minute timeout for LLM calls
+      if (tools?.length) {
+        body.tools = tools;
+      }
+
+      // Direct HTTP to Ollama - no JAR, no spawn, no shell
+      const res = await fetch('http://localhost:11434/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
       });
 
-      return stdout;
+      if (!res.ok) {
+        throw new Error(`Ollama HTTP error: ${res.status} ${res.statusText}`);
+      }
+
+      const data = await res.json() as any;
+      return JSON.stringify(data.message);
     } catch (error: any) {
       this.log(`LLM call error: ${error.message}`);
-      // Return a helpful error message instead of throwing
-      return `Error: LLM call failed - ${error.message}. The CLI may not support LLM calls yet.`;
+      return `Error: LLM call failed - ${error.message}`;
     }
   }
+
 
   /**
    * Read file using Node.js fs module

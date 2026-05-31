@@ -330,11 +330,10 @@ export class AgentBridge {
     // 4. Execute tools and repeat if needed
 
     try {
-      // Step 1: Get project context
-      this.log('Getting project context...');
-      const projectContext = await this.cli.runDiscovery();
-      this.log(`Project context retrieved: ${JSON.stringify(projectContext).substring(0, 100)}...`);
-      
+      // SKIP DISCOVERY FOR NOW — it's blocking the agent
+      // const projectContext = await this.cli.runDiscovery();
+      this.log('Skipping discovery — going directly to LLM');
+
       // Step 2: Build messages for LLM
       const messages = [
         { role: 'system', content: systemPrompt },

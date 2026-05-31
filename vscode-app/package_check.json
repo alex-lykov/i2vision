@@ -1,0 +1,416 @@
+{
+    "name":  "i2-vision-vscode",
+    "displayName":  "i2-Vision",
+    "description":  "i2-Vision VSCode Extension with Tree View, CLI Integration, and Agent Support",
+    "version":  "1.0.0",
+    "publisher":  "i2vision",
+    "engines":  {
+                    "vscode":  "^1.90.0"
+                },
+    "categories":  [
+                       "Other"
+                   ],
+    "activationEvents":  [
+
+                         ],
+    "main":  "./out/extension.js",
+    "contributes":  {
+                        "viewsContainers":  {
+                                                "activitybar":  [
+                                                                    {
+                                                                        "id":  "i2vision-explorer",
+                                                                        "title":  "i2-Vision Explorer",
+                                                                        "icon":  "resources/i2vision-icon.svg"
+                                                                    }
+                                                                ]
+                                            },
+                        "views":  {
+                                      "i2vision-explorer":  [
+                                                                {
+                                                                    "id":  "i2visionTreeView",
+                                                                    "name":  "i2-Vision Projects",
+                                                                    "icon":  "resources/i2vision-icon.svg",
+                                                                    "contextualTitle":  "i2-Vision"
+                                                                }
+                                                            ]
+                                  },
+                        "commands":  [
+                                         {
+                                             "command":  "i2vision.refreshTree",
+                                             "title":  "Refresh",
+                                             "icon":  {
+                                                          "light":  "resources/refresh.svg",
+                                                          "dark":  "resources/refresh.svg"
+                                                      },
+                                             "category":  "i2-Vision"
+                                         },
+                                         {
+                                             "command":  "i2vision.openProject",
+                                             "title":  "Open Project",
+                                             "category":  "i2-Vision",
+                                             "icon":  {
+                                                          "light":  "resources/open.svg",
+                                                          "dark":  "resources/open.svg"
+                                                      }
+                                         },
+                                         {
+                                             "command":  "i2vision.createProject",
+                                             "title":  "Create New Project",
+                                             "category":  "i2-Vision"
+                                         },
+                                         {
+                                             "command":  "i2vision.helloWorld",
+                                             "title":  "Hello World",
+                                             "category":  "i2-Vision"
+                                         },
+                                         {
+                                             "command":  "i2vision.openFile",
+                                             "title":  "Open File",
+                                             "category":  "i2-Vision"
+                                         },
+                                         {
+                                             "command":  "i2vision.showDiscovery",
+                                             "title":  "Show Discovery Results",
+                                             "category":  "i2-Vision"
+                                         },
+                                         {
+                                             "command":  "i2vision.analyzeArchitecture",
+                                             "title":  "Analyze Architecture",
+                                             "category":  "i2-Vision"
+                                         },
+                                         {
+                                             "command":  "i2vision.viewDocumentation",
+                                             "title":  "View Documentation",
+                                             "category":  "i2-Vision"
+                                         },
+                                         {
+                                             "command":  "i2vision.toggleFileSystemScan",
+                                             "title":  "Toggle File System Scan",
+                                             "category":  "i2-Vision"
+                                         },
+                                         {
+                                             "command":  "i2vision.scanWorkspace",
+                                             "title":  "Scan Workspace",
+                                             "category":  "i2-Vision"
+                                         },
+                                         {
+                                             "command":  "i2vision.showFileInfo",
+                                             "title":  "Show File Information",
+                                             "category":  "i2-Vision"
+                                         },
+                                         {
+                                             "command":  "i2vision.openContainingFolder",
+                                             "title":  "Open Containing Folder",
+                                             "category":  "i2-Vision"
+                                         },
+                                         {
+                                             "command":  "i2vision.newCodingAgent",
+                                             "title":  "New Coding Agent Tab",
+                                             "category":  "i2-Vision Agents",
+                                             "icon":  {
+                                                          "light":  "resources/robot.svg",
+                                                          "dark":  "resources/robot.svg"
+                                                      }
+                                         },
+                                         {
+                                             "command":  "i2vision.newVisionAgent",
+                                             "title":  "New Vision Agent Tab",
+                                             "category":  "i2-Vision Agents"
+                                         },
+                                         {
+                                             "command":  "i2vision.newStructureAgent",
+                                             "title":  "New Structure Agent Tab",
+                                             "category":  "i2-Vision Agents"
+                                         },
+                                         {
+                                             "command":  "i2vision.newLogicAgent",
+                                             "title":  "New Logic Agent Tab",
+                                             "category":  "i2-Vision Agents"
+                                         },
+                                         {
+                                             "command":  "i2vision.newFlowAgent",
+                                             "title":  "New Flow Agent Tab",
+                                             "category":  "i2-Vision Agents"
+                                         },
+                                         {
+                                             "command":  "i2vision.debugToolCalls",
+                                             "title":  "Debug Tool Calls",
+                                             "category":  "i2-Vision Debug"
+                                         },
+                                         {
+                                             "command":  "i2vision.verifyTools",
+                                             "title":  "Verify Tool Definitions",
+                                             "category":  "i2-Vision Debug"
+                                         },
+                                         {
+                                             "command":  "i2vision.checkAgentConfig",
+                                             "title":  "Check Agent Configuration",
+                                             "category":  "i2-Vision Debug"
+                                         },
+                                         {
+                                             "title":  "Quick Diagnostic",
+                                             "command":  "i2vision.quickDiagnostic",
+                                             "category":  "i2-Vision Debug"
+                                         }
+                                     ],
+                        "menus":  {
+                                      "view/title":  [
+                                                         {
+                                                             "command":  "i2vision.refreshTree",
+                                                             "when":  "view == i2visionTreeView",
+                                                             "group":  "navigation"
+                                                         }
+                                                     ],
+                                      "view/item/context":  [
+                                                                {
+                                                                    "command":  "i2vision.openProject",
+                                                                    "when":  "view == i2visionTreeView \u0026\u0026 viewItem == project",
+                                                                    "group":  "inline"
+                                                                },
+                                                                {
+                                                                    "command":  "i2vision.openProject",
+                                                                    "when":  "view == i2visionTreeView \u0026\u0026 viewItem == component",
+                                                                    "group":  "navigation"
+                                                                },
+                                                                {
+                                                                    "command":  "i2vision.openProject",
+                                                                    "when":  "view == i2visionTreeView \u0026\u0026 viewItem == file",
+                                                                    "group":  "inline"
+                                                                },
+                                                                {
+                                                                    "command":  "i2vision.showFileInfo",
+                                                                    "when":  "view == i2visionTreeView",
+                                                                    "group":  "2_modification"
+                                                                },
+                                                                {
+                                                                    "command":  "i2vision.openContainingFolder",
+                                                                    "when":  "view == i2visionTreeView \u0026\u0026 viewItem == file",
+                                                                    "group":  "3_compare"
+                                                                }
+                                                            ],
+                                      "commandPalette":  [
+                                                             {
+                                                                 "command":  "i2vision.openFile",
+                                                                 "when":  "false"
+                                                             },
+                                                             {
+                                                                 "command":  "i2vision.showFileInfo",
+                                                                 "when":  "false"
+                                                             },
+                                                             {
+                                                                 "command":  "i2vision.openContainingFolder",
+                                                                 "when":  "false"
+                                                             }
+                                                         ]
+                                  },
+                        "configuration":  {
+                                              "title":  "i2-Vision",
+                                              "properties":  {
+                                                                 "i2vision.agents.configPath":  {
+                                                                                                    "type":  "string",
+                                                                                                    "default":  ".vision-ai",
+                                                                                                    "description":  "Path to agent YAML configuration files (relative to workspace root)"
+                                                                                                },
+                                                                 "i2vision.cli.path":  {
+                                                                                           "type":  "string",
+                                                                                           "default":  "",
+                                                                                           "description":  "Path to i2vision CLI executable (leave empty for auto-detect)"
+                                                                                       },
+                                                                 "i2vision.cli.autoStart":  {
+                                                                                                "type":  "boolean",
+                                                                                                "default":  true,
+                                                                                                "description":  "Automatically start CLI server on extension activation"
+                                                                                            },
+                                                                 "i2vision.bridge.transport":  {
+                                                                                                   "type":  "string",
+                                                                                                   "default":  "stdio",
+                                                                                                   "enum":  [
+                                                                                                                "stdio",
+                                                                                                                "http",
+                                                                                                                "websocket"
+                                                                                                            ],
+                                                                                                   "description":  "Transport protocol for agent bridge"
+                                                                                               },
+                                                                 "i2vision.bridge.httpUrl":  {
+                                                                                                 "type":  "string",
+                                                                                                 "default":  "http://localhost:8765",
+                                                                                                 "description":  "URL for HTTP bridge transport"
+                                                                                             },
+                                                                 "i2vision.bridge.command":  {
+                                                                                                 "type":  "string",
+                                                                                                 "default":  "java -jar conf-agent-core.jar --mode=server --transport=stdio",
+                                                                                                 "description":  "Command to start the agent server (stdio transport)"
+                                                                                             },
+                                                                 "i2vision.ui.agents.enabled":  {
+                                                                                                    "type":  "array",
+                                                                                                    "default":  [
+                                                                                                                    "code",
+                                                                                                                    "structure",
+                                                                                                                    "flow"
+                                                                                                                ],
+                                                                                                    "items":  {
+                                                                                                                  "type":  "string",
+                                                                                                                  "enum":  [
+                                                                                                                               "vision",
+                                                                                                                               "structure",
+                                                                                                                               "logic",
+                                                                                                                               "flow",
+                                                                                                                               "code"
+                                                                                                                           ]
+                                                                                                              },
+                                                                                                    "description":  "Which VSLFC agent tabs to enable"
+                                                                                                },
+                                                                 "i2vision.ui.agents.defaultAgent":  {
+                                                                                                         "type":  "string",
+                                                                                                         "default":  "code",
+                                                                                                         "enum":  [
+                                                                                                                      "vision",
+                                                                                                                      "structure",
+                                                                                                                      "logic",
+                                                                                                                      "flow",
+                                                                                                                      "code"
+                                                                                                                  ],
+                                                                                                         "description":  "Default agent tab to open"
+                                                                                                     },
+                                                                 "i2vision.ui.chat.showReasoningTrace":  {
+                                                                                                             "type":  "boolean",
+                                                                                                             "default":  true,
+                                                                                                             "description":  "Show agent reasoning steps in chat"
+                                                                                                         },
+                                                                 "i2vision.ui.chat.showToolCalls":  {
+                                                                                                        "type":  "boolean",
+                                                                                                        "default":  true,
+                                                                                                        "description":  "Show tool calls in chat"
+                                                                                                    },
+                                                                 "i2vision.ui.chat.showIterationCount":  {
+                                                                                                             "type":  "boolean",
+                                                                                                             "default":  true,
+                                                                                                             "description":  "Show iteration count in chat"
+                                                                                                         },
+                                                                 "i2vision.ui.chat.showDuration":  {
+                                                                                                       "type":  "boolean",
+                                                                                                       "default":  true,
+                                                                                                       "description":  "Show execution duration in chat"
+                                                                                                   },
+                                                                 "i2vision.ui.chat.maxHistoryDisplay":  {
+                                                                                                            "type":  "number",
+                                                                                                            "default":  50,
+                                                                                                            "description":  "Maximum number of chat history items to display"
+                                                                                                        },
+                                                                 "i2vision.ui.chat.inputPlaceholder":  {
+                                                                                                           "type":  "string",
+                                                                                                           "default":  "Ask the agent to analyze, explain, or modify code...",
+                                                                                                           "description":  "Placeholder text for chat input"
+                                                                                                       },
+                                                                 "i2vision.ui.context.autoIncludeCurrentFile":  {
+                                                                                                                    "type":  "boolean",
+                                                                                                                    "default":  true,
+                                                                                                                    "description":  "Automatically include current file in agent context"
+                                                                                                                },
+                                                                 "i2vision.ui.context.autoIncludeDiscoveryCache":  {
+                                                                                                                       "type":  "boolean",
+                                                                                                                       "default":  true,
+                                                                                                                       "description":  "Automatically include discovery cache in agent context"
+                                                                                                                   },
+                                                                 "i2vision.ui.context.autoIncludeVslfcContext":  {
+                                                                                                                     "type":  "boolean",
+                                                                                                                     "default":  false,
+                                                                                                                     "description":  "Automatically include VSLFC context in agent context"
+                                                                                                                 },
+                                                                 "i2vision.ui.context.promptForMissingContext":  {
+                                                                                                                     "type":  "boolean",
+                                                                                                                     "default":  true,
+                                                                                                                     "description":  "Prompt user when context is missing"
+                                                                                                                 },
+                                                                 "i2vision.ui.toolCall.showToolName":  {
+                                                                                                           "type":  "boolean",
+                                                                                                           "default":  true,
+                                                                                                           "description":  "Show tool name in tool call display"
+                                                                                                       },
+                                                                 "i2vision.ui.toolCall.showToolArgs":  {
+                                                                                                           "type":  "boolean",
+                                                                                                           "default":  false,
+                                                                                                           "description":  "Show tool arguments in tool call display"
+                                                                                                       },
+                                                                 "i2vision.ui.toolCall.showToolResult":  {
+                                                                                                             "type":  "boolean",
+                                                                                                             "default":  false,
+                                                                                                             "description":  "Show tool result in tool call display"
+                                                                                                         },
+                                                                 "i2vision.ui.toolCall.truncateResultLines":  {
+                                                                                                                  "type":  "number",
+                                                                                                                  "default":  10,
+                                                                                                                  "description":  "Number of lines to show before truncating tool results"
+                                                                                                              },
+                                                                 "i2vision.ui.streaming.enabled":  {
+                                                                                                       "type":  "boolean",
+                                                                                                       "default":  true,
+                                                                                                       "description":  "Stream agent responses"
+                                                                                                   },
+                                                                 "i2vision.ui.streaming.chunkSize":  {
+                                                                                                         "type":  "number",
+                                                                                                         "default":  200,
+                                                                                                         "description":  "Chunk size for streaming responses"
+                                                                                                     },
+                                                                 "i2vision.ui.streaming.delayMs":  {
+                                                                                                       "type":  "number",
+                                                                                                       "default":  10,
+                                                                                                       "description":  "Delay between streaming chunks in milliseconds"
+                                                                                                   },
+                                                                 "i2vision.model.override":  {
+                                                                                                 "type":  "boolean",
+                                                                                                 "default":  false,
+                                                                                                 "description":  "Override model specified in agent config"
+                                                                                             },
+                                                                 "i2vision.model.id":  {
+                                                                                           "type":  "string",
+                                                                                           "default":  "codellama:13b",
+                                                                                           "description":  "Model ID to use when override is enabled"
+                                                                                       },
+                                                                 "i2vision.model.provider":  {
+                                                                                                 "type":  "string",
+                                                                                                 "default":  "ollama",
+                                                                                                 "description":  "Model provider when override is enabled"
+                                                                                             },
+                                                                 "i2vision.model.temperature":  {
+                                                                                                    "type":  "number",
+                                                                                                    "default":  0.7,
+                                                                                                    "minimum":  0,
+                                                                                                    "maximum":  2,
+                                                                                                    "description":  "Model temperature for response generation"
+                                                                                                },
+                                                                 "i2vision.agent.maxIterations":  {
+                                                                                                      "type":  "number",
+                                                                                                      "default":  10,
+                                                                                                      "minimum":  1,
+                                                                                                      "maximum":  100,
+                                                                                                      "description":  "Maximum iterations for agent execution"
+                                                                                                  }
+                                                             }
+                                          }
+                    },
+    "scripts":  {
+                    "vscode:prepublish":  "npm run compile",
+                    "compile":  "tsc -p ./",
+                    "watch":  "tsc -watch -p ./",
+                    "lint":  "eslint src --ext ts",
+                    "test":  "node ./out/test/runTest.js"
+                },
+    "devDependencies":  {
+                            "@types/glob":  "^8.1.0",
+                            "@types/js-yaml":  "^4.0.9",
+                            "@types/mocha":  "^10.0.0",
+                            "@types/node":  "^20.0.0",
+                            "@types/vscode":  "^1.90.0",
+                            "@typescript-eslint/eslint-plugin":  "^7.0.0",
+                            "@typescript-eslint/parser":  "^7.0.0",
+                            "@vscode/test-electron":  "^2.3.9",
+                            "eslint":  "^8.57.0",
+                            "glob":  "^10.3.0",
+                            "mocha":  "^10.3.0",
+                            "typescript":  "^5.4.0"
+                        },
+    "dependencies":  {
+                         "js-yaml":  "^4.1.0"
+                     }
+}

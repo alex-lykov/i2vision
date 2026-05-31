@@ -193,7 +193,7 @@
         }
     },
     "scripts": {
-        "compile": "tsc -p ./",
+        "compile": "tsc -p ./ && node scripts/copy-resources.js",
         "watch": "tsc -watch -p ./",
         "lint": "eslint src --ext ts",
         "package": "vsce package",

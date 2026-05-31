@@ -1,4 +1,4 @@
-/**
+﻿/**
  * i2-Vision CLI Integration
  * 
  * Bridges the VSCode extension with the i2vision CLI backend
@@ -493,17 +493,9 @@ export class I2VisionCLI {
    * Get loaded models from CLI
    */
   async getLoadedModels(): Promise<Array<{name: string, provider: string}>> {
-    try {
-      const command = `${this.cliPath} models --list --json`;
-      const { stdout } = await execAsync(command, {
-        cwd: this.workspaceRoot,
-        timeout: 5000
-      });
-      return JSON.parse(stdout) as Array<{name: string, provider: string}>;
-    } catch (error: any) {
-      this.log(`Models list error: ${error.message}`);
-      return [];
-    }
+    // Note: CLI does not have a models command yet
+    // Return empty array - model verification will be skipped
+    return [];
   }
 
   /**

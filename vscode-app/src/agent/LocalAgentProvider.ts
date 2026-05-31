@@ -40,6 +40,7 @@ export class LocalAgentProvider {
   private outputChannel: vscode.OutputChannel;
   private context: vscode.ExtensionContext;
   private visionAiDir: string;
+  private workspaceRoot: string;
   private defaultConfig: AgentConfig | null = null;
 
   constructor(
@@ -48,10 +49,12 @@ export class LocalAgentProvider {
   ) {
     this.context = context;
     this.outputChannel = outputChannel;
+    this.workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+    
     // Load agent configs from workspace's .vision-ai directory
     // Config path: {workspace}/.vision-ai/{layer}-agent.yaml
     this.visionAiDir = path.join(
-      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '',
+      this.workspaceRoot,
       '.vision-ai'
     );
     
@@ -79,6 +82,7 @@ export class LocalAgentProvider {
   private async loadDefaultConfig(): Promise<AgentConfig> {
     const defaultConfigPath = path.join(
       this.context.extensionPath,
+      'out',
       'conf-agent-core',
       'src',
       'commonMain',
@@ -293,7 +297,7 @@ export class LocalAgentProvider {
         requiredToolsForModification: yamlConfig.toolSelection?.requiredToolsForModification || [],
         defaultRelevanceThreshold: yamlConfig.toolSelection?.defaultRelevanceThreshold || 0.5,
         maxToolsPerTask: yamlConfig.toolSelection?.maxToolsPerTask || 10,
-        toolTimeoutSeconds: yamlConfig.toolSelection?.toolTimeoutSeconds || 60
+        toolTimeoutSeconds: yamlConfig.toolSelection?.toolTimeoutSeconds || 30
       },
       
       // Safety section
@@ -307,12 +311,12 @@ export class LocalAgentProvider {
       
       // Parsing section
       parsing: {
-        enabledParsers: yamlConfig.parsing?.enabledParsers || ['tool-call'],
+        enabledParsers: yamlConfig.parsing?.enabledParsers || [],
         headerPattern: yamlConfig.parsing?.headerPattern || '',
         toolCallPattern: yamlConfig.parsing?.toolCallPattern || '',
         malformedPattern: yamlConfig.parsing?.malformedPattern || '',
-        maxResponseSize: yamlConfig.parsing?.maxResponseSize || 32768,
-        maxProseChars: yamlConfig.parsing?.maxProseChars || 16384
+        maxResponseSize: yamlConfig.parsing?.maxResponseSize || 10000,
+        maxProseChars: yamlConfig.parsing?.maxProseChars || 5000
       },
       
       // Repair strategies section
@@ -327,16 +331,16 @@ export class LocalAgentProvider {
       
       // Execution section
       execution: {
-        enableBuildVerification: yamlConfig.execution?.enableBuildVerification ?? true,
-        buildCommand: yamlConfig.execution?.buildCommand || './gradlew build',
-        buildTimeoutSeconds: yamlConfig.execution?.buildTimeoutSeconds || 120,
-        enableSynthesis: yamlConfig.execution?.enableSynthesis ?? true,
+        enableBuildVerification: yamlConfig.execution?.enableBuildVerification ?? false,
+        buildCommand: yamlConfig.execution?.buildCommand || '',
+        buildTimeoutSeconds: yamlConfig.execution?.buildTimeoutSeconds || 60,
+        enableSynthesis: yamlConfig.execution?.enableSynthesis ?? false,
         synthesisOnlyForNonModification: yamlConfig.execution?.synthesisOnlyForNonModification ?? false,
         fileOperations: {
           mode: yamlConfig.execution?.fileOperations?.mode || 'shell',
           shell: {
-            executable: yamlConfig.execution?.fileOperations?.shell?.executable || 'bash',
-            useNoProfile: yamlConfig.execution?.fileOperations?.shell?.useNoProfile ?? true,
+            executable: yamlConfig.execution?.fileOperations?.shell?.executable || 'cmd',
+            useNoProfile: yamlConfig.execution?.fileOperations?.shell?.useNoProfile ?? false,
             readFileEnabled: yamlConfig.execution?.fileOperations?.shell?.readFileEnabled ?? true,
             writeFileEnabled: yamlConfig.execution?.fileOperations?.shell?.writeFileEnabled ?? true,
             listDirectoryEnabled: yamlConfig.execution?.fileOperations?.shell?.listDirectoryEnabled ?? true,
@@ -347,24 +351,24 @@ export class LocalAgentProvider {
       
       // Formatting section
       formatting: {
-        chunkSize: yamlConfig.formatting?.chunkSize || 100,
-        delayMs: yamlConfig.formatting?.delayMs || 50,
-        maxObservationChars: yamlConfig.formatting?.maxObservationChars || 8192
+        chunkSize: yamlConfig.formatting?.chunkSize || 1000,
+        delayMs: yamlConfig.formatting?.delayMs || 100,
+        maxObservationChars: yamlConfig.formatting?.maxObservationChars || 5000
       },
       
       // Streaming section
       streaming: {
-        enabled: yamlConfig.streaming?.enabled ?? true,
+        enabled: yamlConfig.streaming?.enabled ?? false,
         methodCandidates: yamlConfig.streaming?.methodCandidates || [],
         fallbackToNonStreaming: yamlConfig.streaming?.fallbackToNonStreaming ?? true,
-        fallbackChunkSize: yamlConfig.streaming?.fallbackChunkSize || 200,
+        fallbackChunkSize: yamlConfig.streaming?.fallbackChunkSize || 500,
         fallbackChunkDelayMs: yamlConfig.streaming?.fallbackChunkDelayMs || 50
       },
       
       // MCP section
       mcp: {
-        enabled: yamlConfig.mcp?.enabled ?? true,
-        injectClusterContext: yamlConfig.mcp?.injectClusterContext ?? true,
+        enabled: yamlConfig.mcp?.enabled ?? false,
+        injectClusterContext: yamlConfig.mcp?.injectClusterContext ?? false,
         directCliEnabled: yamlConfig.mcp?.directCliEnabled ?? false,
         allowedToolPrefixes: yamlConfig.mcp?.allowedToolPrefixes || [],
         strictToolNamePolicy: yamlConfig.mcp?.strictToolNamePolicy ?? true
@@ -375,30 +379,16 @@ export class LocalAgentProvider {
   }
 
   /**
-   * Create default configuration for a layer (fallback if resource file not found)
+   * Create default configuration for a layer
    */
-  private createDefaultConfig(layer: VslfcLayer): AgentConfig {
-    const layerName = layer.toLowerCase();
-    
+  private createDefaultConfig(layer: string): AgentConfig {
     return {
-      key: 'agent',
+      key: `${layer}-agent`,
       agentType: 'configurable',
       version: '1.0.0',
       isActive: true,
-      
-      // Prompt section
-      systemPromptTemplate: `You are the ${layerName} layer agent for the VSLFC architecture.
-Your role is to analyze and generate artifacts for the ${layerName} layer.
-
-Guidelines:
-- Maintain consistency with other layers
-- Follow VSLFC contract specifications
-- Generate clear, maintainable artifacts`,
+      systemPromptTemplate: 'You are an AI assistant.',
       templateVariables: {},
-      ruleSetKeys: undefined,
-      parserTemplateName: undefined,
-      
-      // Model section
       model: {
         id: 'qwen3:4b',
         provider: 'ollama',
@@ -407,8 +397,6 @@ Guidelines:
         temperature: 0.7,
         topP: 0.9
       },
-      
-      // LLM behavior section
       llm: {
         timeoutSeconds: 120,
         modificationTimeoutSeconds: 300,
@@ -416,8 +404,6 @@ Guidelines:
         maxRetries: 3,
         retryBackoffMs: [1000, 2000, 4000]
       },
-      
-      // Formatting rules section
       formattingRules: {
         rules: '',
         brief: '',
@@ -425,24 +411,18 @@ Guidelines:
         toolCallHeader: '## Tool Calls',
         eosMarker: '### END'
       },
-      
-      // Iteration section
       iterationSettings: {
         maxIterations: 10,
         maxConsecutiveToolCalls: 5,
         enableKickstart: false,
         kickstartMinInvalidOutputs: 3
       },
-      
-      // Tool selection section
       toolSelection: {
         requiredToolsForModification: [],
         defaultRelevanceThreshold: 0.5,
         maxToolsPerTask: 10,
-        toolTimeoutSeconds: 60
+        toolTimeoutSeconds: 30
       },
-      
-      // Safety section
       safety: {
         modificationKeywords: [],
         listingKeywords: [],
@@ -450,39 +430,31 @@ Guidelines:
         blockGeneratedPaths: [],
         allowNewFileCreationPatterns: []
       },
-      
-      // Parsing section
       parsing: {
-        enabledParsers: ['tool-call'],
+        enabledParsers: [],
         headerPattern: '',
         toolCallPattern: '',
         malformedPattern: '',
-        maxResponseSize: 32768,
-        maxProseChars: 16384
+        maxResponseSize: 10000,
+        maxProseChars: 5000
       },
-      
-      // Repair strategies section
       repairStrategies: [],
-      
-      // Discovery section
       discovery: {
         maxSearchTerms: 5,
         maxCandidates: 10,
         frameworkProfiles: {}
       },
-      
-      // Execution section
       execution: {
-        enableBuildVerification: true,
-        buildCommand: './gradlew build',
-        buildTimeoutSeconds: 120,
-        enableSynthesis: true,
+        enableBuildVerification: false,
+        buildCommand: '',
+        buildTimeoutSeconds: 60,
+        enableSynthesis: false,
         synthesisOnlyForNonModification: false,
         fileOperations: {
           mode: 'shell',
           shell: {
-            executable: 'bash',
-            useNoProfile: true,
+            executable: 'cmd',
+            useNoProfile: false,
             readFileEnabled: true,
             writeFileEnabled: true,
             listDirectoryEnabled: true,
@@ -490,27 +462,21 @@ Guidelines:
           }
         }
       },
-      
-      // Formatting section
       formatting: {
-        chunkSize: 100,
-        delayMs: 50,
-        maxObservationChars: 8192
+        chunkSize: 1000,
+        delayMs: 100,
+        maxObservationChars: 5000
       },
-      
-      // Streaming section
       streaming: {
-        enabled: true,
+        enabled: false,
         methodCandidates: [],
         fallbackToNonStreaming: true,
-        fallbackChunkSize: 200,
+        fallbackChunkSize: 500,
         fallbackChunkDelayMs: 50
       },
-      
-      // MCP section
       mcp: {
-        enabled: true,
-        injectClusterContext: true,
+        enabled: false,
+        injectClusterContext: false,
         directCliEnabled: false,
         allowedToolPrefixes: [],
         strictToolNamePolicy: true
@@ -519,45 +485,9 @@ Guidelines:
   }
 
   /**
-   * Get all available layer configurations
-   */
-  async getAvailableLayers(): Promise<VslfcLayer[]> {
-    const layers: VslfcLayer[] = [];
-    const visionAiDir = this.visionAiDir;
-    
-    try {
-      const files = fs.readdirSync(visionAiDir);
-      
-      for (const file of files) {
-        if (file.endsWith('-agent.yaml')) {
-          const layerName = file.replace('-agent.yaml', '').toUpperCase();
-          try {
-            const layer = VslfcLayer[layerName as keyof typeof VslfcLayer];
-            if (layer) {
-              layers.push(layer);
-            }
-          } catch {
-            // Ignore invalid layer names
-          }
-        }
-      }
-    } catch (error: any) {
-      this.log(`Error reading .vision-ai directory: ${error.message}`);
-    }
-    
-    // If no config files found, return all layers
-    if (layers.length === 0) {
-      return Object.values(VslfcLayer);
-    }
-    
-    return layers;
-  }
-
-  /**
    * Log a message to the output channel
    */
   private log(message: string): void {
-    const timestamp = new Date().toISOString();
-    this.outputChannel.appendLine(`[${timestamp}] [LocalAgentProvider] ${message}`);
+    this.outputChannel.appendLine(`[LocalAgentProvider] ${message}`);
   }
 }

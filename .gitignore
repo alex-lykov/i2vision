@@ -78,3 +78,10 @@ desktop.ini
 AGENTS.md
 DEVOXXGENIE.md
 backlog/
+
+# VSCode extension build artifacts
+*.vsix
+
+# Dependencies
+node_modules/
+**/node_modules/

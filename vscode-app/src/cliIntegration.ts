@@ -1,168 +1,19 @@
 /**
- * i2-Vision CLI Integration
+ * CLI Integration - Direct Ollama HTTP calls
  * 
- * Bridges the VSCode extension with the i2vision CLI backend
- * for real-time discovery, context extraction, and analysis.
+ * This module provides direct HTTP integration with Ollama,
+ * bypassing the need for external CLI tools.
  */
 
-import { exec, spawn } from 'child_process';
-import { promisify } from 'util';
-import * as vscode from 'vscode';
-import * as path from 'path';
 import * as fs from 'fs';
+import * as path from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 
 const execAsync = promisify(exec);
 
 /**
- * Execute a command with stdin input
- */
-function execWithInput(command: string, input: string, options: { cwd?: string, timeout?: number } = {}): Promise<string> {
-  return new Promise((resolve, reject) => {
-    // On Windows, use cmd.exe to handle complex commands
-    const isWindows = process.platform === 'win32';
-    const shell = isWindows ? 'cmd.exe' : '/bin/sh';
-    const shellArgs = isWindows ? ['/c', command] : ['-c', command];
-    
-    const child = spawn(shell, shellArgs, {
-      cwd: options.cwd,
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
-
-    let stdout = '';
-    let stderr = '';
-
-    child.stdout.on('data', (data) => {
-      stdout += data.toString();
-    });
-
-    child.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-
-    child.on('error', (err) => {
-      reject(err);
-    });
-
-    child.on('close', (code) => {
-      if (code === 0) {
-        resolve(stdout);
-      } else {
-        reject(new Error(`Command failed with code ${code}: ${stderr}`));
-      }
-    });
-
-    // Write input to stdin
-    child.stdin.write(input);
-    child.stdin.end();
-
-    // Timeout handling
-    if (options.timeout) {
-      setTimeout(() => {
-        child.kill('SIGTERM');
-        reject(new Error('Command timed out'));
-      }, options.timeout);
-    }
-  });
-}
-
-/**
- * Discovery result from i2vision CLI
- */
-export interface DiscoveryResult {
-  projectName: string;
-  version: string;
-  components: ComponentInfo[];
-  relationships: Relationship[];
-  layers: LayerInfo[];
-  violations?: Violation[];
-}
-
-/**
- * Component information from discovery
- */
-export interface ComponentInfo {
-  name: string;
-  type: 'module' | 'package' | 'class' | 'interface' | 'service';
-  path: string;
-  layer?: string;
-  dependencies?: string[];
-  metadata?: Record<string, any>;
-}
-
-/**
- * Relationship between components
- */
-export interface Relationship {
-  from: string;
-  to: string;
-  type: 'depends_on' | 'implements' | 'extends' | 'calls' | 'uses';
-  strength?: number;
-}
-
-/**
- * Architecture layer information
- */
-export interface LayerInfo {
-  name: string;
-  level: number;
-  components: string[];
-  allowedDependencies?: string[];
-}
-
-/**
- * Architecture violation
- */
-export interface Violation {
-  severity: 'error' | 'warning' | 'info';
-  message: string;
-  source: string;
-  target: string;
-  rule: string;
-}
-
-/**
- * VSLF Context for a file
- */
-export interface VSLFContext {
-  filePath: string;
-  component: string;
-  layer: string;
-  responsibilities: string[];
-  dependencies: string[];
-  dependents: string[];
-  metrics?: {
-    complexity: number;
-    coupling: number;
-    cohesion: number;
-  };
-}
-
-/**
- * Project template information
- */
-export interface TemplateInfo {
-  name: string;
-  description: string;
-  category: 'basic' | 'advanced' | 'enterprise' | 'microservice';
-  files: TemplateFile[];
-  variables: TemplateVariable[];
-}
-
-export interface TemplateFile {
-  path: string;
-  content: string;
-  template: boolean;
-}
-
-export interface TemplateVariable {
-  name: string;
-  description: string;
-  defaultValue?: string;
-  required: boolean;
-}
-
-/**
- * LLM message structure
+ * LLM Message format
  */
 export interface LLMMessage {
   role: string;
@@ -170,7 +21,7 @@ export interface LLMMessage {
 }
 
 /**
- * LLM tool definition
+ * LLM Tool definition
  */
 export interface LLMTool {
   type: string;
@@ -186,7 +37,7 @@ export interface LLMTool {
 }
 
 /**
- * LLM options
+ * LLM Options
  */
 export interface LLMOptions {
   temperature?: number;
@@ -195,338 +46,56 @@ export interface LLMOptions {
 }
 
 /**
- * i2-Vision CLI wrapper
+ * Tool Call result from LLM
  */
-export class I2VisionCLI {
+export interface LLMToolCall {
+  name: string;
+  arguments: Record<string, any>;
+}
+
+/**
+ * LLM Response with both content and tool calls
+ */
+export interface LLMResponse {
+  content: string;
+  toolCalls: LLMToolCall[];
+}
+
+/**
+ * CLI class for Ollama integration
+ */
+export class CLI {
+  private outputChannel?: any;
+  private ollamaUrl: string = 'http://localhost:11434';
   private workspaceRoot: string;
-  private cliPath: string;
-  private outputChannel: vscode.OutputChannel;
-  private i2VisionProjectRoot: string | null;
 
-  constructor(workspaceRoot: string, outputChannel?: vscode.OutputChannel) {
+  constructor(workspaceRoot: string, outputChannel?: any) {
     this.workspaceRoot = workspaceRoot;
-    // Initialize outputChannel FIRST - detectCLIPath() calls this.log() which needs it
-    this.outputChannel = outputChannel || vscode.window.createOutputChannel('i2-Vision CLI');
-    
-    // Find i2-vision project root first
-    this.i2VisionProjectRoot = this.findI2VisionProjectRoot();
-    this.cliPath = this.detectCLIPath();
+    this.outputChannel = outputChannel;
   }
 
   /**
-   * Detect the i2vision CLI path
+   * Log a message to the output channel
    */
-  private detectCLIPath(): string {
-    // First, check VSCode settings for custom path
-    const config = vscode.workspace.getConfiguration('i2vision');
-    const customPath = config.get<string>('cli.path');
-    if (customPath && fs.existsSync(customPath)) {
-      this.log(`Using custom CLI path from settings: ${customPath}`);
-      return `java -jar "${customPath}"`;
+  private log(message: string): void {
+    const timestamp = new Date().toLocaleTimeString();
+    const formatted = `[${timestamp}] [CLI] ${message}`;
+    if (this.outputChannel) {
+      this.outputChannel.appendLine(formatted);
     }
-
-    // Second, try to find the shadow JAR in i2-vision project
-    if (this.i2VisionProjectRoot) {
-      const shadowJar = path.join(
-        this.i2VisionProjectRoot,
-        'i2vision-cli',
-        'build',
-        'libs',
-        'i2vision-cli-1.0.0-all.jar'
-      );
-      
-      if (fs.existsSync(shadowJar)) {
-        this.log(`Using shadow JAR: ${shadowJar}`);
-        return `java -jar "${shadowJar}"`;
-      }
-
-      // Fallback to installed distribution
-      const installedCli = path.join(
-        this.i2VisionProjectRoot,
-        'i2vision-cli',
-        'build',
-        'install',
-        'i2vision-cli',
-        'bin',
-        'i2vision-cli.bat'
-      );
-      
-      if (fs.existsSync(installedCli)) {
-        this.log(`Using installed CLI: ${installedCli}`);
-        return `"${installedCli}"`;
-      }
-    }
-
-    // Third, check known development locations
-    const knownLocations = [
-      'D:/proj/AI/i2-vision',
-      'C:/proj/AI/i2-vision',
-      path.join(process.env.USERPROFILE || '', 'projects', 'i2-vision'),
-      path.join(process.env.HOME || '', 'projects', 'i2-vision')
-    ];
-
-    for (const location of knownLocations) {
-      if (fs.existsSync(location)) {
-        const shadowJar = path.join(location, 'i2vision-cli', 'build', 'libs', 'i2vision-cli-1.0.0-all.jar');
-        if (fs.existsSync(shadowJar)) {
-          this.log(`Found CLI in known location: ${shadowJar}`);
-          return `java -jar "${shadowJar}"`;
-        }
-      }
-    }
-
-    // Last resort: try PATH
-    this.log('CLI not found, will try PATH');
-    return 'i2vision-cli';
-  }
-
-  /**
-   * Find the i2-vision project root (looks for the specific multi-module structure)
-   */
-  private findI2VisionProjectRoot(): string | null {
-    // Strategy 1: Search upward from workspace root
-    let currentDir = this.workspaceRoot;
-    const maxDepth = 8;
-    let depth = 0;
-
-    while (depth < maxDepth) {
-      // Look for the specific i2-vision structure
-      const settingsFile = path.join(currentDir, 'settings.gradle.kts');
-      const cliModuleDir = path.join(currentDir, 'i2vision-cli');
-      
-      if (fs.existsSync(settingsFile) && fs.existsSync(cliModuleDir)) {
-        // Verify it's actually i2-vision by checking settings.gradle.kts content
-        try {
-          const settingsContent = fs.readFileSync(settingsFile, 'utf-8');
-          if (settingsContent.includes('i2vision-cli') || settingsContent.includes('i2-vision')) {
-            this.log(`Found i2-vision project root (upward search): ${currentDir}`);
-            return currentDir;
-          }
-        } catch (err) {
-          // Continue searching
-        }
-      }
-      
-      const parentDir = path.dirname(currentDir);
-      if (parentDir === currentDir) {
-        break;
-      }
-      currentDir = parentDir;
-      depth++;
-    }
-
-    // Strategy 2: Check known development locations
-    const knownLocations = [
-      'D:/proj/AI/i2-vision',
-      'C:/proj/AI/i2-vision',
-      path.join(process.env.USERPROFILE || '', 'projects', 'i2-vision'),
-      path.join(process.env.HOME || '', 'projects', 'i2-vision')
-    ];
-
-    for (const location of knownLocations) {
-      if (fs.existsSync(location)) {
-        const settingsFile = path.join(location, 'settings.gradle.kts');
-        const cliModuleDir = path.join(location, 'i2vision-cli');
-        
-        if (fs.existsSync(settingsFile) && fs.existsSync(cliModuleDir)) {
-          try {
-            const settingsContent = fs.readFileSync(settingsFile, 'utf-8');
-            if (settingsContent.includes('i2vision-cli') || settingsContent.includes('i2-vision')) {
-              this.log(`Found i2-vision project root (known location): ${location}`);
-              return location;
-            }
-          } catch (err) {
-            // Continue searching
-          }
-        }
-      }
-    }
-
-    this.log(`Could not find i2-vision project root from: ${this.workspaceRoot}`);
-    return null;
-  }
-
-  /**
-   * Run discovery on the workspace
-   */
-  async runDiscovery(): Promise<DiscoveryResult> {
-    this.log('Running discovery...');
-    
-    try {
-      const command = `${this.cliPath} discover --json "${this.workspaceRoot}"`;
-      const { stdout, stderr } = await execAsync(command, {
-        cwd: this.workspaceRoot,
-        maxBuffer: 10 * 1024 * 1024 // 10MB buffer
-      });
-
-      if (stderr) {
-        this.log(`Warning: ${stderr}`);
-      }
-
-      const result = JSON.parse(stdout) as DiscoveryResult;
-      this.log(`Discovery complete: ${result.components.length} components found`);
-      return result;
-    } catch (error: any) {
-      this.log(`Discovery error: ${error.message}`);
-      // Return mock data if CLI is not available (development mode)
-      return this.getMockDiscovery();
-    }
-  }
-
-  /**
-   * Get VSLF context for a specific file
-   */
-  async getContext(filePath: string): Promise<VSLFContext> {
-    this.log(`Getting context for: ${filePath}`);
-
-    try {
-      const command = `${this.cliPath} context file --path "${filePath}" --json`;
-      const { stdout, stderr } = await execAsync(command, {
-        cwd: this.workspaceRoot
-      });
-
-      if (stderr) {
-        this.log(`Warning: ${stderr}`);
-      }
-
-      return JSON.parse(stdout) as VSLFContext;
-    } catch (error: any) {
-      this.log(`Context error: ${error.message}`);
-      // Return mock context
-      return this.getMockContext(filePath);
-    }
-  }
-
-  /**
-   * List available templates
-   */
-  async listTemplates(): Promise<TemplateInfo[]> {
-    this.log('Listing templates...');
-
-    try {
-      const command = `${this.cliPath} preset --list --json`;
-      const { stdout, stderr } = await execAsync(command, {
-        cwd: this.workspaceRoot
-      });
-
-      if (stderr) {
-        this.log(`Warning: ${stderr}`);
-      }
-
-      return JSON.parse(stdout) as TemplateInfo[];
-    } catch (error: any) {
-      this.log(`Template list error: ${error.message}`);
-      // Return mock templates
-      return this.getMockTemplates();
-    }
-  }
-
-  /**
-   * Create a new project from template
-   */
-  async createProject(templateName: string, projectName: string, variables: Record<string, string>): Promise<boolean> {
-    this.log(`Creating project: ${projectName} from template: ${templateName}`);
-
-    try {
-      const varsString = Object.entries(variables)
-        .map(([k, v]) => `--var ${k}="${v}"`)
-        .join(' ');
-
-      const command = `${this.cliPath} preset --create --template "${templateName}" --name "${projectName}" ${varsString}`;
-      const { stdout, stderr } = await execAsync(command, {
-        cwd: this.workspaceRoot
-      });
-
-      if (stderr) {
-        this.log(`Warning: ${stderr}`);
-      }
-
-      this.log('Project created successfully');
-      return true;
-    } catch (error: any) {
-      this.log(`Project creation error: ${error.message}`);
-      vscode.window.showErrorMessage(`Failed to create project: ${error.message}`);
-      return false;
-    }
-  }
-
-  /**
-   * Analyze architecture violations
-   */
-  async analyzeViolations(): Promise<Violation[]> {
-    this.log('Analyzing architecture violations...');
-
-    try {
-      const command = `${this.cliPath} discover --violations --json`;
-      const { stdout, stderr } = await execAsync(command, {
-        cwd: this.workspaceRoot
-      });
-
-      if (stderr) {
-        this.log(`Warning: ${stderr}`);
-      }
-
-      const result = JSON.parse(stdout) as { violations: Violation[] };
-      return result.violations || [];
-    } catch (error: any) {
-      this.log(`Analysis error: ${error.message}`);
-      return [];
-    }
-  }
-
-  /**
-   * Check if CLI is available
-   */
-  async isAvailable(): Promise<boolean> {
-    try {
-      await execAsync(`${this.cliPath} --help`, {
-        cwd: this.workspaceRoot,
-        timeout: 5000
-      });
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Get available models from Ollama
-   */
-  async getLoadedModels(): Promise<Array<{name: string, provider: string}>> {
-    try {
-      const res = await fetch('http://localhost:11434/api/tags', {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' }
-      });
-
-      if (!res.ok) {
-        this.log(`Failed to fetch models: ${res.status}`);
-        return [];
-      }
-
-      const data = await res.json() as any;
-      const models = data.models || [];
-      
-      return models.map((m: any) => ({
-        name: m.name || m.model || 'unknown',
-        provider: 'ollama'
-      }));
-    } catch (error: any) {
-      this.log(`Error fetching models: ${error.message}`);
-      return [];
-    }
+    console.log(formatted);
   }
 
   /**
    * Call LLM through Ollama HTTP API
-   * DIAGNOSTIC: Added detailed logging to trace the HTTP request/response
+   * Returns both content and tool calls
    */
   async callLLM(
     modelId: string,
     messages: LLMMessage[],
     options?: LLMOptions,
     tools?: LLMTool[]
-  ): Promise<string> {
+  ): Promise<LLMResponse> {
     this.log(`Calling LLM: ${modelId} with ${messages.length} messages`);
     this.log(`=== DIAGNOSTIC: LLM CALL START ===`);
     this.log(`Model: ${modelId}`);
@@ -553,11 +122,11 @@ export class I2VisionCLI {
         this.log(`Body includes ${tools.length} tools`);
       }
 
-      this.log(`Sending HTTP POST to http://localhost:11434/api/chat`);
+      this.log(`Sending HTTP POST to ${this.ollamaUrl}/api/chat`);
       this.log(`Request body size: ${JSON.stringify(body).length} bytes`);
 
-      // Direct HTTP to Ollama - no JAR, no spawn, no shell
-      const res = await fetch('http://localhost:11434/api/chat', {
+      // Direct HTTP to Ollama
+      const res = await fetch(`${this.ollamaUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -577,37 +146,54 @@ export class I2VisionCLI {
       this.log(`Response parsed successfully`);
       this.log(`Response structure: ${Object.keys(data).join(', ')}`);
       
-      if (data.message) {
-        this.log(`Message content length: ${data.message.content?.length || 0} chars`);
-        this.log(`Message content preview: ${data.message.content?.substring(0, 200)}`);
-      } else {
-        this.log(`WARNING: No 'message' field in response!`);
-        this.log(`Full response: ${JSON.stringify(data).substring(0, 500)}`);
+      // Extract content and tool calls separately
+      const content = data.message?.content || '';
+      const toolCallsData = data.message?.tool_calls || [];
+      
+      this.log(`Message content length: ${content.length} chars`);
+      this.log(`Message tool_calls count: ${toolCallsData.length}`);
+      
+      // Convert Ollama tool calls to our format
+      const toolCalls: LLMToolCall[] = toolCallsData.map((tc: any) => ({
+        name: tc.function?.name || '',
+        arguments: tc.function?.arguments || {}
+      }));
+      
+      if (toolCalls.length > 0) {
+        this.log(`Tool calls: ${JSON.stringify(toolCalls).substring(0, 300)}`);
       }
-
-      const result = JSON.stringify(data.message);
-      this.log(`Returning ${result.length} chars`);
+      
       this.log(`=== DIAGNOSTIC: LLM CALL END ===`);
       
-      return result;
+      return {
+        content,
+        toolCalls
+      };
     } catch (error: any) {
       const elapsed = Date.now() - startTime;
       this.log(`LLM call error after ${elapsed}ms: ${error.message}`);
       this.log(`Error stack: ${error.stack}`);
       this.log(`=== DIAGNOSTIC: LLM CALL FAILED ===`);
-      return `Error: LLM call failed - ${error.message}`;
+      
+      // Return empty response on error
+      return {
+        content: `Error: LLM call failed - ${error.message}`,
+        toolCalls: []
+      };
     }
   }
-
 
   /**
    * Read file using Node.js fs module
    */
   async readFile(filePath: string): Promise<string> {
+    this.log(`Reading file: ${filePath}`);
     try {
-      return fs.promises.readFile(filePath, 'utf-8');
+      const content = await fs.promises.readFile(filePath, 'utf8');
+      this.log(`File read successfully (${content.length} chars)`);
+      return content;
     } catch (error: any) {
-      this.log(`Read file error: ${error.message}`);
+      this.log(`Error reading file: ${error.message}`);
       throw error;
     }
   }
@@ -615,272 +201,404 @@ export class I2VisionCLI {
   /**
    * Write file using Node.js fs module
    */
-  async writeFile(filePath: string, content: string): Promise<string> {
+  async writeFile(filePath: string, content: string): Promise<void> {
+    this.log(`Writing file: ${filePath} (${content.length} chars)`);
     try {
       // Ensure directory exists
       const dir = path.dirname(filePath);
       await fs.promises.mkdir(dir, { recursive: true });
-      await fs.promises.writeFile(filePath, content, 'utf-8');
-      this.log(`File written: ${filePath}`);
-      return `Successfully wrote ${filePath}`;
+      
+      await fs.promises.writeFile(filePath, content, 'utf8');
+      this.log(`File written successfully`);
     } catch (error: any) {
-      this.log(`Write file error: ${error.message}`);
+      this.log(`Error writing file: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Edit file using Node.js fs module
+   * List files in a directory
    */
-  async editFile(filePath: string, oldString: string, newString: string): Promise<string> {
+  async listFiles(dirPath: string, recursive: boolean = false): Promise<string[]> {
+    this.log(`Listing files in: ${dirPath} (recursive: ${recursive})`);
     try {
-      const content = await fs.promises.readFile(filePath, 'utf-8');
-      const updatedContent = content.replace(oldString, newString);
-      await fs.promises.writeFile(filePath, updatedContent, 'utf-8');
-      this.log(`File edited: ${filePath}`);
-      return `Successfully edited ${filePath}`;
-    } catch (error: any) {
-      this.log(`Edit file error: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
-   * List directory using Node.js fs module
-   */
-  async listDirectory(dirPath: string): Promise<string> {
-    try {
-      const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
-      const fileList = entries.map(entry => {
-        const type = entry.isDirectory() ? '[DIR]' : '[FILE]';
-        return `${type} ${entry.name}`;
-      }).join('\n');
-      return fileList;
-    } catch (error: any) {
-      this.log(`List directory error: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
-   * Regex search in files using Node.js fs module
-   */
-  async regexSearch(pattern: string, searchPath: string): Promise<string> {
-    const results: Array<{file: string, line: number, match: string}> = [];
-    const regex = new RegExp(pattern, 'g');
-
-    try {
-      const searchDir = async (dir: string) => {
+      const files: string[] = [];
+      
+      const walk = async (dir: string) => {
         const entries = await fs.promises.readdir(dir, { withFileTypes: true });
-        
         for (const entry of entries) {
           const fullPath = path.join(dir, entry.name);
-          
           if (entry.isDirectory()) {
-            // Skip common non-source directories
-            if (['node_modules', '.git', 'build', 'dist', 'out', '.idea', '.vscode'].includes(entry.name)) {
-              continue;
+            if (recursive && !entry.name.startsWith('.')) {
+              await walk(fullPath);
             }
-            await searchDir(fullPath);
-          } else if (entry.isFile()) {
-            // Only search in text-based source files
-            const ext = path.extname(entry.name).toLowerCase();
-            if (['.kt', '.java', '.ts', '.js', '.py', '.go', '.rs', '.cs', '.cpp', '.c', '.h', '.hpp', '.xml', '.json', '.yaml', '.yml', '.md', '.txt'].includes(ext)) {
-              try {
-                const content = await fs.promises.readFile(fullPath, 'utf-8');
-                const lines = content.split('\n');
-                
-                for (let i = 0; i < lines.length; i++) {
-                  const line = lines[i];
-                  const matches = line.match(regex);
-                  if (matches) {
-                    results.push({
-                      file: fullPath,
-                      line: i + 1,
-                      match: line.trim()
-                    });
-                  }
-                }
-              } catch (err: any) {
-                // Skip binary files or files that can't be read
-                if (!err.message.includes('utf-8')) {
-                  this.log(`Search error in ${fullPath}: ${err.message}`);
-                }
-              }
-            }
+          } else {
+            files.push(fullPath);
           }
         }
       };
-
-      const stat = await fs.promises.stat(searchPath);
-      if (stat.isDirectory()) {
-        await searchDir(searchPath);
-      } else if (stat.isFile()) {
-        const content = await fs.promises.readFile(searchPath, 'utf-8');
-        const lines = content.split('\n');
-        
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i];
-          const matches = line.match(regex);
-          if (matches) {
-            results.push({
-              file: searchPath,
-              line: i + 1,
-              match: line.trim()
-            });
-          }
-        }
-      }
-
-      // Format results as a readable string
-      if (results.length === 0) {
-        return 'No matches found';
-      }
       
-      return results.map(r => `${r.file}:${r.line}: ${r.match}`).join('\n');
+      await walk(dirPath);
+      this.log(`Found ${files.length} files`);
+      return files;
     } catch (error: any) {
-      this.log(`Regex search error: ${error.message}`);
+      this.log(`Error listing files: ${error.message}`);
       throw error;
     }
   }
 
   /**
-   * Log message to output channel
+   * Run a shell command
    */
-  private log(message: string): void {
-    const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
-    this.outputChannel.appendLine(`[${timestamp}] ${message}`);
+  async runCommand(command: string, workingDir?: string): Promise<{ stdout: string, stderr: string }> {
+    this.log(`Running command: ${command}`);
+    try {
+      const options = workingDir ? { cwd: workingDir } : {};
+      const { stdout, stderr } = await execAsync(command, options);
+      this.log(`Command completed`);
+      return { stdout, stderr };
+    } catch (error: any) {
+      this.log(`Command failed: ${error.message}`);
+      throw error;
+    }
   }
 
-  // ============= Mock Data for Development =============
+  /**
+   * Search for a pattern in files
+   */
+  async searchFiles(pattern: string, dirPath?: string): Promise<string[]> {
+    this.log(`Searching for pattern: ${pattern}`);
+    try {
+      const searchDir = dirPath || process.cwd();
+      const command = `powershell -Command "Get-ChildItem -Path '${searchDir}' -Recurse -File | Select-String -Pattern '${pattern}' | Select-Object -First 50"`;
+      const { stdout } = await this.runCommand(command);
+      
+      const results = stdout.split('\n')
+        .filter(line => line.trim())
+        .slice(0, 50);
+      
+      this.log(`Found ${results.length} matches`);
+      return results;
+    } catch (error: any) {
+      this.log(`Error searching files: ${error.message}`);
+      return [];
+    }
+  }
 
-  private getMockDiscovery(): DiscoveryResult {
-    return {
-      projectName: 'i2-vision',
-      version: '1.0.0',
-      components: [
+  /**
+   * Run discovery to get project context
+   */
+  async runDiscovery(): Promise<DiscoveryResult> {
+    this.log('Running project discovery...');
+    try {
+      // Simple discovery: list top-level directories
+      const rootDir = this.workspaceRoot || process.cwd();
+      const entries = await fs.promises.readdir(rootDir, { withFileTypes: true });
+      
+      const directories = entries.filter(e => e.isDirectory()).map(e => e.name);
+      const files = entries.filter(e => e.isFile()).map(e => e.name);
+      
+      // Create a simple component for each directory
+      const components: ComponentInfo[] = directories.map(dir => ({
+        name: dir,
+        type: 'module',
+        path: path.join(rootDir, dir)
+      }));
+      
+      const result: DiscoveryResult = {
+        projectName: path.basename(rootDir),
+        version: '1.0.0',
+        components,
+        relationships: [],
+        layers: []
+      };
+      
+      this.log(`Discovery complete: ${components.length} components found`);
+      return result;
+    } catch (error: any) {
+      this.log(`Discovery failed: ${error.message}`);
+      return {
+        projectName: 'unknown',
+        version: '0.0.0',
+        components: [],
+        relationships: [],
+        layers: []
+      };
+    }
+  }
+
+  /**
+   * List available project templates
+   */
+  async listTemplates(): Promise<TemplateInfo[]> {
+    this.log('Listing available templates...');
+    try {
+      // Return built-in templates
+      const templates: TemplateInfo[] = [
         {
-          name: 'app',
-          type: 'module',
-          path: 'app/src/main/kotlin',
-          layer: 'application',
-          dependencies: ['storage-core', 'index-provider']
+          name: 'spring-boot',
+          path: 'templates/spring-boot',
+          type: 'project',
+          description: 'Spring Boot microservice template',
+          category: 'Java',
+          files: [
+            { path: 'src/main/java/Application.java', content: '' },
+            { path: 'pom.xml', content: '' }
+          ],
+          variables: [
+            { name: 'groupId', description: 'Maven group ID', required: true, defaultValue: 'com.example' },
+            { name: 'artifactId', description: 'Maven artifact ID', required: true, defaultValue: 'my-service' },
+            { name: 'packageName', description: 'Base package name', required: true, defaultValue: 'com.example.service' }
+          ]
         },
         {
-          name: 'storage-core',
-          type: 'module',
-          path: 'storage-core/src/main/kotlin',
-          layer: 'infrastructure',
-          dependencies: []
-        },
-        {
-          name: 'index-provider',
-          type: 'module',
-          path: 'index-provider/src/main/kotlin',
-          layer: 'infrastructure',
-          dependencies: ['storage-core']
-        },
-        {
-          name: 'vscode-app',
-          type: 'module',
-          path: 'vscode-app',
-          layer: 'presentation',
-          dependencies: ['i2vision-cli']
-        },
-        {
-          name: 'DiscoveryService',
-          type: 'class',
-          path: 'app/src/main/kotlin/core/DiscoveryService.kt',
-          layer: 'application',
-          dependencies: ['IndexProvider']
-        },
-        {
-          name: 'IndexProvider',
-          type: 'interface',
-          path: 'index-provider/src/main/kotlin/IndexProvider.kt',
-          layer: 'infrastructure',
-          dependencies: []
+          name: 'express',
+          path: 'templates/express',
+          type: 'project',
+          description: 'Express.js REST API template',
+          category: 'Node.js',
+          files: [
+            { path: 'src/app.ts', content: '' },
+            { path: 'package.json', content: '' }
+          ],
+          variables: [
+            { name: 'appName', description: 'Application name', required: true, defaultValue: 'my-api' },
+            { name: 'port', description: 'Server port', required: false, defaultValue: '3000' }
+          ]
         }
-      ],
-      relationships: [
-        { from: 'app', to: 'storage-core', type: 'depends_on', strength: 0.9 },
-        { from: 'app', to: 'index-provider', type: 'depends_on', strength: 0.8 },
-        { from: 'index-provider', to: 'storage-core', type: 'depends_on', strength: 0.7 },
-        { from: 'vscode-app', to: 'i2vision-cli', type: 'calls', strength: 1.0 },
-        { from: 'DiscoveryService', to: 'IndexProvider', type: 'uses', strength: 0.95 }
-      ],
-      layers: [
-        {
-          name: 'presentation',
-          level: 3,
-          components: ['vscode-app'],
-          allowedDependencies: ['application', 'infrastructure']
-        },
-        {
-          name: 'application',
-          level: 2,
-          components: ['app', 'DiscoveryService'],
-          allowedDependencies: ['infrastructure']
-        },
-        {
-          name: 'infrastructure',
-          level: 1,
-          components: ['storage-core', 'index-provider', 'IndexProvider'],
-          allowedDependencies: []
-        }
-      ],
-      violations: []
-    };
+      ];
+      
+      this.log(`Found ${templates.length} templates`);
+      return templates;
+    } catch (error: any) {
+      this.log(`Error listing templates: ${error.message}`);
+      return [];
+    }
   }
 
-  private getMockContext(filePath: string): VSLFContext {
-    return {
-      filePath,
-      component: path.basename(filePath),
-      layer: 'unknown',
-      responsibilities: ['Mock responsibility'],
-      dependencies: [],
-      dependents: [],
-      metrics: {
-        complexity: 5,
-        coupling: 3,
-        cohesion: 7
+  /**
+   * Create a new project from template
+   */
+  async createProject(templateName: string, projectName: string, variables: Record<string, string>): Promise<boolean> {
+    this.log(`Creating project '${projectName}' from template '${templateName}'...`);
+    try {
+      const rootDir = this.workspaceRoot || process.cwd();
+      const projectPath = path.join(rootDir, projectName);
+      
+      // Create project directory
+      await fs.promises.mkdir(projectPath, { recursive: true });
+      
+      // Create basic structure based on template
+      if (templateName === 'spring-boot') {
+        const packageName = variables.packageName?.replace(/\./g, '/') || 'com/example/service';
+        const srcPath = path.join(projectPath, 'src', 'main', 'java', packageName);
+        await fs.promises.mkdir(srcPath, { recursive: true });
+        
+        // Create main application class
+        const mainClass = `package ${variables.packageName || 'com.example.service'};
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class Application {
+    public static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
+    }
+}
+`;
+        await fs.promises.writeFile(path.join(srcPath, 'Application.java'), mainClass);
+        
+        // Create pom.xml
+        const pom = `<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    
+    <groupId>${variables.groupId || 'com.example'}</groupId>
+    <artifactId>${variables.artifactId || projectName}</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+    
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.2.0</version>
+    </parent>
+    
+    <dependencies>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+    </dependencies>
+</project>
+`;
+        await fs.promises.writeFile(path.join(projectPath, 'pom.xml'), pom);
+        
+      } else if (templateName === 'express') {
+        const srcPath = path.join(projectPath, 'src');
+        await fs.promises.mkdir(srcPath, { recursive: true });
+        
+        // Create main app file
+        const app = `import express from 'express';
+
+const app = express();
+const PORT = ${variables.port || '3000'};
+
+app.get('/', (req, res) => {
+  res.json({ message: 'Hello World!' });
+});
+
+app.listen(PORT, () => {
+  console.log(\`Server running on port \${PORT}\`);
+});
+`;
+        await fs.promises.writeFile(path.join(srcPath, 'app.ts'), app);
+        
+        // Create package.json
+        const packageJson = `{
+  "name": "${projectName}",
+  "version": "1.0.0",
+  "main": "dist/app.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/app.js",
+    "dev": "ts-node src/app.ts"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0",
+    "ts-node": "^10.9.2"
+  }
+}
+`;
+        await fs.promises.writeFile(path.join(projectPath, 'package.json'), packageJson);
       }
-    };
+      
+      this.log(`Project '${projectName}' created successfully at ${projectPath}`);
+      return true;
+    } catch (error: any) {
+      this.log(`Error creating project: ${error.message}`);
+      return false;
+    }
   }
 
-  private getMockTemplates(): TemplateInfo[] {
-    return [
-      {
-        name: 'basic-kotlin',
-        description: 'Basic Kotlin project structure',
-        category: 'basic',
-        files: [
-          {
-            path: 'src/main/kotlin/Main.kt',
-            content: 'fun main() {\n    println("Hello, World!")\n}',
-            template: false
-          },
-          {
-            path: 'build.gradle.kts',
-            content: 'plugins {\n    kotlin("jvm") version "1.9.0"\n}\n\ndependencies {\n    implementation(kotlin("stdlib"))\n}',
-            template: false
-          }
-        ],
-        variables: [
-          {
-            name: 'projectName',
-            description: 'Name of the project',
-            required: true
-          },
-          {
-            name: 'packageName',
-            description: 'Base package name',
-            required: false,
-            defaultValue: 'com.example'
-          }
-        ]
-      }
-    ];
+  /**
+   * Get context for a specific file
+   */
+  async getContext(filePath: string): Promise<any> {
+    this.log(`Getting context for: ${filePath}`);
+    try {
+      // Return mock context for testing
+      return {
+        filePath,
+        component: {
+          name: path.basename(filePath),
+          type: 'file',
+          path: filePath
+        },
+        layer: 'default',
+        dependencies: []
+      };
+    } catch (error: any) {
+      this.log(`Error getting context: ${error.message}`);
+      return null;
+    }
   }
+
+  /**
+   * Check if CLI is available
+   */
+  async isAvailable(): Promise<boolean> {
+    try {
+      // For now, always return false as we're using direct HTTP
+      return false;
+    } catch (error: any) {
+      return false;
+    }
+  }
+
+  /**
+   * Analyze architecture violations
+   */
+  async analyzeViolations(): Promise<ViolationInfo[]> {
+    this.log('Analyzing architecture violations...');
+    try {
+      // Return mock violations for now
+      return [];
+    } catch (error: any) {
+      this.log(`Error analyzing violations: ${error.message}`);
+      return [];
+    }
+  }
+}
+
+/**
+ * Discovery result types
+ */
+export interface ComponentInfo {
+  name: string;
+  layer?: string;
+  file?: string;
+  path?: string;
+  type?: string;
+  responsibilities?: string[];
+  dependencies?: string[];
+}
+
+export interface RelationshipInfo {
+  source: string;
+  target: string;
+  type: string;
+}
+
+export interface LayerInfo {
+  name: string;
+  level: number;
+  components: string[];
+}
+
+export interface ViolationInfo {
+  message: string;
+  severity: 'error' | 'warning';
+  source?: string;
+  target?: string;
+  rule?: string;
+}
+
+export interface DiscoveryResult {
+  projectName: string;
+  version: string;
+  components: ComponentInfo[];
+  relationships: RelationshipInfo[];
+  layers: LayerInfo[];
+  violations?: ViolationInfo[];
+}
+
+export interface TemplateVariable {
+  name: string;
+  description: string;
+  required: boolean;
+  defaultValue?: string;
+}
+
+export interface TemplateFile {
+  path: string;
+  content: string;
+}
+
+export interface TemplateInfo {
+  name: string;
+  path: string;
+  type: string;
+  description?: string;
+  category?: string;
+  files: TemplateFile[];
+  variables: TemplateVariable[];
 }

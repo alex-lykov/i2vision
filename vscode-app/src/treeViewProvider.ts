@@ -6,7 +6,7 @@
  */
 
 import * as vscode from 'vscode';
-import { I2VisionCLI, DiscoveryResult, ComponentInfo, TemplateInfo } from './cliIntegration';
+import { CLI as I2VisionCLI, DiscoveryResult, TemplateInfo, ComponentInfo } from './cliIntegration';
 import { FileSystemIntegration, FileSystemProject, FileSystemModule, SourceFile } from './fileSystemIntegration';
 
 /**

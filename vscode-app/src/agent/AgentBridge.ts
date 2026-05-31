@@ -9,7 +9,9 @@
  */
 
 import * as vscode from 'vscode';
-import { I2VisionCLI } from '../cliIntegration';
+import * as fs from 'fs';
+import * as path from 'path';
+import { CLI, LLMResponse } from '../cliIntegration';
 
 /**
  * Agent configuration interface (matches YAML structure)
@@ -189,11 +191,19 @@ export interface ProcessContext {
 }
 
 /**
+ * LLM Tool Call from API
+ */
+export interface LLMToolCall {
+  name: string;
+  arguments: Record<string, any>;
+}
+
+/**
  * AgentBridge - Manages agent lifecycle and communication
  */
 export class AgentBridge {
   private config: AgentConfig;
-  private cli: I2VisionCLI;
+  private cli: CLI;
   private isInitialized: boolean = false;
   private outputChannel?: vscode.OutputChannel;
 
@@ -203,7 +213,7 @@ export class AgentBridge {
     
     // Initialize CLI integration
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
-    this.cli = new I2VisionCLI(workspaceRoot, outputChannel);
+    this.cli = new CLI(workspaceRoot, outputChannel);
   }
 
   /**
@@ -217,20 +227,6 @@ export class AgentBridge {
     this.log(`Initializing agent: ${this.config.key} (type: ${this.config.agentType})`);
     this.log(`Model: ${this.config.model.id} (${this.config.model.provider})`);
     this.log(`Max iterations: ${this.config.iterationSettings.maxIterations}`);
-    
-    // Verify model is available
-    try {
-      const models = await this.cli.getLoadedModels();
-      const isModelLoaded = models.some(m => 
-        m.name === this.config.model.id || m.name.includes(this.config.model.id.split(':')[0])
-      );
-      
-      if (!isModelLoaded) {
-        this.log(`Warning: Model ${this.config.model.id} may not be loaded`);
-      }
-    } catch (error) {
-      this.log(`Warning: Could not verify model availability: ${error}`);
-    }
     
     this.isInitialized = true;
     this.log(`Agent ${this.config.key} initialized successfully`);
@@ -326,24 +322,16 @@ export class AgentBridge {
     let iterations = 0;
     let finalText = '';
 
-    // For initial testing, we'll use a simplified approach:
-    // 1. Get context from i2vision
-    // 2. Call LLM with system prompt + user input + tools
-    // 3. Parse response for tool calls
-    // 4. Execute tools and repeat if needed
-
     try {
-      // SKIP DISCOVERY FOR NOW — it's blocking the agent
-      // const projectContext = await this.cli.runDiscovery();
-      this.log('Skipping discovery — going directly to LLM');
+      this.log('Going directly to LLM');
 
-      // Step 2: Build messages for LLM
+      // Build messages for LLM
       const messages = [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userInput }
       ];
 
-      // Step 3: Call LLM with tools
+      // Call LLM with tools
       this.log(`Calling model: ${this.config.model.id}`);
       const tools = this.getAvailableTools();
       this.log(`Passing ${tools.length} tools to LLM`);
@@ -352,47 +340,47 @@ export class AgentBridge {
       
       // DIAGNOSTIC: Log the raw response
       this.log(`=== DIAGNOSTIC: LLM RESPONSE ===`);
-      this.log(`LLM raw response length: ${llmResponse.length} chars`);
-      this.log(`LLM raw response preview: ${llmResponse.substring(0, 300)}`);
-      this.log(`=== END DIAGNOSTIC ===`);
-      
-      // Step 4: Parse response for tool calls
-      const parsed = this.parseLLMResponse(llmResponse);
-      
-      // DIAGNOSTIC: Log parsing results
-      this.log(`=== DIAGNOSTIC: PARSING RESULTS ===`);
-      this.log(`Parsed reasoning length: ${parsed.reasoning?.length || 0} chars`);
-      this.log(`Parsed reasoning preview: ${parsed.reasoning?.substring(0, 100)}`);
-      this.log(`Parsed toolCalls count: ${parsed.toolCalls.length}`);
-      if (parsed.toolCalls.length > 0) {
-        parsed.toolCalls.forEach((tc, i) => {
-          this.log(`  Tool ${i}: ${tc.toolName} - args: ${JSON.stringify(tc.args)}`);
+      this.log(`LLM content length: ${llmResponse.content.length} chars`);
+      this.log(`LLM content preview: ${llmResponse.content.substring(0, 300)}`);
+      this.log(`LLM tool calls count: ${llmResponse.toolCalls.length}`);
+      if (llmResponse.toolCalls.length > 0) {
+        llmResponse.toolCalls.forEach((tc, i) => {
+          this.log(`  Tool ${i}: ${tc.name} - args: ${JSON.stringify(tc.arguments)}`);
         });
       }
       this.log(`=== END DIAGNOSTIC ===`);
       
-      if (parsed.toolCalls.length > 0) {
-        this.log(`Found ${parsed.toolCalls.length} tool calls`);
+      // Convert LLM tool calls to our format and execute them
+      if (llmResponse.toolCalls.length > 0) {
+        this.log(`Found ${llmResponse.toolCalls.length} tool calls from LLM`);
         
-        // Execute tool calls
-        for (const toolCall of parsed.toolCalls) {
+        for (const tc of llmResponse.toolCalls) {
           try {
+            const toolCall: ToolCall = {
+              toolName: tc.name,
+              args: tc.arguments
+            };
+            
             this.log(`Executing tool: ${toolCall.toolName} with args: ${JSON.stringify(toolCall.args)}`);
             const result = await this.executeTool(toolCall);
             toolCall.result = result;
             toolCalls.push(toolCall);
             this.log(`Tool ${toolCall.toolName} completed successfully (${result.length} chars)`);
           } catch (error: any) {
-            toolCall.error = error.message;
+            const toolCall: ToolCall = {
+              toolName: tc.name,
+              args: tc.arguments,
+              error: error.message
+            };
             toolCalls.push(toolCall);
-            this.log(`Tool ${toolCall.toolName} failed: ${error.message}`);
+            this.log(`Tool ${tc.name} failed: ${error.message}`);
           }
         }
         
-        finalText = parsed.reasoning + '\n\nTool results:\n' + 
+        finalText = llmResponse.content + '\n\nTool results:\n' + 
           toolCalls.map(tc => `- ${tc.toolName}: ${tc.result || tc.error}`).join('\n');
       } else {
-        finalText = parsed.reasoning;
+        finalText = llmResponse.content || 'No response from LLM';
       }
       
       // DIAGNOSTIC: Log final text before return
@@ -418,7 +406,7 @@ export class AgentBridge {
   }
 
   /**
-   * Call LLM through CLI
+   * Call LLM through CLI - returns both content and tool calls
    */
   private async callLLM(
     messages: Array<{role: string, content: string}>,
@@ -434,7 +422,7 @@ export class AgentBridge {
         };
       };
     }>
-  ): Promise<string> {
+  ): Promise<LLMResponse> {
     // Use the CLI to call the LLM
     this.log(`Calling LLM with ${messages.length} messages and ${tools?.length || 0} tools`);
     
@@ -449,7 +437,7 @@ export class AgentBridge {
       tools
     );
     
-    this.log(`LLM response length: ${response.length} chars`);
+    this.log(`LLM response - content: ${response.content.length} chars, toolCalls: ${response.toolCalls.length}`);
     return response;
   }
 
@@ -470,49 +458,6 @@ export class AgentBridge {
     };
   }> {
     return [
-      {
-        type: "function",
-        function: {
-          name: "i2vision_discover",
-          description: "Run full VSLFC discovery on the project. Returns architecture patterns, flows, business rules, and components across all modules.",
-          parameters: {
-            type: "object",
-            properties: {
-              path: { 
-                type: "string", 
-                description: "Project root path to discover" 
-              },
-              intent: { 
-                type: "string",
-                enum: ["full_discovery", "quick_overview", "architecture_audit", "flow_mapping"],
-                description: "Discovery intent"
-              }
-            },
-            required: ["path"]
-          }
-        }
-      },
-      {
-        type: "function",
-        function: {
-          name: "i2vision_get_context",
-          description: "Get VSLFC architectural context for a specific file. Returns symbols, related files, business rules, flows, and complexity metrics.",
-          parameters: {
-            type: "object",
-            properties: {
-              file: { 
-                type: "string", 
-                description: "File path relative to workspace root" 
-              },
-              task: { 
-                type: "string", 
-                description: "Task type: debug, refactor, add_feature, fix_bug, optimize, discovery" 
-              }
-            },
-            required: ["file"]
-          }
-        }
-      },
       {
         type: "function",
         function: {
@@ -544,6 +489,26 @@ export class AgentBridge {
               }
             },
             required: ["path"]
+          }
+        }
+      },
+      {
+        type: "function",
+        function: {
+          name: "list_files",
+          description: "List files and directories",
+          parameters: {
+            type: "object",
+            properties: {
+              path: { 
+                type: "string", 
+                description: "Directory path relative to workspace root" 
+              },
+              recursive: { 
+                type: "boolean", 
+                description: "Whether to list recursively" 
+              }
+            }
           }
         }
       },
@@ -618,183 +583,172 @@ export class AgentBridge {
   }
 
   /**
-   * Parse LLM response for reasoning and tool calls
-   * Updated to handle multiple formats and provide better error handling
-   */
-  private parseLLMResponse(response: string): { reasoning: string, toolCalls: ToolCall[] } {
-    const toolCalls: ToolCall[] = [];
-    let reasoning = response;
-    
-    this.log(`Parsing LLM response (${response.length} chars)`);
-    this.log(`Response preview: ${response.substring(0, 300)}`);
-    
-    // Strategy 1: Try to extract tool calls using the configured pattern
-    try {
-      const toolCallPattern = new RegExp(this.config.parsing.toolCallPattern, 'g');
-      let match;
-      
-      while ((match = toolCallPattern.exec(response)) !== null) {
-        try {
-          // Extract JSON from the match
-          const jsonStart = response.indexOf('{', match.index);
-          const jsonEnd = response.lastIndexOf('}', match.index + match[0].length);
-          
-          if (jsonStart !== -1 && jsonEnd !== -1) {
-            const jsonStr = response.substring(jsonStart, jsonEnd + 1);
-            this.log(`Found tool call JSON: ${jsonStr.substring(0, 100)}`);
-            const parsed = JSON.parse(jsonStr);
-            
-            toolCalls.push({
-              toolName: parsed.tool,
-              args: parsed.args || {}
-            });
-          }
-        } catch (error: any) {
-          this.log(`Failed to parse tool call with config pattern: ${error.message}`);
-        }
-      }
-    } catch (error: any) {
-      this.log(`Error using config pattern: ${error.message}`);
-    }
-    
-    // Strategy 2: If no tool calls found, try direct "tool_call:" pattern from system prompt
-    if (toolCalls.length === 0) {
-      this.log('No tool calls found with config pattern, trying direct pattern...');
-      const directPattern = /tool_call:\s*(\{[^}]+\})/g;
-      let match;
-      
-      while ((match = directPattern.exec(response)) !== null) {
-        try {
-          const jsonStr = match[1];
-          this.log(`Found tool call with direct pattern: ${jsonStr}`);
-          const parsed = JSON.parse(jsonStr);
-          
-          toolCalls.push({
-            toolName: parsed.tool,
-            args: parsed.args || {}
-          });
-        } catch (error: any) {
-          this.log(`Failed to parse tool call with direct pattern: ${error.message}`);
-        }
-      }
-    }
-    
-    // Strategy 3: Try to find any JSON with "tool" field
-    if (toolCalls.length === 0) {
-      this.log('No tool calls found with direct pattern, trying generic JSON search...');
-      const jsonPattern = /\{[^{}]*"tool"[^{}]*\}/g;
-      let match;
-      
-      while ((match = jsonPattern.exec(response)) !== null) {
-        try {
-          const jsonStr = match[0];
-          this.log(`Found potential tool JSON: ${jsonStr}`);
-          const parsed = JSON.parse(jsonStr);
-          
-          if (parsed.tool && parsed.args) {
-            toolCalls.push({
-              toolName: parsed.tool,
-              args: parsed.args
-            });
-          }
-        } catch (error: any) {
-          this.log(`Failed to parse generic JSON: ${error.message}`);
-        }
-      }
-    }
-    
-    // Extract reasoning (everything before first tool_call or after last tool_call)
-    const toolCallHeader = this.config.formattingRules.toolCallHeader || 'tool_call:';
-    const toolCallIndex = response.indexOf(toolCallHeader);
-    if (toolCallIndex !== -1) {
-      reasoning = response.substring(0, toolCallIndex).trim();
-      // Remove "reasoning:" prefix if present
-      const reasoningPrefix = this.config.formattingRules.reasoningHeader || 'reasoning:';
-      if (reasoning.startsWith(reasoningPrefix)) {
-        reasoning = reasoning.substring(reasoningPrefix.length).trim();
-      }
-    }
-    
-    // Also try to extract reasoning after tool calls (for multi-turn responses)
-    const eosMarker = this.config.formattingRules.eosMarker || 'EOS';
-    const eosIndex = response.indexOf(eosMarker);
-    if (eosIndex !== -1 && toolCallIndex !== -1 && eosIndex > toolCallIndex) {
-      // There might be more content between tool_call and EOS
-      const betweenContent = response.substring(toolCallIndex + toolCallHeader.length, eosIndex).trim();
-      if (betweenContent && !toolCalls.some(tc => betweenContent.includes(JSON.stringify(tc.args)))) {
-        reasoning += '\n' + betweenContent;
-      }
-    }
-    
-    this.log(`Parsed ${toolCalls.length} tool calls, reasoning: ${reasoning.substring(0, 100)}...`);
-    return { reasoning, toolCalls };
-  }
-
-  /**
    * Execute a tool call
    */
-  async executeTool(toolCall: ToolCall): Promise<string> {
-    const { toolName, args } = toolCall;
-    this.log(`Executing tool: ${toolName} with args: ${JSON.stringify(args)}`);
+  private async executeTool(toolCall: ToolCall): Promise<string> {
+    this.log(`Executing tool: ${toolCall.toolName}`);
     
-    // Map tool names to CLI methods
-    switch (toolName) {
-      case 'read_file':
-        this.log(`Reading file: ${args.path}`);
-        return await this.cli.readFile(args.path);
-        
-      case 'write_file':
-        this.log(`Writing file: ${args.path}`);
-        return await this.cli.writeFile(args.path, args.content);
-        
-      case 'edit_file':
-        this.log(`Editing file: ${args.path}`);
-        return await this.cli.editFile(args.path, args.old_string, args.new_string);
-        
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+    
+    switch (toolCall.toolName) {
+      case 'read_file': {
+        const filePath = toolCall.args.path;
+        if (!filePath) {
+          throw new Error('Missing path argument for read_file');
+        }
+        const fullPath = filePath.startsWith(workspaceRoot) ? filePath : path.join(workspaceRoot, filePath);
+        return await this.readFile(fullPath);
+      }
+      
       case 'list_directory':
-        this.log(`Listing directory: ${args.path}`);
-        return await this.cli.listDirectory(args.path);
-        
-      case 'regex_search':
-        this.log(`Regex search: ${args.pattern} in ${args.path}`);
-        return await this.cli.regexSearch(args.pattern, args.path);
-        
-      case 'i2vision_get_context':
-        this.log(`Getting context for file: ${args.file}`);
-        return JSON.stringify(await this.cli.runDiscovery());
-        
-      case 'i2vision_discover':
-        this.log(`Running discovery on: ${args.path || 'project root'}`);
-        return JSON.stringify(await this.cli.runDiscovery());
-        
+      case 'list_files': {
+        const dirPath = toolCall.args.path || '.';
+        const recursive = toolCall.args.recursive || false;
+        const fullPath = dirPath.startsWith(workspaceRoot) ? dirPath : path.join(workspaceRoot, dirPath);
+        const files = await this.listFiles(fullPath, recursive);
+        return files.join('\n');
+      }
+      
+      case 'write_file': {
+        const filePath = toolCall.args.path;
+        const content = toolCall.args.content;
+        if (!filePath || content === undefined) {
+          throw new Error('Missing path or content argument for write_file');
+        }
+        const fullPath = filePath.startsWith(workspaceRoot) ? filePath : path.join(workspaceRoot, filePath);
+        await this.writeFile(fullPath, content);
+        return `Successfully wrote ${content.length} chars to ${filePath}`;
+      }
+      
+      case 'edit_file': {
+        const filePath = toolCall.args.path;
+        const oldString = toolCall.args.old_string;
+        const newString = toolCall.args.new_string;
+        if (!filePath || !oldString || newString === undefined) {
+          throw new Error('Missing required arguments for edit_file');
+        }
+        const fullPath = filePath.startsWith(workspaceRoot) ? filePath : path.join(workspaceRoot, filePath);
+        const content = await this.readFile(fullPath);
+        if (!content.includes(oldString)) {
+          throw new Error(`Could not find old_string in ${filePath}`);
+        }
+        const newContent = content.replace(oldString, newString);
+        await this.writeFile(fullPath, newContent);
+        return `Successfully edited ${filePath}`;
+      }
+      
+      case 'regex_search': {
+        const pattern = toolCall.args.pattern;
+        const searchPath = toolCall.args.path || '.';
+        if (!pattern) {
+          throw new Error('Missing pattern argument for regex_search');
+        }
+        const fullPath = searchPath.startsWith(workspaceRoot) ? searchPath : path.join(workspaceRoot, searchPath);
+        const results = await this.searchFiles(pattern, fullPath);
+        return results.join('\n');
+      }
+      
       default:
-        this.log(`Unknown tool: ${toolName}`);
-        throw new Error(`Unknown tool: ${toolName}`);
+        throw new Error(`Unknown tool: ${toolCall.toolName}`);
     }
   }
 
   /**
-   * Dispose resources
+   * Read a file
    */
-  dispose() {
-    this.log(`Disposing agent: ${this.config.key}`);
-    this.isInitialized = false;
+  private async readFile(filePath: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      fs.readFile(filePath, 'utf8', (err, data) => {
+        if (err) reject(err);
+        else resolve(data);
+      });
+    });
   }
 
   /**
-   * Log a message
+   * Write a file
    */
-  log(message: string) {
+  private async writeFile(filePath: string, content: string): Promise<void> {
+    const dir = path.dirname(filePath);
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(filePath, content, 'utf8');
+  }
+
+  /**
+   * List files in a directory
+   */
+  private async listFiles(dirPath: string, recursive: boolean = false): Promise<string[]> {
+    const files: string[] = [];
+    const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+    
+    for (const entry of entries) {
+      const fullPath = path.join(dirPath, entry.name);
+      if (entry.isDirectory()) {
+        if (recursive) {
+          const subFiles = await this.listFiles(fullPath, recursive);
+          files.push(...subFiles);
+        } else {
+          files.push(entry.name + '/');
+        }
+      } else {
+        files.push(entry.name);
+      }
+    }
+    
+    return files;
+  }
+
+  /**
+   * Search files with regex
+   */
+  private async searchFiles(pattern: string, searchPath: string): Promise<string[]> {
+    const results: string[] = [];
+    const regex = new RegExp(pattern);
+    
+    const searchDir = async (dir: string) => {
+      const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          if (!entry.name.startsWith('.') && entry.name !== 'node_modules') {
+            await searchDir(path.join(dir, entry.name));
+          }
+        } else if (entry.isFile()) {
+          const filePath = path.join(dir, entry.name);
+          try {
+            const content = await this.readFile(filePath);
+            const lines = content.split('\n');
+            for (let i = 0; i < lines.length; i++) {
+              if (regex.test(lines[i])) {
+                results.push(`${filePath}:${i + 1}: ${lines[i]}`);
+              }
+            }
+          } catch (error) {
+            // Skip binary files
+          }
+        }
+      }
+    };
+    
+    await searchDir(searchPath);
+    return results;
+  }
+
+  /**
+   * Log a message to the output channel
+   */
+  private log(message: string): void {
+    const timestamp = new Date().toLocaleTimeString();
+    const formatted = `[${timestamp}] [AgentBridge] ${message}`;
     if (this.outputChannel) {
-      this.outputChannel.appendLine(`[Agent:${this.config.key}] ${message}`);
+      this.outputChannel.appendLine(formatted);
     }
-    console.log(`[Agent:${this.config.key}] ${message}`);
+    console.log(formatted);
   }
 
   /**
-   * Get agent configuration
+   * Dispose the agent bridge
    */
-  getConfig(): AgentConfig {
-    return this.config;
+  dispose(): void {
+    this.log('AgentBridge disposed');
   }
 }

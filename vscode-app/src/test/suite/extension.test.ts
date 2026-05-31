@@ -4,7 +4,7 @@
 
 import * as assert from 'assert';
 import * as vscode from 'vscode';
-import { I2VisionCLI, DiscoveryResult, TemplateInfo } from '../../cliIntegration';
+import { CLI as I2VisionCLI } from '../../cliIntegration';
 import { I2VisionTreeProvider, I2VisionTreeItem } from '../../treeViewProvider';
 
 suite('i2-Vision Extension Tests', () => {
@@ -29,6 +29,7 @@ suite('i2-Vision Extension Tests', () => {
             assert.ok(Array.isArray(result.components));
             assert.ok(Array.isArray(result.relationships));
             assert.ok(Array.isArray(result.layers));
+            assert.ok(typeof result.version === 'string');
         });
 
         test('Discovery result should have valid structure', async () => {
@@ -59,6 +60,7 @@ suite('i2-Vision Extension Tests', () => {
             assert.ok(template.category);
             assert.ok(Array.isArray(template.files));
             assert.ok(Array.isArray(template.variables));
+            assert.ok(template.type);
         });
 
         test('Context should return data for file path', async () => {

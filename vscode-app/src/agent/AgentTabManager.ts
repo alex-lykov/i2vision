@@ -7,6 +7,7 @@
  * UPDATED: Fixed tool call parsing, improved logging, better error handling
  * DIAGNOSTIC: Added detailed logging to trace response flow
  * DIAGNOSTIC v2: Added try-catch logging around executeAgentLoop
+ * DIAGNOSTIC v3: Added timeout wrapper around agent.process()
  */
 
 import * as vscode from 'vscode';
@@ -149,7 +150,7 @@ export class AgentTabManager {
   }
 
   /**
-   * Process user input through the agent
+   * Process user input through the agent with timeout protection
    */
   private async processUserInput(tab: AgentTab, userInput: string) {
     if (tab.isProcessing) {
@@ -179,14 +180,30 @@ export class AgentTabManager {
         sessionId: tab.id
       };
       
-      // Call the agent
+      // Call the agent with timeout protection
       this.log(`=== DIAGNOSTIC: Calling agent.process() ===`);
-      const response = await tab.agent.process({
+      
+      const AGENT_TIMEOUT_MS = 60000; // 60 second timeout
+      const agentPromise = tab.agent.process({
         id: `request-${Date.now()}`,
         task: userInput,
         context: context
       });
+      
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`agent.process() timed out after ${AGENT_TIMEOUT_MS}ms`));
+        }, AGENT_TIMEOUT_MS);
+      });
+      
+      const response = await Promise.race([agentPromise, timeoutPromise]);
+      
       this.log(`=== DIAGNOSTIC: agent.process() returned ===`);
+      this.log(`=== DIAGNOSTIC: Response object keys: ${Object.keys(response).join(', ')} `);
+      this.log(`=== DIAGNOSTIC: Response type: ${typeof response}`);
+      this.log(`=== DIAGNOSTIC: Response.finalText type: ${typeof response.finalText}`);
+      this.log(`=== DIAGNOSTIC: Response.toolCalls type: ${typeof response.toolCalls}`);
+      this.log(`=== DIAGNOSTIC: About to build postMessage payload`);
       this.log(`Response finalText length: ${response.finalText?.length || 0}`);
       this.log(`Response toolCalls count: ${response.toolCalls?.length || 0}`);
       this.log(`Response success: ${response.success}`);
@@ -206,6 +223,9 @@ export class AgentTabManager {
       this.log(`Tool calls: ${response.toolCalls?.map(tc => tc.toolName).join(', ') || 'none'}`);
       
       // Update webview with result - include full tool call data
+      this.log(`=== DIAGNOSTIC: About to postMessage to webview`);
+      this.log(`=== DIAGNOSTIC: response.finalText length: ${response.finalText?.length || 0}`);
+      this.log(`=== DIAGNOSTIC: response.toolCalls count: ${response.toolCalls?.length || 0}`);
       tab.panel.webview.postMessage({
         command: 'response',
         response: {
@@ -216,6 +236,7 @@ export class AgentTabManager {
           success: response.success
         }
       });
+      this.log(`=== DIAGNOSTIC: postMessage sent successfully`);
     } catch (error: any) {
       this.log(`Error processing input: ${error.message}`);
       this.log(`Stack trace: ${error.stack}`);
@@ -314,33 +335,34 @@ export class AgentTabManager {
   /**
    * Get all active tabs
    */
-  getActiveTabs(): AgentTab[] {
-    return Array.from(this.tabs.values());
+  getActiveTabs(): string[] {
+    return Array.from(this.tabs.keys());
   }
 
   /**
-   * Get tab by ID
+   * Get tab details
    */
   getTab(tabId: string): AgentTab | undefined {
     return this.tabs.get(tabId);
   }
 
   /**
-   * Log a message
+   * Log a message to the output channel
    */
-  private log(message: string): void {
+  private log(message: string) {
+    const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
     this.outputChannel.appendLine(`[AgentTabManager] ${message}`);
   }
 
   /**
-   * Capitalize first letter
+   * Capitalize a string
    */
-  private capitalize(s: string): string {
-    return s.charAt(0).toUpperCase() + s.slice(1);
+  private capitalize(str: string): string {
+    return str.charAt(0).toUpperCase() + str.slice(1);
   }
 
   /**
-   * Get webview HTML content
+   * Get webview content for the agent panel
    */
   private getWebviewContent(layer: string, config: AgentConfig): string {
     return `<!DOCTYPE html>
@@ -353,298 +375,255 @@ export class AgentTabManager {
     body {
       font-family: var(--vscode-font-family);
       padding: 20px;
+      color: var(--vscode-foreground);
       background-color: var(--vscode-editor-background);
-      color: var(--vscode-editor-foreground);
     }
     .chat-container {
-      display: flex;
-      flex-direction: column;
-      height: calc(100vh - 100px);
-    }
-    .messages {
-      flex: 1;
-      overflow-y: auto;
-      border: 1px solid var(--vscode-widget-border);
-      padding: 10px;
-      margin-bottom: 10px;
-    }
-    .message {
-      margin-bottom: 10px;
-      padding: 8px;
-      border-radius: 4px;
-    }
-    .message.user {
-      background-color: var(--vscode-input-background);
-      margin-left: 20%;
-    }
-    .message.agent {
-      background-color: var(--vscode-editor-inactiveSelectionBackground);
-      margin-right: 20%;
+      max-width: 800px;
+      margin: 0 auto;
     }
     .input-area {
       display: flex;
       gap: 10px;
+      margin-bottom: 20px;
     }
-    textarea {
+    .input-area input {
       flex: 1;
-      resize: none;
-      height: 60px;
+      padding: 8px 12px;
+      border: 1px solid var(--vscode-input-border);
       background-color: var(--vscode-input-background);
       color: var(--vscode-input-foreground);
-      border: 1px solid var(--vscode-input-border);
-      padding: 8px;
+      border-radius: 4px;
     }
-    button {
+    .input-area button {
       padding: 8px 16px;
       background-color: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
       border: none;
+      border-radius: 4px;
       cursor: pointer;
     }
-    button:hover {
+    .input-area button:hover {
       background-color: var(--vscode-button-hoverBackground);
     }
-    button:disabled {
+    .input-area button:disabled {
       opacity: 0.5;
       cursor: not-allowed;
     }
-    .status {
-      font-size: 12px;
-      color: var(--vscode-descriptionForeground);
-      margin-bottom: 10px;
-    }
-    .tool-calls {
-      margin-top: 10px;
-      padding: 10px;
-      background-color: var(--vscode-editor-selectionBackground);
+    .messages {
+      border: 1px solid var(--vscode-panel-border);
       border-radius: 4px;
+      padding: 15px;
+      min-height: 300px;
+      max-height: 600px;
+      overflow-y: auto;
+    }
+    .message {
+      margin-bottom: 15px;
+      padding: 10px;
+      border-radius: 4px;
+    }
+    .message.user {
+      background-color: var(--vscode-input-background);
       border-left: 3px solid var(--vscode-button-background);
     }
-    .tool-calls h4 {
-      margin: 0 0 8px 0;
-      font-size: 13px;
-      color: var(--vscode-button-foreground);
+    .message.agent {
+      background-color: var(--vscode-editor-inactiveSelectionBackground);
+      border-left: 3px solid var(--vscode-editor-foreground);
     }
-    .tool-call {
-      margin-bottom: 8px;
-      padding: 6px;
-      background-color: var(--vscode-editor-background);
-      border-radius: 3px;
-      font-size: 12px;
+    .message.error {
+      background-color: var(--vscode-inputValidation-errorBackground);
+      border-left: 3px solid var(--vscode-errorForeground);
     }
-    .tool-call-header {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      margin-bottom: 4px;
-    }
-    .tool-name {
-      font-weight: bold;
-      color: var(--vscode-textLink-foreground);
-    }
-    .tool-status {
-      font-size: 11px;
-      padding: 2px 6px;
-      border-radius: 3px;
-    }
-    .tool-status.success {
-      background-color: rgba(0, 255, 0, 0.2);
-      color: #4caf50;
-    }
-    .tool-status.error {
-      background-color: rgba(255, 0, 0, 0.2);
-      color: #f44336;
-    }
-    .tool-args, .tool-result {
-      margin-top: 4px;
-      font-family: monospace;
-      font-size: 11px;
-      white-space: pre-wrap;
-      word-break: break-all;
-    }
-    .tool-args {
-      color: var(--vscode-descriptionForeground);
-    }
-    .tool-result {
-      color: var(--vscode-editor-foreground);
-      background-color: var(--vscode-editor-selectionBackground);
-      padding: 4px;
-      border-radius: 2px;
-    }
-    .reasoning {
-      margin-bottom: 10px;
-      white-space: pre-wrap;
-    }
-    .iteration-info {
-      font-size: 11px;
+    .message-meta {
+      font-size: 0.8em;
       color: var(--vscode-descriptionForeground);
       margin-top: 5px;
+    }
+    .config-info {
+      margin-bottom: 15px;
+      padding: 10px;
+      background-color: var(--vscode-editor-inactiveSelectionBackground);
+      border-radius: 4px;
+      font-size: 0.9em;
+    }
+    .config-info strong {
+      color: var(--vscode-button-background);
+    }
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 15px;
+    }
+    .toolbar button {
+      padding: 6px 12px;
+      background-color: var(--vscode-button-secondaryBackground);
+      color: var(--vscode-button-secondaryForeground);
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 0.9em;
+    }
+    .toolbar button:hover {
+      background-color: var(--vscode-button-secondaryHoverBackground);
+    }
+    .tool-call {
+      background-color: var(--vscode-editor-selectionBackground);
+      padding: 8px;
+      border-radius: 4px;
+      margin-top: 8px;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 0.85em;
     }
   </style>
 </head>
 <body>
-  <h2>i2-Vision ${this.capitalize(layer)} Agent</h2>
-  <div class="status">
-    Model: ${config.model.id} | Max Iterations: ${config.iterationSettings.maxIterations}
-  </div>
   <div class="chat-container">
-    <div class="messages" id="messages"></div>
+    <div class="config-info">
+      <strong>Agent:</strong> ${this.capitalize(layer)} Agent (Ollama ${config.model.id})<br>
+      <strong>Max Iterations:</strong> ${config.iterationSettings.maxIterations}
+    </div>
+    
+    <div class="toolbar">
+      <button id="clearBtn">Clear History</button>
+      <button id="reloadBtn">Reload Config</button>
+      <button id="configBtn">Open Config</button>
+    </div>
+    
+    <div class="messages" id="messages">
+      <div class="message agent">
+        <div class="message-content">Hello! I'm your ${this.capitalize(layer)} Agent. How can I help you with VSLFC today?</div>
+      </div>
+    </div>
+    
     <div class="input-area">
-      <textarea id="input" placeholder="Ask the agent to analyze, explain, or modify code..."></textarea>
-      <button id="send" onclick="sendMessage()">Send</button>
-      <button id="clear" onclick="clearHistory()">Clear</button>
-      <button id="reload" onclick="reloadConfig()">♻️ Reload</button>
-      <button id="config" onclick="openConfig()">Config</button>
+      <input type="text" id="userInput" placeholder="Type your message..." />
+      <button id="sendBtn">Send</button>
     </div>
   </div>
+
   <script>
     const vscode = acquireVsCodeApi();
-    const messagesEl = document.getElementById('messages');
-    const inputEl = document.getElementById('input');
-    const sendBtn = document.getElementById('send');
-    
+    const messagesDiv = document.getElementById('messages');
+    const userInput = document.getElementById('userInput');
+    const sendBtn = document.getElementById('sendBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const reloadBtn = document.getElementById('reloadBtn');
+    const configBtn = document.getElementById('configBtn');
+
     let isProcessing = false;
-    
+
+    function addMessage(content, type, meta = null) {
+      const msgDiv = document.createElement('div');
+      msgDiv.className = 'message ' + type;
+      
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'message-content';
+      contentDiv.textContent = content;
+      msgDiv.appendChild(contentDiv);
+      
+      if (meta) {
+        const metaDiv = document.createElement('div');
+        metaDiv.className = 'message-meta';
+        metaDiv.textContent = meta;
+        msgDiv.appendChild(metaDiv);
+      }
+      
+      messagesDiv.appendChild(msgDiv);
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+
+    function addToolCall(toolCall) {
+      const toolDiv = document.createElement('div');
+      toolDiv.className = 'tool-call';
+      toolDiv.innerHTML = '<strong>Tool:</strong> ' + toolCall.toolName + 
+                          '<br><strong>Args:</strong> ' + JSON.stringify(toolCall.arguments, null, 2);
+      messagesDiv.appendChild(toolDiv);
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+
+    sendBtn.addEventListener('click', sendMessage);
+    userInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') sendMessage();
+    });
+
+    clearBtn.addEventListener('click', () => {
+      vscode.postMessage({ command: 'clearHistory' });
+      messagesDiv.innerHTML = '<div class="message agent"><div class="message-content">History cleared. How can I help?</div></div>';
+    });
+
+    reloadBtn.addEventListener('click', () => {
+      vscode.postMessage({ command: 'reloadConfig' });
+    });
+
+    configBtn.addEventListener('click', () => {
+      vscode.postMessage({ command: 'openConfig' });
+    });
+
     function sendMessage() {
-      const text = inputEl.value.trim();
+      const text = userInput.value.trim();
       if (!text || isProcessing) return;
       
       isProcessing = true;
       sendBtn.disabled = true;
+      userInput.disabled = true;
       
-      // Add user message to UI
       addMessage(text, 'user');
+      userInput.value = '';
       
-      // Send to extension
-      vscode.postMessage({ command: 'sendMessage', text });
-      inputEl.value = '';
+      vscode.postMessage({
+        command: 'sendMessage',
+        text: text
+      });
     }
-    
-    function addMessage(text, type, toolCalls) {
-      const div = document.createElement('div');
-      div.className = 'message ' + type;
-      
-      if (type === 'agent' && toolCalls && toolCalls.length > 0) {
-        // Split reasoning from tool results if present
-        let reasoning = text;
-        const toolResultsIndex = text.indexOf('\\n\\nTool results:\\n');
-        if (toolResultsIndex !== -1) {
-          reasoning = text.substring(0, toolResultsIndex);
-        }
-        
-        let html = '<div class="reasoning">' + escapeHtml(reasoning) + '</div>';
-        html += '<div class="tool-calls"><h4>🛠️ Tools Used (' + toolCalls.length + ')</h4>';
-        
-        for (const tc of toolCalls) {
-          html += '<div class="tool-call">';
-          html += '<div class="tool-call-header">';
-          html += '<span class="tool-name">' + escapeHtml(tc.toolName) + '</span>';
-          if (tc.error) {
-            html += '<span class="tool-status error">❌ Error</span>';
-          } else {
-            html += '<span class="tool-status success">✅ Success</span>';
-          }
-          html += '</div>';
-          
-          if (tc.args && Object.keys(tc.args).length > 0) {
-            html += '<div class="tool-args"><strong>Args:</strong> ' + escapeHtml(JSON.stringify(tc.args, null, 2)) + '</div>';
-          }
-          
-          if (tc.result) {
-            const preview = tc.result.length > 500 ? tc.result.substring(0, 500) + '... (truncated)' : tc.result;
-            html += '<div class="tool-result"><strong>Result:</strong> ' + escapeHtml(preview) + '</div>';
-          }
-          
-          if (tc.error) {
-            html += '<div class="tool-result" style="color: #f44336;"><strong>Error:</strong> ' + escapeHtml(tc.error) + '</div>';
-          }
-          
-          html += '</div>';
-        }
-        
-        html += '</div>';
-        div.innerHTML = html;
-      } else {
-        div.textContent = text || '';
-      }
-      
-      messagesEl.appendChild(div);
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
-    
-    function escapeHtml(text) {
-      if (!text) return '';
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
-    }
-    
-    function clearHistory() {
-      vscode.postMessage({ command: 'clearHistory' });
-      messagesEl.innerHTML = '';
-    }
-    
-    function openConfig() {
-      vscode.postMessage({ command: 'openConfig' });
-    }
-    
-    function reloadConfig() {
-      vscode.postMessage({ command: 'reloadConfig' });
-    }
-    
-    // Handle messages from extension
+
     window.addEventListener('message', event => {
       const message = event.data;
       
       switch (message.command) {
         case 'processing':
-          addMessage('Processing...', 'agent', null);
+          addMessage('Processing: ' + message.userInput, 'agent');
           break;
           
         case 'response':
           isProcessing = false;
           sendBtn.disabled = false;
-          if (message.response.text || (message.response.toolCalls && message.response.toolCalls.length > 0)) {
-            addMessage(message.response.text, 'agent', message.response.toolCalls);
+          userInput.disabled = false;
+          
+          if (message.response.text) {
+            const meta = message.response.iterations + ' iterations, ' + 
+                        message.response.durationMs + 'ms';
+            addMessage(message.response.text, 'agent', meta);
           }
-          // Show iteration info
-          const infoDiv = document.createElement('div');
-          infoDiv.className = 'iteration-info';
-          infoDiv.textContent = '⏱️ ' + message.response.durationMs + 'ms | Iterations: ' + message.response.iterations;
-          messagesEl.appendChild(infoDiv);
-          messagesEl.scrollTop = messagesEl.scrollHeight;
+          
+          // Display tool calls if present
+          if (message.response.toolCalls && message.response.toolCalls.length > 0) {
+            message.response.toolCalls.forEach(tc => addToolCall(tc));
+          }
           break;
           
         case 'error':
           isProcessing = false;
           sendBtn.disabled = false;
-          addMessage('Error: ' + message.error, 'agent', null);
-          break;
-          
-        case 'configReloaded':
-          // Update the status bar with new config
-          const statusEl = document.querySelector('.status');
-          if (statusEl && message.config) {
-            statusEl.textContent = 'Model: ' + message.config.model + ' | Max Iterations: ' + message.config.maxIterations;
-          }
-          console.log('Config reloaded:', message.config);
+          userInput.disabled = false;
+          addMessage('Error: ' + message.error, 'error');
           break;
           
         case 'updateHistory':
-          messagesEl.innerHTML = '';
-          for (const record of message.history) {
+          messagesDiv.innerHTML = '';
+          message.history.forEach(record => {
             addMessage(record.userInput, 'user');
-            addMessage(record.agentResponse, 'agent', null);
-          }
+            const meta = record.iterations + ' iterations, ' + record.durationMs + 'ms';
+            addMessage(record.agentResponse, 'agent', meta);
+            if (record.toolCalls && record.toolCalls.length > 0) {
+              record.toolCalls.forEach(tc => addToolCall({toolName: tc, arguments: {}}));
+            }
+          });
           break;
-      }
-    });
-    
-    // Enter to send, Shift+Enter for new line
-    inputEl.addEventListener('keydown', e => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
+          
+        case 'configReloaded':
+          vscode.showInformationMessage('Configuration reloaded from disk');
+          break;
       }
     });
   </script>

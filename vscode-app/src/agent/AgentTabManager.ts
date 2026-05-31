@@ -1,11 +1,12 @@
 /**
- * AgentTabManager - Manages agent tabs in VSCode
+ * AgentBridge - Bridge between VSCode extension and conf-agent-core
  * 
- * Creates and manages webview panels for each agent instance,
- * using LocalAgentProvider to create agents dynamically.
+ * This class wraps the agent core functionality and provides a clean API
+ * for the AgentTabManager to interact with configured agents.
  * 
- * Updated for Option C: Uses LocalAgentProvider instead of direct AgentBridge
- * FIXED: Tool card display with proper emoji encoding and better tool result visualization
+ * UPDATED: Fixed tool call parsing, improved logging, better error handling
+ * DIAGNOSTIC: Added detailed logging to trace response flow
+ * DIAGNOSTIC v2: Added try-catch logging around executeAgentLoop
  */
 
 import * as vscode from 'vscode';
@@ -179,11 +180,16 @@ export class AgentTabManager {
       };
       
       // Call the agent
+      this.log(`=== DIAGNOSTIC: Calling agent.process() ===`);
       const response = await tab.agent.process({
         id: `request-${Date.now()}`,
         task: userInput,
         context: context
       });
+      this.log(`=== DIAGNOSTIC: agent.process() returned ===`);
+      this.log(`Response finalText length: ${response.finalText?.length || 0}`);
+      this.log(`Response toolCalls count: ${response.toolCalls?.length || 0}`);
+      this.log(`Response success: ${response.success}`);
       
       // Record the interaction
       const record: InteractionRecord = {
@@ -212,6 +218,7 @@ export class AgentTabManager {
       });
     } catch (error: any) {
       this.log(`Error processing input: ${error.message}`);
+      this.log(`Stack trace: ${error.stack}`);
       tab.panel.webview.postMessage({
         command: 'error',
         error: String(error)

@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright (c) 2026. Oleksii Lykov.
  *
  * Licensed under the MIT License.
@@ -258,7 +258,7 @@ export class LocalAgentProvider {
       
       // Model section
       model: {
-        id: yamlConfig.model?.id || 'qwen3:4b',
+        id: yamlConfig.model?.id || 'minimax-m2.1:cloud',
         provider: yamlConfig.model?.provider || 'ollama',
         contextLength: yamlConfig.model?.contextLength || 32768,
         maxOutputTokens: yamlConfig.model?.maxOutputTokens || 4096,
@@ -390,7 +390,7 @@ export class LocalAgentProvider {
       systemPromptTemplate: 'You are an AI assistant.',
       templateVariables: {},
       model: {
-        id: 'qwen3:4b',
+        id: 'minimax-m2.1:cloud',
         provider: 'ollama',
         contextLength: 32768,
         maxOutputTokens: 4096,
@@ -491,3 +491,4 @@ export class LocalAgentProvider {
     this.outputChannel.appendLine(`[LocalAgentProvider] ${message}`);
   }
 }
+

@@ -5,6 +5,7 @@
  * for the AgentTabManager to interact with configured agents.
  * 
  * UPDATED: Fixed tool call parsing, improved logging, better error handling
+ * DIAGNOSTIC: Added detailed logging to trace response flow
  */
 
 import * as vscode from 'vscode';
@@ -264,6 +265,8 @@ export class AgentBridge {
       
       const durationMs = Date.now() - startTime;
       this.log(`Agent completed in ${durationMs}ms with ${response.iterations} iterations`);
+      this.log(`Agent response finalText length: ${response.finalText?.length || 0} chars`);
+      this.log(`Agent response toolCalls count: ${response.toolCalls?.length || 0}`);
       
       return {
         ...response,
@@ -346,11 +349,27 @@ export class AgentBridge {
       this.log(`Passing ${tools.length} tools to LLM`);
       
       const llmResponse = await this.callLLM(messages, tools);
-      this.log(`LLM response received (${llmResponse.length} chars): ${llmResponse.substring(0, 200)}...`);
+      
+      // DIAGNOSTIC: Log the raw response
+      this.log(`=== DIAGNOSTIC: LLM RESPONSE ===`);
+      this.log(`LLM raw response length: ${llmResponse.length} chars`);
+      this.log(`LLM raw response preview: ${llmResponse.substring(0, 300)}`);
+      this.log(`=== END DIAGNOSTIC ===`);
       
       // Step 4: Parse response for tool calls
       const parsed = this.parseLLMResponse(llmResponse);
-      this.log(`Parsed response: ${parsed.toolCalls.length} tool calls found`);
+      
+      // DIAGNOSTIC: Log parsing results
+      this.log(`=== DIAGNOSTIC: PARSING RESULTS ===`);
+      this.log(`Parsed reasoning length: ${parsed.reasoning?.length || 0} chars`);
+      this.log(`Parsed reasoning preview: ${parsed.reasoning?.substring(0, 100)}`);
+      this.log(`Parsed toolCalls count: ${parsed.toolCalls.length}`);
+      if (parsed.toolCalls.length > 0) {
+        parsed.toolCalls.forEach((tc, i) => {
+          this.log(`  Tool ${i}: ${tc.toolName} - args: ${JSON.stringify(tc.args)}`);
+        });
+      }
+      this.log(`=== END DIAGNOSTIC ===`);
       
       if (parsed.toolCalls.length > 0) {
         this.log(`Found ${parsed.toolCalls.length} tool calls`);
@@ -375,6 +394,13 @@ export class AgentBridge {
       } else {
         finalText = parsed.reasoning;
       }
+      
+      // DIAGNOSTIC: Log final text before return
+      this.log(`=== DIAGNOSTIC: FINAL TEXT ===`);
+      this.log(`finalText length: ${finalText?.length || 0} chars`);
+      this.log(`finalText preview: ${finalText?.substring(0, 200)}`);
+      this.log(`iterations: ${iterations}`);
+      this.log(`=== END DIAGNOSTIC ===`);
       
       iterations = 1;
     } catch (error: any) {
@@ -701,16 +727,14 @@ export class AgentBridge {
     }
     
     this.log(`Parsed ${toolCalls.length} tool calls, reasoning: ${reasoning.substring(0, 100)}...`);
-    
     return { reasoning, toolCalls };
   }
 
   /**
    * Execute a tool call
    */
-  private async executeTool(toolCall: ToolCall): Promise<string> {
+  async executeTool(toolCall: ToolCall): Promise<string> {
     const { toolName, args } = toolCall;
-    
     this.log(`Executing tool: ${toolName} with args: ${JSON.stringify(args)}`);
     
     // Map tool names to CLI methods
@@ -718,31 +742,31 @@ export class AgentBridge {
       case 'read_file':
         this.log(`Reading file: ${args.path}`);
         return await this.cli.readFile(args.path);
-      
+        
       case 'write_file':
         this.log(`Writing file: ${args.path}`);
         return await this.cli.writeFile(args.path, args.content);
-      
+        
       case 'edit_file':
         this.log(`Editing file: ${args.path}`);
         return await this.cli.editFile(args.path, args.old_string, args.new_string);
-      
+        
       case 'list_directory':
         this.log(`Listing directory: ${args.path}`);
         return await this.cli.listDirectory(args.path);
-      
+        
       case 'regex_search':
         this.log(`Regex search: ${args.pattern} in ${args.path}`);
         return await this.cli.regexSearch(args.pattern, args.path);
-      
+        
       case 'i2vision_get_context':
         this.log(`Getting context for file: ${args.file}`);
         return JSON.stringify(await this.cli.runDiscovery());
-      
+        
       case 'i2vision_discover':
         this.log(`Running discovery on: ${args.path || 'project root'}`);
         return JSON.stringify(await this.cli.runDiscovery());
-      
+        
       default:
         this.log(`Unknown tool: ${toolName}`);
         throw new Error(`Unknown tool: ${toolName}`);
@@ -752,7 +776,7 @@ export class AgentBridge {
   /**
    * Dispose resources
    */
-  dispose(): void {
+  dispose() {
     this.log(`Disposing agent: ${this.config.key}`);
     this.isInitialized = false;
   }
@@ -760,7 +784,7 @@ export class AgentBridge {
   /**
    * Log a message
    */
-  private log(message: string): void {
+  log(message: string) {
     if (this.outputChannel) {
       this.outputChannel.appendLine(`[Agent:${this.config.key}] ${message}`);
     }

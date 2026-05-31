@@ -1,4 +1,4 @@
-﻿/**
+/**
  * i2-Vision CLI Integration
  * 
  * Bridges the VSCode extension with the i2vision CLI backend
@@ -519,6 +519,7 @@ export class I2VisionCLI {
 
   /**
    * Call LLM through Ollama HTTP API
+   * DIAGNOSTIC: Added detailed logging to trace the HTTP request/response
    */
   async callLLM(
     modelId: string,
@@ -527,6 +528,13 @@ export class I2VisionCLI {
     tools?: LLMTool[]
   ): Promise<string> {
     this.log(`Calling LLM: ${modelId} with ${messages.length} messages`);
+    this.log(`=== DIAGNOSTIC: LLM CALL START ===`);
+    this.log(`Model: ${modelId}`);
+    this.log(`Tools: ${tools?.length || 0}`);
+    this.log(`Temperature: ${options?.temperature || 0.2}`);
+    this.log(`Max tokens: ${options?.max_tokens || 4096}`);
+
+    const startTime = Date.now();
 
     try {
       const body: any = {
@@ -542,7 +550,11 @@ export class I2VisionCLI {
 
       if (tools?.length) {
         body.tools = tools;
+        this.log(`Body includes ${tools.length} tools`);
       }
+
+      this.log(`Sending HTTP POST to http://localhost:11434/api/chat`);
+      this.log(`Request body size: ${JSON.stringify(body).length} bytes`);
 
       // Direct HTTP to Ollama - no JAR, no spawn, no shell
       const res = await fetch('http://localhost:11434/api/chat', {
@@ -551,14 +563,38 @@ export class I2VisionCLI {
         body: JSON.stringify(body)
       });
 
+      const elapsed = Date.now() - startTime;
+      this.log(`HTTP response received after ${elapsed}ms - Status: ${res.status} ${res.statusText}`);
+
       if (!res.ok) {
+        const errorText = await res.text();
+        this.log(`HTTP error body: ${errorText.substring(0, 500)}`);
         throw new Error(`Ollama HTTP error: ${res.status} ${res.statusText}`);
       }
 
+      this.log(`Parsing JSON response...`);
       const data = await res.json() as any;
-      return JSON.stringify(data.message);
+      this.log(`Response parsed successfully`);
+      this.log(`Response structure: ${Object.keys(data).join(', ')}`);
+      
+      if (data.message) {
+        this.log(`Message content length: ${data.message.content?.length || 0} chars`);
+        this.log(`Message content preview: ${data.message.content?.substring(0, 200)}`);
+      } else {
+        this.log(`WARNING: No 'message' field in response!`);
+        this.log(`Full response: ${JSON.stringify(data).substring(0, 500)}`);
+      }
+
+      const result = JSON.stringify(data.message);
+      this.log(`Returning ${result.length} chars`);
+      this.log(`=== DIAGNOSTIC: LLM CALL END ===`);
+      
+      return result;
     } catch (error: any) {
-      this.log(`LLM call error: ${error.message}`);
+      const elapsed = Date.now() - startTime;
+      this.log(`LLM call error after ${elapsed}ms: ${error.message}`);
+      this.log(`Error stack: ${error.stack}`);
+      this.log(`=== DIAGNOSTIC: LLM CALL FAILED ===`);
       return `Error: LLM call failed - ${error.message}`;
     }
   }
@@ -820,13 +856,29 @@ export class I2VisionCLI {
         description: 'Basic Kotlin project structure',
         category: 'basic',
         files: [
-          { path: 'build.gradle.kts', content: '// Build file', template: false },
-          { path: 'settings.gradle.kts', content: '// Settings', template: false },
-          { path: 'src/main/kotlin/Main.kt', content: 'fun main() {}', template: false }
+          {
+            path: 'src/main/kotlin/Main.kt',
+            content: 'fun main() {\n    println("Hello, World!")\n}',
+            template: false
+          },
+          {
+            path: 'build.gradle.kts',
+            content: 'plugins {\n    kotlin("jvm") version "1.9.0"\n}\n\ndependencies {\n    implementation(kotlin("stdlib"))\n}',
+            template: false
+          }
         ],
         variables: [
-          { name: 'projectName', description: 'Project name', required: true },
-          { name: 'groupId', description: 'Maven group ID', defaultValue: 'com.example', required: false }
+          {
+            name: 'projectName',
+            description: 'Name of the project',
+            required: true
+          },
+          {
+            name: 'packageName',
+            description: 'Base package name',
+            required: false,
+            defaultValue: 'com.example'
+          }
         ]
       }
     ];

@@ -781,6 +781,3 @@ export class AgentBridge {
     this.log('AgentBridge disposed');
   }
 }
-
-
-

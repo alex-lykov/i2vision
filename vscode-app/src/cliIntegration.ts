@@ -9,6 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import * as vscode from 'vscode';
 
 const execAsync = promisify(exec);
 
@@ -68,10 +69,22 @@ export class CLI {
   private outputChannel?: any;
   private ollamaUrl: string = 'http://localhost:11434';
   private workspaceRoot: string;
+  private cliPath?: string;
 
   constructor(workspaceRoot: string, outputChannel?: any) {
     this.workspaceRoot = workspaceRoot;
     this.outputChannel = outputChannel;
+    
+    // Get CLI path from VSCode settings
+    try {
+      const config = vscode.workspace.getConfiguration('i2vision');
+      this.cliPath = config.get<string>('cli.path');
+      if (this.cliPath) {
+        this.log(`CLI path from settings: ${this.cliPath}`);
+      }
+    } catch (error: any) {
+      this.log(`Could not read CLI path from settings: ${error.message}`);
+    }
   }
 
   /**
@@ -347,8 +360,8 @@ export class CLI {
           ],
           variables: [
             { name: 'groupId', description: 'Maven group ID', required: true, defaultValue: 'com.example' },
-            { name: 'artifactId', description: 'Maven artifact ID', required: true, defaultValue: 'my-service' },
-            { name: 'packageName', description: 'Base package name', required: true, defaultValue: 'com.example.service' }
+            { name: 'artifactId', description: 'Maven artifact ID', required: true, defaultValue: 'demo' },
+            { name: 'packageName', description: 'Base package name', required: true, defaultValue: 'com.example.demo' }
           ]
         },
         {
@@ -358,12 +371,11 @@ export class CLI {
           description: 'Express.js REST API template',
           category: 'Node.js',
           files: [
-            { path: 'src/app.ts', content: '' },
+            { path: 'src/index.ts', content: '' },
             { path: 'package.json', content: '' }
           ],
           variables: [
-            { name: 'appName', description: 'Application name', required: true, defaultValue: 'my-api' },
-            { name: 'port', description: 'Server port', required: false, defaultValue: '3000' }
+            { name: 'projectName', description: 'Project name', required: true, defaultValue: 'my-api' }
           ]
         }
       ];
@@ -377,55 +389,63 @@ export class CLI {
   }
 
   /**
-   * Create a new project from template
+   * Create a project from a template
    */
-  async createProject(templateName: string, projectName: string, variables: Record<string, string>): Promise<boolean> {
-    this.log(`Creating project '${projectName}' from template '${templateName}'...`);
+  async createProject(templateName: string, targetDir: string, variables: Record<string, string>): Promise<boolean> {
+    this.log(`Creating project from template: ${templateName} in ${targetDir}`);
     try {
-      const rootDir = this.workspaceRoot || process.cwd();
-      const projectPath = path.join(rootDir, projectName);
-      
-      // Create project directory
-      await fs.promises.mkdir(projectPath, { recursive: true });
+      // Create target directory
+      await fs.promises.mkdir(targetDir, { recursive: true });
       
       // Create basic structure based on template
       if (templateName === 'spring-boot') {
-        const packageName = variables.packageName?.replace(/\./g, '/') || 'com/example/service';
-        const srcPath = path.join(projectPath, 'src', 'main', 'java', packageName);
-        await fs.promises.mkdir(srcPath, { recursive: true });
+        const groupId = variables.groupId || 'com.example';
+        const artifactId = variables.artifactId || 'demo';
+        const packageName = variables.packageName || 'com.example.demo';
         
-        // Create main application class
-        const mainClass = `package ${variables.packageName || 'com.example.service'};
+        // Create directory structure
+        const srcDir = path.join(targetDir, 'src', 'main', 'java', ...packageName.split('.'));
+        await fs.promises.mkdir(srcDir, { recursive: true });
+        
+        // Create Application.java
+        const appClass = artifactId.charAt(0).toUpperCase() + artifactId.slice(1);
+        const appContent = `package ${packageName};
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class Application {
+public class ${appClass}Application {
     public static void main(String[] args) {
-        SpringApplication.run(Application.class, args);
+        SpringApplication.run(${appClass}Application.class, args);
     }
-}
-`;
-        await fs.promises.writeFile(path.join(srcPath, 'Application.java'), mainClass);
+}`;
+        await fs.promises.writeFile(path.join(srcDir, `${appClass}Application.java`), appContent);
         
         // Create pom.xml
-        const pom = `<?xml version="1.0" encoding="UTF-8"?>
+        const pomContent = `<?xml version="1.0" encoding="UTF-8"?>
 <project xmlns="http://maven.apache.org/POM/4.0.0"
          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
+         https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-    
-    <groupId>${variables.groupId || 'com.example'}</groupId>
-    <artifactId>${variables.artifactId || projectName}</artifactId>
-    <version>1.0.0</version>
-    <packaging>jar</packaging>
     
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
         <version>3.2.0</version>
+        <relativePath/>
     </parent>
+    
+    <groupId>${groupId}</groupId>
+    <artifactId>${artifactId}</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>${artifactId}</name>
+    <description>Demo project for Spring Boot</description>
+    
+    <properties>
+        <java.version>17</java.version>
+    </properties>
     
     <dependencies>
         <dependency>
@@ -433,39 +453,52 @@ public class Application {
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
     </dependencies>
-</project>
-`;
-        await fs.promises.writeFile(path.join(projectPath, 'pom.xml'), pom);
+    
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>`;
+        await fs.promises.writeFile(path.join(targetDir, 'pom.xml'), pomContent);
         
       } else if (templateName === 'express') {
-        const srcPath = path.join(projectPath, 'src');
-        await fs.promises.mkdir(srcPath, { recursive: true });
+        const projectName = variables.projectName || 'my-api';
         
-        // Create main app file
-        const app = `import express from 'express';
+        // Create src directory
+        const srcDir = path.join(targetDir, 'src');
+        await fs.promises.mkdir(srcDir, { recursive: true });
+        
+        // Create index.ts
+        const indexContent = `import express, { Application, Request, Response } from 'express';
 
-const app = express();
-const PORT = ${variables.port || '3000'};
+const app: Application = express();
+const port = process.env.PORT || 3000;
 
-app.get('/', (req, res) => {
+app.use(express.json());
+
+app.get('/', (req: Request, res: Response) => {
   res.json({ message: 'Hello World!' });
 });
 
-app.listen(PORT, () => {
-  console.log(\`Server running on port \${PORT}\`);
-});
-`;
-        await fs.promises.writeFile(path.join(srcPath, 'app.ts'), app);
+app.listen(port, () => {
+  console.log(\`Server running at http://localhost:\${port}\`);
+});`;
+        await fs.promises.writeFile(path.join(srcDir, 'index.ts'), indexContent);
         
         // Create package.json
-        const packageJson = `{
+        const packageContent = `{
   "name": "${projectName}",
   "version": "1.0.0",
-  "main": "dist/app.js",
+  "description": "Express.js REST API",
+  "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/app.js",
-    "dev": "ts-node src/app.ts"
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts"
   },
   "dependencies": {
     "express": "^4.18.2"
@@ -476,12 +509,11 @@ app.listen(PORT, () => {
     "typescript": "^5.3.0",
     "ts-node": "^10.9.2"
   }
-}
-`;
-        await fs.promises.writeFile(path.join(projectPath, 'package.json'), packageJson);
+}`;
+        await fs.promises.writeFile(path.join(targetDir, 'package.json'), packageContent);
       }
       
-      this.log(`Project '${projectName}' created successfully at ${projectPath}`);
+      this.log(`Project created successfully in ${targetDir}`);
       return true;
     } catch (error: any) {
       this.log(`Error creating project: ${error.message}`);
@@ -492,20 +524,57 @@ app.listen(PORT, () => {
   /**
    * Get context for a specific file
    */
-  async getContext(filePath: string): Promise<any> {
+  async getContext(filePath: string): Promise<FileContext | null> {
     this.log(`Getting context for: ${filePath}`);
     try {
-      // Return mock context for testing
-      return {
-        filePath,
-        component: {
-          name: path.basename(filePath),
-          type: 'file',
-          path: filePath
-        },
-        layer: 'default',
-        dependencies: []
+      const content = await fs.promises.readFile(filePath, 'utf8');
+      const ext = path.extname(filePath).toLowerCase();
+      
+      let language = 'unknown';
+      const languageMap: Record<string, string> = {
+        '.java': 'java',
+        '.ts': 'typescript',
+        '.js': 'javascript',
+        '.py': 'python',
+        '.go': 'go',
+        '.rs': 'rust',
+        '.kt': 'kotlin',
+        '.scala': 'scala',
+        '.cs': 'csharp',
+        '.cpp': 'cpp',
+        '.c': 'c',
+        '.rb': 'ruby',
+        '.php': 'php',
+        '.swift': 'swift',
+        '.sql': 'sql',
+        '.xml': 'xml',
+        '.json': 'json',
+        '.yaml': 'yaml',
+        '.yml': 'yaml',
+        '.md': 'markdown',
+        '.html': 'html',
+        '.css': 'css',
+        '.scss': 'scss',
+        '.sh': 'shell',
+        '.bash': 'shell'
       };
+      
+      language = languageMap[ext] || 'unknown';
+      
+      const context: FileContext = {
+        path: filePath,
+        name: path.basename(filePath),
+        language,
+        content,
+        size: content.length,
+        lines: content.split('\n').length,
+        imports: this.extractImports(content, language),
+        classes: this.extractClasses(content, language),
+        functions: this.extractFunctions(content, language)
+      };
+      
+      this.log(`Context extracted: ${context.classes.length} classes, ${context.functions.length} functions`);
+      return context;
     } catch (error: any) {
       this.log(`Error getting context: ${error.message}`);
       return null;
@@ -513,13 +582,118 @@ app.listen(PORT, () => {
   }
 
   /**
+   * Extract imports from file content
+   */
+  private extractImports(content: string, language: string): string[] {
+    const imports: string[] = [];
+    
+    if (language === 'java') {
+      const importRegex = /^import\s+(static\s+)?([\w.*]+);/gm;
+      let match;
+      while ((match = importRegex.exec(content)) !== null) {
+        imports.push(match[2]);
+      }
+    } else if (language === 'typescript' || language === 'javascript') {
+      const importRegex = /^import\s+.*?\s+from\s+['"](.+?)['"];?/gm;
+      let match;
+      while ((match = importRegex.exec(content)) !== null) {
+        imports.push(match[1]);
+      }
+    } else if (language === 'python') {
+      const importRegex = /^(?:import\s+(\w+)|from\s+(\w+)\s+import)/gm;
+      let match;
+      while ((match = importRegex.exec(content)) !== null) {
+        imports.push(match[1] || match[2]);
+      }
+    }
+    
+    return imports;
+  }
+
+  /**
+   * Extract class names from file content
+   */
+  private extractClasses(content: string, language: string): string[] {
+    const classes: string[] = [];
+    
+    if (language === 'java' || language === 'typescript' || language === 'csharp') {
+      const classRegex = /^(?:public\s+|private\s+|protected\s+)?(?:abstract\s+|final\s+)?class\s+(\w+)/gm;
+      let match;
+      while ((match = classRegex.exec(content)) !== null) {
+        classes.push(match[1]);
+      }
+    } else if (language === 'python') {
+      const classRegex = /^class\s+(\w+)/gm;
+      let match;
+      while ((match = classRegex.exec(content)) !== null) {
+        classes.push(match[1]);
+      }
+    }
+    
+    return classes;
+  }
+
+  /**
+   * Extract function/method names from file content
+   */
+  private extractFunctions(content: string, language: string): string[] {
+    const functions: string[] = [];
+    
+    if (language === 'java' || language === 'typescript' || language === 'csharp') {
+      const funcRegex = /^(?:public\s+|private\s+|protected\s+)?(?:static\s+)?(?:\w+(?:<[^>]+>)?\s+)?(\w+)\s*\([^)]*\)\s*(?:\{|throws)/gm;
+      let match;
+      while ((match = funcRegex.exec(content)) !== null) {
+        if (!['if', 'for', 'while', 'switch', 'catch', 'constructor'].includes(match[1])) {
+          functions.push(match[1]);
+        }
+      }
+    } else if (language === 'python') {
+      const funcRegex = /^def\s+(\w+)\s*\(/gm;
+      let match;
+      while ((match = funcRegex.exec(content)) !== null) {
+        functions.push(match[1]);
+      }
+    }
+    
+    return functions;
+  }
+
+  /**
    * Check if CLI is available
    */
   async isAvailable(): Promise<boolean> {
     try {
-      // For now, always return false as we're using direct HTTP
-      return false;
+      // Check if CLI path is configured
+      if (!this.cliPath) {
+        this.log('CLI path not configured in settings');
+        return false;
+      }
+      
+      // Check if JAR file exists
+      const jarExists = await fs.promises.access(this.cliPath, fs.constants.F_OK)
+        .then(() => true)
+        .catch(() => false);
+      
+      if (!jarExists) {
+        this.log(`CLI JAR not found at: ${this.cliPath}`);
+        return false;
+      }
+      
+      this.log(`CLI JAR found at: ${this.cliPath}`);
+      
+      // Try to run CLI with --version or --help to verify it works
+      try {
+        const command = `java -jar "${this.cliPath}" --version`;
+        const { stdout } = await this.runCommand(command);
+        this.log(`CLI version check successful: ${stdout.trim()}`);
+        return true;
+      } catch (error: any) {
+        this.log(`CLI version check failed: ${error.message}`);
+        // JAR exists but might not be executable, still return true
+        return true;
+      }
     } catch (error: any) {
+      this.log(`CLI availability check error: ${error.message}`);
       return false;
     }
   }
@@ -550,26 +724,22 @@ export interface ComponentInfo {
   type?: string;
   responsibilities?: string[];
   dependencies?: string[];
+  metadata?: Record<string, any>;
 }
 
 export interface RelationshipInfo {
-  source: string;
-  target: string;
+  from: string;
+  to: string;
   type: string;
+  description?: string;
 }
 
 export interface LayerInfo {
   name: string;
-  level: number;
+  description?: string;
   components: string[];
-}
-
-export interface ViolationInfo {
-  message: string;
-  severity: 'error' | 'warning';
-  source?: string;
-  target?: string;
-  rule?: string;
+  allowedDependencies?: string[];
+  level?: number;
 }
 
 export interface DiscoveryResult {
@@ -581,6 +751,9 @@ export interface DiscoveryResult {
   violations?: ViolationInfo[];
 }
 
+/**
+ * Template types
+ */
 export interface TemplateVariable {
   name: string;
   description: string;
@@ -597,8 +770,41 @@ export interface TemplateInfo {
   name: string;
   path: string;
   type: string;
-  description?: string;
-  category?: string;
+  description: string;
+  category: string;
   files: TemplateFile[];
   variables: TemplateVariable[];
+}
+
+/**
+ * File context for LLM
+ */
+export interface FileContext {
+  path: string;
+  name: string;
+  language: string;
+  content: string;
+  size: number;
+  lines: number;
+  imports: string[];
+  classes: string[];
+  functions: string[];
+  filePath?: string;
+  component?: string;
+  layer?: string;
+  dependencies?: string[];
+}
+
+/**
+ * Architecture violation info
+ */
+export interface ViolationInfo {
+  severity: 'error' | 'warning' | 'info';
+  rule: string;
+  message: string;
+  file?: string;
+  line?: number;
+  suggestion?: string;
+  source?: string;
+  target?: string;
 }

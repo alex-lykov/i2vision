@@ -68,6 +68,10 @@ export class LocalAgentProvider {
     try {
       // Load default config from extension resources
       this.defaultConfig = await this.loadDefaultConfig();
+      
+      // Load project-specific CLI configuration
+      await this.loadProjectCliConfig();
+      
       this.log('Default configuration loaded successfully');
       this.log('LocalAgentProvider initialization complete');
     } catch (error: any) {
@@ -106,6 +110,42 @@ export class LocalAgentProvider {
         }
       });
     });
+  }
+
+  /**
+   * Load project-specific CLI configuration from .vision-ai/config/cli.yaml
+   * and update VSCode workspace settings
+   */
+  private async loadProjectCliConfig(): Promise<void> {
+    const cliConfigPath = path.join(this.visionAiDir, 'config', 'cli.yaml');
+    
+    try {
+      const data = await fs.promises.readFile(cliConfigPath, 'utf8');
+      const yamlConfig = yaml.load(data) as any;
+      
+      if (yamlConfig?.cli?.path) {
+        const cliPath = yamlConfig.cli.path;
+        this.log(`CLI path loaded from project config: ${cliPath}`);
+        
+        // Resolve relative paths to absolute
+        const resolvedPath = path.isAbsolute(cliPath) 
+          ? cliPath 
+          : path.join(this.workspaceRoot, cliPath);
+        
+        // Update VSCode workspace settings for this project
+        const config = vscode.workspace.getConfiguration('i2vision');
+        await config.update('cli.path', resolvedPath, vscode.ConfigurationTarget.Workspace);
+        this.log(`CLI path set in workspace settings: ${resolvedPath}`);
+      } else {
+        this.log('No CLI path specified in project config');
+      }
+      
+      if (yamlConfig?.cli?.enabled === false) {
+        this.log('CLI disabled in project config');
+      }
+    } catch (error: any) {
+      this.log(`No project CLI config found at ${cliConfigPath} (optional)`);
+    }
   }
 
   /**

@@ -75,16 +75,52 @@ export class CLI {
     this.workspaceRoot = workspaceRoot;
     this.outputChannel = outputChannel;
     
-    // Get CLI path from VSCode settings
+    // Get CLI path from VSCode settings (may have been set by LocalAgentProvider from project config)
     try {
       const config = vscode.workspace.getConfiguration('i2vision');
       this.cliPath = config.get<string>('cli.path');
       if (this.cliPath) {
         this.log(`CLI path from settings: ${this.cliPath}`);
+      } else {
+        // Fallback: try to load directly from project config file
+        this.cliPath = this.loadCliPathFromProjectConfig();
+        if (this.cliPath) {
+          this.log(`CLI path from project config file: ${this.cliPath}`);
+        }
       }
     } catch (error: any) {
       this.log(`Could not read CLI path from settings: ${error.message}`);
     }
+  }
+
+  /**
+   * Load CLI path directly from .vision-ai/config/cli.yaml
+   * This is a fallback if VSCode settings don't have the path
+   */
+  private loadCliPathFromProjectConfig(): string | undefined {
+    const cliConfigPath = path.join(this.workspaceRoot, '.vision-ai', 'config', 'cli.yaml');
+    
+    try {
+      if (!fs.existsSync(cliConfigPath)) {
+        return undefined;
+      }
+      
+      const data = fs.readFileSync(cliConfigPath, 'utf8');
+      const yaml = require('js-yaml');
+      const yamlConfig = yaml.load(data) as any;
+      
+      if (yamlConfig?.cli?.path) {
+        const cliPath = yamlConfig.cli.path;
+        // Resolve relative paths
+        return path.isAbsolute(cliPath) 
+          ? cliPath 
+          : path.join(this.workspaceRoot, cliPath);
+      }
+    } catch (error: any) {
+      this.log(`Could not load CLI config from project: ${error.message}`);
+    }
+    
+    return undefined;
   }
 
   /**

@@ -121,6 +121,15 @@ class RolloutManager {
             val configDir = File(visionAiDir, "config")
             if (configDir.mkdirs()) created.add(configDir.path) else skipped.add(configDir.path)
 
+            // 7a. Create CLI configuration file
+            val cliConfigFile = File(configDir, "cli.yaml")
+            if (!cliConfigFile.exists()) {
+                cliConfigFile.writeText(generateCliConfigTemplate())
+                created.add(cliConfigFile.path)
+            } else {
+                skipped.add(cliConfigFile.path)
+            }
+
             val clustersDir = File(visionAiDir, "clusters")
             if (clustersDir.mkdirs()) created.add(clustersDir.path) else skipped.add(clustersDir.path)
 
@@ -198,6 +207,16 @@ class RolloutManager {
             }
         }
 
+        // Check CLI configuration (optional, not required for validation)
+        val configDir = File(visionAiDir, "config")
+        if (configDir.exists()) {
+            val cliConfigFile = File(configDir, "cli.yaml")
+            if (!cliConfigFile.exists()) {
+                // CLI config is optional, so just log it
+                println("[ROLLOUT] CLI config not found at ${cliConfigFile.path} (optional)")
+            }
+        }
+
         // Semantic cache is NOT in project root - it's in user home via I2VisionPaths
 
         return RolloutValidationResult(
@@ -238,6 +257,35 @@ class RolloutManager {
     private fun getVersion(projectRoot: File): String? {
         val versionFile = File(projectRoot, "${StorageConstants.VISION_AI_DIR}/.version")
         return if (versionFile.exists()) versionFile.readText().trim() else null
+    }
+
+    /**
+     * Generate CLI configuration template.
+     * 
+     * @return CLI configuration YAML template
+     */
+    private fun generateCliConfigTemplate(): String {
+        return """# CLI Configuration for i2-Vision
+# This file is project-specific and can be committed to version control
+# 
+# The CLI path can be:
+# - Absolute path: "D:/proj/AI/i2-vision/i2vision-cli/build/libs/i2vision-cli-1.0.0-all.jar"
+# - Relative to project root: "../i2vision-cli/build/libs/i2vision-cli-1.0.0-all.jar"
+# - Environment variable: "${'$'}{I2VISION_CLI_PATH}"
+
+cli:
+  # Path to the i2vision-cli JAR file
+  path: ""
+  
+  # Whether CLI is enabled for this project
+  enabled: true
+  
+  # Auto-detect CLI from environment
+  autoDetect: false
+  
+  # Minimum CLI version required (optional)
+  minVersion: "1.0.0"
+""".trimIndent()
     }
 
     /**

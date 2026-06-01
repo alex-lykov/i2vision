@@ -6,6 +6,11 @@
  * 
  * UPDATED: Implements modern agentic loop with reflection - LLM sees tool results
  * and decides if more tools are needed or if task is complete.
+ * 
+ * FIXES APPLIED:
+ * - Tool result truncation to prevent context window overflow
+ * - Repeated tool call detection to prevent infinite loops
+ * - Better logging for debugging
  */
 
 import * as vscode from 'vscode';
@@ -209,6 +214,15 @@ export interface Message {
 }
 
 /**
+ * Track tool call history for loop detection
+ */
+interface ToolCallHistory {
+  toolName: string;
+  argsSignature: string;
+  iteration: number;
+}
+
+/**
  * AgentBridge - Manages agent lifecycle and communication
  */
 export class AgentBridge {
@@ -216,6 +230,10 @@ export class AgentBridge {
   private cli: CLI;
   private isInitialized: boolean = false;
   private outputChannel?: vscode.OutputChannel;
+
+  // Truncation settings
+  private static readonly MAX_TOOL_RESULT_LENGTH = 2000; // characters
+  private static readonly MAX_LIST_FILES_RESULTS = 100; // max files to return
 
   constructor(config: AgentConfig, outputChannel?: vscode.OutputChannel) {
     this.config = config;
@@ -328,6 +346,15 @@ export class AgentBridge {
   }
 
   /**
+   * Create a signature for tool call deduplication
+   */
+  private createToolCallSignature(toolName: string, args: Record<string, any>): string {
+    // Sort args keys for consistent signature
+    const sortedArgs = Object.keys(args).sort().map(k => `${k}=${JSON.stringify(args[k])}`).join('|');
+    return `${toolName}:${sortedArgs}`;
+  }
+
+  /**
    * Execute the agent loop with reflection (MODERN APPROACH)
    * 
    * This implements the task-complete pattern:
@@ -335,6 +362,11 @@ export class AgentBridge {
    * - Tool results are fed back to LLM for analysis
    * - LLM decides when task is complete (no more tool calls)
    * - maxIterations is a safety net, not the primary control
+   * 
+   * FIXES:
+   * - Truncates large tool results to prevent context window overflow
+   * - Detects repeated tool calls to prevent infinite loops
+   * - Better error handling and logging
    */
   private async executeAgentLoop(
     userInput: string,
@@ -342,6 +374,7 @@ export class AgentBridge {
     context?: ProcessContext
   ): Promise<Omit<AgentResponse, 'durationMs' | 'success'>> {
     const allToolCalls: ToolCall[] = [];
+    const toolCallHistory: ToolCallHistory[] = [];
     let iterations = 0;
     let finalText = '';
     let lastSanitizedContent = '';
@@ -397,15 +430,43 @@ export class AgentBridge {
             };
             
             this.log(`  → Executing: ${toolCall.toolName}(${JSON.stringify(toolCall.args)})`);
+            
+            // Check for repeated tool calls (loop detection)
+            const signature = this.createToolCallSignature(toolCall.toolName, toolCall.args);
+            const previousCalls = toolCallHistory.filter(h => h.argsSignature === signature);
+            
+            if (previousCalls.length >= 2) {
+              // Same tool called 3+ times with same args = stuck in loop
+              this.log(`  ⚠️ DETECTED: Repeated tool call (3rd time). Forcing completion.`);
+              finalText = sanitizedContent + '\n\n[Note: I appear to be stuck in a loop. Based on the information gathered, I cannot make further progress with the current approach.]';
+              break;
+            }
+            
+            toolCallHistory.push({
+              toolName: toolCall.toolName,
+              argsSignature: signature,
+              iteration: iterations
+            });
+            
             const result = await this.executeTool(toolCall);
+            
+            // TRUNCATE large results to prevent context window overflow
+            let resultText = result;
+            if (resultText.length > AgentBridge.MAX_TOOL_RESULT_LENGTH) {
+              resultText = resultText.substring(0, AgentBridge.MAX_TOOL_RESULT_LENGTH) + 
+                `\n\n[... truncated ${resultText.length - AgentBridge.MAX_TOOL_RESULT_LENGTH} more chars ...]`;
+              this.log(`  ← Result truncated from ${result.length} to ${AgentBridge.MAX_TOOL_RESULT_LENGTH} chars`);
+            } else {
+              this.log(`  ← Result: ${resultText.length} chars`);
+            }
+            
             toolCall.result = result;
             allToolCalls.push(toolCall);
-            this.log(`  ← Result: ${result.length} chars`);
             
-            // Feed tool result back to LLM
+            // Feed tool result back to LLM (truncated version)
             messages.push({
               role: 'tool',
-              content: result,
+              content: resultText,
               tool_call_id: tc.name
             });
           } catch (error: any) {
@@ -546,7 +607,7 @@ export class AgentBridge {
         type: "function",
         function: {
           name: "list_files",
-          description: "List files and directories",
+          description: "List files and directories (limited to 100 results)",
           parameters: {
             type: "object",
             properties: {
@@ -566,7 +627,7 @@ export class AgentBridge {
         type: "function",
         function: {
           name: "regex_search",
-          description: "Search for a regex pattern across files",
+          description: "Search for a regex pattern across files (returns up to 50 matches)",
           parameters: {
             type: "object",
             properties: {
@@ -677,7 +738,12 @@ export class AgentBridge {
         const recursive = toolCall.args.recursive || false;
         const fullPath = dirPath.startsWith(workspaceRoot) ? dirPath : path.join(workspaceRoot, dirPath);
         const files = await this.listFiles(fullPath, recursive);
-        return files.join('\n');
+        // Limit results to prevent context explosion
+        const limitedFiles = files.slice(0, AgentBridge.MAX_LIST_FILES_RESULTS);
+        if (files.length > AgentBridge.MAX_LIST_FILES_RESULTS) {
+          return limitedFiles.join('\n') + `\n\n[... and ${files.length - AgentBridge.MAX_LIST_FILES_RESULTS} more files]`;
+        }
+        return limitedFiles.join('\n');
       }
       
       case 'write_file': {
@@ -715,7 +781,9 @@ export class AgentBridge {
           throw new Error('Missing pattern argument for regex_search');
         }
         const fullPath = searchPath.startsWith(workspaceRoot) ? searchPath : path.join(workspaceRoot, searchPath);
+        this.log(`regex_search: pattern="${pattern}", path="${fullPath}"`);
         const results = await this.searchFiles(pattern, fullPath);
+        this.log(`regex_search result: ${results.length} matches`);
         return results.join('\n');
       }
       
@@ -777,47 +845,82 @@ export class AgentBridge {
   }
 
   /**
-   * Search for a regex pattern in files
+   * Search for a pattern in files using ripgrep or PowerShell
    */
-  private async searchFiles(pattern: string, searchPath: string): Promise<string[]> {
-    const results: string[] = [];
-    const stat = await fs.promises.stat(searchPath);
+  private async searchFiles(pattern: string, dirPath: string): Promise<string[]> {
+    this.log(`searchFiles: pattern="${pattern}", dirPath="${dirPath}"`);
     
-    if (stat.isFile()) {
-      const content = await this.readFile(searchPath);
-      const lines = content.split('\n');
-      const regex = new RegExp(pattern, 'g');
+    try {
+      // Try ripgrep first (faster, better regex support)
+      const rgPath = await this.findRipgrep();
+      if (rgPath) {
+        this.log(`Using ripgrep: ${rgPath}`);
+        const command = `"${rgPath}" --max-count 50 --line-number --column --with-filename "${pattern}" "${dirPath}"`;
+        this.log(`Executing: ${command}`);
+        const { stdout } = await this.runCommand(command);
+        const results = stdout.split('\n').filter(line => line.trim()).slice(0, 50);
+        this.log(`ripgrep found ${results.length} matches`);
+        return results;
+      }
       
-      for (let i = 0; i < lines.length; i++) {
-        if (regex.test(lines[i])) {
-          results.push(`${searchPath}:${i + 1}: ${lines[i]}`);
-        }
-      }
-    } else if (stat.isDirectory()) {
-      const entries = await fs.promises.readdir(searchPath, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isFile()) {
-          const fullPath = path.join(searchPath, entry.name);
-          const subResults = await this.searchFiles(pattern, fullPath);
-          results.push(...subResults);
-        }
-      }
+      // Fallback to PowerShell
+      this.log('Falling back to PowerShell search');
+      const command = `powershell -Command "Get-ChildItem -Path '${dirPath}' -Recurse -File -ErrorAction SilentlyContinue | Select-String -Pattern '${pattern}' -SimpleMatch | Select-Object -First 50 -ExpandProperty Line"`;
+      this.log(`Executing: ${command}`);
+      const { stdout } = await this.runCommand(command);
+      const results = stdout.split('\n').filter(line => line.trim()).slice(0, 50);
+      this.log(`PowerShell found ${results.length} matches`);
+      return results;
+    } catch (error: any) {
+      this.log(`searchFiles error: ${error.message}`);
+      return [];
     }
-    
-    return results;
   }
 
   /**
-   * Log a message to the output channel
+   * Find ripgrep executable
    */
-  private log(message: string): void {
-    const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
-    const formattedMessage = `[${timestamp}] [AgentBridge] ${message}`;
-    
-    if (this.outputChannel) {
-      this.outputChannel.appendLine(formattedMessage);
+  private async findRipgrep(): Promise<string | null> {
+    try {
+      // Check common locations
+      const candidates = [
+        'rg',
+        'ripgrep',
+        path.join(process.env.LOCALAPPDATA || '', 'Programs', 'ripgrep', 'rg.exe'),
+        path.join('C:', 'Program Files', 'ripgrep', 'rg.exe'),
+      ];
+      
+      for (const candidate of candidates) {
+        try {
+          const { stdout } = await this.runCommand(`"${candidate}" --version`);
+          if (stdout.includes('ripgrep')) {
+            return candidate;
+          }
+        } catch {
+          continue;
+        }
+      }
+    } catch {
+      // Ignore errors
     }
-    console.log(formattedMessage);
+    
+    return null;
+  }
+
+  /**
+   * Run a shell command
+   */
+  private async runCommand(command: string): Promise<{ stdout: string, stderr: string }> {
+    return new Promise((resolve, reject) => {
+      const { exec } = require('child_process');
+      exec(command, { maxBuffer: 10 * 1024 * 1024 }, (error: any, stdout: string, stderr: string) => {
+        if (error && !stdout) {
+          reject(error);
+        } else {
+          resolve({ stdout, stderr });
+        }
+      });
+    });
   }
 
   /**
@@ -826,5 +929,17 @@ export class AgentBridge {
   dispose(): void {
     this.log(`Disposing AgentBridge for agent: ${this.config.key}`);
     this.isInitialized = false;
+  }
+
+  /**
+   * Log a message to the output channel
+   */
+  private log(message: string): void {
+    const timestamp = new Date().toLocaleTimeString();
+    const formatted = `[${timestamp}] [AgentBridge:${this.config.key}] ${message}`;
+    if (this.outputChannel) {
+      this.outputChannel.appendLine(formatted);
+    }
+    console.log(formatted);
   }
 }

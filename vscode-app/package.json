@@ -21,7 +21,8 @@
         "onCommand:i2vision.verifyTools",
         "onCommand:i2vision.checkAgentConfig",
         "onCommand:i2vision.quickDiagnostic",
-        "onCommand:i2vision.reloadAgentConfig"
+        "onCommand:i2vision.reloadAgentConfig",
+        "onCommand:i2vision.init"
     ],
     "main": "./out/extension.js",
     "contributes": {
@@ -66,6 +67,11 @@
             {
                 "command": "i2vision.createProject",
                 "title": "Create New Project",
+                "category": "i2-Vision"
+            },
+            {
+                "command": "i2vision.init",
+                "title": "Initialize VSLFC Structure (i2vision.init)",
                 "category": "i2-Vision"
             },
             {

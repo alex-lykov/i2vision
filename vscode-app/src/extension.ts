@@ -105,6 +105,12 @@ function registerCommands(context: vscode.ExtensionContext, workspaceRoot: strin
     });
     context.subscriptions.push(createProjectCmd);
 
+    // Initialize VSLFC structure command (i2vision.init)
+    const initCmd = vscode.commands.registerCommand('i2vision.init', async () => {
+        await handleInitializeProject(workspaceRoot);
+    });
+    context.subscriptions.push(initCmd);
+
     // Open project command
     const openProjectCmd = vscode.commands.registerCommand('i2vision.openProject', async (item?: I2VisionTreeItem) => {
         await handleOpenProject(item);
@@ -336,6 +342,104 @@ async function handleCreateProject(workspaceRoot: string) {
     if (success) {
         vscode.window.showInformationMessage(`Project '${projectName}' created successfully!`);
         treeProvider.refresh();
+    }
+}
+
+/**
+ * Handle initialize project command (i2vision.init)
+ * Initializes the VSLFC structure in the current project using RolloutManager
+ */
+async function handleInitializeProject(workspaceRoot: string) {
+    outputChannel.appendLine('Initialize project command invoked (i2vision.init)');
+    
+    if (!workspaceRoot) {
+        vscode.window.showErrorMessage('No workspace folder open. Cannot initialize project.');
+        return;
+    }
+    
+    try {
+        // Call the storage-core RolloutManager via CLI or directly
+        // For now, we'll use a simple approach: create the .vision-ai structure directly
+        
+        const visionAiDir = require('path').join(workspaceRoot, '.vision-ai');
+        const fs = require('fs');
+        
+        // Check if already initialized
+        if (fs.existsSync(visionAiDir)) {
+            const confirm = await vscode.window.showWarningMessage(
+                'This project already has a .vision-ai directory. Do you want to re-initialize?',
+                { modal: true },
+                'Yes', 'No'
+            );
+            
+            if (confirm !== 'Yes') {
+                return;
+            }
+        }
+        
+        outputChannel.appendLine(`Initializing VSLFC structure in: ${workspaceRoot}`);
+        vscode.window.showInformationMessage('Initializing VSLFC structure...');
+        
+        // Create .vision-ai root
+        fs.mkdirSync(visionAiDir, { recursive: true });
+        
+        // Create layer directories
+        const layers = ['vision', 'code', 'logic', 'structure', 'flow', 'data', 'api'];
+        for (const layer of layers) {
+            const layerDir = require('path').join(visionAiDir, layer);
+            fs.mkdirSync(layerDir, { recursive: true });
+            
+            // Create agent config
+            const agentConfig = require('path').join(layerDir, `${layer}-agent.yaml`);
+            if (!fs.existsSync(agentConfig)) {
+                fs.writeFileSync(agentConfig, `# Agent Configuration for ${layer} layer\nlayer: ${layer}\n`);
+            }
+            
+            // Create contract file
+            const contractFile = require('path').join(layerDir, 'contract.yaml');
+            if (!fs.existsSync(contractFile)) {
+                fs.writeFileSync(contractFile, `# Contract for ${layer} layer\nversion: "2.0"\nlayer: ${layer}\n`);
+            }
+        }
+        
+        // Create config directory with CLI config
+        const configDir = require('path').join(visionAiDir, 'config');
+        fs.mkdirSync(configDir, { recursive: true });
+        
+        const cliConfigFile = require('path').join(configDir, 'cli.yaml');
+        if (!fs.existsSync(cliConfigFile)) {
+            fs.writeFileSync(cliConfigFile, `# CLI Configuration for i2-Vision
+cli:
+  path: ""
+  enabled: true
+  autoDetect: false
+  minVersion: "1.0.0"
+`);
+        }
+        
+        // Create other control-plane directories
+        const dirs = ['clusters', 'overrides', 'cross-module', 'learning', 'project'];
+        for (const dir of dirs) {
+            fs.mkdirSync(require('path').join(visionAiDir, dir), { recursive: true });
+        }
+        
+        // Write version file
+        const versionFile = require('path').join(visionAiDir, '.version');
+        fs.writeFileSync(versionFile, '2.0.0');
+        
+        // Create requirements directory for vision layer
+        const requirementsDir = require('path').join(visionAiDir, 'vision', 'requirements');
+        fs.mkdirSync(requirementsDir, { recursive: true });
+        
+        outputChannel.appendLine('VSLFC structure initialized successfully');
+        vscode.window.showInformationMessage('✓ VSLFC structure initialized! Check .vision-ai directory.');
+        
+        // Refresh tree view
+        treeProvider.refresh();
+        
+    } catch (error: any) {
+        outputChannel.appendLine(`Initialization failed: ${error.message}`);
+        vscode.window.showErrorMessage(`Failed to initialize project: ${error.message}`);
     }
 }
 

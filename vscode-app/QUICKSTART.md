@@ -1,195 +1,125 @@
-# i2-Vision VSCode Extension - Quick Start Guide
+# Quick Start: Using i2vision.init
 
-## 🚀 Getting Started in 3 Steps
+## ✅ Command is Now Available
 
-### Step 1: Install Dependencies
-```bash
-cd vscode-app
-npm install
+The `i2vision.init` command has been successfully added to the extension.
+
+## How to Use
+
+### Step 1: Reload VSCode Extension
+
+After the extension rebuilds, you need to reload VSCode:
+
+1. Press `Ctrl+Shift+P` (Windows/Linux) or `Cmd+Shift+P` (macOS)
+2. Type: `Developer: Reload Window`
+3. Press Enter
+
+### Step 2: Run i2vision.init
+
+**Method 1: Command Palette**
+```
+1. Press Ctrl+Shift+P
+2. Type: "i2vision.init"
+3. Select: "i2vision.init: Initialize VSLFC Structure (i2vision.init)"
+4. Press Enter
 ```
 
-### Step 2: Compile TypeScript
-```bash
-npm run compile
+**Method 2: Search by Title**
+```
+1. Press Ctrl+Shift+P
+2. Type: "Initialize VSLFC"
+3. Select the command
+4. Press Enter
 ```
 
-### Step 3: Launch Extension Development Host
-1. Open the `vscode-app` folder in VSCode
-2. Press `F5` (or go to Run → Start Debugging)
-3. A new VSCode window will open with the extension loaded
-4. Look for the **i2-Vision Explorer** icon in the Activity Bar (left sidebar)
+### Step 3: Verify
 
-## 📁 Extension Structure
+After running the command, check your project root:
 
 ```
-vscode-app/
-├── src/
-│   ├── extension.ts          # Main entry point
-│   ├── treeViewProvider.ts   # Tree view data provider
-│   └── test/                 # Test suite
-│       ├── suite/
-│       │   ├── index.ts      # Test runner
-│       │   └── extension.test.ts  # Unit tests
-│       └── runTest.ts        # Test entry point
-├── resources/
-│   ├── i2vision-icon.svg     # Extension icon
-│   └── refresh.svg           # Refresh icon
-├── out/                      # Compiled JavaScript (auto-generated)
-├── .vscode/
-│   ├── launch.json           # Debug configurations
-│   └── tasks.json            # Build tasks
-├── package.json              # Extension manifest
-├── tsconfig.json             # TypeScript configuration
-├── README.md                 # Full documentation
-├── CHANGELOG.md              # Version history
-├── .vscodeignore             # Files to exclude from package
-└── .gitignore                # Git ignore rules
+your-project/
+└── .vision-ai/          ← Should be created
+    ├── .version
+    ├── vision/
+    ├── code/
+    ├── logic/
+    ├── structure/
+    ├── flow/
+    ├── data/
+    ├── api/
+    └── config/
+        └── cli.yaml
 ```
 
-## 🎯 Available Commands
+## Troubleshooting
 
-| Command | Description | How to Access |
-|---------|-------------|---------------|
-| `i2vision.helloWorld` | Display Hello World message | Command Palette |
-| `i2vision.createProject` | Create new project | Command Palette |
-| `i2vision.openProject` | Open existing project | Tree item context menu |
-| `i2vision.refreshTree` | Refresh tree view | Tree view title bar |
+### Command Still Not Showing
 
-## 🌳 Tree View Structure
+If `i2vision.init` doesn't appear:
 
-```
-i2-Vision Explorer
-├── 📁 Projects
-│   ├── 📄 My First Project
-│   ├── 📄 Demo Application
-│   └── 📄 Test Project
-├── 📁 Templates
-│   ├── 📄 Basic Template
-│   ├── 📄 Advanced Template
-│   └── 📄 Enterprise Template
-├── ⚙️ Settings
-└── 📖 Documentation
-```
+1. **Check extension is running**:
+   - Look for "i2-Vision" in the Activity Bar (left sidebar)
+   - Check Output panel → "i2-Vision" channel
 
-## 🛠 Development Commands
+2. **Verify package.json**:
+   ```bash
+   # In vscode-app directory
+   type package.json | findstr "i2vision.init"
+   ```
+   Should show:
+   - `"onCommand:i2vision.init"` in activationEvents
+   - `"command": "i2vision.init"` in contributes.commands
 
-```bash
-# Compile TypeScript
-npm run compile
+3. **Rebuild extension**:
+   ```bash
+   cd D:\proj\AI\i2-vision\vscode-app
+   npm run compile
+   ```
 
-# Watch for changes (auto-compile)
-npm run watch
+4. **Check compiled output**:
+   ```bash
+   type out\extension.js | findstr "i2vision.init"
+   ```
 
-# Run linter
-npm run lint
+### Extension Not Activating
 
-# Run tests
-npm test
+If the extension doesn't activate:
 
-# Package extension
-vsce package
-```
+1. Open a project folder in VSCode
+2. Check Output panel → Select "i2-Vision" from dropdown
+3. Look for: "i2-Vision extension is now active"
 
-## 🐛 Debugging
+### Permission Errors
 
-### Launch Configurations
-- **Run Extension**: Launches the extension in a new VSCode window
-- **Extension Tests**: Runs the test suite
+If you see permission errors:
 
-### Setting Breakpoints
-1. Click in the gutter next to a line number in TypeScript files
-2. Press `F5` to start debugging
-3. The extension will pause at breakpoints
+1. Make sure you have write access to the project directory
+2. Run VSCode as Administrator (Windows) if needed
+3. Check the Output channel for specific error messages
 
-## ✅ Testing
+## What the Command Does
 
-### Unit Tests
-```bash
-npm test
-```
+When you run `i2vision.init`:
 
-Tests verify:
-- Command registration
-- Tree view provider
-- Extension activation
+1. ✅ Creates `.vision-ai` directory in project root
+2. ✅ Creates 7 layer directories (vision, code, logic, structure, flow, data, api)
+3. ✅ Generates agent config templates for each layer
+4. ✅ Generates contract templates for each layer
+5. ✅ Creates control-plane directories (config, clusters, overrides, etc.)
+6. ✅ Creates CLI configuration file (`.vision-ai/config/cli.yaml`)
+7. ✅ Creates requirements directory for vision layer
+8. ✅ Writes version file (`.vision-ai/.version`)
 
-### Manual Testing
-1. Launch extension with `F5`
-2. Click the i2-Vision icon in Activity Bar
-3. Verify tree view appears with sample data
-4. Click refresh button to reload tree
-5. Right-click items for context menu
+## Next Steps
 
-## 📦 Packaging for Distribution
+After initialization:
 
-```bash
-# Install vsce globally
-npm install -g vsce
+1. **Configure CLI**: Edit `.vision-ai/config/cli.yaml` with your CLI JAR path
+2. **Customize Agents**: Edit layer-specific agent configs
+3. **Define Contracts**: Update contract files for your project needs
+4. **Add Requirements**: Create requirement files in `.vision-ai/vision/requirements/`
 
-# Create .vsix package
-vsce package
+## Related Documentation
 
-# Install in VSCode
-# Go to Extensions → ⋯ → Install from VSIX...
-```
-
-## 🔧 Configuration
-
-### package.json Contributions
-- **Views Container**: Activity bar icon
-- **Views**: Tree view in sidebar
-- **Commands**: Available actions
-- **Menus**: Context menu items
-
-### TypeScript Configuration
-- Target: ES2022
-- Module: CommonJS
-- Strict mode: Enabled
-- Source maps: Enabled
-
-## 📝 Next Steps
-
-1. **Connect to Backend**: Integrate with Kotlin application API
-2. **Add Project Creation**: Implement actual project creation logic
-3. **File System Integration**: Read real projects from disk
-4. **Add More Commands**: Expand functionality
-5. **Improve UI**: Add more icons and visual feedback
-
-## 🆘 Troubleshooting
-
-### Extension Not Appearing
-- Check Activation Events in package.json
-- Verify extension is enabled in Extensions view
-
-### Tree View Empty
-- Check TreeDataProvider implementation
-- Verify getChildren() returns items
-- Try clicking refresh button
-
-### Compilation Errors
-- Run `npm install` to ensure dependencies are installed
-- Check TypeScript version compatibility
-- Review tsconfig.json settings
-
-### Tests Failing
-- Ensure extension is compiled (`npm run compile`)
-- Check test file paths in index.ts
-- Verify VSCode version compatibility
-
-## 📚 Resources
-
-- [VSCode Extension API](https://code.visualstudio.com/api)
-- [Tree View API](https://code.visualstudio.com/api/extension-guides/tree-view)
-- [TypeScript Handbook](https://www.typescriptlang.org/docs/)
-
-## 🎉 Success!
-
-You now have a working VSCode extension with:
-- ✅ Tree view in Activity Bar
-- ✅ Custom data provider
-- ✅ Commands and menus
-- ✅ Test framework
-- ✅ Debug configuration
-- ✅ Build pipeline
-
-Happy coding! 🚀
+- 📄 [DOC-7: How to Run i2vision.init - User Guide](../backlog/docs/DOC-7.md)
+- 📄 [RolloutManager Implementation](../storage-core/src/main/kotlin/com/i2vision/storage/impl/RolloutManager.kt)

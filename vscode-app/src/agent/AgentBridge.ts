@@ -1,4 +1,4 @@
-/**
+﻿/**
  * AgentBridge - Bridge between VSCode extension and conf-agent-core
  * 
  * This class wraps the agent core functionality and provides a clean API
@@ -578,6 +578,27 @@ export class AgentBridge {
             required: ["path", "old_string", "new_string"]
           }
         }
+      },
+      {
+        type: "function",
+        function: {
+          name: "i2vision_discover",
+          description: "Run full VSLFC discovery on the project using the i2vision CLI. Analyzes architecture patterns, flows, business rules, and components across all modules.",
+          parameters: {
+            type: "object",
+            properties: {
+              path: {
+                type: "string",
+                description: "Project root path to discover (default: current workspace)"
+              },
+              intent: {
+                type: "string",
+                description: "Discovery intent: full_discovery, quick_overview, architecture_audit, or flow_mapping"
+              }
+            },
+            required: ["path"]
+          }
+        }
       }
     ];
   }
@@ -646,6 +667,14 @@ export class AgentBridge {
         const fullPath = searchPath.startsWith(workspaceRoot) ? searchPath : path.join(workspaceRoot, searchPath);
         const results = await this.searchFiles(pattern, fullPath);
         return results.join('\n');
+      }
+      
+      case 'i2vision_discover': {
+        const projectPath = toolCall.args.path || workspaceRoot;
+        const intent = toolCall.args.intent || 'full_discovery';
+        this.log(`Running i2vision discovery on ${projectPath} with intent: ${intent}`);
+        const result = await this.cli.runDiscovery();
+        return JSON.stringify(result);
       }
       
       default:
@@ -752,3 +781,6 @@ export class AgentBridge {
     this.log('AgentBridge disposed');
   }
 }
+
+
+

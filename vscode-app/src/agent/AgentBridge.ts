@@ -1,11 +1,11 @@
-﻿/**
+/**
  * AgentBridge - Bridge between VSCode extension and conf-agent-core
  * 
  * This class wraps the agent core functionality and provides a clean API
  * for the AgentTabManager to interact with configured agents.
  * 
- * UPDATED: Fixed tool call parsing, improved logging, better error handling
- * DIAGNOSTIC: Added detailed logging to trace response flow
+ * UPDATED: Implements modern agentic loop with reflection - LLM sees tool results
+ * and decides if more tools are needed or if task is complete.
  */
 
 import * as vscode from 'vscode';
@@ -199,6 +199,16 @@ export interface LLMToolCall {
 }
 
 /**
+ * Message in conversation history
+ */
+export interface Message {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  tool_calls?: LLMToolCall[];
+  tool_call_id?: string;
+}
+
+/**
  * AgentBridge - Manages agent lifecycle and communication
  */
 export class AgentBridge {
@@ -226,7 +236,7 @@ export class AgentBridge {
 
     this.log(`Initializing agent: ${this.config.key} (type: ${this.config.agentType})`);
     this.log(`Model: ${this.config.model.id} (${this.config.model.provider})`);
-    this.log(`Max iterations: ${this.config.iterationSettings.maxIterations}`);
+    this.log(`Max iterations (safety net): ${this.config.iterationSettings.maxIterations}`);
     
     this.isInitialized = true;
     this.log(`Agent ${this.config.key} initialized successfully`);
@@ -310,49 +320,74 @@ export class AgentBridge {
   }
 
   /**
-   * Execute the agent loop (simplified version for initial testing)
-   * In production, this would integrate with conf-agent-core's BaseConfigurableAgent
+   * Strip <think> tags from LLM content
+   */
+  private stripThinkTags(content: string): string {
+    // Remove <think>...</think> blocks
+    return content.replace(new RegExp('<think>[\\s\\S]*?</think>', 'gi'), '').trim();
+  }
+
+  /**
+   * Execute the agent loop with reflection (MODERN APPROACH)
+   * 
+   * This implements the task-complete pattern:
+   * - Loop continues while LLM keeps making tool calls
+   * - Tool results are fed back to LLM for analysis
+   * - LLM decides when task is complete (no more tool calls)
+   * - maxIterations is a safety net, not the primary control
    */
   private async executeAgentLoop(
     userInput: string,
     systemPrompt: string,
     context?: ProcessContext
   ): Promise<Omit<AgentResponse, 'durationMs' | 'success'>> {
-    const toolCalls: ToolCall[] = [];
+    const allToolCalls: ToolCall[] = [];
     let iterations = 0;
     let finalText = '';
+    let lastSanitizedContent = '';
+
+    // Build initial message history
+    const messages: Message[] = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userInput }
+    ];
+
+    // Get available tools once
+    const tools = this.getAvailableTools();
+    this.log(`Available tools: ${tools.length}`);
 
     try {
-      this.log('Going directly to LLM');
-
-      // Build messages for LLM
-      const messages = [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userInput }
-      ];
-
-      // Call LLM with tools
-      this.log(`Calling model: ${this.config.model.id}`);
-      const tools = this.getAvailableTools();
-      this.log(`Passing ${tools.length} tools to LLM`);
-      
-      const llmResponse = await this.callLLM(messages, tools);
-      
-      // DIAGNOSTIC: Log the raw response
-      this.log(`=== DIAGNOSTIC: LLM RESPONSE ===`);
-      this.log(`LLM content length: ${llmResponse.content.length} chars`);
-      this.log(`LLM content preview: ${llmResponse.content.substring(0, 300)}`);
-      this.log(`LLM tool calls count: ${llmResponse.toolCalls.length}`);
-      if (llmResponse.toolCalls.length > 0) {
-        llmResponse.toolCalls.forEach((tc, i) => {
-          this.log(`  Tool ${i}: ${tc.name} - args: ${JSON.stringify(tc.arguments)}`);
+      // MODERN AGENTIC LOOP: Continue while LLM keeps calling tools
+      while (iterations < this.config.iterationSettings.maxIterations) {
+        this.log(`\n=== ITERATION ${iterations + 1} ===`);
+        
+        // Call LLM with current message history
+        this.log(`Calling model: ${this.config.model.id} with ${messages.length} messages`);
+        const llmResponse = await this.callLLM(messages, tools);
+        
+        // Strip <think> tags from LLM content
+        const sanitizedContent = this.stripThinkTags(llmResponse.content);
+        lastSanitizedContent = sanitizedContent;
+        
+        this.log(`LLM response - content: ${sanitizedContent.length} chars, toolCalls: ${llmResponse.toolCalls.length}`);
+        
+        // Add assistant's response to message history
+        messages.push({
+          role: 'assistant',
+          content: sanitizedContent,
+          tool_calls: llmResponse.toolCalls
         });
-      }
-      this.log(`=== END DIAGNOSTIC ===`);
-      
-      // Convert LLM tool calls to our format and execute them
-      if (llmResponse.toolCalls.length > 0) {
-        this.log(`Found ${llmResponse.toolCalls.length} tool calls from LLM`);
+
+        // CHECK: Did LLM make any tool calls?
+        if (llmResponse.toolCalls.length === 0) {
+          // No tool calls = task is complete!
+          this.log('LLM has no more tool calls - task complete');
+          finalText = sanitizedContent;
+          break;
+        }
+
+        // Execute all tool calls from this iteration
+        this.log(`Executing ${llmResponse.toolCalls.length} tool calls...`);
         
         for (const tc of llmResponse.toolCalls) {
           try {
@@ -361,36 +396,51 @@ export class AgentBridge {
               args: tc.arguments
             };
             
-            this.log(`Executing tool: ${toolCall.toolName} with args: ${JSON.stringify(toolCall.args)}`);
+            this.log(`  → Executing: ${toolCall.toolName}(${JSON.stringify(toolCall.args)})`);
             const result = await this.executeTool(toolCall);
             toolCall.result = result;
-            toolCalls.push(toolCall);
-            this.log(`Tool ${toolCall.toolName} completed successfully (${result.length} chars)`);
+            allToolCalls.push(toolCall);
+            this.log(`  ← Result: ${result.length} chars`);
+            
+            // Feed tool result back to LLM
+            messages.push({
+              role: 'tool',
+              content: result,
+              tool_call_id: tc.name
+            });
           } catch (error: any) {
             const toolCall: ToolCall = {
               toolName: tc.name,
               args: tc.arguments,
               error: error.message
             };
-            toolCalls.push(toolCall);
-            this.log(`Tool ${tc.name} failed: ${error.message}`);
+            allToolCalls.push(toolCall);
+            this.log(`  ← Error: ${error.message}`);
+            
+            // Feed error back to LLM
+            messages.push({
+              role: 'tool',
+              content: `Error: ${error.message}`,
+              tool_call_id: tc.name
+            });
           }
         }
-        
-        finalText = llmResponse.content + '\n\nTool results:\n' + 
-          toolCalls.map(tc => `- ${tc.toolName}: ${tc.result || tc.error}`).join('\n');
-      } else {
-        finalText = llmResponse.content || 'No response from LLM';
+
+        iterations++;
+        this.log(`Iteration ${iterations} complete. Tool results fed back to LLM.`);
       }
+
+      // Check if we hit the iteration limit
+      if (iterations >= this.config.iterationSettings.maxIterations) {
+        this.log(`⚠️ Hit max iterations limit (${this.config.iterationSettings.maxIterations})`);
+        finalText = lastSanitizedContent + '\n\n[Note: Reached maximum iteration limit]';
+      }
+
+      this.log(`\n=== AGENTIC LOOP COMPLETE ===`);
+      this.log(`Total iterations: ${iterations}`);
+      this.log(`Total tool calls: ${allToolCalls.length}`);
+      this.log(`Final text length: ${finalText.length} chars`);
       
-      // DIAGNOSTIC: Log final text before return
-      this.log(`=== DIAGNOSTIC: FINAL TEXT ===`);
-      this.log(`finalText length: ${finalText?.length || 0} chars`);
-      this.log(`finalText preview: ${finalText?.substring(0, 200)}`);
-      this.log(`iterations: ${iterations}`);
-      this.log(`=== END DIAGNOSTIC ===`);
-      
-      iterations = 1;
     } catch (error: any) {
       finalText = `Error during agent loop: ${error.message}`;
       iterations = 0;
@@ -400,7 +450,7 @@ export class AgentBridge {
 
     return {
       finalText,
-      toolCalls,
+      toolCalls: allToolCalls,
       iterations
     };
   }
@@ -409,7 +459,7 @@ export class AgentBridge {
    * Call LLM through CLI - returns both content and tool calls
    */
   private async callLLM(
-    messages: Array<{role: string, content: string}>,
+    messages: Message[],
     tools?: Array<{
       type: string;
       function: {
@@ -428,7 +478,7 @@ export class AgentBridge {
     
     const response = await this.cli.callLLM(
       this.config.model.id,
-      messages,
+      messages.map(m => ({ role: m.role, content: m.content })),
       {
         temperature: this.config.model.temperature,
         top_p: this.config.model.topP,
@@ -713,14 +763,13 @@ export class AgentBridge {
     for (const entry of entries) {
       const fullPath = path.join(dirPath, entry.name);
       if (entry.isDirectory()) {
+        files.push(`[DIR]  ${fullPath}`);
         if (recursive) {
           const subFiles = await this.listFiles(fullPath, recursive);
           files.push(...subFiles);
-        } else {
-          files.push(entry.name + '/');
         }
       } else {
-        files.push(entry.name);
+        files.push(`[FILE] ${fullPath}`);
       }
     }
     
@@ -728,37 +777,33 @@ export class AgentBridge {
   }
 
   /**
-   * Search files with regex
+   * Search for a regex pattern in files
    */
   private async searchFiles(pattern: string, searchPath: string): Promise<string[]> {
     const results: string[] = [];
-    const regex = new RegExp(pattern);
+    const stat = await fs.promises.stat(searchPath);
     
-    const searchDir = async (dir: string) => {
-      const entries = await fs.promises.readdir(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          if (!entry.name.startsWith('.') && entry.name !== 'node_modules') {
-            await searchDir(path.join(dir, entry.name));
-          }
-        } else if (entry.isFile()) {
-          const filePath = path.join(dir, entry.name);
-          try {
-            const content = await this.readFile(filePath);
-            const lines = content.split('\n');
-            for (let i = 0; i < lines.length; i++) {
-              if (regex.test(lines[i])) {
-                results.push(`${filePath}:${i + 1}: ${lines[i]}`);
-              }
-            }
-          } catch (error) {
-            // Skip binary files
-          }
+    if (stat.isFile()) {
+      const content = await this.readFile(searchPath);
+      const lines = content.split('\n');
+      const regex = new RegExp(pattern, 'g');
+      
+      for (let i = 0; i < lines.length; i++) {
+        if (regex.test(lines[i])) {
+          results.push(`${searchPath}:${i + 1}: ${lines[i]}`);
         }
       }
-    };
+    } else if (stat.isDirectory()) {
+      const entries = await fs.promises.readdir(searchPath, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isFile()) {
+          const fullPath = path.join(searchPath, entry.name);
+          const subResults = await this.searchFiles(pattern, fullPath);
+          results.push(...subResults);
+        }
+      }
+    }
     
-    await searchDir(searchPath);
     return results;
   }
 
@@ -766,18 +811,20 @@ export class AgentBridge {
    * Log a message to the output channel
    */
   private log(message: string): void {
-    const timestamp = new Date().toLocaleTimeString();
-    const formatted = `[${timestamp}] [AgentBridge] ${message}`;
+    const timestamp = new Date().toISOString().split('T')[1].split('.')[0];
+    const formattedMessage = `[${timestamp}] [AgentBridge] ${message}`;
+    
     if (this.outputChannel) {
-      this.outputChannel.appendLine(formatted);
+      this.outputChannel.appendLine(formattedMessage);
     }
-    console.log(formatted);
+    console.log(formattedMessage);
   }
 
   /**
-   * Dispose the agent bridge
+   * Dispose resources
    */
   dispose(): void {
-    this.log('AgentBridge disposed');
+    this.log(`Disposing AgentBridge for agent: ${this.config.key}`);
+    this.isInitialized = false;
   }
 }

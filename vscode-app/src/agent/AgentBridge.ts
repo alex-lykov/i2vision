@@ -171,7 +171,7 @@ export interface InteractionRecord {
   timestamp: number;
   userInput: string;
   agentResponse: string;
-  toolCalls: string[];
+  toolCalls: ToolCall[];
   iterations: number;
   durationMs: number;
 }
@@ -382,6 +382,17 @@ export class AgentBridge {
   }
 
   /**
+   * Strip formatting artifacts from LLM output (reasoning:, tool_call:, EOS)
+   */
+  private stripFormattingArtifacts(content: string): string {
+    return content
+      .replace(/^reasoning:\s*/gmi, '')
+      .replace(/tool_call:\s*\{[^}]*\}\s*/g, '')
+      .replace(/\bEOS\b/g, '')
+      .trim();
+  }
+
+  /**
    * Create a signature for tool call deduplication
    */
   private createToolCallSignature(toolName: string, args: Record<string, any>): string {
@@ -584,6 +595,9 @@ export class AgentBridge {
       finalText = `Error during agent execution: ${error.message}`;
       this.log(`Agent loop error: ${error.message}`);
     }
+
+    // Clean up formatting artifacts from final output
+    finalText = this.stripFormattingArtifacts(finalText);
 
     return {
       finalText,

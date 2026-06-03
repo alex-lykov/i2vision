@@ -213,7 +213,10 @@ export class AgentTabManager {
         timestamp: Date.now(),
         userInput,
         agentResponse: response.finalText || 'No response',
-        toolCalls: response.toolCalls?.map(tc => tc.toolName) || [],
+        toolCalls: response.toolCalls?.map(tc => ({
+          toolName: tc.toolName,
+          args: tc.args || {}
+        })) || [],
         iterations: response.iterations,
         durationMs: Date.now() - startTime
       };

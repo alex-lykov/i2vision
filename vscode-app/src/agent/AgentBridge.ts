@@ -9,14 +9,15 @@
  * 
  * FIXES APPLIED:
  * - Tool result truncation to prevent context window overflow
- * - Repeated tool call detection to prevent infinite loops
+ * - Repeated tool call detection to prevent infinite loops (FIXED: now breaks outer loop)
  * - Better logging for debugging
+ * - Correct workspace root handling
  */
 
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { CLI, LLMResponse } from '../cliIntegration';
+import { CLI, LLMResponse, LLMTool, LLMMessage } from '../cliIntegration';
 
 /**
  * Agent configuration interface (matches YAML structure)
@@ -230,6 +231,7 @@ export class AgentBridge {
   private cli: CLI;
   private isInitialized: boolean = false;
   private outputChannel?: vscode.OutputChannel;
+  private workspaceRoot: string;
 
   // Truncation settings
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000; // characters
@@ -239,9 +241,13 @@ export class AgentBridge {
     this.config = config;
     this.outputChannel = outputChannel;
     
-    // Initialize CLI integration
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
-    this.cli = new CLI(workspaceRoot, outputChannel);
+    // CRITICAL: Get workspace root ONCE and store it
+    // This is the i2-vision project root, NOT the user's project
+    this.workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+    this.log(`Workspace root: ${this.workspaceRoot}`);
+    
+    // Initialize CLI integration with the workspace root
+    this.cli = new CLI(this.workspaceRoot, outputChannel);
   }
 
   /**
@@ -396,7 +402,11 @@ export class AgentBridge {
         
         // Call LLM with current message history
         this.log(`Calling model: ${this.config.model.id} with ${messages.length} messages`);
-        const llmResponse = await this.callLLM(messages, tools);
+        
+        // Convert Message[] to LLMMessage[] for CLI
+        const cliMessages: LLMMessage[] = messages.map(m => ({ role: m.role, content: m.content }));
+        
+        const llmResponse = await this.callLLM(cliMessages, tools);
         
         // Strip <think> tags from LLM content
         const sanitizedContent = this.stripThinkTags(llmResponse.content);
@@ -422,6 +432,9 @@ export class AgentBridge {
         // Execute all tool calls from this iteration
         this.log(`Executing ${llmResponse.toolCalls.length} tool calls...`);
         
+        // Track if we need to break the outer loop
+        let shouldBreakOuterLoop = false;
+        
         for (const tc of llmResponse.toolCalls) {
           try {
             const toolCall: ToolCall = {
@@ -439,7 +452,8 @@ export class AgentBridge {
               // Same tool called 3+ times with same args = stuck in loop
               this.log(`  ⚠️ DETECTED: Repeated tool call (3rd time). Forcing completion.`);
               finalText = sanitizedContent + '\n\n[Note: I appear to be stuck in a loop. Based on the information gathered, I cannot make further progress with the current approach.]';
-              break;
+              shouldBreakOuterLoop = true;
+              break; // Break inner for loop
             }
             
             toolCallHistory.push({
@@ -486,6 +500,11 @@ export class AgentBridge {
             });
           }
         }
+        
+        // Check if we need to break the outer loop (from repeated tool detection)
+        if (shouldBreakOuterLoop) {
+          break;
+        }
 
         iterations++;
         this.log(`Iteration ${iterations} complete. Tool results fed back to LLM.`);
@@ -503,10 +522,8 @@ export class AgentBridge {
       this.log(`Final text length: ${finalText.length} chars`);
       
     } catch (error: any) {
-      finalText = `Error during agent loop: ${error.message}`;
-      iterations = 0;
+      finalText = `Error during agent execution: ${error.message}`;
       this.log(`Agent loop error: ${error.message}`);
-      this.log(`Stack trace: ${error.stack}`);
     }
 
     return {
@@ -517,201 +534,19 @@ export class AgentBridge {
   }
 
   /**
-   * Call LLM through CLI - returns both content and tool calls
+   * Call LLM via CLI
    */
-  private async callLLM(
-    messages: Message[],
-    tools?: Array<{
-      type: string;
-      function: {
-        name: string;
-        description: string;
-        parameters: {
-          type: string;
-          properties: Record<string, any>;
-          required?: string[];
-        };
-      };
-    }>
-  ): Promise<LLMResponse> {
-    // Use the CLI to call the LLM
-    this.log(`Calling LLM with ${messages.length} messages and ${tools?.length || 0} tools`);
-    
-    const response = await this.cli.callLLM(
+  private async callLLM(messages: LLMMessage[], tools: any[]): Promise<LLMResponse> {
+    this.log(`Calling LLM with ${messages.length} messages and ${tools.length} tools`);
+    return await this.cli.callLLM(
       this.config.model.id,
-      messages.map(m => ({ role: m.role, content: m.content })),
+      messages,
       {
         temperature: this.config.model.temperature,
-        top_p: this.config.model.topP,
         max_tokens: this.config.model.maxOutputTokens
       },
       tools
     );
-    
-    this.log(`LLM response - content: ${response.content.length} chars, toolCalls: ${response.toolCalls.length}`);
-    return response;
-  }
-
-  /**
-   * Get the list of tools the agent can use.
-   * These are sent to the LLM so it knows what tools are available.
-   */
-  private getAvailableTools(): Array<{
-    type: string;
-    function: {
-      name: string;
-      description: string;
-      parameters: {
-        type: string;
-        properties: Record<string, any>;
-        required?: string[];
-      };
-    };
-  }> {
-    return [
-      {
-        type: "function",
-        function: {
-          name: "read_file",
-          description: "Read the contents of a file",
-          parameters: {
-            type: "object",
-            properties: {
-              path: { 
-                type: "string", 
-                description: "File path relative to workspace root" 
-              }
-            },
-            required: ["path"]
-          }
-        }
-      },
-      {
-        type: "function",
-        function: {
-          name: "list_directory",
-          description: "List contents of a directory",
-          parameters: {
-            type: "object",
-            properties: {
-              path: { 
-                type: "string", 
-                description: "Directory path relative to workspace root" 
-              }
-            },
-            required: ["path"]
-          }
-        }
-      },
-      {
-        type: "function",
-        function: {
-          name: "list_files",
-          description: "List files and directories (limited to 100 results)",
-          parameters: {
-            type: "object",
-            properties: {
-              path: { 
-                type: "string", 
-                description: "Directory path relative to workspace root" 
-              },
-              recursive: { 
-                type: "boolean", 
-                description: "Whether to list recursively" 
-              }
-            }
-          }
-        }
-      },
-      {
-        type: "function",
-        function: {
-          name: "regex_search",
-          description: "Search for a regex pattern across files (returns up to 50 matches)",
-          parameters: {
-            type: "object",
-            properties: {
-              pattern: { 
-                type: "string", 
-                description: "Regex pattern to search for" 
-              },
-              path: { 
-                type: "string", 
-                description: "Directory or file to search in" 
-              }
-            },
-            required: ["pattern", "path"]
-          }
-        }
-      },
-      {
-        type: "function",
-        function: {
-          name: "write_file",
-          description: "Write content to a file (creates or overwrites)",
-          parameters: {
-            type: "object",
-            properties: {
-              path: { 
-                type: "string", 
-                description: "File path relative to workspace root" 
-              },
-              content: { 
-                type: "string", 
-                description: "Content to write to the file" 
-              }
-            },
-            required: ["path", "content"]
-          }
-        }
-      },
-      {
-        type: "function",
-        function: {
-          name: "edit_file",
-          description: "Edit a file by replacing exact string match",
-          parameters: {
-            type: "object",
-            properties: {
-              path: { 
-                type: "string", 
-                description: "File path relative to workspace root" 
-              },
-              old_string: { 
-                type: "string", 
-                description: "The exact text to find in the file" 
-              },
-              new_string: { 
-                type: "string", 
-                description: "The replacement text" 
-              }
-            },
-            required: ["path", "old_string", "new_string"]
-          }
-        }
-      },
-      {
-        type: "function",
-        function: {
-          name: "i2vision_discover",
-          description: "Run full VSLFC discovery on the project using the i2vision CLI. Analyzes architecture patterns, flows, business rules, and components across all modules.",
-          parameters: {
-            type: "object",
-            properties: {
-              path: {
-                type: "string",
-                description: "Project root path to discover (default: current workspace)"
-              },
-              intent: {
-                type: "string",
-                description: "Discovery intent: full_discovery, quick_overview, architecture_audit, or flow_mapping"
-              }
-            },
-            required: ["path"]
-          }
-        }
-      }
-    ];
   }
 
   /**
@@ -720,79 +555,53 @@ export class AgentBridge {
   private async executeTool(toolCall: ToolCall): Promise<string> {
     this.log(`Executing tool: ${toolCall.toolName}`);
     
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+    const args = toolCall.args;
     
     switch (toolCall.toolName) {
       case 'read_file': {
-        const filePath = toolCall.args.path;
-        if (!filePath) {
-          throw new Error('Missing path argument for read_file');
-        }
-        const fullPath = filePath.startsWith(workspaceRoot) ? filePath : path.join(workspaceRoot, filePath);
-        return await this.readFile(fullPath);
+        // FIX: Use path.isAbsolute() to check if path needs workspace root prepended
+        const filePath = path.isAbsolute(args.path) ? args.path : path.join(this.workspaceRoot, args.path);
+        this.log(`  Reading file: ${filePath}`);
+        return await this.cli.readFile(filePath);
       }
       
       case 'list_directory':
       case 'list_files': {
-        const dirPath = toolCall.args.path || '.';
-        const recursive = toolCall.args.recursive || false;
-        const fullPath = dirPath.startsWith(workspaceRoot) ? dirPath : path.join(workspaceRoot, dirPath);
-        const files = await this.listFiles(fullPath, recursive);
-        // Limit results to prevent context explosion
-        const limitedFiles = files.slice(0, AgentBridge.MAX_LIST_FILES_RESULTS);
+        // FIX: Use path.isAbsolute() to check if path needs workspace root prepended
+        const dirPath = path.isAbsolute(args.path) ? args.path : path.join(this.workspaceRoot, args.path);
+        this.log(`  Listing directory: ${dirPath}`);
+        
+        const files = await this.cli.listFiles(dirPath, args.recursive || false);
+        
+        // Limit results to prevent context overflow
         if (files.length > AgentBridge.MAX_LIST_FILES_RESULTS) {
-          return limitedFiles.join('\n') + `\n\n[... and ${files.length - AgentBridge.MAX_LIST_FILES_RESULTS} more files]`;
+          const truncated = files.slice(0, AgentBridge.MAX_LIST_FILES_RESULTS);
+          return truncated.join('\n') + `\n\n[... truncated ${files.length - AgentBridge.MAX_LIST_FILES_RESULTS} more files ...]`;
         }
-        return limitedFiles.join('\n');
+        return files.join('\n');
       }
       
       case 'write_file': {
-        const filePath = toolCall.args.path;
-        const content = toolCall.args.content;
-        if (!filePath || content === undefined) {
-          throw new Error('Missing path or content argument for write_file');
-        }
-        const fullPath = filePath.startsWith(workspaceRoot) ? filePath : path.join(workspaceRoot, filePath);
-        await this.writeFile(fullPath, content);
-        return `Successfully wrote ${content.length} chars to ${filePath}`;
-      }
-      
-      case 'edit_file': {
-        const filePath = toolCall.args.path;
-        const oldString = toolCall.args.old_string;
-        const newString = toolCall.args.new_string;
-        if (!filePath || !oldString || newString === undefined) {
-          throw new Error('Missing required arguments for edit_file');
-        }
-        const fullPath = filePath.startsWith(workspaceRoot) ? filePath : path.join(workspaceRoot, filePath);
-        const content = await this.readFile(fullPath);
-        if (!content.includes(oldString)) {
-          throw new Error(`Could not find old_string in ${filePath}`);
-        }
-        const newContent = content.replace(oldString, newString);
-        await this.writeFile(fullPath, newContent);
-        return `Successfully edited ${filePath}`;
+        // FIX: Use path.isAbsolute() to check if path needs workspace root prepended
+        const filePath = path.isAbsolute(args.path) ? args.path : path.join(this.workspaceRoot, args.path);
+        this.log(`  Writing file: ${filePath}`);
+        await this.cli.writeFile(filePath, args.content);
+        return `Successfully wrote ${args.path} (${args.content.length} chars)`;
       }
       
       case 'regex_search': {
-        const pattern = toolCall.args.pattern;
-        const searchPath = toolCall.args.path || '.';
-        if (!pattern) {
-          throw new Error('Missing pattern argument for regex_search');
-        }
-        const fullPath = searchPath.startsWith(workspaceRoot) ? searchPath : path.join(workspaceRoot, searchPath);
-        this.log(`regex_search: pattern="${pattern}", path="${fullPath}"`);
-        const results = await this.searchFiles(pattern, fullPath);
-        this.log(`regex_search result: ${results.length} matches`);
+        const pattern = args.pattern;
+        // FIX: Use path.isAbsolute() to check if path needs workspace root prepended
+        const searchDir = path.isAbsolute(args.path) ? args.path : path.join(this.workspaceRoot, args.path);
+        this.log(`  Searching for "${pattern}" in ${searchDir}`);
+        const results = await this.cli.searchFiles(pattern, searchDir);
         return results.join('\n');
       }
       
       case 'i2vision_discover': {
-        const projectPath = toolCall.args.path || workspaceRoot;
-        const intent = toolCall.args.intent || 'full_discovery';
-        this.log(`Running i2vision discovery on ${projectPath} with intent: ${intent}`);
+        this.log(`  Running VSLFC discovery...`);
         const result = await this.cli.runDiscovery();
-        return JSON.stringify(result);
+        return JSON.stringify(result, null, 2);
       }
       
       default:
@@ -801,145 +610,124 @@ export class AgentBridge {
   }
 
   /**
-   * Read a file
+   * Get available tools for the agent
    */
-  private async readFile(filePath: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      fs.readFile(filePath, 'utf8', (err, data) => {
-        if (err) reject(err);
-        else resolve(data);
-      });
-    });
-  }
-
-  /**
-   * Write a file
-   */
-  private async writeFile(filePath: string, content: string): Promise<void> {
-    const dir = path.dirname(filePath);
-    await fs.promises.mkdir(dir, { recursive: true });
-    await fs.promises.writeFile(filePath, content, 'utf8');
-  }
-
-  /**
-   * List files in a directory
-   */
-  private async listFiles(dirPath: string, recursive: boolean = false): Promise<string[]> {
-    const files: string[] = [];
-    const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
-    
-    for (const entry of entries) {
-      const fullPath = path.join(dirPath, entry.name);
-      if (entry.isDirectory()) {
-        files.push(`[DIR]  ${fullPath}`);
-        if (recursive) {
-          const subFiles = await this.listFiles(fullPath, recursive);
-          files.push(...subFiles);
-        }
-      } else {
-        files.push(`[FILE] ${fullPath}`);
-      }
-    }
-    
-    return files;
-  }
-
-  /**
-   * Search for a pattern in files using ripgrep or PowerShell
-   */
-  private async searchFiles(pattern: string, dirPath: string): Promise<string[]> {
-    this.log(`searchFiles: pattern="${pattern}", dirPath="${dirPath}"`);
-    
-    try {
-      // Try ripgrep first (faster, better regex support)
-      const rgPath = await this.findRipgrep();
-      if (rgPath) {
-        this.log(`Using ripgrep: ${rgPath}`);
-        const command = `"${rgPath}" --max-count 50 --line-number --column --with-filename "${pattern}" "${dirPath}"`;
-        this.log(`Executing: ${command}`);
-        const { stdout } = await this.runCommand(command);
-        const results = stdout.split('\n').filter(line => line.trim()).slice(0, 50);
-        this.log(`ripgrep found ${results.length} matches`);
-        return results;
-      }
-      
-      // Fallback to PowerShell
-      this.log('Falling back to PowerShell search');
-      const command = `powershell -Command "Get-ChildItem -Path '${dirPath}' -Recurse -File -ErrorAction SilentlyContinue | Select-String -Pattern '${pattern}' -SimpleMatch | Select-Object -First 50 -ExpandProperty Line"`;
-      this.log(`Executing: ${command}`);
-      const { stdout } = await this.runCommand(command);
-      const results = stdout.split('\n').filter(line => line.trim()).slice(0, 50);
-      this.log(`PowerShell found ${results.length} matches`);
-      return results;
-    } catch (error: any) {
-      this.log(`searchFiles error: ${error.message}`);
-      return [];
-    }
-  }
-
-  /**
-   * Find ripgrep executable
-   */
-  private async findRipgrep(): Promise<string | null> {
-    try {
-      // Check common locations
-      const candidates = [
-        'rg',
-        'ripgrep',
-        path.join(process.env.LOCALAPPDATA || '', 'Programs', 'ripgrep', 'rg.exe'),
-        path.join('C:', 'Program Files', 'ripgrep', 'rg.exe'),
-      ];
-      
-      for (const candidate of candidates) {
-        try {
-          const { stdout } = await this.runCommand(`"${candidate}" --version`);
-          if (stdout.includes('ripgrep')) {
-            return candidate;
+  private getAvailableTools(): LLMTool[] {
+    return [
+      {
+        type: 'function',
+        function: {
+          name: 'read_file',
+          description: 'Read the contents of a file',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: {
+                type: 'string',
+                description: 'Path to the file (relative to workspace root or absolute)'
+              }
+            },
+            required: ['path']
           }
-        } catch {
-          continue;
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'list_files',
+          description: 'List files in a directory',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: {
+                type: 'string',
+                description: 'Directory path (relative to workspace root or absolute)'
+              },
+              recursive: {
+                type: 'boolean',
+                description: 'Whether to list files recursively',
+                default: false
+              }
+            },
+            required: ['path']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'write_file',
+          description: 'Write content to a file',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: {
+                type: 'string',
+                description: 'Path to the file (relative to workspace root or absolute)'
+              },
+              content: {
+                type: 'string',
+                description: 'Content to write'
+              }
+            },
+            required: ['path', 'content']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'regex_search',
+          description: 'Search for a regex pattern in files',
+          parameters: {
+            type: 'object',
+            properties: {
+              pattern: {
+                type: 'string',
+                description: 'Regex pattern to search for'
+              },
+              path: {
+                type: 'string',
+                description: 'Directory to search in (relative to workspace root or absolute)'
+              }
+            },
+            required: ['pattern', 'path']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'i2vision_discover',
+          description: 'Run VSLFC discovery on the current project',
+          parameters: {
+            type: 'object',
+            properties: {},
+            required: []
+          }
         }
       }
-    } catch {
-      // Ignore errors
-    }
-    
-    return null;
-  }
-
-  /**
-   * Run a shell command
-   */
-  private async runCommand(command: string): Promise<{ stdout: string, stderr: string }> {
-    return new Promise((resolve, reject) => {
-      const { exec } = require('child_process');
-      exec(command, { maxBuffer: 10 * 1024 * 1024 }, (error: any, stdout: string, stderr: string) => {
-        if (error && !stdout) {
-          reject(error);
-        } else {
-          resolve({ stdout, stderr });
-        }
-      });
-    });
-  }
-
-  /**
-   * Dispose resources
-   */
-  dispose(): void {
-    this.log(`Disposing AgentBridge for agent: ${this.config.key}`);
-    this.isInitialized = false;
+    ];
   }
 
   /**
    * Log a message to the output channel
    */
   private log(message: string): void {
-    const timestamp = new Date().toLocaleTimeString();
+    const timestamp = new Date().toLocaleTimeString('en-US', { hour12: true });
     const formatted = `[${timestamp}] [AgentBridge:${this.config.key}] ${message}`;
+    
     if (this.outputChannel) {
       this.outputChannel.appendLine(formatted);
     }
     console.log(formatted);
+  }
+
+  /**
+   * Dispose resources
+   */
+  dispose(): void {
+    this.isInitialized = false;
+    this.log('AgentBridge disposed');
   }
 }

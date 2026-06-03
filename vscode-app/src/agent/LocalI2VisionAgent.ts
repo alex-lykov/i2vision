@@ -150,7 +150,8 @@ export class LocalI2VisionAgent implements vscode.Disposable {
     };
     
     // Create the agent bridge
-    this.bridge = new AgentBridge(config, outputChannel);
+    // Pass extension root so agent can access extension source files
+    this.bridge = new AgentBridge(config, outputChannel, vscode.extensions.getExtension('i2vision.i2-vision-vscode')?.extensionPath);
     
     this.log(`LocalI2VisionAgent created: ${this.id}`);
   }

@@ -12,6 +12,7 @@
  * - Repeated tool call detection to prevent infinite loops (FIXED: now breaks outer loop)
  * - Better logging for debugging
  * - Correct workspace root handling
+ * - Extension root path support for accessing extension source files
  */
 
 import * as vscode from 'vscode';
@@ -232,21 +233,31 @@ export class AgentBridge {
   private isInitialized: boolean = false;
   private outputChannel?: vscode.OutputChannel;
   private workspaceRoot: string;
+  private extensionRoot: string;
 
   // Truncation settings
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000; // characters
   private static readonly MAX_LIST_FILES_RESULTS = 100; // max files to return
 
-  constructor(config: AgentConfig, outputChannel?: vscode.OutputChannel) {
+  constructor(config: AgentConfig, outputChannel?: vscode.OutputChannel, extensionRoot?: string) {
     this.config = config;
     this.outputChannel = outputChannel;
     
     // CRITICAL: Get workspace root ONCE and store it
-    // This is the i2-vision project root, NOT the user's project
+    // This is the USER'S project root (e.g., d:\proj\alyk\android-arch-sketch)
     this.workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
-    this.log(`Workspace root: ${this.workspaceRoot}`);
+    this.log(`Workspace root (user project): ${this.workspaceRoot}`);
     
-    // Initialize CLI integration with the workspace root
+    // Extension root: where the extension source code lives
+    // This is D:/proj/AI/i2-vision/vscode-app (or wherever extension is installed)
+    this.extensionRoot = extensionRoot || vscode.extensions.getExtension('i2vision.i2-vision-vscode')?.extensionPath || '';
+    if (!this.extensionRoot) {
+      // Fallback: use workspace root
+      this.extensionRoot = this.workspaceRoot;
+    }
+    this.log(`Extension root: ${this.extensionRoot}`);
+    
+    // Initialize CLI integration with the workspace root (for CLI operations on user's project)
     this.cli = new CLI(this.workspaceRoot, outputChannel);
   }
 
@@ -550,6 +561,37 @@ export class AgentBridge {
   }
 
   /**
+   * Resolve a path - handles both workspace and extension paths
+   * 
+   * Smart path resolution:
+   * - If path starts with common extension dirs (vscode-app, storage-core, etc.), use extensionRoot
+   * - Otherwise, use workspaceRoot (user's project)
+   * - Absolute paths are used as-is
+   */
+  private resolvePath(requestedPath: string): string {
+    // If already absolute, use as-is
+    if (path.isAbsolute(requestedPath)) {
+      return requestedPath;
+    }
+    
+    // Check if path refers to extension source directories
+    const extensionDirs = ['vscode-app', 'storage-core', 'conf-agent-core', 'i2vision-cli', 'backlog'];
+    const firstSegment = requestedPath.split(/[\\/]/)[0];
+    
+    if (extensionDirs.includes(firstSegment)) {
+      // This is a reference to extension source - use extension root
+      const fullPath = path.join(this.extensionRoot, requestedPath);
+      this.log(`  Path resolution: "${requestedPath}" → extension root → ${fullPath}`);
+      return fullPath;
+    }
+    
+    // Default: use workspace root (user's project)
+    const fullPath = path.join(this.workspaceRoot, requestedPath);
+    this.log(`  Path resolution: "${requestedPath}" → workspace root → ${fullPath}`);
+    return fullPath;
+  }
+
+  /**
    * Execute a tool call
    */
   private async executeTool(toolCall: ToolCall): Promise<string> {
@@ -559,16 +601,16 @@ export class AgentBridge {
     
     switch (toolCall.toolName) {
       case 'read_file': {
-        // FIX: Use path.isAbsolute() to check if path needs workspace root prepended
-        const filePath = path.isAbsolute(args.path) ? args.path : path.join(this.workspaceRoot, args.path);
+        // Smart path resolution: detects extension source paths vs workspace paths
+        const filePath = this.resolvePath(args.path);
         this.log(`  Reading file: ${filePath}`);
         return await this.cli.readFile(filePath);
       }
       
       case 'list_directory':
       case 'list_files': {
-        // FIX: Use path.isAbsolute() to check if path needs workspace root prepended
-        const dirPath = path.isAbsolute(args.path) ? args.path : path.join(this.workspaceRoot, args.path);
+        // Smart path resolution: detects extension source paths vs workspace paths
+        const dirPath = this.resolvePath(args.path);
         this.log(`  Listing directory: ${dirPath}`);
         
         const files = await this.cli.listFiles(dirPath, args.recursive || false);
@@ -582,7 +624,7 @@ export class AgentBridge {
       }
       
       case 'write_file': {
-        // FIX: Use path.isAbsolute() to check if path needs workspace root prepended
+        // For write operations, always use workspace root (user's project)
         const filePath = path.isAbsolute(args.path) ? args.path : path.join(this.workspaceRoot, args.path);
         this.log(`  Writing file: ${filePath}`);
         await this.cli.writeFile(filePath, args.content);
@@ -591,8 +633,8 @@ export class AgentBridge {
       
       case 'regex_search': {
         const pattern = args.pattern;
-        // FIX: Use path.isAbsolute() to check if path needs workspace root prepended
-        const searchDir = path.isAbsolute(args.path) ? args.path : path.join(this.workspaceRoot, args.path);
+        // Smart path resolution: detects extension source paths vs workspace paths
+        const searchDir = this.resolvePath(args.path);
         this.log(`  Searching for "${pattern}" in ${searchDir}`);
         const results = await this.cli.searchFiles(pattern, searchDir);
         return results.join('\n');
@@ -618,13 +660,13 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'read_file',
-          description: 'Read the contents of a file',
+          description: 'Read the contents of a file. Path can be relative to workspace or extension source (e.g., "vscode-app/src/extension.ts" or "src/main.kt")',
           parameters: {
             type: 'object',
             properties: {
               path: {
                 type: 'string',
-                description: 'Path to the file (relative to workspace root or absolute)'
+                description: 'Path to the file (relative to workspace root, extension root, or absolute)'
               }
             },
             required: ['path']
@@ -635,13 +677,13 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'list_files',
-          description: 'List files in a directory',
+          description: 'List files in a directory. Path can be relative to workspace or extension source (e.g., "vscode-app/src" or "src/main")',
           parameters: {
             type: 'object',
             properties: {
               path: {
                 type: 'string',
-                description: 'Directory path (relative to workspace root or absolute)'
+                description: 'Directory path (relative to workspace root, extension root, or absolute)'
               },
               recursive: {
                 type: 'boolean',
@@ -657,7 +699,7 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'write_file',
-          description: 'Write content to a file',
+          description: 'Write content to a file in the workspace (user\'s project)',
           parameters: {
             type: 'object',
             properties: {
@@ -678,7 +720,7 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'regex_search',
-          description: 'Search for a regex pattern in files',
+          description: 'Search for a regex pattern in files. Path can be relative to workspace or extension source',
           parameters: {
             type: 'object',
             properties: {
@@ -688,7 +730,7 @@ export class AgentBridge {
               },
               path: {
                 type: 'string',
-                description: 'Directory to search in (relative to workspace root or absolute)'
+                description: 'Directory to search in (relative to workspace root, extension root, or absolute)'
               }
             },
             required: ['pattern', 'path']
@@ -699,7 +741,7 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'i2vision_discover',
-          description: 'Run VSLFC discovery on the current project',
+          description: 'Run VSLFC discovery on the current workspace (user\'s project)',
           parameters: {
             type: 'object',
             properties: {},

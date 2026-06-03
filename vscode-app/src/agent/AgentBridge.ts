@@ -396,8 +396,17 @@ export class AgentBridge {
    * Create a signature for tool call deduplication
    */
   private createToolCallSignature(toolName: string, args: Record<string, any>): string {
+    // Create a normalized copy of args
+    const normalizedArgs = { ...args };
+
+    // Normalize optional parameters with default values
+    if (toolName === 'list_directory') {
+      // 'recursive' defaults to false, so remove it for signature comparison
+      delete normalizedArgs.recursive;
+    }
+
     // Sort args keys for consistent signature
-    const sortedArgs = Object.keys(args).sort().map(k => `${k}=${JSON.stringify(args[k])}`).join('|');
+    const sortedArgs = Object.keys(normalizedArgs).sort().map(k => `${k}=${JSON.stringify(normalizedArgs[k])}`).join('|');
     return `${toolName}:${sortedArgs}`;
   }
 

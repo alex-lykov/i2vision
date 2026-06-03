@@ -50,6 +50,7 @@ export interface LLMOptions {
  * Tool Call result from LLM
  */
 export interface LLMToolCall {
+  id: string;
   name: string;
   arguments: Record<string, any>;
 }
@@ -215,6 +216,7 @@ export class CLI {
           }
         }
         return {
+          id: tc.id || tc.function?.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
           name: tc.function?.name || '',
           arguments: args
         };

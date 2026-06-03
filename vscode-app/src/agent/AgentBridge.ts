@@ -469,10 +469,39 @@ export class AgentBridge {
           try {
             const toolCall: ToolCall = {
               toolName: tc.name,
-              args: tc.arguments
+              args: tc.arguments || {}
             };
             
             this.log(`  → Executing: ${toolCall.toolName}(${JSON.stringify(toolCall.args)})`);
+            
+            // Validate required arguments
+            if (toolCall.toolName === 'list_directory' && !toolCall.args.path) {
+              this.log(`  ⚠️ WARNING: list_directory called without 'path' argument!`);
+              toolCall.error = 'Missing required argument: path';
+              allToolCalls.push(toolCall);
+              
+              // Feed error back to LLM
+              messages.push({
+                role: 'tool',
+                content: `Error: Missing required argument 'path' for list_directory. Example: {"path": "vscode-app/src"}`,
+                tool_call_id: tc.name
+              });
+              continue; // Skip to next tool call
+            }
+            
+            if (toolCall.toolName === 'read_file' && !toolCall.args.path) {
+              this.log(`  ⚠️ WARNING: read_file called without 'path' argument!`);
+              toolCall.error = 'Missing required argument: path';
+              allToolCalls.push(toolCall);
+              
+              // Feed error back to LLM
+              messages.push({
+                role: 'tool',
+                content: `Error: Missing required argument 'path' for read_file. Example: {"path": "vscode-app/src/extension.ts"}`,
+                tool_call_id: tc.name
+              });
+              continue; // Skip to next tool call
+            }
             
             // Check for repeated tool calls (loop detection)
             const signature = this.createToolCallSignature(toolCall.toolName, toolCall.args);

@@ -203,13 +203,25 @@ export class CLI {
       this.log(`Message tool_calls count: ${toolCallsData.length}`);
       
       // Convert Ollama tool calls to our format
-      const toolCalls: LLMToolCall[] = toolCallsData.map((tc: any) => ({
-        name: tc.function?.name || '',
-        arguments: tc.function?.arguments || {}
-      }));
+      const toolCalls: LLMToolCall[] = toolCallsData.map((tc: any) => {
+        // Ollama may return arguments as a string or object - parse if needed
+        let args = tc.function?.arguments || {};
+        if (typeof args === 'string') {
+          try {
+            args = JSON.parse(args);
+          } catch (e) {
+            this.log(`Warning: Could not parse tool arguments as JSON: ${args}`);
+            args = {};
+          }
+        }
+        return {
+          name: tc.function?.name || '',
+          arguments: args
+        };
+      });
       
       if (toolCalls.length > 0) {
-        this.log(`Tool calls: ${JSON.stringify(toolCalls).substring(0, 300)}`);
+        this.log(`Tool calls: ${JSON.stringify(toolCalls, null, 2)}`);
       }
       
       this.log(`=== DIAGNOSTIC: LLM CALL END ===`);

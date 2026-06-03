@@ -248,14 +248,27 @@ export class AgentBridge {
     this.workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
     this.log(`Workspace root (user project): ${this.workspaceRoot}`);
     
-    // Extension root: where the extension source code lives
-    // This is D:/proj/AI/i2-vision/vscode-app (or wherever extension is installed)
-    this.extensionRoot = extensionRoot || vscode.extensions.getExtension('i2vision.i2-vision-vscode')?.extensionPath || '';
-    if (!this.extensionRoot) {
+    // Extension root: where the i2-vision PROJECT root is
+    // If extension is installed from vscode-app directory, extensionRoot points to vscode-app
+    // We need to go up to the actual project root (parent of vscode-app)
+    let detectedExtensionRoot = extensionRoot || vscode.extensions.getExtension('i2vision.i2-vision-vscode')?.extensionPath || '';
+    
+    if (!detectedExtensionRoot) {
       // Fallback: use workspace root
-      this.extensionRoot = this.workspaceRoot;
+      detectedExtensionRoot = this.workspaceRoot;
+    } else {
+      // Check if we're in development mode (extension running from vscode-app directory)
+      // If extension path ends with 'vscode-app', go up to project root
+      const pathSegments = detectedExtensionRoot.split(/[\\/]/);
+      if (pathSegments[pathSegments.length - 1] === 'vscode-app') {
+        // Go up one level to get project root
+        detectedExtensionRoot = path.dirname(detectedExtensionRoot);
+        this.log(`Development mode detected: extension root adjusted to project root`);
+      }
     }
-    this.log(`Extension root: ${this.extensionRoot}`);
+    
+    this.extensionRoot = detectedExtensionRoot;
+    this.log(`Extension root (project root): ${this.extensionRoot}`);
     
     // Initialize CLI integration with the workspace root (for CLI operations on user's project)
     this.cli = new CLI(this.workspaceRoot, outputChannel);
@@ -350,6 +363,12 @@ export class AgentBridge {
     prompt += '\nreasoning: The answer is 42.';
     prompt += '\nEOS';
     prompt += '\n\nIMPORTANT: Always start with "reasoning:" and use "tool_call:" if you need to use a tool.';
+    prompt += '\n\n--- CRITICAL RULES ---';
+    prompt += '\n1. NEVER call the same tool with the same arguments more than once.';
+    prompt += '\n2. If a tool returns an error, try a different approach or explain the issue to the user.';
+    prompt += '\n3. If a tool returns the expected result, summarize the findings in text - do NOT call more tools.';
+    prompt += '\n4. When you have enough information to answer the user\'s question, stop calling tools and provide a text response.';
+    prompt += '\n5. If you get the same error twice, explain the problem to the user instead of retrying.';
     
     return prompt;
   }
@@ -607,8 +626,7 @@ export class AgentBridge {
         return await this.cli.readFile(filePath);
       }
       
-      case 'list_directory':
-      case 'list_files': {
+      case 'list_directory': {
         // Smart path resolution: detects extension source paths vs workspace paths
         const dirPath = this.resolvePath(args.path);
         this.log(`  Listing directory: ${dirPath}`);
@@ -660,7 +678,7 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'read_file',
-          description: 'Read the contents of a file. Path can be relative to workspace or extension source (e.g., "vscode-app/src/extension.ts" or "src/main.kt")',
+          description: 'Read the contents of a file. Path can be relative to workspace or extension source (e.g., "vscode-app/src/extension.ts" or "src/main.kt"). Use list_directory to find files first.',
           parameters: {
             type: 'object',
             properties: {
@@ -676,8 +694,8 @@ export class AgentBridge {
       {
         type: 'function',
         function: {
-          name: 'list_files',
-          description: 'List files in a directory. Path can be relative to workspace or extension source (e.g., "vscode-app/src" or "src/main")',
+          name: 'list_directory',
+          description: 'List contents of a directory. Path can be relative to workspace or extension source (e.g., "vscode-app/src" or "src/main")',
           parameters: {
             type: 'object',
             properties: {

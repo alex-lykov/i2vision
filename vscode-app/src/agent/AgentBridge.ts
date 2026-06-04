@@ -18,6 +18,7 @@
  * - BUG FIX: Path normalization in loop detection to catch backslash/forward slash variations
  * - BUG FIX: When directory not found, error includes suggestions for existing paths
  * - BUG FIX: Empty results formatted as clear messages LLM can act on
+ * - BUG FIX: Simplified error format with explicit DO NOT RETRY instruction
  */
 
 import * as vscode from 'vscode';
@@ -373,25 +374,26 @@ export class AgentBridge {
     prompt += '\nWhen you receive a tool result:';
     prompt += '\n1. "This directory is empty. No files found." → Tell the user the directory exists but is empty, then STOP';
     prompt += '\n2. "No files found matching pattern" → Tell the user no matches exist, then STOP';
-    prompt += '\n3. "Directory not found" → Use the suggestion in the error, ask user which folder to check';
+    prompt += '\n3. "DIRECTORY_NOT_FOUND" → DO NOT RETRY. Tell user folder doesn\'t exist, offer alternatives, then STOP';
     prompt += '\n4. List of file paths → Report the files found to the user';
-    prompt += '\n\n--- ERROR HANDLING (CRITICAL) ---';
-    prompt += '\nWhen a tool returns an error:';
-    prompt += '\n1. DO NOT retry the same tool call with the same arguments';
-    prompt += '\n2. DO NOT try alternative paths (root, "/", different separators) - this wastes iterations';
-    prompt += '\n3. If the error includes a SUGGESTION with existing directories, USE IT:';
-    prompt += '\n   - Report to user: "The folder X doesn\'t exist. Available folders: A, B, C. Which should I check?"';
-    prompt += '\n   - Then STOP and wait for user response';
-    prompt += '\n4. If no suggestion provided, list the workspace root ONCE, then report to user';
-    prompt += '\n5. NEVER try more than 2 different approaches for the same task';
-    prompt += '\n\nExample responses to errors:';
-    prompt += '\n- "❌ The folder \'ui\' doesn\'t exist in this project. In the parent folder, I found: app, core, feature. Would you like me to check one of those?"';
-    prompt += '\n- "❌ File not found at that path. The top-level folders are: src, docs, tests. Should I search in one of these?"';
-    prompt += '\n- "✅ The directory exists but is empty. No files found in that folder."';
+    prompt += '\n\n--- DIRECTORY_NOT_FOUND HANDLING (CRITICAL) ---';
+    prompt += '\nWhen list_directory returns DIRECTORY_NOT_FOUND:';
+    prompt += '\n1. DO NOT call list_directory again with the same or different path';
+    prompt += '\n2. DO NOT try root "/", ".", or workspace root';
+    prompt += '\n3. Tell the user: "The folder [path] doesn\'t exist. Available folders: [list]. Would you like me to check one of those?"';
+    prompt += '\n4. Then STOP and wait for user response';
+    prompt += '\n\nExample response:';
+    prompt += '\n"❌ The folder \'core/ui/src\' doesn\'t exist in this project.';
+    prompt += '\nAvailable top-level folders: conf-agent-core, discovery-api, vscode-app, vslfc-core.';
+    prompt += '\nWould you like me to check one of these instead?"';
+    prompt += '\n\n--- ERROR HANDLING ---';
+    prompt += '\nFor other errors:';
+    prompt += '\n- DO NOT retry the same tool call more than once';
+    prompt += '\n- NEVER try more than 2 different approaches for the same task';
+    prompt += '\n- If stuck, report to user and ask for clarification';
     prompt += '\n\n--- PATH HANDLING ---';
     prompt += '\n- Always use forward slashes (/) for paths';
     prompt += '\n- Paths are relative to workspace root';
-    prompt += '\n- If a path fails, use the suggestion in the error message - don\'t guess';
     
     return prompt;
   }
@@ -414,6 +416,7 @@ export class AgentBridge {
    * - BUG FIX: Path normalization to catch backslash/forward slash variations
    * - BUG FIX: When directory not found, error includes suggestions for existing paths
    * - BUG FIX: Empty results formatted as clear messages LLM can act on
+   * - BUG FIX: Simplified error format with explicit DO NOT RETRY instruction
    */
   private async executeAgentLoop(
     userInput: string,

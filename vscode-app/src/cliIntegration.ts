@@ -361,7 +361,7 @@ export class CLI {
   /**
    * List files in a directory
    * 
-   * ENHANCED: When directory not found, suggests parent directory contents
+   * ENHANCED: When directory not found, provides clear alternatives
    */
   async listFiles(dirPath: string, recursive: boolean = false): Promise<string[]> {
     this.log(`Listing files in: ${dirPath} (recursive: ${recursive})`);
@@ -370,12 +370,13 @@ export class CLI {
       if (!fs.existsSync(dirPath)) {
         this.log(`Directory does not exist: ${dirPath}`);
         
-        // Try to find the nearest existing parent and list its contents
-        const suggestion = await this.suggestExistingPath(dirPath);
+        // Get simple list of what exists at workspace root
+        const alternatives = await this.getTopLevelDirectories();
         
         throw new Error(
-          `Directory not found: ${dirPath}\n\n` +
-          `💡 SUGGESTION: ${suggestion}`
+          `DIRECTORY_NOT_FOUND: ${dirPath}\n\n` +
+          `Available top-level folders: ${alternatives.join(', ')}\n\n` +
+          `DO NOT retry this path. Tell the user the folder doesn't exist and offer these alternatives.`
         );
       }
       
@@ -411,64 +412,18 @@ export class CLI {
   }
 
   /**
-   * When a path doesn't exist, find the nearest existing parent and suggest alternatives
+   * Get top-level directories in workspace
    */
-  private async suggestExistingPath(requestedPath: string): Promise<string> {
-    // Normalize path
-    const normalized = requestedPath.replace(/\\/g, '/');
-    const parts = normalized.split('/').filter(p => p.length > 0);
-    
-    // Try to find the deepest existing parent
-    let existingParent = this.workspaceRoot;
-    let missingParts: string[] = [];
-    
-    for (let i = 0; i < parts.length; i++) {
-      const testPath = path.join(existingParent, parts[i]);
-      if (fs.existsSync(testPath)) {
-        existingParent = testPath;
-      } else {
-        missingParts = parts.slice(i);
-        break;
-      }
-    }
-    
-    // If we found an existing parent, list its contents
-    if (existingParent && missingParts.length > 0) {
-      try {
-        const entries = await fs.promises.readdir(existingParent, { withFileTypes: true });
-        const directories = entries
-          .filter(e => e.isDirectory() && !e.name.startsWith('.'))
-          .map(e => e.name)
-          .sort();
-        
-        if (directories.length > 0) {
-          const parentPath = path.relative(this.workspaceRoot, existingParent);
-          return `The path "${path.relative(this.workspaceRoot, requestedPath)}" doesn't exist. ` +
-                 `In the parent folder "${parentPath || '.'}", I found these directories: ${directories.join(', ')}. ` +
-                 `Would you like me to check one of these instead?`;
-        }
-      } catch (e: any) {
-        // Ignore errors, fall through to generic message
-      }
-    }
-    
-    // Fallback: list workspace root
+  private async getTopLevelDirectories(): Promise<string[]> {
     try {
       const entries = await fs.promises.readdir(this.workspaceRoot, { withFileTypes: true });
-      const directories = entries
+      return entries
         .filter(e => e.isDirectory() && !e.name.startsWith('.'))
         .map(e => e.name)
         .sort();
-      
-      if (directories.length > 0) {
-        return `I couldn't find that path. The top-level folders in this project are: ${directories.join(', ')}. ` +
-               `Would you like me to explore one of these?`;
-      }
     } catch (e: any) {
-      // Ignore
+      return [];
     }
-    
-    return `The requested path doesn't exist. Please check the path or ask me to list the available directories.`;
   }
 
   /**

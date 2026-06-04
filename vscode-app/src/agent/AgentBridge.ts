@@ -17,6 +17,7 @@
  * - BUG FIX: Tool calls are now recorded in history BEFORE execution to catch loops on errors
  * - BUG FIX: Path normalization in loop detection to catch backslash/forward slash variations
  * - BUG FIX: When directory not found, error includes suggestions for existing paths
+ * - BUG FIX: Empty results formatted as clear messages LLM can act on
  */
 
 import * as vscode from 'vscode';
@@ -368,6 +369,12 @@ export class AgentBridge {
     prompt += '\nreasoning: I have all the information needed to answer.';
     prompt += '\nThe main entry point is in extension.ts line 45.';
     prompt += '\nEOS';
+    prompt += '\n\n--- TOOL RESULT INTERPRETATION (CRITICAL) ---';
+    prompt += '\nWhen you receive a tool result:';
+    prompt += '\n1. "This directory is empty. No files found." → Tell the user the directory exists but is empty, then STOP';
+    prompt += '\n2. "No files found matching pattern" → Tell the user no matches exist, then STOP';
+    prompt += '\n3. "Directory not found" → Use the suggestion in the error, ask user which folder to check';
+    prompt += '\n4. List of file paths → Report the files found to the user';
     prompt += '\n\n--- ERROR HANDLING (CRITICAL) ---';
     prompt += '\nWhen a tool returns an error:';
     prompt += '\n1. DO NOT retry the same tool call with the same arguments';
@@ -380,6 +387,7 @@ export class AgentBridge {
     prompt += '\n\nExample responses to errors:';
     prompt += '\n- "❌ The folder \'ui\' doesn\'t exist in this project. In the parent folder, I found: app, core, feature. Would you like me to check one of those?"';
     prompt += '\n- "❌ File not found at that path. The top-level folders are: src, docs, tests. Should I search in one of these?"';
+    prompt += '\n- "✅ The directory exists but is empty. No files found in that folder."';
     prompt += '\n\n--- PATH HANDLING ---';
     prompt += '\n- Always use forward slashes (/) for paths';
     prompt += '\n- Paths are relative to workspace root';
@@ -405,6 +413,7 @@ export class AgentBridge {
    * - BUG FIX: Records tool calls in history BEFORE execution to catch loops on errors
    * - BUG FIX: Path normalization to catch backslash/forward slash variations
    * - BUG FIX: When directory not found, error includes suggestions for existing paths
+   * - BUG FIX: Empty results formatted as clear messages LLM can act on
    */
   private async executeAgentLoop(
     userInput: string,
@@ -557,12 +566,39 @@ export class AgentBridge {
             
             allToolCalls.push(toolCall);
             
-            this.log(`  ✅ ${result.error ? 'Error: ' + result.error : 'Success: ' + result.result.substring(0, 100) + (result.result.length > 100 ? '...' : '')}`);
+            // BUG FIX: Format tool result for LLM consumption
+            // Empty results need explicit phrasing so LLM knows to stop
+            let resultText = result.result || '';
+            const errorText = result.error || '';
+            
+            if (errorText) {
+              // Error case - include full error message
+              resultText = `Error: ${errorText}`;
+            } else if (!resultText || resultText.trim() === '') {
+              // Empty result - make it explicit
+              if (toolCall.toolName === 'list_directory') {
+                resultText = 'This directory is empty. No files found.';
+              } else if (toolCall.toolName === 'search_files') {
+                resultText = 'No files found matching that pattern.';
+              } else if (toolCall.toolName === 'read_file') {
+                resultText = 'The file exists but is empty.';
+              } else {
+                resultText = 'No results found.';
+              }
+            } else {
+              // Truncate large results
+              if (resultText.length > this.config.formatting.maxObservationChars) {
+                const truncated = resultText.substring(0, this.config.formatting.maxObservationChars);
+                resultText = truncated + `\n\n[...truncated: ${resultText.length - this.config.formatting.maxObservationChars} more characters...]`;
+              }
+            }
+            
+            this.log(`  ✅ ${errorText ? 'Error: ' + errorText : 'Success: ' + resultText.substring(0, 100) + (resultText.length > 100 ? '...' : '')}`);
             
             // Feed result back to LLM
             messages.push({
               role: 'tool',
-              content: result.result || `Error: ${result.error}`
+              content: resultText
             });
             
             // Emit tool_complete event AFTER executing
@@ -674,6 +710,15 @@ export class AgentBridge {
           this.log(`  Listing directory: ${dirPath} (recursive: ${recursive})`);
           
           const files = await this.cli.listFiles(dirPath, recursive);
+          
+          // BUG FIX: Format empty results explicitly
+          if (files.length === 0) {
+            return {
+              result: 'This directory is empty. No files found.',
+              error: undefined
+            };
+          }
+          
           const result = files.join('\n');
           
           // Truncate if too large
@@ -693,6 +738,15 @@ export class AgentBridge {
           this.log(`  Reading file: ${filePath}`);
           
           const result = await this.cli.readFile(filePath);
+          
+          // Empty file check
+          if (!result || result.trim() === '') {
+            return {
+              result: 'The file exists but is empty.',
+              error: undefined
+            };
+          }
+          
           return { result };
         }
         
@@ -734,6 +788,15 @@ export class AgentBridge {
           this.log(`  Searching for: ${pattern} in ${dirPath || 'workspace'}`);
           
           const results = await this.cli.searchFiles(pattern, dirPath);
+          
+          // BUG FIX: Format empty results explicitly
+          if (results.length === 0) {
+            return {
+              result: 'No files found matching that pattern.',
+              error: undefined
+            };
+          }
+          
           return { result: results.join('\n') };
         }
         

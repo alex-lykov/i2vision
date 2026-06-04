@@ -99,20 +99,21 @@ export class AgentTabManager {
       
       // Set up panel disposal
       panel.onDidDispose(() => {
-        this.log(`Tab disposed: ${tab.id}`);
         this.closeTab(tab.id);
       });
       
-      // Set initial HTML
-      panel.webview.html = this.getWebviewContent(layer, agent.getConfig());
-      
+      // Store the tab
       this.tabs.set(tab.id, tab);
+      
+      // Initialize the webview content
+      this.updateWebview(tab);
+      
       this.log(`Created ${layer} agent tab: ${tab.id}`);
       
       return tab.id;
     } catch (error: any) {
-      this.log(`Error creating ${layer} agent tab: ${error.message}`);
-      vscode.window.showErrorMessage(`Failed to create ${layer} agent: ${error.message}`);
+      this.log(`Error creating tab: ${error.message}`);
+      vscode.window.showErrorMessage(`Failed to create agent tab: ${error.message}`);
       throw error;
     }
   }
@@ -121,22 +122,13 @@ export class AgentTabManager {
    * Handle messages from the webview
    */
   private async handleWebviewMessage(tab: AgentTab, message: any) {
-    this.log(`Webview message: ${message.command}`);
-    
     switch (message.command) {
       case 'sendMessage':
         await this.processUserInput(tab, message.text);
         break;
-        
       case 'openConfig':
         await this.openConfigFile(tab);
         break;
-        
-      case 'clearHistory':
-        tab.history = [];
-        this.updateWebview(tab);
-        break;
-        
       case 'reloadConfig':
         await this.reloadAgent(tab);
         break;
@@ -228,7 +220,7 @@ export class AgentTabManager {
       this.log(`Tool calls: ${response.toolCalls?.map(tc => tc.toolName).join(', ') || 'none'}`);
       
       // Update webview with result - include full tool call data
-      this.log(`=== DIAGNOSTIC: About to postMessage to webview`);
+      this.log(`=== DIAGNOSTIC: About to postMessage to webview ===`);
       this.log(`=== DIAGNOSTIC: response.finalText length: ${response.finalText?.length || 0}`);
       this.log(`=== DIAGNOSTIC: response.toolCalls count: ${response.toolCalls?.length || 0}`);
       tab.panel.webview.postMessage({
@@ -241,7 +233,7 @@ export class AgentTabManager {
           success: response.success
         }
       });
-      this.log(`=== DIAGNOSTIC: postMessage sent successfully`);
+      this.log(`=== DIAGNOSTIC: postMessage sent successfully ===`);
     } catch (error: any) {
       this.log(`Error processing input: ${error.message}`);
       this.log(`Stack trace: ${error.stack}`);
@@ -317,7 +309,7 @@ export class AgentTabManager {
     if (tab) {
       tab.panel.dispose();
       this.tabs.delete(tabId);
-      this.log(`Closed tab: ${tabId}`);
+      this.log(`Closed tab: ${tab.id}`);
     }
   }
 
@@ -348,54 +340,25 @@ export class AgentTabManager {
             color: var(--vscode-foreground);
             background-color: var(--vscode-editor-background);
         }
-        .input-row {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 20px;
-        }
-        #userInput {
-            flex: 1;
-            padding: 8px;
-            font-size: 14px;
-            border: 1px solid var(--vscode-input-border);
-            background: var(--vscode-input-background);
-            color: var(--vscode-input-foreground);
-        }
-        button {
-            padding: 8px 16px;
-            background: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-            border: none;
-            cursor: pointer;
-        }
-        button:hover {
-            background: var(--vscode-button-hoverBackground);
-        }
-        button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
         .message {
             margin: 10px 0;
             padding: 10px;
             border-radius: 4px;
         }
         .user-message {
-            background: var(--vscode-editor-inactiveSelectionBackground);
-            border-left: 3px solid var(--vscode-button-background);
+            background-color: var(--vscode-editor-selectionBackground);
+            border-left: 3px solid var(--vscode-editorCursor-foreground);
         }
         .agent-message {
-            background: var(--vscode-editor-selectionBackground);
-            border-left: 3px solid var(--vscode-editor-foreground);
+            background-color: var(--vscode-editor-inactiveSelectionBackground);
+            border-left: 3px solid var(--vscode-terminal-ansiBlue);
         }
         .tool-call-message {
             margin: 5px 0;
-            padding: 8px 12px;
-            background: var(--vscode-list-hoverBackground);
-            border-left: 3px solid var(--vscode-progressBar-background);
-            border-radius: 3px;
+            padding: 8px;
+            border-left: 3px solid var(--vscode-terminal-ansiCyan);
             font-family: var(--vscode-editor-font-family);
-            font-size: 12px;
+            font-size: 13px;
         }
         .tool-call-complete {
             border-left-color: var(--vscode-terminal-ansiGreen);
@@ -440,6 +403,42 @@ export class AgentTabManager {
             font-size: 12px;
             color: var(--vscode-descriptionForeground);
             margin-bottom: 20px;
+        }
+        .input-row {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            position: sticky;
+            bottom: 0;
+            background: var(--vscode-editor-background);
+            padding: 10px 0;
+        }
+        #userInput {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid var(--vscode-input-border);
+            border-radius: 4px;
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            font-family: var(--vscode-font-family);
+        }
+        #userInput:focus {
+            outline: 2px solid var(--vscode-focusBorder);
+        }
+        #sendButton {
+            padding: 8px 16px;
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        #sendButton:hover {
+            background: var(--vscode-button-hoverBackground);
+        }
+        #sendButton:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
     </style>
 </head>

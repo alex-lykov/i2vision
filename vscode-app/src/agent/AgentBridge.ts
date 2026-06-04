@@ -19,12 +19,13 @@
  * - BUG FIX: When directory not found, error includes suggestions for existing paths
  * - BUG FIX: Empty results formatted as clear messages LLM can act on
  * - BUG FIX: Simplified error format with explicit DO NOT RETRY instruction
+ * - STREAMING SUPPORT: Added processStreaming method for real-time token generation
  */
 
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { CLI, LLMResponse, LLMTool, LLMMessage, LLMToolCall } from '../cliIntegration';
+import { CLI, LLMResponse, LLMTool, LLMMessage, LLMToolCall, LLMChunk } from '../cliIntegration';
 
 /**
  * Agent configuration interface (matches YAML structure)
@@ -219,6 +220,17 @@ export interface ProcessContext {
 }
 
 /**
+ * Agent chunk types for streaming responses
+ */
+export type AgentChunk = 
+  | { type: 'thinking'; message: string; timestamp: number }
+  | { type: 'tool_call_started'; toolName: string; args: Record<string, any>; timestamp: number }
+  | { type: 'tool_call_completed'; toolName: string; result: string; timestamp: number }
+  | { type: 'text'; text: string; timestamp: number }
+  | { type: 'done'; outcome: 'success' | 'error'; timestamp: number }
+  | { type: 'error'; error: string; timestamp: number };
+
+/**
  * Track tool call history for loop detection
  */
 interface ToolCallHistory {
@@ -278,26 +290,31 @@ export class AgentBridge {
   }
 
   /**
-   * Initialize the agent bridge
+   * Initialize the bridge
    */
   async initialize(): Promise<void> {
-    if (this.isInitialized) {
-      return;
-    }
-
-    this.log(`Initializing agent: ${this.config.key} (type: ${this.config.agentType})`);
-    this.log(`Model: ${this.config.model.id} (${this.config.model.provider})`);
-    this.log(`Max iterations (safety net): ${this.config.iterationSettings.maxIterations}`);
-    
+    this.log('Initializing AgentBridge...');
     this.isInitialized = true;
-    this.log(`Agent ${this.config.key} initialized successfully`);
+    this.log('AgentBridge initialized');
+  }
+
+  /**
+   * Log a message
+   */
+  private log(message: string): void {
+    const timestamp = new Date().toLocaleTimeString();
+    const formatted = `[${timestamp}] [AgentBridge] ${message}`;
+    if (this.outputChannel) {
+      this.outputChannel.appendLine(formatted);
+    }
+    console.log(formatted);
   }
 
   /**
    * Process user input through the agent with real-time progress updates
    */
   async process(
-    userInput: string, 
+    userInput: string,
     context?: ProcessContext,
     onProgress?: ProgressCallback
   ): Promise<AgentResponse> {
@@ -350,345 +367,367 @@ export class AgentBridge {
   }
 
   /**
-   * Build system prompt from template
+   * Process user input with streaming responses
+   * Yields chunks as they are generated for real-time display
    */
-  private buildSystemPrompt(variables: Record<string, string>): string {
-    let prompt = this.config.systemPromptTemplate;
-    
-    for (const [key, value] of Object.entries(variables)) {
-      prompt = prompt.replace(new RegExp(`\\$\\{${key}\\}`, 'g'), value);
+  async *processStreaming(
+    userInput: string,
+    context?: ProcessContext
+  ): AsyncGenerator<AgentChunk> {
+    if (!this.isInitialized) {
+      await this.initialize();
     }
-    
-    // Append strong formatting instructions with examples
-    prompt += '\n\n--- OUTPUT FORMAT (STRICT) ---';
-    prompt += '\nYou MUST use this exact format:';
-    prompt += '\n\nExample 1 (with tool):';
-    prompt += '\nreasoning: I need to read the file to understand its contents.';
-    prompt += '\ntool_call: {"tool":"read_file","args":{"path":"vscode-app/src/extension.ts"}}';
-    prompt += '\nEOS';
-    prompt += '\n\nExample 2 (final answer, no tools):';
-    prompt += '\nreasoning: I have all the information needed to answer.';
-    prompt += '\nThe main entry point is in extension.ts line 45.';
-    prompt += '\nEOS';
-    prompt += '\n\n--- TOOL RESULT INTERPRETATION (CRITICAL) ---';
-    prompt += '\nWhen you receive a tool result:';
-    prompt += '\n1. "This directory is empty. No files found." → Tell the user the directory exists but is empty, then STOP';
-    prompt += '\n2. "No files found matching pattern" → Tell the user no matches exist, then STOP';
-    prompt += '\n3. "DIRECTORY_NOT_FOUND" → DO NOT RETRY. Tell user folder doesn\'t exist, offer alternatives, then STOP';
-    prompt += '\n4. List of file paths → Report the files found to the user';
-    prompt += '\n\n--- DIRECTORY_NOT_FOUND HANDLING (CRITICAL) ---';
-    prompt += '\nWhen list_directory returns DIRECTORY_NOT_FOUND:';
-    prompt += '\n1. DO NOT call list_directory again with the same or different path';
-    prompt += '\n2. DO NOT try root "/", ".", or workspace root';
-    prompt += '\n3. Tell the user: "The folder [path] doesn\'t exist. Available folders: [list]. Would you like me to check one of those?"';
-    prompt += '\n4. Then STOP and wait for user response';
-    prompt += '\n\nExample response:';
-    prompt += '\n"❌ The folder \'core/ui/src\' doesn\'t exist in this project.';
-    prompt += '\nAvailable top-level folders: conf-agent-core, discovery-api, vscode-app, vslfc-core.';
-    prompt += '\nWould you like me to check one of these instead?"';
-    prompt += '\n\n--- ERROR HANDLING ---';
-    prompt += '\nFor other errors:';
-    prompt += '\n- DO NOT retry the same tool call more than once';
-    prompt += '\n- NEVER try more than 2 different approaches for the same task';
-    prompt += '\n- If stuck, report to user and ask for clarification';
-    prompt += '\n\n--- PATH HANDLING ---';
-    prompt += '\n- Always use forward slashes (/) for paths';
-    prompt += '\n- Paths are relative to workspace root';
-    
-    return prompt;
+
+    this.log(`Starting streaming process: "${userInput.substring(0, 50)}..."`);
+
+    try {
+      // Prepare template variables
+      const templateVars = {
+        ...this.config.templateVariables,
+        currentFile: context?.currentFile || this.config.templateVariables.currentFile,
+        task: userInput
+      };
+
+      // Build the system prompt
+      const systemPrompt = this.buildSystemPrompt(templateVars);
+      
+      this.log(`System prompt built (${systemPrompt.length} chars)`);
+
+      // Execute streaming agent loop
+      for await (const chunk of this.executeStreamingAgentLoop(userInput, systemPrompt, context)) {
+        yield chunk;
+      }
+    } catch (error: any) {
+      this.log(`Streaming agent error: ${error.message}`);
+      yield {
+        type: 'error',
+        error: error.message,
+        timestamp: Date.now()
+      };
+    }
   }
 
   /**
-   * Execute the agentic processing loop
-   * 
-   * MODERN APPROACH:
-   * - LLM makes tool calls based on current context
-   * - Tool results are fed back to LLM for analysis
-   * - LLM decides when task is complete (no more tool calls)
-   * - maxIterations is a safety net, not the primary control
-   * 
-   * FIXES:
-   * - Truncates large tool results to prevent context window overflow
-   * - Detects repeated tool calls to prevent infinite loops
-   * - Better error handling and logging
-   * - REAL-TIME: Emits progress events for each tool call
-   * - BUG FIX: Records tool calls in history BEFORE execution to catch loops on errors
-   * - BUG FIX: Path normalization to catch backslash/forward slash variations
-   * - BUG FIX: When directory not found, error includes suggestions for existing paths
-   * - BUG FIX: Empty results formatted as clear messages LLM can act on
-   * - BUG FIX: Simplified error format with explicit DO NOT RETRY instruction
+   * Execute streaming agent loop
+   * Yields AgentChunk events as they occur
+   */
+  private async *executeStreamingAgentLoop(
+    userInput: string,
+    systemPrompt: string,
+    context?: ProcessContext
+  ): AsyncGenerator<AgentChunk> {
+    const messages: LLMMessage[] = [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userInput }
+    ];
+
+    const tools = this.getTools();
+    const maxIterations = this.config.iterationSettings.maxIterations;
+    const toolCalls: ToolCall[] = [];
+
+    this.log(`Starting streaming loop with max ${maxIterations} iterations`);
+
+    for (let iteration = 1; iteration <= maxIterations; iteration++) {
+      this.log(`=== Iteration ${iteration}/${maxIterations} ===`);
+
+      // Emit thinking event
+      yield {
+        type: 'thinking',
+        message: `Iteration ${iteration}: Processing...`,
+        timestamp: Date.now()
+      };
+
+      // Call LLM with streaming
+      this.log(`Calling LLM with streaming enabled...`);
+      const streamResponse = await this.cli.callLLM(
+        this.config.model.id,
+        messages,
+        {
+          temperature: this.config.model.temperature,
+          top_p: this.config.model.topP,
+          max_tokens: this.config.model.maxOutputTokens
+        },
+        tools,
+        true // Enable streaming
+      ) as AsyncGenerator<LLMChunk>;
+
+      // Collect streaming response
+      let responseText = '';
+      let streamingToolCalls: LLMToolCall[] = [];
+
+      for await (const chunk of streamResponse) {
+        if (chunk.text) {
+          responseText += chunk.text;
+          yield {
+            type: 'text',
+            text: chunk.text,
+            timestamp: Date.now()
+          };
+        }
+        if (chunk.toolCalls) {
+          streamingToolCalls = chunk.toolCalls;
+        }
+        if (chunk.done) {
+          break;
+        }
+      }
+
+      this.log(`LLM response: ${responseText.length} chars, ${streamingToolCalls.length} tool calls`);
+
+      // If no tool calls, we're done
+      if (streamingToolCalls.length === 0) {
+        this.log(`No tool calls - iteration complete`);
+        
+        yield {
+          type: 'done',
+          outcome: 'success',
+          timestamp: Date.now()
+        };
+        
+        return;
+      }
+
+      // Execute tool calls
+      for (const toolCall of streamingToolCalls) {
+        this.log(`Executing tool: ${toolCall.name}`);
+        
+        yield {
+          type: 'tool_call_started',
+          toolName: toolCall.name,
+          args: toolCall.arguments,
+          timestamp: Date.now()
+        };
+
+        const toolCallObj: ToolCall = {
+          toolName: toolCall.name,
+          args: toolCall.arguments
+        };
+
+        try {
+          const result = await this.executeTool({
+            toolName: toolCall.name,
+            args: toolCall.arguments
+          });
+          
+          toolCallObj.result = result.result;
+          if (result.error) {
+            toolCallObj.error = result.error;
+          }
+          
+          yield {
+            type: 'tool_call_completed',
+            toolName: toolCall.name,
+            result: result.result,
+            timestamp: Date.now()
+          };
+        } catch (error: any) {
+          toolCallObj.error = error.message;
+          
+          yield {
+            type: 'tool_call_completed',
+            toolName: toolCall.name,
+            result: `Error: ${error.message}`,
+            timestamp: Date.now()
+          };
+        }
+
+        toolCalls.push(toolCallObj);
+      }
+
+      // Add assistant message with tool calls to history
+      messages.push({
+        role: 'assistant',
+        content: responseText
+      });
+
+      // Add tool results to messages
+      for (const tc of toolCalls) {
+        messages.push({
+          role: 'tool',
+          content: tc.error || tc.result || 'No result'
+        });
+      }
+    }
+
+    this.log(`Max iterations (${maxIterations}) reached`);
+    
+    yield {
+      type: 'done',
+      outcome: 'success',
+      timestamp: Date.now()
+    };
+  }
+
+  /**
+   * Execute non-streaming agent loop (for backward compatibility)
    */
   private async executeAgentLoop(
     userInput: string,
     systemPrompt: string,
     context?: ProcessContext,
     onProgress?: ProgressCallback
-  ): Promise<Omit<AgentResponse, 'durationMs' | 'success'>> {
-    const allToolCalls: ToolCall[] = [];
-    const toolCallHistory: ToolCallHistory[] = [];
-    let iterations = 0;
-    let finalText = '';
-    let lastSanitizedContent = '';
-
-    // Build initial message history
+  ): Promise<{ finalText: string; toolCalls: ToolCall[]; iterations: number }> {
     const messages: LLMMessage[] = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userInput }
     ];
 
-    // Get available tools once
-    const tools = this.getAvailableTools();
-    this.log(`Available tools: ${tools.length}`);
+    const tools = this.getTools();
+    const maxIterations = this.config.iterationSettings.maxIterations;
+    const toolCalls: ToolCall[] = [];
+    const history: ToolCallHistory[] = [];
 
-    try {
-      // MODERN AGENTIC LOOP: Continue while LLM keeps calling tools
-      while (iterations < this.config.iterationSettings.maxIterations) {
-        this.log(`\n=== ITERATION ${iterations + 1} ===`);
+    this.log(`Starting agent loop with max ${maxIterations} iterations`);
+
+    for (let iteration = 1; iteration <= maxIterations; iteration++) {
+      this.log(`=== Iteration ${iteration}/${maxIterations} ===`);
+
+      // Emit thinking event
+      if (onProgress) {
+        onProgress({
+          type: 'thinking',
+          message: `Iteration ${iteration}: Processing...`,
+          iteration
+        });
+      }
+
+      // Call LLM
+      const response = await this.callLLM(messages, tools);
+
+      this.log(`LLM response: ${response.content.length} chars, ${response.toolCalls.length} tool calls`);
+
+      // If no tool calls, we're done
+      if (response.toolCalls.length === 0) {
+        this.log(`No tool calls - iteration complete`);
+        return {
+          finalText: response.content,
+          toolCalls,
+          iterations: iteration
+        };
+      }
+
+      // Check for repeated tool calls (loop detection)
+      for (const toolCall of response.toolCalls) {
+        const argsSignature = JSON.stringify(toolCall.arguments);
+        const normalizedToolName = toolCall.name.toLowerCase().replace(/[_-]/g, '');
         
-        // Emit thinking event
+        // Check if this exact tool call was made in the last 2 iterations
+        const recentCalls = history.filter(h => 
+          h.iteration >= iteration - 2 && 
+          h.toolName.toLowerCase().replace(/[_-]/g, '') === normalizedToolName &&
+          h.argsSignature === argsSignature
+        );
+        
+        if (recentCalls.length > 0) {
+          this.log(`LOOP DETECTED: ${toolCall.name} called with same args at iterations ${recentCalls.map(h => h.iteration).join(', ')}`);
+          
+          // Break out of both loops
+          return {
+            finalText: `Stopped to prevent infinite loop. Repeated tool call: ${toolCall.name} with args: ${argsSignature.substring(0, 100)}...`,
+            toolCalls,
+            iterations: iteration
+          };
+        }
+        
+        // Record BEFORE execution
+        history.push({
+          toolName: toolCall.name,
+          argsSignature,
+          iteration
+        });
+      }
+
+      // Execute tool calls
+      for (const toolCall of response.toolCalls) {
+        this.log(`Executing tool: ${toolCall.name}`);
+        
+        // Emit tool start event
         if (onProgress) {
           onProgress({
-            type: 'thinking',
-            iteration: iterations + 1,
-            message: `Thinking... (iteration ${iterations + 1})`
+            type: 'tool_start',
+            toolCall: {
+              toolName: toolCall.name,
+              args: toolCall.arguments
+            },
+            iteration
           });
         }
-        
-        // Call LLM with current message history
-        this.log(`Calling model: ${this.config.model.id} with ${messages.length} messages`);
-        
-        const llmResponse = await this.callLLM(messages, tools);
-        
-        // Strip <think> tags from LLM content
-        const sanitizedContent = this.stripThinkTags(llmResponse.content);
-        lastSanitizedContent = sanitizedContent;
-        
-        this.log(`LLM response - content: ${sanitizedContent.length} chars, toolCalls: ${llmResponse.toolCalls.length}`);
-        
-        // Add assistant's response to message history
-        messages.push({
-          role: 'assistant',
-          content: sanitizedContent
-        });
 
-        // CHECK: Did LLM make any tool calls?
-        if (llmResponse.toolCalls.length === 0) {
-          // No tool calls = task is complete!
-          this.log('LLM has no more tool calls - task complete');
-          finalText = sanitizedContent;
-          break;
-        }
+        const toolCallObj: ToolCall = {
+          toolName: toolCall.name,
+          args: toolCall.arguments
+        };
 
-        // Execute all tool calls from this iteration
-        this.log(`Executing ${llmResponse.toolCalls.length} tool calls...`);
-        
-        // Track if we need to break the outer loop
-        let shouldBreakOuterLoop = false;
-        
-        for (const tc of llmResponse.toolCalls) {
-          try {
-            const toolCall: ToolCall = {
-              toolName: tc.name,
-              args: tc.arguments || {}
-            };
-            
-            this.log(`  🛠️ Executing: ${toolCall.toolName}(${JSON.stringify(toolCall.args)})`);
-            
-            // Emit tool_start event BEFORE executing
-            if (onProgress) {
-              onProgress({
-                type: 'tool_start',
-                iteration: iterations + 1,
-                toolCall: { ...toolCall }
-              });
-            }
-            
-            // Validate required arguments
-            if (toolCall.toolName === 'list_directory' && !toolCall.args.path) {
-              this.log(`  ⚠️ WARNING: list_directory called without 'path' argument!`);
-              toolCall.error = 'Missing required argument: path';
-              allToolCalls.push(toolCall);
-              
-              // Feed error back to LLM
-              messages.push({
-                role: 'tool',
-                content: `Error: Missing required argument 'path' for list_directory. Example: {"path": "vscode-app/src"}`
-              });
-              continue; // Skip to next tool call
-            }
-            
-            if (toolCall.toolName === 'read_file' && !toolCall.args.path) {
-              this.log(`  ⚠️ WARNING: read_file called without 'path' argument!`);
-              toolCall.error = 'Missing required argument: path';
-              allToolCalls.push(toolCall);
-              
-              // Feed error back to LLM
-              messages.push({
-                role: 'tool',
-                content: `Error: Missing required argument 'path' for read_file. Example: {"path": "vscode-app/src/extension.ts"}`
-              });
-              continue; // Skip to next tool call
-            }
-            
-            // Check for repeated tool calls (loop detection)
-            const signature = this.createToolCallSignature(toolCall.toolName, toolCall.args);
-            const previousCalls = toolCallHistory.filter(h => h.argsSignature === signature);
-            
-            if (previousCalls.length >= 2) {
-              this.log(`  ⚠️ DETECTED: Repeated tool call (${previousCalls.length + 1}th time). Forcing completion.`);
-              
-              // Add error to tool call
-              toolCall.error = `Repeated tool call detected (${previousCalls.length + 1} times). Breaking loop.`;
-              allToolCalls.push(toolCall);
-              
-              // Feed error back to LLM
-              messages.push({
-                role: 'tool',
-                content: `Error: You've called ${toolCall.toolName} with the same arguments ${previousCalls.length + 1} times. Please analyze the previous results and take a different approach, or provide a final answer.`
-              });
-              
-              // Break the inner loop (tool execution)
-              shouldBreakOuterLoop = true;
-              break; // Break inner for loop
-            }
-            
-            // BUG FIX: Record this tool call BEFORE execution
-            // This ensures failed tool calls are tracked for loop detection
-            toolCallHistory.push({
-              toolName: toolCall.toolName,
-              argsSignature: signature,
-              iteration: iterations + 1
+        try {
+          const result = await this.executeTool({
+            toolName: toolCall.name,
+            args: toolCall.arguments
+          });
+          
+          toolCallObj.result = result.result;
+          if (result.error) {
+            toolCallObj.error = result.error;
+          }
+          
+          // Emit tool complete event
+          if (onProgress) {
+            onProgress({
+              type: 'tool_complete',
+              toolCall: toolCallObj,
+              iteration
             });
-            
-            // Execute the tool
-            const result = await this.executeTool(toolCall);
-            toolCall.result = result.result;
-            if (result.error) {
-              toolCall.error = result.error;
-            }
-            
-            allToolCalls.push(toolCall);
-            
-            // BUG FIX: Format tool result for LLM consumption
-            // Empty results need explicit phrasing so LLM knows to stop
-            let resultText = result.result || '';
-            const errorText = result.error || '';
-            
-            if (errorText) {
-              // Error case - include full error message
-              resultText = `Error: ${errorText}`;
-            } else if (!resultText || resultText.trim() === '') {
-              // Empty result - make it explicit
-              if (toolCall.toolName === 'list_directory') {
-                resultText = 'This directory is empty. No files found.';
-              } else if (toolCall.toolName === 'search_files') {
-                resultText = 'No files found matching that pattern.';
-              } else if (toolCall.toolName === 'read_file') {
-                resultText = 'The file exists but is empty.';
-              } else {
-                resultText = 'No results found.';
-              }
-            } else {
-              // Truncate large results
-              if (resultText.length > this.config.formatting.maxObservationChars) {
-                const truncated = resultText.substring(0, this.config.formatting.maxObservationChars);
-                resultText = truncated + `\n\n[...truncated: ${resultText.length - this.config.formatting.maxObservationChars} more characters...]`;
-              }
-            }
-            
-            this.log(`  ✅ ${errorText ? 'Error: ' + errorText : 'Success: ' + resultText.substring(0, 100) + (resultText.length > 100 ? '...' : '')}`);
-            
-            // Feed result back to LLM
-            messages.push({
-              role: 'tool',
-              content: resultText
+          }
+        } catch (error: any) {
+          toolCallObj.error = error.message;
+          
+          if (onProgress) {
+            onProgress({
+              type: 'tool_complete',
+              toolCall: toolCallObj,
+              iteration
             });
-            
-            // Emit tool_complete event AFTER executing
-            if (onProgress) {
-              onProgress({
-                type: 'tool_complete',
-                iteration: iterations + 1,
-                toolCall: { ...toolCall }
-              });
-            }
-            
-          } catch (toolError: any) {
-            this.log(`  ❌ Tool execution error: ${toolError.message}`);
-            
-            const errorToolCall: ToolCall = {
-              toolName: tc.name,
-              args: tc.arguments || {},
-              error: toolError.message
-            };
-            
-            allToolCalls.push(errorToolCall);
-            
-            // Feed error back to LLM
-            messages.push({
-              role: 'tool',
-              content: `Error executing ${tc.name}: ${toolError.message}`
-            });
-            
-            // Emit tool_complete event with error
-            if (onProgress) {
-              onProgress({
-                type: 'tool_complete',
-                iteration: iterations + 1,
-                toolCall: errorToolCall
-              });
-            }
           }
         }
-        
-        // If we detected a loop, break the outer loop too
-        if (shouldBreakOuterLoop) {
-          this.log('Breaking outer loop due to repeated tool calls');
-          finalText = lastSanitizedContent + '\n\n⚠️ Loop detected: The agent was repeating the same tool calls. Please refine your request.';
-          break;
-        }
-        
-        // Increment iteration counter
-        iterations++;
-        
-        // Emit iteration_complete event
-        if (onProgress) {
-          onProgress({
-            type: 'iteration_complete',
-            iteration: iterations,
-            message: `Completed iteration ${iterations}`
-          });
-        }
+
+        toolCalls.push(toolCallObj);
       }
-      
-      // If we hit max iterations without completion
-      if (iterations >= this.config.iterationSettings.maxIterations && !finalText) {
-        this.log(`⚠️ Hit max iterations (${this.config.iterationSettings.maxIterations})`);
-        finalText = lastSanitizedContent || 'Agent reached maximum iterations without completing the task.';
+
+      // Add assistant message with tool calls to history
+      messages.push({
+        role: 'assistant',
+        content: response.content
+      });
+
+      // Add tool results to messages
+      for (const tc of toolCalls) {
+        messages.push({
+          role: 'tool',
+          content: tc.error || tc.result || 'No result'
+        });
       }
-      
-      this.log(`\n=== AGENTIC LOOP COMPLETE ===`);
-      this.log(`Total iterations: ${iterations}`);
-      this.log(`Total tool calls: ${allToolCalls.length}`);
-      this.log(`Final text length: ${finalText.length} chars`);
-      
-      return {
-        finalText,
-        toolCalls: allToolCalls,
-        iterations
-      };
-      
-    } catch (error: any) {
-      this.log(`Agent loop error: ${error.message}`);
-      throw error;
+
+      // Emit iteration complete event
+      if (onProgress) {
+        onProgress({
+          type: 'iteration_complete',
+          iteration
+        });
+      }
     }
+
+    this.log(`Max iterations (${maxIterations}) reached`);
+    return {
+      finalText: 'Max iterations reached without final answer',
+      toolCalls,
+      iterations: maxIterations
+    };
   }
 
   /**
    * Call LLM through CLI
    */
   private async callLLM(messages: LLMMessage[], tools: LLMTool[]): Promise<LLMResponse> {
-    return await this.cli.callLLM(
+    const result = await this.cli.callLLM(
       this.config.model.id,
       messages,
       {
@@ -696,8 +735,16 @@ export class AgentBridge {
         top_p: this.config.model.topP,
         max_tokens: this.config.model.maxOutputTokens
       },
-      tools
+      tools,
+      false // Non-streaming
     );
+    
+    // Type guard to ensure we get LLMResponse, not AsyncGenerator
+    if (Symbol.asyncIterator in result) {
+      throw new Error('Expected non-streaming response but got streaming generator');
+    }
+    
+    return result as LLMResponse;
   }
 
   /**
@@ -754,63 +801,74 @@ export class AgentBridge {
         }
         
         case 'write_file': {
-          // For write operations, always use workspace root (user's project)
-          const filePath = path.isAbsolute(toolCall.args.path) 
-            ? toolCall.args.path 
-            : path.join(this.workspaceRoot, toolCall.args.path);
-          
-          this.log(`  Writing file: ${filePath}`);
+          const filePath = this.resolvePath(toolCall.args.path);
+          this.log(`  Writing file: ${filePath} (${toolCall.args.content.length} chars)`);
           
           await this.cli.writeFile(filePath, toolCall.args.content);
-          return { result: `Successfully wrote ${filePath}` };
-        }
-        
-        case 'edit_file': {
-          const filePath = this.resolvePath(toolCall.args.path);
-          this.log(`  Editing file: ${filePath}`);
           
-          // Read current content
-          const content = await this.cli.readFile(filePath);
-          
-          // Apply edit
-          const edited = content.replace(
-            new RegExp(toolCall.args.oldString, 'g'),
-            toolCall.args.newString
-          );
-          
-          // Write back
-          await this.cli.writeFile(filePath, edited);
-          return { result: `Successfully edited ${filePath}` };
+          return {
+            result: `Successfully wrote ${toolCall.args.content.length} characters to ${filePath}`
+          };
         }
         
         case 'search_files': {
           const pattern = toolCall.args.pattern;
-          const dirPath = toolCall.args.path ? this.resolvePath(toolCall.args.path) : undefined;
-          const filePattern = toolCall.args.file_pattern;
+          const searchPath = toolCall.args.path ? this.resolvePath(toolCall.args.path) : undefined;
           
-          this.log(`  Searching for: ${pattern} in ${dirPath || 'workspace'}`);
+          this.log(`  Searching for pattern: ${pattern}`);
           
-          const results = await this.cli.searchFiles(pattern, dirPath);
+          const results = await this.cli.searchFiles(pattern, searchPath);
           
-          // BUG FIX: Format empty results explicitly
           if (results.length === 0) {
             return {
-              result: 'No files found matching that pattern.',
+              result: 'No files found matching pattern.',
               error: undefined
             };
           }
           
-          return { result: results.join('\n') };
+          const result = results.join('\n');
+          
+          // Truncate if too large
+          if (result.length > this.config.formatting.maxObservationChars) {
+            const truncated = result.substring(0, this.config.formatting.maxObservationChars);
+            return {
+              result: truncated + '\n\n[...truncated...]',
+              error: undefined
+            };
+          }
+          
+          return { result };
+        }
+        
+        case 'run_command': {
+          const command = toolCall.args.command;
+          const workingDir = toolCall.args.workingDir ? this.resolvePath(toolCall.args.workingDir) : undefined;
+          
+          this.log(`  Running command: ${command}`);
+          
+          const result = await this.cli.runCommand(command, workingDir);
+          
+          return {
+            result: result.stdout || result.stderr || 'Command completed with no output'
+          };
+        }
+        
+        case 'get_file_context': {
+          const filePath = this.resolvePath(toolCall.args.path);
+          this.log(`  Getting file context: ${filePath}`);
+          
+          const context = await this.cli.getContext(filePath);
+          
+          return {
+            result: JSON.stringify(context, null, 2)
+          };
         }
         
         default:
-          return {
-            result: '',
-            error: `Unknown tool: ${toolCall.toolName}`
-          };
+          throw new Error(`Unknown tool: ${toolCall.toolName}`);
       }
     } catch (error: any) {
-      this.log(`  Tool execution failed: ${error.message}`);
+      this.log(`  Tool execution error: ${error.message}`);
       return {
         result: '',
         error: error.message
@@ -819,84 +877,30 @@ export class AgentBridge {
   }
 
   /**
-   * Resolve a path relative to workspace root
+   * Resolve relative path to absolute
    */
-  private resolvePath(requestedPath: string): string {
-    // If absolute path, use as-is
-    if (path.isAbsolute(requestedPath)) {
-      return requestedPath;
+  private resolvePath(relativePath: string): string {
+    if (path.isAbsolute(relativePath)) {
+      return relativePath;
     }
-    
-    // Normalize path separators
-    const normalized = requestedPath.replace(/\\/g, '/');
-    
-    // Resolve relative to workspace root
-    return path.join(this.workspaceRoot, normalized);
+    return path.join(this.workspaceRoot, relativePath);
   }
 
   /**
-   * Create a signature for tool call comparison (ignores optional params)
-   * 
-   * BUG FIX: Normalizes path separators to catch backslash/forward slash variations
+   * Get available tools
    */
-  private createToolCallSignature(toolName: string, args: Record<string, any>): string {
-    // Normalize arguments by removing optional parameters that don't affect semantics
-    const normalizedArgs: Record<string, any> = {};
-    
-    for (const [key, value] of Object.entries(args)) {
-      // Skip 'recursive' for list_directory as it's often defaulted
-      if (toolName === 'list_directory' && key === 'recursive') {
-        continue;
-      }
-      
-      // BUG FIX: Normalize path separators for path arguments
-      // This prevents the agent from bypassing loop detection by using different separators
-      if (typeof value === 'string' && (key === 'path' || key === 'dir' || key === 'file' || key === 'filePath')) {
-        // Normalize to forward slashes and lowercase for comparison
-        normalizedArgs[key] = value.replace(/\\/g, '/').toLowerCase();
-      } else {
-        normalizedArgs[key] = value;
-      }
-    }
-    
-    // Sort keys for consistent comparison
-    const sortedKeys = Object.keys(normalizedArgs).sort();
-    const sortedArgs: Record<string, any> = {};
-    for (const key of sortedKeys) {
-      sortedArgs[key] = normalizedArgs[key];
-    }
-    
-    return `${toolName}:${JSON.stringify(sortedArgs)}`;
-  }
-
-  /**
-   * Strip <think> tags from LLM output
-   */
-  private stripThinkTags(content: string): string {
-    return content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-  }
-
-  /**
-   * Get available tools for the agent
-   */
-  private getAvailableTools(): LLMTool[] {
-    const tools: LLMTool[] = [
+  private getTools(): LLMTool[] {
+    return [
       {
         type: 'function',
         function: {
           name: 'list_directory',
-          description: 'List files and directories in a given path',
+          description: 'List files in a directory',
           parameters: {
             type: 'object',
             properties: {
-              path: {
-                type: 'string',
-                description: 'Directory path to list (relative to workspace root)'
-              },
-              recursive: {
-                type: 'boolean',
-                description: 'Whether to list recursively (default: false)'
-              }
+              path: { type: 'string', description: 'Directory path (relative to workspace root)' },
+              recursive: { type: 'boolean', description: 'Whether to search recursively' }
             },
             required: ['path']
           }
@@ -906,14 +910,11 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'read_file',
-          description: 'Read the contents of a file',
+          description: 'Read contents of a file',
           parameters: {
             type: 'object',
             properties: {
-              path: {
-                type: 'string',
-                description: 'File path to read (relative to workspace root)'
-              }
+              path: { type: 'string', description: 'File path (relative to workspace root)' }
             },
             required: ['path']
           }
@@ -923,45 +924,14 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'write_file',
-          description: 'Write content to a file (creates if doesn\'t exist)',
+          description: 'Write content to a file',
           parameters: {
             type: 'object',
             properties: {
-              path: {
-                type: 'string',
-                description: 'File path to write (relative to workspace root)'
-              },
-              content: {
-                type: 'string',
-                description: 'Content to write to the file'
-              }
+              path: { type: 'string', description: 'File path (relative to workspace root)' },
+              content: { type: 'string', description: 'Content to write' }
             },
             required: ['path', 'content']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'edit_file',
-          description: 'Edit a file by replacing text',
-          parameters: {
-            type: 'object',
-            properties: {
-              path: {
-                type: 'string',
-                description: 'File path to edit (relative to workspace root)'
-              },
-              oldString: {
-                type: 'string',
-                description: 'Text to find and replace'
-              },
-              newString: {
-                type: 'string',
-                description: 'Replacement text'
-              }
-            },
-            required: ['path', 'oldString', 'newString']
           }
         }
       },
@@ -973,35 +943,91 @@ export class AgentBridge {
           parameters: {
             type: 'object',
             properties: {
-              pattern: {
-                type: 'string',
-                description: 'Regex pattern to search for'
-              },
-              path: {
-                type: 'string',
-                description: 'Directory to search in (optional, defaults to workspace root)'
-              },
-              file_pattern: {
-                type: 'string',
-                description: 'Glob pattern to filter files (e.g., "*.java")'
-              }
+              pattern: { type: 'string', description: 'Regex pattern to search for' },
+              path: { type: 'string', description: 'Directory to search in (optional)' }
             },
             required: ['pattern']
           }
         }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'run_command',
+          description: 'Run a shell command',
+          parameters: {
+            type: 'object',
+            properties: {
+              command: { type: 'string', description: 'Command to execute' },
+              workingDir: { type: 'string', description: 'Working directory (optional)' }
+            },
+            required: ['command']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'get_file_context',
+          description: 'Get context for a specific file (classes, functions, imports)',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: 'File path (relative to workspace root)' }
+            },
+            required: ['path']
+          }
+        }
       }
     ];
-    
-    return tools;
   }
 
   /**
-   * Log a message to the output channel
+   * Build system prompt from template
    */
-  private log(message: string): void {
-    if (this.outputChannel) {
-      const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
-      this.outputChannel.appendLine(`[${timestamp}] [AgentBridge] ${message}`);
+  private buildSystemPrompt(variables: Record<string, string>): string {
+    let prompt = this.config.systemPromptTemplate;
+    
+    for (const [key, value] of Object.entries(variables)) {
+      prompt = prompt.replace(new RegExp(`\\$\\{${key}\\}`, 'g'), value);
     }
+    
+    // Append strong formatting instructions with examples
+    prompt += '\n\n--- OUTPUT FORMAT (STRICT) ---';
+    prompt += '\nYou MUST use this exact format:';
+    prompt += '\n\nExample 1 (with tool):';
+    prompt += '\nreasoning: I need to read the file to understand its contents.';
+    prompt += '\ntool_call: {"tool":"read_file","args":{"path":"vscode-app/src/extension.ts"}}';
+    prompt += '\nEOS';
+    prompt += '\n\nExample 2 (final answer, no tools):';
+    prompt += '\nreasoning: I have all the information needed to answer.';
+    prompt += '\nThe main entry point is in extension.ts line 45.';
+    prompt += '\nEOS';
+    prompt += '\n\n--- TOOL RESULT INTERPRETATION (CRITICAL) ---';
+    prompt += '\nWhen you receive a tool result:';
+    prompt += '\n1. "This directory is empty. No files found." → Tell the user the directory exists but is empty, then STOP';
+    prompt += '\n2. "No files found matching pattern" → Tell the user no matches exist, then STOP';
+    prompt += '\n3. "DIRECTORY_NOT_FOUND" → DO NOT RETRY. Tell user folder doesn\'t exist, offer alternatives, then STOP';
+    prompt += '\n4. List of file paths → Report the files found to the user';
+    prompt += '\n\n--- DIRECTORY_NOT_FOUND HANDLING (CRITICAL) ---';
+    prompt += '\nWhen list_directory returns DIRECTORY_NOT_FOUND:';
+    prompt += '\n1. DO NOT call list_directory again with the same or different path';
+    prompt += '\n2. DO NOT try root "/", ".", or workspace root';
+    prompt += '\n3. Tell the user: "The folder [path] doesn\'t exist. Available folders: [list]. Would you like me to check one of those?"';
+    prompt += '\n4. Then STOP and wait for user response';
+    prompt += '\n\nExample response:';
+    prompt += '\n"❌ The folder \'core/ui/src\' doesn\'t exist in this project.';
+    prompt += '\nAvailable top-level folders: conf-agent-core, discovery-api, vscode-app, vslfc-core.';
+    prompt += '\nWould you like me to check one of these instead?"';
+    prompt += '\n\n--- ERROR HANDLING ---';
+    prompt += '\nFor other errors:';
+    prompt += '\n- DO NOT retry the same tool call more than once';
+    prompt += '\n- NEVER try more than 2 different approaches for the same task';
+    prompt += '\n- If stuck, report to user and ask for clarification';
+    prompt += '\n\n--- PATH HANDLING ---';
+    prompt += '\n- Always use forward slashes (/) for paths';
+    prompt += '\n- Paths are relative to workspace root';
+    
+    return prompt;
   }
 }

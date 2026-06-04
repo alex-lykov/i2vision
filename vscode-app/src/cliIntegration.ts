@@ -64,6 +64,15 @@ export interface LLMResponse {
 }
 
 /**
+ * LLM Chunk for streaming responses
+ */
+export interface LLMChunk {
+  text: string;
+  done: boolean;
+  toolCalls?: LLMToolCall[];
+}
+
+/**
  * Violation info structure
  */
 export interface Violation {
@@ -215,14 +224,17 @@ export class CLI {
   /**
    * Call LLM through Ollama HTTP API
    * Returns both content and tool calls
+   * 
+   * @param stream - If true, returns AsyncGenerator<LLMChunk> for streaming
    */
   async callLLM(
     modelId: string,
     messages: LLMMessage[],
     options?: LLMOptions,
-    tools?: LLMTool[]
-  ): Promise<LLMResponse> {
-    this.log(`Calling LLM: ${modelId} with ${messages.length} messages`);
+    tools?: LLMTool[],
+    stream: boolean = false
+  ): Promise<LLMResponse | AsyncGenerator<LLMChunk>> {
+    this.log(`Calling LLM: ${modelId} with ${messages.length} messages (stream: ${stream})`);
     this.log(`=== DIAGNOSTIC: LLM CALL START ===`);
     this.log(`Model: ${modelId}`);
     this.log(`Tools: ${tools?.length || 0}`);
@@ -235,7 +247,7 @@ export class CLI {
       const body: any = {
         model: modelId,
         messages,
-        stream: false,
+        stream: stream,
         options: {
           temperature: options?.temperature || 0.2,
           top_p: options?.top_p || 0.95,
@@ -251,7 +263,6 @@ export class CLI {
       this.log(`Sending HTTP POST to ${this.ollamaUrl}/api/chat`);
       this.log(`Request body size: ${JSON.stringify(body).length} bytes`);
 
-      // Direct HTTP to Ollama
       const res = await fetch(`${this.ollamaUrl}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -267,47 +278,54 @@ export class CLI {
         throw new Error(`Ollama HTTP error: ${res.status} ${res.statusText}`);
       }
 
-      this.log(`Parsing JSON response...`);
-      const data = await res.json() as any;
-      this.log(`Response parsed successfully`);
-      this.log(`Response structure: ${Object.keys(data).join(', ')}`);
-      
-      // Extract content and tool calls separately
-      const content = data.message?.content || '';
-      const toolCallsData = data.message?.tool_calls || [];
-      
-      this.log(`Message content length: ${content.length} chars`);
-      this.log(`Message tool_calls count: ${toolCallsData.length}`);
-      
-      // Convert Ollama tool calls to our format
-      const toolCalls: LLMToolCall[] = toolCallsData.map((tc: any) => {
-        // Ollama may return arguments as a string or object - parse if needed
-        let args = tc.function?.arguments || {};
-        if (typeof args === 'string') {
-          try {
-            args = JSON.parse(args);
-          } catch (e) {
-            this.log(`Warning: Could not parse tool arguments as JSON: ${args}`);
-            args = {};
+      if (stream) {
+        // Return streaming generator
+        this.log(`Starting streaming response...`);
+        return this.streamResponse(res, startTime);
+      } else {
+        // Non-streaming: wait for full response
+        this.log(`Parsing JSON response...`);
+        const data = await res.json() as any;
+        this.log(`Response parsed successfully`);
+        this.log(`Response structure: ${Object.keys(data).join(', ')}`);
+        
+        // Extract content and tool calls separately
+        const content = data.message?.content || '';
+        const toolCallsData = data.message?.tool_calls || [];
+        
+        this.log(`Message content length: ${content.length} chars`);
+        this.log(`Message tool_calls count: ${toolCallsData.length}`);
+        
+        // Convert Ollama tool calls to our format
+        const toolCalls: LLMToolCall[] = toolCallsData.map((tc: any) => {
+          // Ollama may return arguments as a string or object - parse if needed
+          let args = tc.function?.arguments || {};
+          if (typeof args === 'string') {
+            try {
+              args = JSON.parse(args);
+            } catch (e) {
+              this.log(`Warning: Could not parse tool arguments as JSON: ${args}`);
+              args = {};
+            }
           }
+          return {
+            id: tc.id || tc.function?.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            name: tc.function?.name || '',
+            arguments: args
+          };
+        });
+        
+        if (toolCalls.length > 0) {
+          this.log(`Tool calls: ${JSON.stringify(toolCalls, null, 2)}`);
         }
+        
+        this.log(`=== DIAGNOSTIC: LLM CALL END ===`);
+        
         return {
-          id: tc.id || tc.function?.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          name: tc.function?.name || '',
-          arguments: args
+          content,
+          toolCalls
         };
-      });
-      
-      if (toolCalls.length > 0) {
-        this.log(`Tool calls: ${JSON.stringify(toolCalls, null, 2)}`);
       }
-      
-      this.log(`=== DIAGNOSTIC: LLM CALL END ===`);
-      
-      return {
-        content,
-        toolCalls
-      };
     } catch (error: any) {
       const elapsed = Date.now() - startTime;
       this.log(`LLM call error after ${elapsed}ms: ${error.message}`);
@@ -319,6 +337,104 @@ export class CLI {
         content: `Error: LLM call failed - ${error.message}`,
         toolCalls: []
       };
+    }
+  }
+
+  /**
+   * Stream LLM response as chunks
+   */
+  private async *streamResponse(
+    res: Response,
+    startTime: number
+  ): AsyncGenerator<LLMChunk> {
+    try {
+      const reader = res.body?.getReader();
+      if (!reader) {
+        throw new Error('Response body is null');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let accumulatedContent = '';
+      const toolCalls: LLMToolCall[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) {
+          this.log(`Stream complete after ${Date.now() - startTime}ms`);
+          yield {
+            text: '',
+            done: true,
+            toolCalls: toolCalls.length > 0 ? toolCalls : undefined
+          };
+          break;
+        }
+
+        // Decode chunk and add to buffer
+        buffer += decoder.decode(value, { stream: true });
+        
+        // Process complete lines (NDJSON format)
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || ''; // Keep incomplete line in buffer
+        
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          
+          try {
+            const chunk = JSON.parse(line) as any;
+            
+            // Extract content from chunk
+            const content = chunk.message?.content || '';
+            if (content) {
+              accumulatedContent += content;
+              yield {
+                text: content,
+                done: false
+              };
+            }
+            
+            // Check for tool calls in chunk
+            const toolCallsData = chunk.message?.tool_calls || [];
+            if (toolCallsData.length > 0) {
+              const newToolCalls: LLMToolCall[] = toolCallsData.map((tc: any) => {
+                let args = tc.function?.arguments || {};
+                if (typeof args === 'string') {
+                  try {
+                    args = JSON.parse(args);
+                  } catch (e) {
+                    this.log(`Warning: Could not parse tool arguments as JSON: ${args}`);
+                    args = {};
+                  }
+                }
+                return {
+                  id: tc.id || tc.function?.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                  name: tc.function?.name || '',
+                  arguments: args
+                };
+              });
+              toolCalls.push(...newToolCalls);
+              this.log(`Tool calls detected in stream: ${newToolCalls.map(tc => tc.name).join(', ')}`);
+            }
+            
+            // Check if done
+            if (chunk.done) {
+              this.log(`Stream marked as done after ${Date.now() - startTime}ms`);
+              yield {
+                text: '',
+                done: true,
+                toolCalls: toolCalls.length > 0 ? toolCalls : undefined
+              };
+              return;
+            }
+          } catch (e: any) {
+            this.log(`Warning: Could not parse chunk as JSON: ${line.substring(0, 100)}`);
+          }
+        }
+      }
+    } catch (error: any) {
+      this.log(`Streaming error: ${error.message}`);
+      throw error;
     }
   }
 
@@ -700,8 +816,8 @@ public class ${appClass}Application {
     
     <dependencies>
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
+          <groupId>org.springframework.boot</groupId>
+          <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
     </dependencies>
     

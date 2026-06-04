@@ -560,6 +560,13 @@ export class AgentBridge {
           content: tc.error || tc.result || 'No result'
         });
       }
+
+      // DECISION NUDGE: Force LLM to decide - answer or one more tool
+      // This prevents infinite loops by giving a clear decision point after every tool result
+      messages.push({
+        role: 'user',
+        content: `You have new information. Can you answer the user's request: "${userInput}"? If yes, answer now. If you need ONE more piece of information, call a different tool.`
+      });
     }
 
     this.log(`Max iterations (${maxIterations}) reached`);
@@ -731,6 +738,13 @@ export class AgentBridge {
           content: tc.error || tc.result || 'No result'
         });
       }
+
+      // DECISION NUDGE: Force LLM to decide - answer or one more tool
+      // This prevents infinite loops by giving a clear decision point after every tool result
+      messages.push({
+        role: 'user',
+        content: `You have new information. Can you answer the user's request: "${userInput}"? If yes, answer now. If you need ONE more piece of information, call a different tool.`
+      });
 
       // Emit iteration complete event
       if (onProgress) {

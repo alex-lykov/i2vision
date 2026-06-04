@@ -388,29 +388,20 @@ export class AgentTabManager {
             background: var(--vscode-editor-selectionBackground);
             border-left: 3px solid var(--vscode-editor-foreground);
         }
-        .tool-calls {
-            margin: 10px 0;
-            padding: 10px;
-            background: var(--vscode-editor-background);
-            border: 1px solid var(--vscode-widget-border);
-            border-radius: 4px;
-        }
-        .tool-call {
+        .tool-call-message {
             margin: 5px 0;
-            padding: 5px;
+            padding: 8px 12px;
             background: var(--vscode-list-hoverBackground);
+            border-left: 3px solid var(--vscode-progressBar-background);
             border-radius: 3px;
             font-family: var(--vscode-editor-font-family);
             font-size: 12px;
         }
-        .tool-call-start {
-            border-left: 3px solid var(--vscode-progressBar-background);
-        }
         .tool-call-complete {
-            border-left: 3px solid var(--vscode-terminal-ansiGreen);
+            border-left-color: var(--vscode-terminal-ansiGreen);
         }
         .tool-call-error {
-            border-left: 3px solid var(--vscode-terminal-ansiRed);
+            border-left-color: var(--vscode-terminal-ansiRed);
         }
         .progress-indicator {
             display: flex;
@@ -471,7 +462,6 @@ export class AgentTabManager {
         const userInput = document.getElementById('userInput');
         
         let currentProgressDiv = null;
-        let toolCallsDiv = null;
         
         function handleKeyPress(event) {
             if (event.key === 'Enter' && !event.shiftKey) {
@@ -496,10 +486,6 @@ export class AgentTabManager {
                 currentProgressDiv.remove();
                 currentProgressDiv = null;
             }
-            if (toolCallsDiv) {
-                toolCallsDiv.remove();
-                toolCallsDiv = null;
-            }
             
             // Send to extension
             vscode.postMessage({ command: 'sendMessage', text });
@@ -522,6 +508,28 @@ export class AgentTabManager {
             div.scrollIntoView({ behavior: 'smooth' });
         }
         
+        function addToolCallMessage(toolCall, type) {
+            const div = document.createElement('div');
+            div.className = 'tool-call-message ' + (type === 'complete' ? 'tool-call-complete' : (toolCall.error ? 'tool-call-error' : ''));
+            
+            let content = '<strong>' + toolCall.toolName + '</strong>(';
+            for (const [key, value] of Object.entries(toolCall.args || {})) {
+                content += key + ': ' + JSON.stringify(value) + ', ';
+            }
+            content = content.replace(/, $/, '') + ')';
+            
+            if (type === 'complete') {
+                content += ' → <em>Completed</em>';
+            }
+            if (toolCall.error) {
+                content += ' → <strong style="color: var(--vscode-errorForeground)">Error: ' + toolCall.error + '</strong>';
+            }
+            
+            div.innerHTML = content;
+            messagesDiv.appendChild(div);
+            div.scrollIntoView({ behavior: 'smooth' });
+        }
+        
         function showProgress(message) {
             if (currentProgressDiv) {
                 currentProgressDiv.remove();
@@ -532,35 +540,6 @@ export class AgentTabManager {
             currentProgressDiv.innerHTML = '<div class="spinner"></div><span>' + message + '</span>';
             messagesDiv.appendChild(currentProgressDiv);
             currentProgressDiv.scrollIntoView({ behavior: 'smooth' });
-        }
-        
-        function showToolCall(toolCall, type) {
-            if (!toolCallsDiv) {
-                toolCallsDiv = document.createElement('div');
-                toolCallsDiv.className = 'tool-calls';
-                toolCallsDiv.innerHTML = '<strong>Tool Calls:</strong>';
-                messagesDiv.appendChild(toolCallsDiv);
-            }
-            
-            const toolDiv = document.createElement('div');
-            toolDiv.className = 'tool-call ' + (type === 'start' ? 'tool-call-start' : (toolCall.error ? 'tool-call-error' : 'tool-call-complete'));
-            
-            let content = '<strong>' + toolCall.toolName + '</strong>(';
-            for (const [key, value] of Object.entries(toolCall.args || {})) {
-                content += key + ': ' + JSON.stringify(value) + ', ';
-            }
-            content = content.replace(/, $/, '') + ')';
-            
-            if (toolCall.result) {
-                content += ' → <em>Completed</em>';
-            }
-            if (toolCall.error) {
-                content += ' → <strong style="color: var(--vscode-errorForeground)">Error: ' + toolCall.error + '</strong>';
-            }
-            
-            toolDiv.innerHTML = content;
-            toolCallsDiv.appendChild(toolDiv);
-            toolDiv.scrollIntoView({ behavior: 'smooth' });
         }
         
         function hideProgress() {
@@ -585,11 +564,11 @@ export class AgentTabManager {
                         showProgress(event.message);
                     } else if (event.type === 'tool_start') {
                         if (event.toolCall) {
-                            showToolCall(event.toolCall, 'start');
+                            addToolCallMessage(event.toolCall, 'start');
                         }
                     } else if (event.type === 'tool_complete') {
                         if (event.toolCall) {
-                            showToolCall(event.toolCall, 'complete');
+                            addToolCallMessage(event.toolCall, 'complete');
                         }
                     } else if (event.type === 'iteration_complete') {
                         // Optional: show iteration complete message
@@ -598,20 +577,11 @@ export class AgentTabManager {
                     
                 case 'response':
                     hideProgress();
-                    if (toolCallsDiv) {
-                        toolCallsDiv.remove();
-                        toolCallsDiv = null;
-                    }
                     
                     let responseHtml = '<div>' + message.response.text.replace(/\\n/g, '<br>') + '</div>';
                     
                     if (message.response.toolCalls && message.response.toolCalls.length > 0) {
-                        responseHtml += '<div class="tool-calls"><strong>Tools Used:</strong>';
-                        message.response.toolCalls.forEach(tc => {
-                            responseHtml += '<div class="tool-call tool-call-complete"><strong>' + tc.toolName + '</strong>(' + 
-                                Object.entries(tc.args || {}).map(([k,v]) => k + ': ' + JSON.stringify(v)).join(', ') + ')</div>';
-                        });
-                        responseHtml += '</div>';
+                        responseHtml += '<div class="iteration-info">Tools Used: ' + message.response.toolCalls.map(tc => tc.toolName).join(', ') + '</div>';
                     }
                     
                     responseHtml += '<div class="iteration-info">Iterations: ' + message.response.iterations + ' | Duration: ' + message.response.durationMs + 'ms</div>';
@@ -649,10 +619,12 @@ export class AgentTabManager {
   }
 
   /**
-   * Log message
+   * Log a message
    */
   private log(message: string): void {
-    const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
-    this.outputChannel.appendLine(`[${timestamp}] [AgentTabManager] ${message}`);
+    const timestamp = new Date().toLocaleTimeString();
+    const formatted = `[${timestamp}] [AgentTabManager] ${message}`;
+    this.outputChannel.appendLine(formatted);
+    console.log(formatted);
   }
 }

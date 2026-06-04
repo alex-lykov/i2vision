@@ -45,33 +45,40 @@ systemPromptTemplate: |
   - Current file: ${currentFile}
   - Task: ${task}
 
-# Variables available for substitution in the template
+# Variables available for template substitution
 templateVariables:
   projectName: ""
   currentFile: ""
   task: ""
 
+# References to rule sets (defined elsewhere in the system)
+# ruleSetKeys: ["rule-1", "rule-2"]
+
+# Name of the output parser template to use
+# parserTemplateName: "json-output"
+
 # -----------------------------------------------------------------------------
 # 3. MODEL
 # -----------------------------------------------------------------------------
-# LLM model configuration
+# Model configuration for LLM inference
 model:
-  # Model identifier (provider-specific)
+  # Model identifier (format depends on provider)
+  # Examples: "qwen3:4b", "llama3:8b", "minimax-m2.1:cloud"
   id: "minimax-m2.1:cloud"
   
-  # Model provider (ollama, openai, anthropic, etc.)
+  # Provider name (ollama, openai, anthropic, etc.)
   provider: "ollama"
   
-  # Context window size (tokens)
+  # Maximum context window size (tokens)
   contextLength: 32768
   
-  # Maximum output tokens
+  # Maximum tokens in response
   maxOutputTokens: 4096
   
-  # Temperature for response generation (0.0-1.0)
+  # Sampling temperature (0.0 = deterministic, 1.0 = creative)
   temperature: 0.7
   
-  # Top-p sampling
+  # Top-p sampling (nucleus sampling threshold)
   topP: 0.9
   
   # Stop sequences
@@ -79,9 +86,9 @@ model:
     - "EOS"
 
 # -----------------------------------------------------------------------------
-# 4. LLM ENDPOINT
+# 4. LLM BEHAVIOR
 # -----------------------------------------------------------------------------
-# LLM server connection settings
+# Timeout and retry settings for LLM calls
 llm:
   # Base URL for the LLM API
   baseUrl: "http://localhost:11434"

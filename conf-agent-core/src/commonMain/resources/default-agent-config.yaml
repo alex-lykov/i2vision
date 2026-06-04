@@ -34,286 +34,187 @@ systemPromptTemplate: |
   
   When given a task:
   1. Understand the context and requirements
-  2. Follow the VSLFC layer specifications
-  3. Generate clear, maintainable artifacts
-  4. Verify consistency with other layers
+  2. Call ONE tool to gather information
+  3. WAIT for tool results
+  4. ANALYZE the results carefully
+  5. Provide a clear, helpful ANSWER to the user
+  6. STOP - do not call more tools unless absolutely necessary
   
   Available context:
   - Project: ${projectName}
   - Current file: ${currentFile}
   - Task: ${task}
 
-# Variables available for template substitution
+# Variables available for substitution in the template
 templateVariables:
   projectName: ""
   currentFile: ""
   task: ""
 
-# References to rule sets (defined elsewhere in the system)
-# ruleSetKeys: ["rule-1", "rule-2"]
-
-# Name of the output parser template to use
-# parserTemplateName: "json-output"
-
 # -----------------------------------------------------------------------------
 # 3. MODEL
 # -----------------------------------------------------------------------------
-# Model configuration for LLM inference
+# LLM model configuration
 model:
-  # Model identifier (format depends on provider)
-  # Examples: "qwen3:4b", "llama3:8b", "minimax-m2.1:cloud"
+  # Model identifier (provider-specific)
   id: "minimax-m2.1:cloud"
   
-  # Provider name (ollama, openai, anthropic, etc.)
+  # Model provider (ollama, openai, anthropic, etc.)
   provider: "ollama"
   
-  # Maximum context window size (tokens)
+  # Context window size (tokens)
   contextLength: 32768
   
-  # Maximum tokens in response
+  # Maximum output tokens
   maxOutputTokens: 4096
   
-  # Sampling temperature (0.0 = deterministic, 1.0 = creative)
+  # Temperature for response generation (0.0-1.0)
   temperature: 0.7
   
-  # Top-p sampling (nucleus sampling threshold)
+  # Top-p sampling
   topP: 0.9
+  
+  # Stop sequences
+  stopSequences:
+    - "EOS"
 
 # -----------------------------------------------------------------------------
-# 4. LLM BEHAVIOR
+# 4. LLM ENDPOINT
 # -----------------------------------------------------------------------------
-# Timeout and retry settings for LLM calls
+# LLM server connection settings
 llm:
-  # General timeout for LLM requests (seconds)
-  timeoutSeconds: 120
+  # Base URL for the LLM API
+  baseUrl: "http://localhost:11434"
   
-  # Timeout for modification operations (seconds)
-  modificationTimeoutSeconds: 300
+  # API key (if required by provider)
+  apiKey: ""
   
-  # Extra time bonus for final turn (seconds)
-  finalTurnBonusSeconds: 60
+  # Request timeout in milliseconds
+  timeout: 60000
   
-  # Maximum number of retry attempts
-  maxRetries: 3
-  
-  # Backoff delays between retries (milliseconds)
-  retryBackoffMs: [1000, 2000, 4000]
+  # Retry settings
+  maxRetries: 2
+  retryDelayMs: 1000
 
 # -----------------------------------------------------------------------------
-# 5. FORMATTING RULES
+# 5. FORMATTING
 # -----------------------------------------------------------------------------
-# Rules for parsing agent output
+# Response formatting rules
 formattingRules:
-  # Full formatting rules description
-  rules: ""
+  # Marker that indicates end of structured response
+  eosMarker: "EOS"
   
-  # Brief format specification
-  brief: ""
+  # Tool call format (JSON schema)
+  toolCallFormat: '{"tool":"tool_name","args":{}}'
   
-  # Header marker for reasoning sections
-  reasoningHeader: "## Reasoning"
+  # Reasoning prefix
+  reasoningPrefix: "reasoning:"
   
-  # Header marker for tool call sections
-  toolCallHeader: "## Tool Calls"
-  
-  # End-of-stream marker
-  eosMarker: "### END"
+  # Tool call prefix
+  toolCallPrefix: "tool_call:"
 
 # -----------------------------------------------------------------------------
-# 6. ITERATION
+# 6. ITERATION SETTINGS
 # -----------------------------------------------------------------------------
-# Settings for iterative task execution
+# Controls agent iteration behavior
 iterationSettings:
-  # Maximum number of iteration cycles
+  # Maximum number of tool call iterations
   maxIterations: 10
   
-  # Maximum consecutive tool calls without user input
-  maxConsecutiveToolCalls: 5
+  # Maximum tool calls per iteration
+  maxToolCallsPerIteration: 1
   
-  # Enable kickstart mechanism for stuck iterations
-  enableKickstart: false
-  
-  # Number of invalid outputs before kickstart triggers
-  kickstartMinInvalidOutputs: 3
+  # Whether to stop after first tool result (for simple queries)
+  stopAfterFirstToolResult: false
 
 # -----------------------------------------------------------------------------
 # 7. TOOL SELECTION
 # -----------------------------------------------------------------------------
-# Configuration for tool discovery and selection
+# Tool availability and configuration
 toolSelection:
-  # Tools required for modification operations
-  requiredToolsForModification: []
+  # Tools available to this agent
+  availableTools:
+    - "read_file"
+    - "list_files"
+    - "search_files"
+    - "write_file"
+    - "run_command"
+    - "find_definition"
+    - "find_references"
+    - "find_symbols"
+    - "find_implementations"
+    - "document_symbols"
   
-  # Default relevance threshold for tool selection (0.0-1.0)
-  defaultRelevanceThreshold: 0.5
+  # Tools that require special handling
+  privilegedTools:
+    - "write_file"
+    - "run_command"
   
-  # Maximum number of tools to consider per task
-  maxToolsPerTask: 10
-  
-  # Timeout for individual tool calls (seconds)
-  toolTimeoutSeconds: 60
+  # Tool call timeout in milliseconds
+  toolCallTimeout: 30000
 
 # -----------------------------------------------------------------------------
 # 8. SAFETY
 # -----------------------------------------------------------------------------
-# Safety constraints and path restrictions
+# Safety and security settings
 safety:
-  # Keywords that indicate modification intent
-  modificationKeywords: []
+  # Maximum file size to read (bytes)
+  maxFileReadSize: 1048576  # 1MB
   
-  # Keywords that indicate listing/read-only intent
-  listingKeywords: []
+  # Maximum response size (characters)
+  maxResponseSize: 10000
   
-  # Keywords to exclude from listing-modification detection
-  listingModificationExclusions: []
+  # Whether to allow file writes
+  allowFileWrites: true
   
-  # Path patterns to block (generated files, build artifacts, etc.)
-  blockGeneratedPaths: []
+  # Whether to allow command execution
+  allowCommandExecution: true
   
-  # Patterns that indicate safe new file creation
-  allowNewFileCreationPatterns: []
+  # Blocked commands (shell injection prevention)
+  blockedCommands:
+    - "rm -rf /"
+    - "del /F /S /Q C:\\*"
+    - "format"
 
 # -----------------------------------------------------------------------------
 # 9. PARSING
 # -----------------------------------------------------------------------------
-# Output parsing configuration
+# Response parsing configuration
 parsing:
-  # List of enabled parsers
-  enabledParsers: ["tool-call"]
+  # Parser template name (from parser-templates)
+  parserTemplateName: "default"
   
-  # Regex pattern for header detection
-  headerPattern: ""
+  # Whether to validate tool call JSON
+  validateToolCallJson: true
   
-  # Regex pattern for tool call detection
-  toolCallPattern: ""
-  
-  # Regex pattern for malformed output detection
-  malformedPattern: ""
-  
-  # Maximum response size (characters)
-  maxResponseSize: 32768
-  
-  # Maximum prose characters before truncation
-  maxProseChars: 16384
+  # Whether to extract reasoning from response
+  extractReasoning: true
 
 # -----------------------------------------------------------------------------
-# 10. REPAIR
+# 10. DISCOVERY
 # -----------------------------------------------------------------------------
-# Strategies for handling parsing failures
-# repairStrategies: []
-
-# -----------------------------------------------------------------------------
-# 11. DISCOVERY
-# -----------------------------------------------------------------------------
-# Configuration for tool and context discovery
+# Discovery-specific settings (for discovery agents)
 discovery:
-  # Maximum search terms to generate
-  maxSearchTerms: 5
+  # Batch size for parallel processing
+  batchSize: 10
   
-  # Maximum candidate results to consider
-  maxCandidates: 10
+  # Whether to use parallel processing
+  useParallelProcessing: true
   
-  # Framework-specific profiles
-  frameworkProfiles: {}
+  # Cache settings
+  cacheEnabled: true
+  cacheTtlHours: 24
 
 # -----------------------------------------------------------------------------
-# 12. EXECUTION
+# 11. EXECUTION
 # -----------------------------------------------------------------------------
-# Build and execution settings
+# Execution environment settings
 execution:
-  # Enable build verification after modifications
-  enableBuildVerification: true
+  # Working directory (relative to workspace root)
+  workingDirectory: ""
   
-  # Command to run for build verification
-  buildCommand: "./gradlew build"
+  # Environment variables
+  environment: {}
   
-  # Timeout for build command (seconds)
-  buildTimeoutSeconds: 120
-  
-  # Enable code synthesis features
-  enableSynthesis: true
-  
-  # Only use synthesis for non-modification tasks
-  synthesisOnlyForNonModification: false
-  
-  # File operation mode (direct, shell, sandbox)
-  fileOperations:
-    mode: "shell"
-    
-    # Shell execution settings
-    shell:
-      # Shell executable
-      executable: "bash"
-      
-      # Don't load shell profile
-      useNoProfile: true
-      
-      # Enable read file operations
-      readFileEnabled: true
-      
-      # Enable write file operations
-      writeFileEnabled: true
-      
-      # Enable directory listing
-      listDirectoryEnabled: true
-      
-      # Enable regex search
-      regexSearchEnabled: true
-
-# -----------------------------------------------------------------------------
-# 13. FORMATTING
-# -----------------------------------------------------------------------------
-# Output formatting settings
-formatting:
-  # Chunk size for streaming output
-  chunkSize: 100
-  
-  # Delay between chunks (milliseconds)
-  delayMs: 50
-  
-  # Maximum observation characters
-  maxObservationChars: 8192
-
-# -----------------------------------------------------------------------------
-# 14. STREAMING
-# -----------------------------------------------------------------------------
-# Streaming response configuration
-streaming:
-  # Enable streaming responses
-  enabled: true
-  
-  # Candidate method names for streaming
-  methodCandidates: []
-  
-  # Fallback to non-streaming if streaming fails
-  fallbackToNonStreaming: true
-  
-  # Chunk size for non-streaming fallback
-  fallbackChunkSize: 200
-  
-  # Delay between fallback chunks (milliseconds)
-  fallbackChunkDelayMs: 50
-
-# -----------------------------------------------------------------------------
-# 15. MCP (MODEL CONTEXT PROTOCOL)
-# -----------------------------------------------------------------------------
-# MCP integration settings
-mcp:
-  # Enable MCP integration
-  enabled: true
-  
-  # Inject cluster context into MCP calls
-  injectClusterContext: true
-  
-  # Enable direct CLI access via MCP
-  directCliEnabled: false
-  
-  # Allowed tool name prefixes
-  allowedToolPrefixes: []
-  
-  # Enforce strict tool naming policy
-  strictToolNamePolicy: true
-
-# =============================================================================
-# END OF DEFAULT CONFIGURATION
-# =============================================================================
+  # Shell to use for command execution
+  shell: "bash"

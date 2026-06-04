@@ -1,4 +1,4 @@
-﻿/*
+/*
  * Copyright (c) 2026. Oleksii Lykov.
  *
  * Licensed under the MIT License.
@@ -524,11 +524,34 @@ export class LocalAgentProvider {
     };
   }
 
+
+  /**
+   * Get configuration for a layer (for UI display)
+   */
+  getConfig(layer: string): AgentConfig {
+    const layerName = layer.toLowerCase();
+    const cacheKey = `agent-` + layerName;
+    const cached = this.configCache.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    return this.defaultConfig || this.createDefaultConfig(layerName);
+  }
+
+  /**
+   * Dispose resources
+   */
+  async dispose(): Promise<void> {
+    this.log(`Disposing LocalAgentProvider...`);
+    this.clearConfigCache();
+    this.log(`LocalAgentProvider disposed`);
+  }
+
   /**
    * Log a message to the output channel
    */
   private log(message: string): void {
-    this.outputChannel.appendLine(`[LocalAgentProvider] ${message}`);
+    this.outputChannel.appendLine(`[LocalAgentProvider] ` + message);
   }
 }
 

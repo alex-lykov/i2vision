@@ -2,6 +2,8 @@
  * AgentTabManager - Creates and manages agent tabs
  * 
  * UPDATED: Added real-time progress streaming for tool calls
+ * UPDATED: Added stop/cancel control with combined send/stop button
+ * UPDATED: Display tool results in real-time
  */
 
 import * as vscode from 'vscode';
@@ -22,6 +24,7 @@ interface AgentTab {
   panel: vscode.WebviewPanel;
   history: InteractionRecord[];
   isProcessing: boolean;
+  cancelToken?: vscode.CancellationTokenSource;
 }
 
 /**
@@ -126,6 +129,9 @@ export class AgentTabManager {
       case 'sendMessage':
         await this.processUserInput(tab, message.text);
         break;
+      case 'stopAgent':
+        await this.stopAgent(tab);
+        break;
       case 'openConfig':
         await this.openConfigFile(tab);
         break;
@@ -133,6 +139,33 @@ export class AgentTabManager {
         await this.reloadAgent(tab);
         break;
     }
+  }
+
+  /**
+   * Stop/cancel the currently running agent
+   */
+  private async stopAgent(tab: AgentTab): Promise<void> {
+    if (!tab.isProcessing) {
+      this.log('Agent is not processing, nothing to stop');
+      return;
+    }
+    
+    this.log('Stopping agent...');
+    
+    // Cancel the token
+    if (tab.cancelToken) {
+      tab.cancelToken.cancel();
+      tab.cancelToken.dispose();
+      tab.cancelToken = undefined;
+    }
+    
+    // Update UI
+    tab.panel.webview.postMessage({
+      command: 'stopped'
+    });
+    
+    tab.isProcessing = false;
+    this.log('Agent stopped');
   }
 
   /**
@@ -146,6 +179,9 @@ export class AgentTabManager {
     
     tab.isProcessing = true;
     const startTime = Date.now();
+    
+    // Create cancellation token
+    tab.cancelToken = new vscode.CancellationTokenSource();
     
     this.log(`Processing user input (${userInput.length} chars)`);
     
@@ -237,11 +273,24 @@ export class AgentTabManager {
     } catch (error: any) {
       this.log(`Error processing input: ${error.message}`);
       this.log(`Stack trace: ${error.stack}`);
-      tab.panel.webview.postMessage({
-        command: 'error',
-        error: String(error)
-      });
+      
+      // Check if it was a cancellation
+      if (error.message === 'cancelled' || (tab.cancelToken && tab.cancelToken.token.isCancellationRequested)) {
+        tab.panel.webview.postMessage({
+          command: 'stopped'
+        });
+      } else {
+        tab.panel.webview.postMessage({
+          command: 'error',
+          error: String(error)
+        });
+      }
     } finally {
+      // Clean up cancellation token
+      if (tab.cancelToken) {
+        tab.cancelToken.dispose();
+        tab.cancelToken = undefined;
+      }
       tab.isProcessing = false;
     }
   }
@@ -302,143 +351,227 @@ export class AgentTabManager {
   }
 
   /**
-   * Close a tab
+   * Close an agent tab
    */
-  closeTab(tabId: string): void {
+  async closeTab(tabId: string): Promise<void> {
     const tab = this.tabs.get(tabId);
-    if (tab) {
-      tab.panel.dispose();
-      this.tabs.delete(tabId);
-      this.log(`Closed tab: ${tab.id}`);
+    if (!tab) {
+      this.log(`Tab ${tabId} not found`);
+      return;
     }
+    
+    this.log(`Closing tab: ${tabId}`);
+    
+    // Cancel any ongoing processing
+    if (tab.cancelToken) {
+      tab.cancelToken.cancel();
+      tab.cancelToken.dispose();
+    }
+    
+    // Dispose the agent
+    await tab.agent.dispose();
+    
+    // Remove from tracking
+    this.tabs.delete(tabId);
+    
+    this.log(`Tab closed: ${tabId}`);
   }
 
   /**
-   * Update webview content
+   * Update webview HTML content
    */
-  private updateWebview(tab: AgentTab): void {
-    tab.panel.webview.html = this.getWebviewContent(tab.layer, tab.agent.getConfig(), tab.history);
+  private updateWebview(tab: AgentTab) {
+    const modelId = this.provider.getConfig(tab.layer).model.id;
+    const maxIterations = this.provider.getConfig(tab.layer).iterationSettings.maxIterations;
+    
+    tab.panel.webview.html = this.getWebviewContent(tab, modelId, maxIterations);
   }
 
   /**
    * Get webview HTML content
    */
-  private getWebviewContent(layer: string, config: AgentConfig, history: InteractionRecord[] = []): string {
-    const modelId = config.model.id;
-    const maxIterations = config.iterationSettings.maxIterations;
-    
+  private getWebviewContent(tab: AgentTab, modelId: string, maxIterations: number): string {
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>i2-Vision ${this.capitalize(layer)} Agent</title>
+    <title>i2-Vision ${this.capitalize(tab.layer)} Agent</title>
     <style>
+        :root {
+            --vscode-font-family: var(--vscode-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
+            --vscode-foreground: var(--vscode-foreground, #333);
+            --vscode-editor-background: var(--vscode-editor-background, #fff);
+            --vscode-input-background: var(--vscode-input-background, #f0f0f0);
+            --vscode-input-foreground: var(--vscode-input-foreground, #333);
+            --vscode-button-background: var(--vscode-button-background, #007acc);
+            --vscode-button-foreground: var(--vscode-button-foreground, #fff);
+            --vscode-button-hoverBackground: var(--vscode-button-hoverBackground, #005a9e);
+            --vscode-focusBorder: var(--vscode-focusBorder, #007acc);
+            --vscode-errorForeground: var(--vscode-errorForeground, #f00);
+            --vscode-descriptionForeground: var(--vscode-descriptionForeground, #666);
+        }
+        
         body {
             font-family: var(--vscode-font-family);
-            padding: 20px;
             color: var(--vscode-foreground);
-            background-color: var(--vscode-editor-background);
-        }
-        .message {
-            margin: 10px 0;
+            background: var(--vscode-editor-background);
+            margin: 0;
             padding: 10px;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+        
+        .config-info {
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+            margin-bottom: 10px;
+            padding: 5px;
+            border-bottom: 1px solid var(--vscode-editor-background);
+        }
+        
+        #messages {
+            flex: 1;
+            overflow-y: auto;
+            margin-bottom: 10px;
+            padding: 10px;
+            border: 1px solid var(--vscode-editor-background);
             border-radius: 4px;
         }
+        
+        .message {
+            margin-bottom: 10px;
+            padding: 8px 12px;
+            border-radius: 4px;
+            max-width: 90%;
+        }
+        
         .user-message {
-            background-color: var(--vscode-editor-selectionBackground);
-            border-left: 3px solid var(--vscode-editorCursor-foreground);
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            margin-left: auto;
+            text-align: right;
         }
+        
         .agent-message {
-            background-color: var(--vscode-editor-inactiveSelectionBackground);
-            border-left: 3px solid var(--vscode-terminal-ansiBlue);
+            background: var(--vscode-input-background);
+            color: var(--vscode-input-foreground);
+            margin-right: auto;
         }
+        
         .tool-call-message {
-            margin: 5px 0;
-            padding: 8px;
-            border-left: 3px solid var(--vscode-terminal-ansiCyan);
-            font-family: var(--vscode-editor-font-family);
-            font-size: 13px;
+            font-family: monospace;
+            font-size: 11px;
+            padding: 4px 8px;
+            margin: 2px 0;
+            background: rgba(0, 0, 0, 0.05);
+            border-left: 3px solid var(--vscode-button-background);
+            border-radius: 2px;
         }
+        
         .tool-call-complete {
-            border-left-color: var(--vscode-terminal-ansiGreen);
+            border-left-color: #28a745;
+            background: rgba(40, 167, 69, 0.1);
         }
+        
         .tool-call-error {
-            border-left-color: var(--vscode-terminal-ansiRed);
+            border-left-color: var(--vscode-errorForeground);
+            background: rgba(255, 0, 0, 0.1);
         }
+        
+        .tool-result {
+            font-family: monospace;
+            font-size: 10px;
+            padding: 4px 8px;
+            margin: 2px 0 2px 12px;
+            background: rgba(0, 0, 0, 0.03);
+            border-left: 2px solid #28a745;
+            border-radius: 2px;
+            color: var(--vscode-descriptionForeground);
+            max-height: 200px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+        
         .progress-indicator {
             display: flex;
             align-items: center;
-            gap: 10px;
-            margin: 10px 0;
-            padding: 10px;
-            background: var(--vscode-editor-inactiveSelectionBackground);
-            border-radius: 4px;
+            gap: 8px;
+            padding: 8px;
+            color: var(--vscode-descriptionForeground);
+            font-style: italic;
         }
+        
         .spinner {
-            width: 16px;
-            height: 16px;
-            border: 2px solid var(--vscode-progressBar-background);
+            width: 12px;
+            height: 12px;
+            border: 2px solid var(--vscode-button-background);
             border-top-color: transparent;
             border-radius: 50%;
             animation: spin 1s linear infinite;
         }
+        
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
-        .iteration-info {
-            font-size: 12px;
-            color: var(--vscode-descriptionForeground);
-        }
-        .thinking {
-            color: var(--vscode-descriptionForeground);
-            font-style: italic;
-        }
-        .error {
-            background: var(--vscode-inputValidation-errorBackground);
-            border: 1px solid var(--vscode-inputValidation-errorBorder);
-            color: var(--vscode-errorForeground);
-        }
-        .config-info {
-            font-size: 12px;
-            color: var(--vscode-descriptionForeground);
-            margin-bottom: 20px;
-        }
+        
         .input-row {
             display: flex;
-            gap: 10px;
-            margin-top: 20px;
-            position: sticky;
-            bottom: 0;
-            background: var(--vscode-editor-background);
-            padding: 10px 0;
+            gap: 8px;
+            align-items: center;
         }
+        
         #userInput {
             flex: 1;
             padding: 8px 12px;
-            border: 1px solid var(--vscode-input-border);
+            border: 1px solid var(--vscode-editor-background);
             border-radius: 4px;
             background: var(--vscode-input-background);
             color: var(--vscode-input-foreground);
             font-family: var(--vscode-font-family);
         }
+        
         #userInput:focus {
             outline: 2px solid var(--vscode-focusBorder);
         }
-        #sendButton {
+        
+        #actionButton {
             padding: 8px 16px;
             background: var(--vscode-button-background);
             color: var(--vscode-button-foreground);
             border: none;
             border-radius: 4px;
             cursor: pointer;
+            min-width: 80px;
+            font-weight: 600;
         }
-        #sendButton:hover {
+        
+        #actionButton:hover {
             background: var(--vscode-button-hoverBackground);
         }
-        #sendButton:disabled {
+        
+        #actionButton:disabled {
             opacity: 0.5;
             cursor: not-allowed;
+        }
+        
+        #actionButton.stop-button {
+            background: #dc3545;
+        }
+        
+        #actionButton.stop-button:hover {
+            background: #c82333;
+        }
+        
+        .iteration-info {
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px solid rgba(0, 0, 0, 0.1);
         }
     </style>
 </head>
@@ -451,20 +584,31 @@ export class AgentTabManager {
     
     <div class="input-row">
         <input type="text" id="userInput" placeholder="Ask me anything about your code..." onkeypress="handleKeyPress(event)">
-        <button onclick="sendMessage()" id="sendButton">Send</button>
+        <button onclick="toggleAction()" id="actionButton">Send</button>
     </div>
 
     <script>
         const vscode = acquireVsCodeApi();
         const messagesDiv = document.getElementById('messages');
-        const sendButton = document.getElementById('sendButton');
+        const actionButton = document.getElementById('actionButton');
         const userInput = document.getElementById('userInput');
         
         let currentProgressDiv = null;
+        let isProcessing = false;
         
         function handleKeyPress(event) {
             if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
+                if (!isProcessing) {
+                    sendMessage();
+                }
+            }
+        }
+        
+        function toggleAction() {
+            if (isProcessing) {
+                stopAgent();
+            } else {
                 sendMessage();
             }
         }
@@ -473,9 +617,9 @@ export class AgentTabManager {
             const text = userInput.value.trim();
             if (!text) return;
             
-            // Disable input while processing
-            userInput.disabled = true;
-            sendButton.disabled = true;
+            // Set processing state
+            isProcessing = true;
+            updateActionButton();
             
             // Add user message to chat
             addMessage('user', text);
@@ -491,6 +635,20 @@ export class AgentTabManager {
             
             // Clear input
             userInput.value = '';
+        }
+        
+        function stopAgent() {
+            vscode.postMessage({ command: 'stopAgent' });
+        }
+        
+        function updateActionButton() {
+            if (isProcessing) {
+                actionButton.textContent = 'Stop';
+                actionButton.className = 'stop-button';
+            } else {
+                actionButton.textContent = 'Send';
+                actionButton.className = '';
+            }
         }
         
         function addMessage(type, content, isHtml = false) {
@@ -518,13 +676,30 @@ export class AgentTabManager {
             content = content.replace(/, $/, '') + ')';
             
             if (type === 'complete') {
-                content += ' → <em>Completed</em>';
+                content += ' ✓ <em>Completed</em>';
             }
             if (toolCall.error) {
-                content += ' → <strong style="color: var(--vscode-errorForeground)">Error: ' + toolCall.error + '</strong>';
+                content += ' ✗ <strong style="color: var(--vscode-errorForeground)">Error: ' + toolCall.error + '</strong>';
             }
             
             div.innerHTML = content;
+            messagesDiv.appendChild(div);
+            div.scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        function addToolResult(toolName, result) {
+            if (!result || result.trim() === '') return;
+            
+            const div = document.createElement('div');
+            div.className = 'tool-result';
+            
+            // Truncate long results
+            let displayResult = result;
+            if (result.length > 500) {
+                displayResult = result.substring(0, 500) + '... (truncated)';
+            }
+            
+            div.textContent = '↳ ' + toolName + ' result: ' + displayResult;
             messagesDiv.appendChild(div);
             div.scrollIntoView({ behavior: 'smooth' });
         }
@@ -568,6 +743,10 @@ export class AgentTabManager {
                     } else if (event.type === 'tool_complete') {
                         if (event.toolCall) {
                             addToolCallMessage(event.toolCall, 'complete');
+                            // Display tool result
+                            if (event.toolCall.result) {
+                                addToolResult(event.toolCall.toolName, event.toolCall.result);
+                            }
                         }
                     } else if (event.type === 'iteration_complete') {
                         // Optional: show iteration complete message
@@ -577,7 +756,17 @@ export class AgentTabManager {
                 case 'response':
                     hideProgress();
                     
-                    let responseHtml = '<div>' + message.response.text.replace(/\\n/g, '<br>') + '</div>';
+                    let responseHtml = '';
+                    
+                    // Show final text if available
+                    if (message.response.text && message.response.text.trim() !== '') {
+                        responseHtml = '<div>' + message.response.text.replace(/\\n/g, '<br>') + '</div>';
+                    } else if (message.response.toolCalls && message.response.toolCalls.length > 0) {
+                        // No text but tool calls were made - explain what happened
+                        responseHtml = '<div><em>Completed tool operations:</em></div>';
+                    } else {
+                        responseHtml = '<div><em>No response generated.</em></div>';
+                    }
                     
                     if (message.response.toolCalls && message.response.toolCalls.length > 0) {
                         responseHtml += '<div class="iteration-info">Tools Used: ' + message.response.toolCalls.map(tc => tc.toolName).join(', ') + '</div>';
@@ -585,19 +774,34 @@ export class AgentTabManager {
                     
                     responseHtml += '<div class="iteration-info">Iterations: ' + message.response.iterations + ' | Duration: ' + message.response.durationMs + 'ms</div>';
                     
+                    if (message.response.success !== undefined) {
+                        responseHtml += '<div class="iteration-info">Status: ' + (message.response.success ? '✓ Success' : '✗ Failed') + '</div>';
+                    }
+                    
                     addMessage('agent', responseHtml, true);
                     
-                    // Re-enable input
+                    // Reset processing state
+                    isProcessing = false;
+                    updateActionButton();
                     userInput.disabled = false;
-                    sendButton.disabled = false;
+                    userInput.focus();
+                    break;
+                    
+                case 'stopped':
+                    hideProgress();
+                    addMessage('agent', '<strong>⏹ Stopped by user</strong>', true);
+                    isProcessing = false;
+                    updateActionButton();
+                    userInput.disabled = false;
                     userInput.focus();
                     break;
                     
                 case 'error':
                     hideProgress();
                     addMessage('agent', 'Error: ' + message.error, false);
+                    isProcessing = false;
+                    updateActionButton();
                     userInput.disabled = false;
-                    sendButton.disabled = false;
                     break;
                     
                 case 'configReloaded':
@@ -605,6 +809,9 @@ export class AgentTabManager {
                     break;
             }
         });
+        
+        // Initialize button state
+        updateActionButton();
     </script>
 </body>
 </html>`;
@@ -618,12 +825,26 @@ export class AgentTabManager {
   }
 
   /**
-   * Log a message
+   * Log message to output channel
    */
   private log(message: string): void {
-    const timestamp = new Date().toLocaleTimeString();
-    const formatted = `[${timestamp}] [AgentTabManager] ${message}`;
-    this.outputChannel.appendLine(formatted);
-    console.log(formatted);
+    this.outputChannel.appendLine(`[AgentTabManager] ${message}`);
+  }
+
+  /**
+   * Dispose all tabs and resources
+   */
+  async dispose(): Promise<void> {
+    this.log('Disposing AgentTabManager...');
+    
+    // Close all tabs
+    for (const tab of this.tabs.values()) {
+      await this.closeTab(tab.id);
+    }
+    
+    // Dispose provider
+    await this.provider.dispose();
+    
+    this.log('AgentTabManager disposed');
   }
 }

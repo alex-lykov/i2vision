@@ -535,9 +535,22 @@ export class AgentBridge {
       }
 
       // Add assistant message with tool calls to history
+      // CRITICAL FIX: If LLM returned tool calls without content, add explanatory message
+      // This prevents the LLM from repeating the same tool call in the next iteration
+      let assistantContent = responseText;
+      if (!assistantContent || assistantContent.trim() === '') {
+        // LLM returned only tool calls with no prose - add descriptive message
+        const toolDescriptions = toolCalls.map(tc => {
+          const argsStr = JSON.stringify(tc.args);
+          return `Calling ${tc.toolName}(${argsStr})`;
+        }).join('; ');
+        assistantContent = `I will: ${toolDescriptions}`;
+        this.log(`Assistant content was empty - added synthetic message: "${assistantContent}"`);
+      }
+      
       messages.push({
         role: 'assistant',
-        content: responseText
+        content: assistantContent
       });
 
       // Add tool results to messages
@@ -693,9 +706,22 @@ export class AgentBridge {
       }
 
       // Add assistant message with tool calls to history
+      // CRITICAL FIX: If LLM returned tool calls without content, add explanatory message
+      // This prevents the LLM from repeating the same tool call in the next iteration
+      let assistantContent = response.content;
+      if (!assistantContent || assistantContent.trim() === '') {
+        // LLM returned only tool calls with no prose - add descriptive message
+        const toolDescriptions = toolCalls.map(tc => {
+          const argsStr = JSON.stringify(tc.args);
+          return `Calling ${tc.toolName}(${argsStr})`;
+        }).join('; ');
+        assistantContent = `I will: ${toolDescriptions}`;
+        this.log(`Assistant content was empty - added synthetic message: "${assistantContent}"`);
+      }
+      
       messages.push({
         role: 'assistant',
-        content: response.content
+        content: assistantContent
       });
 
       // Add tool results to messages

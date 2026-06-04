@@ -5,23 +5,11 @@
  * infrastructure. It communicates directly with Ollama via the CLI
  * integration, bypassing the need for a Kotlin backend.
  * 
- * Features:
- * - Implements I2VisionAgent interface (compatible with Kotlin agent)
- * - Direct Ollama API calls via AgentBridge
- * - No JSON-RPC overhead (in-process)
- * - Streaming support via AgentBridge
- * - Same configuration structure as Kotlin agent
- * 
- * Use this for:
- * - Rapid prototyping and testing
- * - Development without Kotlin compilation
- * - Validating agent behavior before Kotlin integration
- * 
- * Future: Swap to KotlinAgentProvider for production
+ * UPDATED: Added progress callback support for real-time tool call streaming
  */
 
 import * as vscode from 'vscode';
-import { AgentBridge, AgentConfig, AgentResponse as BridgeAgentResponse } from './AgentBridge';
+import { AgentBridge, AgentConfig, AgentResponse as BridgeAgentResponse, ProgressCallback } from './AgentBridge';
 
 /**
  * VSLFC Layer enumeration (matches Kotlin VslfcLayer)
@@ -151,7 +139,8 @@ export class LocalI2VisionAgent implements vscode.Disposable {
     
     // Create the agent bridge
     // Pass extension root so agent can access extension source files
-    this.bridge = new AgentBridge(config, outputChannel, vscode.extensions.getExtension('i2vision.i2-vision-vscode')?.extensionPath);
+    this.bridge = new AgentBridge(config, outputChannel, 
+      vscode.extensions.getExtension('i2vision.i2-vision-vscode')?.extensionPath);
     
     this.log(`LocalI2VisionAgent created: ${this.id}`);
   }
@@ -171,9 +160,13 @@ export class LocalI2VisionAgent implements vscode.Disposable {
   }
 
   /**
-   * Process a task synchronously
+   * Process a task synchronously with optional progress callback
    */
-  async process(request: AgentRequest): Promise<BridgeAgentResponse> {
+  async process(
+    request: AgentRequest, 
+    _streamCallback?: (chunk: AgentChunk) => void,
+    onProgress?: ProgressCallback
+  ): Promise<BridgeAgentResponse> {
     if (!this.isInitialized) {
       await this.initialize();
     }
@@ -187,12 +180,12 @@ export class LocalI2VisionAgent implements vscode.Disposable {
         await this.updateConfig(request.config);
       }
 
-      // Process through the bridge
+      // Process through the bridge with progress callback
       const response = await this.bridge.process(request.task, {
         currentFile: request.context.currentFile,
         projectName: vscode.workspace.workspaceFolders?.[0]?.name,
         task: request.task
-      });
+      }, onProgress);
 
       this.log(`Request completed [${request.id}]: ${response.iterations} iterations, ${response.durationMs}ms`);
       return response;
@@ -338,9 +331,6 @@ export class LocalI2VisionAgent implements vscode.Disposable {
       await this.cancel(requestId);
     }
     
-    // Dispose bridge
-    this.bridge.dispose();
-    
     this.log(`Agent disposed: ${this.id}`);
   }
 
@@ -357,43 +347,38 @@ export class LocalI2VisionAgent implements vscode.Disposable {
    * Extract available tools from config
    */
   private extractAvailableTools(config: AgentConfig): string[] {
-    const tools: string[] = [];
+    const tools = [
+      'list_directory',
+      'read_file',
+      'write_file',
+      'edit_file',
+      'search_files'
+    ];
     
-    // FileSystem tools
-    if (config.execution.fileOperations.shell.readFileEnabled) {
-      tools.push('read_file');
+    // Filter based on config
+    if (!config.execution.fileOperations.shell.listDirectoryEnabled) {
+      tools.splice(tools.indexOf('list_directory'), 1);
     }
-    if (config.execution.fileOperations.shell.writeFileEnabled) {
-      tools.push('write_file');
+    if (!config.execution.fileOperations.shell.readFileEnabled) {
+      tools.splice(tools.indexOf('read_file'), 1);
     }
-    if (config.execution.fileOperations.shell.listDirectoryEnabled) {
-      tools.push('list_directory');
+    if (!config.execution.fileOperations.shell.writeFileEnabled) {
+      tools.splice(tools.indexOf('write_file'), 1);
     }
-    if (config.execution.fileOperations.shell.regexSearchEnabled) {
-      tools.push('regex_search');
-    }
-    
-    // Build tool
-    if (config.execution.enableBuildVerification) {
-      tools.push('run_build');
+    if (!config.execution.fileOperations.shell.regexSearchEnabled) {
+      tools.splice(tools.indexOf('search_files'), 1);
     }
     
     return tools;
   }
 
   /**
-   * Log a message
+   * Log message to output channel
    */
   private log(message: string): void {
-    const timestamp = new Date().toISOString();
-    const logMessage = `[${timestamp}] [LocalAgent:${this.id}] ${message}`;
-    
     if (this.outputChannel) {
-      this.outputChannel.appendLine(logMessage);
-    } else {
-      console.log(logMessage);
+      const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
+      this.outputChannel.appendLine(`[${timestamp}] [${this.displayName}] ${message}`);
     }
   }
 }
-
-

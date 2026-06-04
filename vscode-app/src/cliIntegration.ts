@@ -64,6 +64,75 @@ export interface LLMResponse {
 }
 
 /**
+ * Violation info structure
+ */
+export interface Violation {
+  type: string;
+  message: string;
+  severity: string;
+  component?: string;
+  layer?: string;
+  source?: string;
+  target?: string;
+  rule?: string;
+}
+
+/**
+ * Discovery result structure
+ */
+export interface DiscoveryResult {
+  projectName: string;
+  version: string;
+  components: ComponentInfo[];
+  relationships: any[];
+  layers: any[];
+  violations: Violation[];
+}
+
+/**
+ * Component info structure
+ */
+export interface ComponentInfo {
+  name: string;
+  type: string;
+  path: string;
+  layer?: string;
+  dependencies?: string[];
+}
+
+/**
+ * Template info structure
+ */
+export interface TemplateInfo {
+  name: string;
+  path: string;
+  type: string;
+  description: string;
+  category: string;
+  files: { path: string; content: string }[];
+  variables: { name: string; description: string; required: boolean; defaultValue: string }[];
+}
+
+/**
+ * File context structure
+ */
+export interface FileContext {
+  path: string;
+  filePath: string;
+  name: string;
+  language: string;
+  content: string;
+  size: number;
+  lines: number;
+  imports: string[];
+  classes: string[];
+  functions: string[];
+  component?: string;
+  layer?: string;
+  dependencies?: string[];
+}
+
+/**
  * CLI class for Ollama integration
  */
 export class CLI {
@@ -92,6 +161,13 @@ export class CLI {
     } catch (error: any) {
       this.log(`Could not read CLI path from settings: ${error.message}`);
     }
+  }
+
+  /**
+   * Check if CLI is available
+   */
+  isAvailable(): boolean {
+    return true; // HTTP API is always available if Ollama is running
   }
 
   /**
@@ -327,21 +403,53 @@ export class CLI {
   }
 
   /**
-   * Search for a pattern in files
+   * Search for a pattern in files using Node.js fs (excludes build directories)
    */
   async searchFiles(pattern: string, dirPath?: string): Promise<string[]> {
     this.log(`Searching for pattern: ${pattern}`);
     try {
-      const searchDir = dirPath || process.cwd();
-      const command = `powershell -Command "Get-ChildItem -Path '${searchDir}' -Recurse -File | Select-String -Pattern '${pattern}' | Select-Object -First 50"`;
-      const { stdout } = await this.runCommand(command);
+      const searchDir = dirPath || this.workspaceRoot || process.cwd();
+      this.log(`Search directory: ${searchDir}`);
       
-      const results = stdout.split('\n')
-        .filter(line => line.trim())
-        .slice(0, 50);
+      const results: string[] = [];
+      const regex = new RegExp(pattern, 'i');
+      
+      const searchInDir = async (dir: string) => {
+        try {
+          const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+          
+          for (const entry of entries) {
+            // Skip excluded directories
+            if (entry.isDirectory() && ['build', '.gradle', '.idea', 'node_modules', '.git', 'out', 'bin', 'target', 'dist'].includes(entry.name)) {
+              this.log(`  Skipping excluded directory: ${entry.name}`);
+              continue;
+            }
+            
+            const fullPath = path.join(dir, entry.name);
+            
+            if (entry.isDirectory() && !entry.name.startsWith('.')) {
+              await searchInDir(fullPath);
+            } else if (entry.isFile()) {
+              try {
+                // Check if filename matches
+                if (regex.test(entry.name)) {
+                  results.push(fullPath);
+                  if (results.length >= 50) return; // Limit results
+                }
+              } catch (e) {
+                // Skip files that can't be read
+              }
+            }
+          }
+        } catch (error: any) {
+          this.log(`Error searching directory ${dir}: ${error.message}`);
+        }
+      };
+      
+      await searchInDir(searchDir);
       
       this.log(`Found ${results.length} matches`);
-      return results;
+      return results.slice(0, 50);
     } catch (error: any) {
       this.log(`Error searching files: ${error.message}`);
       return [];
@@ -365,18 +473,24 @@ export class CLI {
       const components: ComponentInfo[] = directories.map(dir => ({
         name: dir,
         type: 'module',
-        path: path.join(rootDir, dir)
+        path: path.join(rootDir, dir),
+        layer: this.inferLayer(dir),
+        dependencies: []
       }));
+      
+      // Analyze violations
+      const violations = await this.analyzeViolations(components);
       
       const result: DiscoveryResult = {
         projectName: path.basename(rootDir),
         version: '1.0.0',
         components,
         relationships: [],
-        layers: []
+        layers: [],
+        violations
       };
       
-      this.log(`Discovery complete: ${components.length} components found`);
+      this.log(`Discovery complete: ${components.length} components found, ${violations.length} violations`);
       return result;
     } catch (error: any) {
       this.log(`Discovery failed: ${error.message}`);
@@ -385,9 +499,56 @@ export class CLI {
         version: '0.0.0',
         components: [],
         relationships: [],
-        layers: []
+        layers: [],
+        violations: []
       };
     }
+  }
+
+  /**
+   * Infer VSLFC layer from directory name
+   */
+  private inferLayer(dirName: string): string {
+    const lower = dirName.toLowerCase();
+    if (lower.includes('vision') || lower.includes('ui') || lower.includes('view')) return 'VISION';
+    if (lower.includes('struct') || lower.includes('model') || lower.includes('entity')) return 'STRUCTURE';
+    if (lower.includes('logic') || lower.includes('service') || lower.includes('business')) return 'LOGIC';
+    if (lower.includes('flow') || lower.includes('control') || lower.includes('router')) return 'FLOW';
+    if (lower.includes('code') || lower.includes('impl') || lower.includes('util')) return 'CODE';
+    return 'CODE';
+  }
+
+  /**
+   * Analyze violations in the project
+   */
+  async analyzeViolations(components?: ComponentInfo[]): Promise<Violation[]> {
+    this.log(`Analyzing violations...`);
+    const violations: Violation[] = [];
+    
+    // If no components provided, run discovery first
+    const comps = components || (await this.runDiscovery()).components;
+    
+    this.log(`Analyzing violations for ${comps.length} components...`);
+    
+    // Simple heuristic analysis
+    for (const component of comps) {
+      // Check for layer violations (simplified)
+      if (component.layer === 'VISION' && component.dependencies?.some(d => d.includes('Logic'))) {
+        violations.push({
+          type: 'LAYER_VIOLATION',
+          message: `Vision component '${component.name}' should not depend on Logic layer`,
+          severity: 'warning',
+          component: component.name,
+          layer: component.layer,
+          source: component.name,
+          target: 'Logic',
+          rule: 'LayerDependency'
+        });
+      }
+    }
+    
+    this.log(`Found ${violations.length} violations`);
+    return violations;
   }
 
   /**
@@ -574,7 +735,7 @@ app.listen(port, () => {
   /**
    * Get context for a specific file
    */
-  async getContext(filePath: string): Promise<FileContext | null> {
+  async getContext(filePath: string): Promise<FileContext> {
     this.log(`Getting context for: ${filePath}`);
     try {
       const content = await fs.promises.readFile(filePath, 'utf8');
@@ -611,8 +772,15 @@ app.listen(port, () => {
       
       language = languageMap[ext] || 'unknown';
       
+      // Infer component and layer from path
+      const relativePath = path.relative(this.workspaceRoot, filePath);
+      const pathParts = relativePath.split(path.sep);
+      const component = pathParts.length > 1 ? pathParts[0] : 'root';
+      const layer = this.inferLayer(component);
+      
       const context: FileContext = {
         path: filePath,
+        filePath: filePath,
         name: path.basename(filePath),
         language,
         content,
@@ -620,14 +788,17 @@ app.listen(port, () => {
         lines: content.split('\n').length,
         imports: this.extractImports(content, language),
         classes: this.extractClasses(content, language),
-        functions: this.extractFunctions(content, language)
+        functions: this.extractFunctions(content, language),
+        component,
+        layer,
+        dependencies: []
       };
       
       this.log(`Context extracted: ${context.classes.length} classes, ${context.functions.length} functions`);
       return context;
     } catch (error: any) {
       this.log(`Error getting context: ${error.message}`);
-      return null;
+      throw error;
     }
   }
 
@@ -661,13 +832,13 @@ app.listen(port, () => {
   }
 
   /**
-   * Extract class names from file content
+   * Extract classes from file content
    */
   private extractClasses(content: string, language: string): string[] {
     const classes: string[] = [];
     
-    if (language === 'java' || language === 'typescript' || language === 'csharp') {
-      const classRegex = /^(?:public\s+|private\s+|protected\s+)?(?:abstract\s+|final\s+)?class\s+(\w+)/gm;
+    if (language === 'java' || language === 'typescript' || language === 'javascript') {
+      const classRegex = /(?:public\s+|class\s+)?class\s+(\w+)/g;
       let match;
       while ((match = classRegex.exec(content)) !== null) {
         classes.push(match[1]);
@@ -684,177 +855,25 @@ app.listen(port, () => {
   }
 
   /**
-   * Extract function/method names from file content
+   * Extract functions from file content
    */
   private extractFunctions(content: string, language: string): string[] {
     const functions: string[] = [];
     
-    if (language === 'java' || language === 'typescript' || language === 'csharp') {
-      const funcRegex = /^(?:public\s+|private\s+|protected\s+)?(?:static\s+)?(?:\w+(?:<[^>]+>)?\s+)?(\w+)\s*\([^)]*\)\s*(?:\{|throws)/gm;
+    if (language === 'java' || language === 'typescript' || language === 'javascript') {
+      const functionRegex = /(?:public\s+|private\s+|protected\s+)?(?:static\s+)?\w+\s+(\w+)\s*\([^)]*\)\s*(?:\{|:)/g;
       let match;
-      while ((match = funcRegex.exec(content)) !== null) {
-        if (!['if', 'for', 'while', 'switch', 'catch', 'constructor'].includes(match[1])) {
-          functions.push(match[1]);
-        }
+      while ((match = functionRegex.exec(content)) !== null) {
+        functions.push(match[1]);
       }
     } else if (language === 'python') {
-      const funcRegex = /^def\s+(\w+)\s*\(/gm;
+      const functionRegex = /^def\s+(\w+)/gm;
       let match;
-      while ((match = funcRegex.exec(content)) !== null) {
+      while ((match = functionRegex.exec(content)) !== null) {
         functions.push(match[1]);
       }
     }
     
     return functions;
   }
-
-  /**
-   * Check if CLI is available
-   */
-  async isAvailable(): Promise<boolean> {
-    try {
-      // Check if CLI path is configured
-      if (!this.cliPath) {
-        this.log('CLI path not configured in settings');
-        return false;
-      }
-      
-      // Check if JAR file exists
-      const jarExists = await fs.promises.access(this.cliPath, fs.constants.F_OK)
-        .then(() => true)
-        .catch(() => false);
-      
-      if (!jarExists) {
-        this.log(`CLI JAR not found at: ${this.cliPath}`);
-        return false;
-      }
-      
-      this.log(`CLI JAR found at: ${this.cliPath}`);
-      
-      // Try to run CLI with --version or --help to verify it works
-      try {
-        const command = `java -jar "${this.cliPath}" --version`;
-        const { stdout } = await this.runCommand(command);
-        this.log(`CLI version check successful: ${stdout.trim()}`);
-        return true;
-      } catch (error: any) {
-        this.log(`CLI version check failed: ${error.message}`);
-        // JAR exists but might not be executable, still return true
-        return true;
-      }
-    } catch (error: any) {
-      this.log(`CLI availability check error: ${error.message}`);
-      return false;
-    }
-  }
-
-  /**
-   * Analyze architecture violations
-   */
-  async analyzeViolations(): Promise<ViolationInfo[]> {
-    this.log('Analyzing architecture violations...');
-    try {
-      // Return mock violations for now
-      return [];
-    } catch (error: any) {
-      this.log(`Error analyzing violations: ${error.message}`);
-      return [];
-    }
-  }
-}
-
-/**
- * Discovery result types
- */
-export interface ComponentInfo {
-  name: string;
-  layer?: string;
-  file?: string;
-  path?: string;
-  type?: string;
-  responsibilities?: string[];
-  dependencies?: string[];
-  metadata?: Record<string, any>;
-}
-
-export interface RelationshipInfo {
-  from: string;
-  to: string;
-  type: string;
-  description?: string;
-}
-
-export interface LayerInfo {
-  name: string;
-  description?: string;
-  components: string[];
-  allowedDependencies?: string[];
-  level?: number;
-}
-
-export interface DiscoveryResult {
-  projectName: string;
-  version: string;
-  components: ComponentInfo[];
-  relationships: RelationshipInfo[];
-  layers: LayerInfo[];
-  violations?: ViolationInfo[];
-}
-
-/**
- * Template types
- */
-export interface TemplateVariable {
-  name: string;
-  description: string;
-  required: boolean;
-  defaultValue?: string;
-}
-
-export interface TemplateFile {
-  path: string;
-  content: string;
-}
-
-export interface TemplateInfo {
-  name: string;
-  path: string;
-  type: string;
-  description: string;
-  category: string;
-  files: TemplateFile[];
-  variables: TemplateVariable[];
-}
-
-/**
- * File context for LLM
- */
-export interface FileContext {
-  path: string;
-  name: string;
-  language: string;
-  content: string;
-  size: number;
-  lines: number;
-  imports: string[];
-  classes: string[];
-  functions: string[];
-  filePath?: string;
-  component?: string;
-  layer?: string;
-  dependencies?: string[];
-}
-
-/**
- * Architecture violation info
- */
-export interface ViolationInfo {
-  severity: 'error' | 'warning' | 'info';
-  rule: string;
-  message: string;
-  file?: string;
-  line?: number;
-  suggestion?: string;
-  source?: string;
-  target?: string;
 }

@@ -1,13 +1,7 @@
 /**
- * AgentBridge - Bridge between VSCode extension and conf-agent-core
+ * AgentTabManager - Creates and manages agent tabs
  * 
- * This class wraps the agent core functionality and provides a clean API
- * for the AgentTabManager to interact with configured agents.
- * 
- * UPDATED: Fixed tool call parsing, improved logging, better error handling
- * DIAGNOSTIC: Added detailed logging to trace response flow
- * DIAGNOSTIC v2: Added try-catch logging around executeAgentLoop
- * DIAGNOSTIC v3: Added timeout wrapper around agent.process()
+ * UPDATED: Added real-time progress streaming for tool calls
  */
 
 import * as vscode from 'vscode';
@@ -16,7 +10,7 @@ import * as fs from 'fs';
 import * as yaml from 'js-yaml';
 import { LocalAgentProvider } from './LocalAgentProvider';
 import { LocalI2VisionAgent, VslfcLayer, AgentContext } from './LocalI2VisionAgent';
-import { AgentConfig, InteractionRecord, ToolCall } from './AgentBridge';
+import { AgentConfig, InteractionRecord, ToolCall, ProgressEvent } from './AgentBridge';
 
 /**
  * Agent tab representation
@@ -150,7 +144,7 @@ export class AgentTabManager {
   }
 
   /**
-   * Process user input through the agent with timeout protection
+   * Process user input through the agent with timeout protection and real-time progress
    */
   private async processUserInput(tab: AgentTab, userInput: string) {
     if (tab.isProcessing) {
@@ -180,14 +174,22 @@ export class AgentTabManager {
         sessionId: tab.id
       };
       
-      // Call the agent with timeout protection
-      this.log(`=== DIAGNOSTIC: Calling agent.process() ===`);
+      // Call the agent with timeout protection and progress callback
+      this.log(`=== DIAGNOSTIC: Calling agent.process() with progress callback ===`);
       
       const AGENT_TIMEOUT_MS = 60000; // 60 second timeout
+      
       const agentPromise = tab.agent.process({
         id: `request-${Date.now()}`,
         task: userInput,
         context: context
+      }, undefined, (event: ProgressEvent) => {
+        // Forward progress events to webview in real-time
+        this.log(`Progress event: ${event.type} at iteration ${event.iteration}`);
+        tab.panel.webview.postMessage({
+          command: 'progress',
+          event: event
+        });
       });
       
       const timeoutPromise = new Promise<never>((_, reject) => {
@@ -308,7 +310,7 @@ export class AgentTabManager {
   }
 
   /**
-   * Close a tab and dispose resources
+   * Close a tab
    */
   closeTab(tabId: string): void {
     const tab = this.tabs.get(tabId);
@@ -340,242 +342,136 @@ export class AgentTabManager {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>i2-Vision ${this.capitalize(layer)} Agent</title>
     <style>
-        :root {
-            --vscode-font-family: var(--vscode-editor-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
-            --vscode-font-size: var(--vscode-editor-font-size, 13px);
-            --vscode-foreground: var(--vscode-editor-foreground, #cccccc);
-            --vscode-background: var(--vscode-editor-background, #1e1e1e);
-            --vscode-input-background: var(--vscode-input-background, #3c3c3c);
-            --vscode-input-foreground: var(--vscode-input-foreground, #cccccc);
-            --vscode-button-background: var(--vscode-button-background, #0e639c);
-            --vscode-button-foreground: var(--vscode-button-foreground, #ffffff);
-            --vscode-descriptionForeground: var(--vscode-descriptionForeground, #cccccc99);
-            --vscode-textLink-foreground: var(--vscode-textLink-foreground, #3794ff);
-            --vscode-textCodeBlock-background: var(--vscode-textCodeBlock-background, #2d2d2d);
-            --vscode-widget-border: var(--vscode-widget-border, #454545);
-        }
-        
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-        
         body {
             font-family: var(--vscode-font-family);
-            font-size: var(--vscode-font-size);
-            color: var(--vscode-foreground);
-            background-color: var(--vscode-background);
             padding: 20px;
-            line-height: 1.6;
+            color: var(--vscode-foreground);
+            background-color: var(--vscode-editor-background);
         }
-        
-        .header {
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 1px solid var(--vscode-widget-border);
-        }
-        
-        .header h1 {
-            font-size: 18px;
-            font-weight: 600;
-            margin-bottom: 8px;
-        }
-        
-        .header .config-info {
-            font-size: 12px;
-            color: var(--vscode-descriptionForeground);
-        }
-        
-        .chat-container {
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-            margin-bottom: 20px;
-            max-height: calc(100vh - 300px);
-            overflow-y: auto;
-            padding-right: 5px;
-        }
-        
-        .message {
-            padding: 12px 15px;
-            border-radius: 8px;
-            max-width: 85%;
-        }
-        
-        .message.user {
-            background-color: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-            align-self: flex-end;
-            margin-left: auto;
-        }
-        
-        .message.assistant {
-            background-color: var(--vscode-textCodeBlock-background);
-            border: 1px solid var(--vscode-widget-border);
-            align-self: flex-start;
-        }
-        
-        .message.error {
-            background-color: #5a1d1d;
-            border: 1px solid #be1100;
-            color: #f48771;
-        }
-        
-        .message-content {
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
-        
-        .tool-calls {
-            margin-top: 10px;
-            padding-top: 10px;
-            border-top: 1px solid var(--vscode-widget-border);
-        }
-        
-        .tool-call {
-            background-color: rgba(0, 0, 0, 0.2);
-            padding: 8px 12px;
-            border-radius: 6px;
-            margin-top: 8px;
-            font-size: 12px;
-            font-family: 'Consolas', 'Courier New', monospace;
-            border-left: 3px solid var(--vscode-textLink-foreground);
-        }
-        
-        .input-container {
-            position: sticky;
-            bottom: 0;
-            background-color: var(--vscode-background);
-            padding-top: 15px;
-            border-top: 1px solid var(--vscode-widget-border);
-        }
-        
         .input-row {
             display: flex;
             gap: 10px;
-            align-items: center;
+            margin-bottom: 20px;
         }
-        
-        input[type="text"] {
+        #userInput {
             flex: 1;
-            padding: 10px 15px;
-            border: 1px solid var(--vscode-widget-border);
-            border-radius: 6px;
-            background-color: var(--vscode-input-background);
+            padding: 8px;
+            font-size: 14px;
+            border: 1px solid var(--vscode-input-border);
+            background: var(--vscode-input-background);
             color: var(--vscode-input-foreground);
-            font-family: var(--vscode-font-family);
-            font-size: var(--vscode-font-size);
         }
-        
-        input[type="text"]:focus {
-            outline: 2px solid var(--vscode-button-background);
-            outline-offset: 1px;
-        }
-        
         button {
-            padding: 10px 20px;
-            background-color: var(--vscode-button-background);
+            padding: 8px 16px;
+            background: var(--vscode-button-background);
             color: var(--vscode-button-foreground);
             border: none;
-            border-radius: 6px;
             cursor: pointer;
-            font-family: var(--vscode-font-family);
-            font-size: var(--vscode-font-size);
-            font-weight: 500;
-            transition: background-color 0.2s;
         }
-        
         button:hover {
-            background-color: #1177bb;
+            background: var(--vscode-button-hoverBackground);
         }
-        
         button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
         }
-        
-        .action-buttons {
-            display: flex;
-            gap: 8px;
-            margin-top: 10px;
-            flex-wrap: wrap;
-        }
-        
-        .action-buttons button {
-            padding: 6px 12px;
-            font-size: 11px;
-            background-color: transparent;
-            border: 1px solid var(--vscode-widget-border);
-            color: var(--vscode-descriptionForeground);
-        }
-        
-        .action-buttons button:hover {
-            background-color: var(--vscode-textCodeBlock-background);
-            color: var(--vscode-foreground);
-        }
-        
-        .processing {
-            color: var(--vscode-descriptionForeground);
-            font-style: italic;
-            font-size: 12px;
-        }
-        
-        .metadata {
-            font-size: 11px;
-            color: var(--vscode-descriptionForeground);
-            margin-top: 8px;
-        }
-        
-        /* Scrollbar styling */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-        
-        ::-webkit-scrollbar-track {
-            background: var(--vscode-background);
-        }
-        
-        ::-webkit-scrollbar-thumb {
-            background: var(--vscode-widget-border);
+        .message {
+            margin: 10px 0;
+            padding: 10px;
             border-radius: 4px;
         }
-        
-        ::-webkit-scrollbar-thumb:hover {
-            background: #555;
+        .user-message {
+            background: var(--vscode-editor-inactiveSelectionBackground);
+            border-left: 3px solid var(--vscode-button-background);
+        }
+        .agent-message {
+            background: var(--vscode-editor-selectionBackground);
+            border-left: 3px solid var(--vscode-editor-foreground);
+        }
+        .tool-calls {
+            margin: 10px 0;
+            padding: 10px;
+            background: var(--vscode-editor-background);
+            border: 1px solid var(--vscode-widget-border);
+            border-radius: 4px;
+        }
+        .tool-call {
+            margin: 5px 0;
+            padding: 5px;
+            background: var(--vscode-list-hoverBackground);
+            border-radius: 3px;
+            font-family: var(--vscode-editor-font-family);
+            font-size: 12px;
+        }
+        .tool-call-start {
+            border-left: 3px solid var(--vscode-progressBar-background);
+        }
+        .tool-call-complete {
+            border-left: 3px solid var(--vscode-terminal-ansiGreen);
+        }
+        .tool-call-error {
+            border-left: 3px solid var(--vscode-terminal-ansiRed);
+        }
+        .progress-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 10px 0;
+            padding: 10px;
+            background: var(--vscode-editor-inactiveSelectionBackground);
+            border-radius: 4px;
+        }
+        .spinner {
+            width: 16px;
+            height: 16px;
+            border: 2px solid var(--vscode-progressBar-background);
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .iteration-info {
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+        }
+        .thinking {
+            color: var(--vscode-descriptionForeground);
+            font-style: italic;
+        }
+        .error {
+            background: var(--vscode-inputValidation-errorBackground);
+            border: 1px solid var(--vscode-inputValidation-errorBorder);
+            color: var(--vscode-errorForeground);
+        }
+        .config-info {
+            font-size: 12px;
+            color: var(--vscode-descriptionForeground);
+            margin-bottom: 20px;
         }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>i2-Vision ${this.capitalize(layer)} Agent</h1>
-        <div class="config-info">
-            Agent: ${modelId} | Max Iterations: ${maxIterations}
-        </div>
-        <div class="action-buttons">
-            <button onclick="clearHistory()">Clear History</button>
-            <button onclick="reloadConfig()">Reload Config</button>
-            <button onclick="openConfig()">Open Config</button>
-        </div>
+    <div class="config-info">
+        <strong>Model:</strong> ${modelId} | <strong>Max Iterations:</strong> ${maxIterations}
     </div>
     
-    <div class="chat-container" id="chatContainer">
-        <div class="message assistant">
-            <div class="message-content">Hello! I'm your Code Agent. How can I help you with VSLFC today?</div>
-        </div>
-    </div>
+    <div id="messages"></div>
     
-    <div class="input-container">
-        <div class="input-row">
-            <input type="text" id="userInput" placeholder="Ask me anything about your code..." onkeypress="handleKeyPress(event)">
-            <button onclick="sendMessage()" id="sendButton">Send</button>
-        </div>
+    <div class="input-row">
+        <input type="text" id="userInput" placeholder="Ask me anything about your code..." onkeypress="handleKeyPress(event)">
+        <button onclick="sendMessage()" id="sendButton">Send</button>
     </div>
-    
+
     <script>
         const vscode = acquireVsCodeApi();
-        let isProcessing = false;
+        const messagesDiv = document.getElementById('messages');
+        const sendButton = document.getElementById('sendButton');
+        const userInput = document.getElementById('userInput');
+        
+        let currentProgressDiv = null;
+        let toolCallsDiv = null;
         
         function handleKeyPress(event) {
             if (event.key === 'Enter' && !event.shiftKey) {
@@ -585,98 +481,93 @@ export class AgentTabManager {
         }
         
         function sendMessage() {
-            const input = document.getElementById('userInput');
-            const text = input.value.trim();
+            const text = userInput.value.trim();
+            if (!text) return;
             
-            if (!text || isProcessing) return;
-            
-            isProcessing = true;
-            document.getElementById('sendButton').disabled = true;
+            // Disable input while processing
+            userInput.disabled = true;
+            sendButton.disabled = true;
             
             // Add user message to chat
             addMessage('user', text);
             
-            // Clear input
-            input.value = '';
-            
-            // Show processing indicator
-            const processingDiv = document.createElement('div');
-            processingDiv.className = 'processing';
-            processingDiv.id = 'processingIndicator';
-            processingDiv.textContent = 'Processing...';
-            document.getElementById('chatContainer').appendChild(processingDiv);
-            scrollToBottom();
+            // Clear previous progress indicators
+            if (currentProgressDiv) {
+                currentProgressDiv.remove();
+                currentProgressDiv = null;
+            }
+            if (toolCallsDiv) {
+                toolCallsDiv.remove();
+                toolCallsDiv = null;
+            }
             
             // Send to extension
             vscode.postMessage({ command: 'sendMessage', text });
+            
+            // Clear input
+            userInput.value = '';
         }
         
-        function addMessage(type, content, toolCalls = [], iterations = null, durationMs = null) {
-            const container = document.getElementById('chatContainer');
-            const messageDiv = document.createElement('div');
-            messageDiv.className = 'message ' + type;
+        function addMessage(type, content, isHtml = false) {
+            const div = document.createElement('div');
+            div.className = 'message ' + (type === 'user' ? 'user-message' : 'agent-message');
             
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'message-content';
-            contentDiv.textContent = content;
-            messageDiv.appendChild(contentDiv);
+            if (isHtml) {
+                div.innerHTML = content;
+            } else {
+                div.textContent = content;
+            }
             
-            // Add tool calls if present
-            if (toolCalls && toolCalls.length > 0) {
-                const toolCallsDiv = document.createElement('div');
+            messagesDiv.appendChild(div);
+            div.scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        function showProgress(message) {
+            if (currentProgressDiv) {
+                currentProgressDiv.remove();
+            }
+            
+            currentProgressDiv = document.createElement('div');
+            currentProgressDiv.className = 'progress-indicator';
+            currentProgressDiv.innerHTML = '<div class="spinner"></div><span>' + message + '</span>';
+            messagesDiv.appendChild(currentProgressDiv);
+            currentProgressDiv.scrollIntoView({ behavior: 'smooth' });
+        }
+        
+        function showToolCall(toolCall, type) {
+            if (!toolCallsDiv) {
+                toolCallsDiv = document.createElement('div');
                 toolCallsDiv.className = 'tool-calls';
-                
-                toolCalls.forEach(toolCall => {
-                    const toolDiv = document.createElement('div');
-                    toolDiv.className = 'tool-call';
-                    toolDiv.innerHTML = '<strong>Tool:</strong> ' + toolCall.toolName + 
-                                        '<br><strong>Args:</strong> ' + JSON.stringify(toolCall.args || toolCall.arguments || {}, null, 2);
-                    toolCallsDiv.appendChild(toolDiv);
-                });
-                
-                messageDiv.appendChild(toolCallsDiv);
+                toolCallsDiv.innerHTML = '<strong>Tool Calls:</strong>';
+                messagesDiv.appendChild(toolCallsDiv);
             }
             
-            // Add metadata if present
-            if (iterations !== null || durationMs !== null) {
-                const metaDiv = document.createElement('div');
-                metaDiv.className = 'metadata';
-                const parts = [];
-                if (iterations !== null) parts.push(iterations + ' iterations');
-                if (durationMs !== null) parts.push((durationMs / 1000).toFixed(2) + 's');
-                metaDiv.textContent = parts.join(', ');
-                messageDiv.appendChild(metaDiv);
+            const toolDiv = document.createElement('div');
+            toolDiv.className = 'tool-call ' + (type === 'start' ? 'tool-call-start' : (toolCall.error ? 'tool-call-error' : 'tool-call-complete'));
+            
+            let content = '<strong>' + toolCall.toolName + '</strong>(';
+            for (const [key, value] of Object.entries(toolCall.args || {})) {
+                content += key + ': ' + JSON.stringify(value) + ', ';
+            }
+            content = content.replace(/, $/, '') + ')';
+            
+            if (toolCall.result) {
+                content += ' → <em>Completed</em>';
+            }
+            if (toolCall.error) {
+                content += ' → <strong style="color: var(--vscode-errorForeground)">Error: ' + toolCall.error + '</strong>';
             }
             
-            container.appendChild(messageDiv);
-            scrollToBottom();
+            toolDiv.innerHTML = content;
+            toolCallsDiv.appendChild(toolDiv);
+            toolDiv.scrollIntoView({ behavior: 'smooth' });
         }
         
-        function addError(error) {
-            const container = document.getElementById('chatContainer');
-            const errorDiv = document.createElement('div');
-            errorDiv.className = 'message error';
-            errorDiv.innerHTML = '<div class="message-content">' + error + '</div>';
-            container.appendChild(errorDiv);
-            scrollToBottom();
-        }
-        
-        function scrollToBottom() {
-            const container = document.getElementById('chatContainer');
-            container.scrollTop = container.scrollHeight;
-        }
-        
-        function clearHistory() {
-            document.getElementById('chatContainer').innerHTML = '<div class="message assistant"><div class="message-content">Hello! I\\'m your Code Agent. How can I help you with VSLFC today?</div></div>';
-            vscode.postMessage({ command: 'clearHistory' });
-        }
-        
-        function reloadConfig() {
-            vscode.postMessage({ command: 'reloadConfig' });
-        }
-        
-        function openConfig() {
-            vscode.postMessage({ command: 'openConfig' });
+        function hideProgress() {
+            if (currentProgressDiv) {
+                currentProgressDiv.remove();
+                currentProgressDiv = null;
+            }
         }
         
         // Handle messages from extension
@@ -684,49 +575,64 @@ export class AgentTabManager {
             const message = event.data;
             
             switch (message.command) {
+                case 'processing':
+                    showProgress('Processing: ' + message.userInput.substring(0, 50) + '...');
+                    break;
+                    
+                case 'progress':
+                    const event = message.event;
+                    if (event.type === 'thinking') {
+                        showProgress(event.message);
+                    } else if (event.type === 'tool_start') {
+                        if (event.toolCall) {
+                            showToolCall(event.toolCall, 'start');
+                        }
+                    } else if (event.type === 'tool_complete') {
+                        if (event.toolCall) {
+                            showToolCall(event.toolCall, 'complete');
+                        }
+                    } else if (event.type === 'iteration_complete') {
+                        // Optional: show iteration complete message
+                    }
+                    break;
+                    
                 case 'response':
-                    // Remove processing indicator
-                    const processingIndicator = document.getElementById('processingIndicator');
-                    if (processingIndicator) {
-                        processingIndicator.remove();
+                    hideProgress();
+                    if (toolCallsDiv) {
+                        toolCallsDiv.remove();
+                        toolCallsDiv = null;
                     }
                     
-                    // Add assistant response
-                    addMessage(
-                        'assistant',
-                        message.response.text || 'No response',
-                        message.response.toolCalls || [],
-                        message.response.iterations,
-                        message.response.durationMs
-                    );
+                    let responseHtml = '<div>' + message.response.text.replace(/\\n/g, '<br>') + '</div>';
                     
-                    isProcessing = false;
-                    document.getElementById('sendButton').disabled = false;
+                    if (message.response.toolCalls && message.response.toolCalls.length > 0) {
+                        responseHtml += '<div class="tool-calls"><strong>Tools Used:</strong>';
+                        message.response.toolCalls.forEach(tc => {
+                            responseHtml += '<div class="tool-call tool-call-complete"><strong>' + tc.toolName + '</strong>(' + 
+                                Object.entries(tc.args || {}).map(([k,v]) => k + ': ' + JSON.stringify(v)).join(', ') + ')</div>';
+                        });
+                        responseHtml += '</div>';
+                    }
+                    
+                    responseHtml += '<div class="iteration-info">Iterations: ' + message.response.iterations + ' | Duration: ' + message.response.durationMs + 'ms</div>';
+                    
+                    addMessage('agent', responseHtml, true);
+                    
+                    // Re-enable input
+                    userInput.disabled = false;
+                    sendButton.disabled = false;
+                    userInput.focus();
                     break;
                     
                 case 'error':
-                    // Remove processing indicator
-                    const errorIndicator = document.getElementById('processingIndicator');
-                    if (errorIndicator) {
-                        errorIndicator.remove();
-                    }
-                    
-                    addError(message.error);
-                    isProcessing = false;
-                    document.getElementById('sendButton').disabled = false;
-                    break;
-                    
-                case 'processing':
-                    // Already handled in sendMessage
+                    hideProgress();
+                    addMessage('agent', 'Error: ' + message.error, false);
+                    userInput.disabled = false;
+                    sendButton.disabled = false;
                     break;
                     
                 case 'configReloaded':
-                    // Update config info in header
-                    const configInfo = document.querySelector('.config-info');
-                    if (configInfo && message.config) {
-                        configInfo.textContent = 'Agent: ' + message.config.model + ' | Max Iterations: ' + message.config.maxIterations;
-                    }
-                    addMessage('assistant', 'Configuration reloaded successfully.', [], null, null);
+                    location.reload();
                     break;
             }
         });
@@ -736,14 +642,14 @@ export class AgentTabManager {
   }
 
   /**
-   * Capitalize first letter of a string
+   * Capitalize first letter
    */
   private capitalize(str: string): string {
     return str.charAt(0).toUpperCase() + str.slice(1);
   }
 
   /**
-   * Log a message to the output channel
+   * Log message
    */
   private log(message: string): void {
     const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });

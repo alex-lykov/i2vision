@@ -13,12 +13,13 @@
  * - Better logging for debugging
  * - Correct workspace root handling
  * - Extension root path support for accessing extension source files
+ * - REAL-TIME STREAMING: Tool calls are emitted immediately via progress callback
  */
 
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { CLI, LLMResponse, LLMTool, LLMMessage } from '../cliIntegration';
+import { CLI, LLMResponse, LLMTool, LLMMessage, LLMToolCall } from '../cliIntegration';
 
 /**
  * Agent configuration interface (matches YAML structure)
@@ -165,6 +166,21 @@ export interface ToolCall {
 }
 
 /**
+ * Progress event for real-time updates
+ */
+export interface ProgressEvent {
+  type: 'tool_start' | 'tool_complete' | 'iteration_complete' | 'thinking';
+  iteration: number;
+  toolCall?: ToolCall;
+  message?: string;
+}
+
+/**
+ * Progress callback type
+ */
+export type ProgressCallback = (event: ProgressEvent) => void;
+
+/**
  * Interaction record for history tracking
  */
 export interface InteractionRecord {
@@ -195,24 +211,6 @@ export interface ProcessContext {
   currentFile?: string;
   projectName?: string;
   task?: string;
-}
-
-/**
- * LLM Tool Call from API
- */
-export interface LLMToolCall {
-  name: string;
-  arguments: Record<string, any>;
-}
-
-/**
- * Message in conversation history
- */
-export interface Message {
-  role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
-  tool_calls?: LLMToolCall[];
-  tool_call_id?: string;
 }
 
 /**
@@ -261,7 +259,7 @@ export class AgentBridge {
       // If extension path ends with 'vscode-app', go up to project root
       const pathSegments = detectedExtensionRoot.split(/[\\/]/);
       if (pathSegments[pathSegments.length - 1] === 'vscode-app') {
-        // Go up one level to get project root
+        // Go up one level to project root
         detectedExtensionRoot = path.dirname(detectedExtensionRoot);
         this.log(`Development mode detected: extension root adjusted to project root`);
       }
@@ -291,9 +289,13 @@ export class AgentBridge {
   }
 
   /**
-   * Process user input through the agent
+   * Process user input through the agent with real-time progress updates
    */
-  async process(userInput: string, context?: ProcessContext): Promise<AgentResponse> {
+  async process(
+    userInput: string, 
+    context?: ProcessContext,
+    onProgress?: ProgressCallback
+  ): Promise<AgentResponse> {
     if (!this.isInitialized) {
       await this.initialize();
     }
@@ -315,7 +317,7 @@ export class AgentBridge {
       this.log(`System prompt built (${systemPrompt.length} chars)`);
 
       // Execute agent loop using CLI
-      const response = await this.executeAgentLoop(userInput, systemPrompt, context);
+      const response = await this.executeAgentLoop(userInput, systemPrompt, context, onProgress);
       
       const durationMs = Date.now() - startTime;
       this.log(`Agent completed in ${durationMs}ms with ${response.iterations} iterations`);
@@ -359,62 +361,31 @@ export class AgentBridge {
     prompt += '\nreasoning: I need to read the file to understand its contents.';
     prompt += '\ntool_call: {"tool":"read_file","args":{"path":"vscode-app/src/extension.ts"}}';
     prompt += '\nEOS';
-    prompt += '\n\nExample 2 (no tool needed):';
-    prompt += '\nreasoning: The answer is 42.';
+    prompt += '\n\nExample 2 (final answer, no tools):';
+    prompt += '\nreasoning: I have all the information needed to answer.';
+    prompt += '\nThe main entry point is in extension.ts line 45.';
     prompt += '\nEOS';
-    prompt += '\n\nIMPORTANT: Always start with "reasoning:" and use "tool_call:" if you need to use a tool.';
-    prompt += '\n\n--- CRITICAL RULES ---';
-    prompt += '\n1. NEVER call the same tool with the same arguments more than once.';
-    prompt += '\n2. If a tool returns an error, try a different approach or explain the issue to the user.';
-    prompt += '\n3. If a tool returns the expected result, summarize the findings in text - do NOT call more tools.';
-    prompt += '\n4. When you have enough information to answer the user\'s question, stop calling tools and provide a text response.';
-    prompt += '\n5. If you get the same error twice, explain the problem to the user instead of retrying.';
+    prompt += '\n\n--- ERROR HANDLING (CRITICAL) ---';
+    prompt += '\nWhen a tool returns an error:';
+    prompt += '\n1. DO NOT retry the same tool call with the same arguments';
+    prompt += '\n2. Analyze the error message to understand what went wrong';
+    prompt += '\n3. Take a different approach:';
+    prompt += '\n   - If path not found (ENOENT): Tell the user the path doesn\'t exist, offer to list parent directory or search for similar paths';
+    prompt += '\n   - If permission denied: Tell the user and ask for alternative location';
+    prompt += '\n   - If file is empty: Report that the file exists but is empty';
+    prompt += '\n4. If you\'ve tried 2 different approaches and both failed, report to user and ask for clarification';
+    prompt += '\n\nExample responses to errors:';
+    prompt += '\n- "The folder \'ui\' doesn\'t exist in this project. I found these folders instead: app, core, feature. Would you like me to check one of those?"';
+    prompt += '\n- "I couldn\'t find the file at that path. Would you like me to search for files with similar names?"';
     
     return prompt;
   }
 
   /**
-   * Strip <think> tags from LLM content
-   */
-  private stripThinkTags(content: string): string {
-    // Remove <think>...</think> blocks
-    return content.replace(new RegExp('<think>[\\s\\S]*?</think>', 'gi'), '').trim();
-  }
-
-  /**
-   * Strip formatting artifacts from LLM output (reasoning:, tool_call:, EOS)
-   */
-  private stripFormattingArtifacts(content: string): string {
-    return content
-      .replace(/^reasoning:\s*/gmi, '')
-      .replace(/tool_call:\s*\{[^}]*\}\s*/g, '')
-      .replace(/\bEOS\b/g, '')
-      .trim();
-  }
-
-  /**
-   * Create a signature for tool call deduplication
-   */
-  private createToolCallSignature(toolName: string, args: Record<string, any>): string {
-    // Create a normalized copy of args
-    const normalizedArgs = { ...args };
-
-    // Normalize optional parameters with default values
-    if (toolName === 'list_directory') {
-      // 'recursive' defaults to false, so remove it for signature comparison
-      delete normalizedArgs.recursive;
-    }
-
-    // Sort args keys for consistent signature
-    const sortedArgs = Object.keys(normalizedArgs).sort().map(k => `${k}=${JSON.stringify(normalizedArgs[k])}`).join('|');
-    return `${toolName}:${sortedArgs}`;
-  }
-
-  /**
-   * Execute the agent loop with reflection (MODERN APPROACH)
+   * Execute the agentic processing loop
    * 
-   * This implements the task-complete pattern:
-   * - Loop continues while LLM keeps making tool calls
+   * MODERN APPROACH:
+   * - LLM makes tool calls based on current context
    * - Tool results are fed back to LLM for analysis
    * - LLM decides when task is complete (no more tool calls)
    * - maxIterations is a safety net, not the primary control
@@ -423,11 +394,13 @@ export class AgentBridge {
    * - Truncates large tool results to prevent context window overflow
    * - Detects repeated tool calls to prevent infinite loops
    * - Better error handling and logging
+   * - REAL-TIME: Emits progress events for each tool call
    */
   private async executeAgentLoop(
     userInput: string,
     systemPrompt: string,
-    context?: ProcessContext
+    context?: ProcessContext,
+    onProgress?: ProgressCallback
   ): Promise<Omit<AgentResponse, 'durationMs' | 'success'>> {
     const allToolCalls: ToolCall[] = [];
     const toolCallHistory: ToolCallHistory[] = [];
@@ -436,7 +409,7 @@ export class AgentBridge {
     let lastSanitizedContent = '';
 
     // Build initial message history
-    const messages: Message[] = [
+    const messages: LLMMessage[] = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userInput }
     ];
@@ -450,13 +423,19 @@ export class AgentBridge {
       while (iterations < this.config.iterationSettings.maxIterations) {
         this.log(`\n=== ITERATION ${iterations + 1} ===`);
         
+        // Emit thinking event
+        if (onProgress) {
+          onProgress({
+            type: 'thinking',
+            iteration: iterations + 1,
+            message: `Thinking... (iteration ${iterations + 1})`
+          });
+        }
+        
         // Call LLM with current message history
         this.log(`Calling model: ${this.config.model.id} with ${messages.length} messages`);
         
-        // Convert Message[] to LLMMessage[] for CLI
-        const cliMessages: LLMMessage[] = messages.map(m => ({ role: m.role, content: m.content }));
-        
-        const llmResponse = await this.callLLM(cliMessages, tools);
+        const llmResponse = await this.callLLM(messages, tools);
         
         // Strip <think> tags from LLM content
         const sanitizedContent = this.stripThinkTags(llmResponse.content);
@@ -467,8 +446,7 @@ export class AgentBridge {
         // Add assistant's response to message history
         messages.push({
           role: 'assistant',
-          content: sanitizedContent,
-          tool_calls: llmResponse.toolCalls
+          content: sanitizedContent
         });
 
         // CHECK: Did LLM make any tool calls?
@@ -494,6 +472,15 @@ export class AgentBridge {
             
             this.log(`  → Executing: ${toolCall.toolName}(${JSON.stringify(toolCall.args)})`);
             
+            // Emit tool_start event BEFORE executing
+            if (onProgress) {
+              onProgress({
+                type: 'tool_start',
+                iteration: iterations + 1,
+                toolCall: { ...toolCall }
+              });
+            }
+            
             // Validate required arguments
             if (toolCall.toolName === 'list_directory' && !toolCall.args.path) {
               this.log(`  ⚠️ WARNING: list_directory called without 'path' argument!`);
@@ -503,8 +490,7 @@ export class AgentBridge {
               // Feed error back to LLM
               messages.push({
                 role: 'tool',
-                content: `Error: Missing required argument 'path' for list_directory. Example: {"path": "vscode-app/src"}`,
-                tool_call_id: tc.name
+                content: `Error: Missing required argument 'path' for list_directory. Example: {"path": "vscode-app/src"}`
               });
               continue; // Skip to next tool call
             }
@@ -517,8 +503,7 @@ export class AgentBridge {
               // Feed error back to LLM
               messages.push({
                 role: 'tool',
-                content: `Error: Missing required argument 'path' for read_file. Example: {"path": "vscode-app/src/extension.ts"}`,
-                tool_call_id: tc.name
+                content: `Error: Missing required argument 'path' for read_file. Example: {"path": "vscode-app/src/extension.ts"}`
               });
               continue; // Skip to next tool call
             }
@@ -528,129 +513,257 @@ export class AgentBridge {
             const previousCalls = toolCallHistory.filter(h => h.argsSignature === signature);
             
             if (previousCalls.length >= 2) {
-              // Same tool called 3+ times with same args = stuck in loop
-              this.log(`  ⚠️ DETECTED: Repeated tool call (3rd time). Forcing completion.`);
-              finalText = sanitizedContent + '\n\n[Note: I appear to be stuck in a loop. Based on the information gathered, I cannot make further progress with the current approach.]';
+              this.log(`  ⚠️ DETECTED: Repeated tool call (${previousCalls.length + 1}th time). Forcing completion.`);
+              
+              // Add error to tool call
+              toolCall.error = `Repeated tool call detected (${previousCalls.length + 1} times). Breaking loop.`;
+              allToolCalls.push(toolCall);
+              
+              // Feed error back to LLM
+              messages.push({
+                role: 'tool',
+                content: `Error: You've called ${toolCall.toolName} with the same arguments ${previousCalls.length + 1} times. Please analyze the previous results and take a different approach, or provide a final answer.`
+              });
+              
+              // Break the inner loop (tool execution)
               shouldBreakOuterLoop = true;
               break; // Break inner for loop
             }
             
+            // Record this tool call
             toolCallHistory.push({
               toolName: toolCall.toolName,
               argsSignature: signature,
-              iteration: iterations
+              iteration: iterations + 1
             });
             
+            // Execute the tool
             const result = await this.executeTool(toolCall);
-            
-            // TRUNCATE large results to prevent context window overflow
-            let resultText = result;
-            if (resultText.length > AgentBridge.MAX_TOOL_RESULT_LENGTH) {
-              resultText = resultText.substring(0, AgentBridge.MAX_TOOL_RESULT_LENGTH) + 
-                `\n\n[... truncated ${resultText.length - AgentBridge.MAX_TOOL_RESULT_LENGTH} more chars ...]`;
-              this.log(`  ← Result truncated from ${result.length} to ${AgentBridge.MAX_TOOL_RESULT_LENGTH} chars`);
-            } else {
-              this.log(`  ← Result: ${resultText.length} chars`);
+            toolCall.result = result.result;
+            if (result.error) {
+              toolCall.error = result.error;
             }
             
-            toolCall.result = result;
             allToolCalls.push(toolCall);
             
-            // Feed tool result back to LLM (truncated version)
+            this.log(`  ← ${result.error ? 'Error: ' + result.error : 'Success: ' + result.result.substring(0, 100) + (result.result.length > 100 ? '...' : '')}`);
+            
+            // Feed result back to LLM
             messages.push({
               role: 'tool',
-              content: resultText,
-              tool_call_id: tc.name
+              content: result.result || `Error: ${result.error}`
             });
-          } catch (error: any) {
-            const toolCall: ToolCall = {
+            
+            // Emit tool_complete event AFTER executing
+            if (onProgress) {
+              onProgress({
+                type: 'tool_complete',
+                iteration: iterations + 1,
+                toolCall: { ...toolCall }
+              });
+            }
+            
+          } catch (toolError: any) {
+            this.log(`  ← Tool execution error: ${toolError.message}`);
+            
+            const errorToolCall: ToolCall = {
               toolName: tc.name,
-              args: tc.arguments,
-              error: error.message
+              args: tc.arguments || {},
+              error: toolError.message
             };
-            allToolCalls.push(toolCall);
-            this.log(`  ← Error: ${error.message}`);
+            
+            allToolCalls.push(errorToolCall);
             
             // Feed error back to LLM
             messages.push({
               role: 'tool',
-              content: `Error: ${error.message}`,
-              tool_call_id: tc.name
+              content: `Error executing ${tc.name}: ${toolError.message}`
             });
+            
+            // Emit tool_complete event with error
+            if (onProgress) {
+              onProgress({
+                type: 'tool_complete',
+                iteration: iterations + 1,
+                toolCall: errorToolCall
+              });
+            }
           }
         }
         
-        // Check if we need to break the outer loop (from repeated tool detection)
+        // If we detected a loop, break the outer loop too
         if (shouldBreakOuterLoop) {
+          this.log('Breaking outer loop due to repeated tool calls');
+          finalText = lastSanitizedContent + '\n\n⚠️ Loop detected: The agent was repeating the same tool calls. Please refine your request.';
           break;
         }
-
+        
+        // Increment iteration counter
         iterations++;
-        this.log(`Iteration ${iterations} complete. Tool results fed back to LLM.`);
+        
+        // Emit iteration_complete event
+        if (onProgress) {
+          onProgress({
+            type: 'iteration_complete',
+            iteration: iterations,
+            message: `Completed iteration ${iterations}`
+          });
+        }
       }
-
-      // Check if we hit the iteration limit
-      if (iterations >= this.config.iterationSettings.maxIterations) {
-        this.log(`⚠️ Hit max iterations limit (${this.config.iterationSettings.maxIterations})`);
-        finalText = lastSanitizedContent + '\n\n[Note: Reached maximum iteration limit]';
+      
+      // If we hit max iterations without completion
+      if (iterations >= this.config.iterationSettings.maxIterations && !finalText) {
+        this.log(`⚠️ Hit max iterations (${this.config.iterationSettings.maxIterations})`);
+        finalText = lastSanitizedContent || 'Agent reached maximum iterations without completing the task.';
       }
-
+      
       this.log(`\n=== AGENTIC LOOP COMPLETE ===`);
       this.log(`Total iterations: ${iterations}`);
       this.log(`Total tool calls: ${allToolCalls.length}`);
       this.log(`Final text length: ${finalText.length} chars`);
       
+      return {
+        finalText,
+        toolCalls: allToolCalls,
+        iterations
+      };
+      
     } catch (error: any) {
-      finalText = `Error during agent execution: ${error.message}`;
       this.log(`Agent loop error: ${error.message}`);
+      this.log(error.stack);
+      
+      return {
+        finalText: `Agent error: ${error.message}`,
+        toolCalls: allToolCalls,
+        iterations
+      };
     }
-
-    // Clean up formatting artifacts from final output
-    finalText = this.stripFormattingArtifacts(finalText);
-
-    return {
-      finalText,
-      toolCalls: allToolCalls,
-      iterations
-    };
   }
 
   /**
    * Call LLM via CLI
    */
-  private async callLLM(messages: LLMMessage[], tools: any[]): Promise<LLMResponse> {
-    this.log(`Calling LLM with ${messages.length} messages and ${tools.length} tools`);
-    return await this.cli.callLLM(
+  private async callLLM(messages: LLMMessage[], tools: LLMTool[]): Promise<LLMResponse> {
+    this.log(`Calling LLM: ${this.config.model.id} with ${messages.length} messages`);
+    
+    const response = await this.cli.callLLM(
       this.config.model.id,
       messages,
       {
         temperature: this.config.model.temperature,
-        max_tokens: this.config.model.maxOutputTokens
+        max_tokens: this.config.model.maxOutputTokens,
+        top_p: this.config.model.topP
       },
       tools
     );
+    
+    return response;
   }
 
   /**
-   * Resolve a path - handles both workspace and extension paths
-   * 
-   * Smart path resolution:
-   * - If path starts with common extension dirs (vscode-app, storage-core, etc.), use extensionRoot
-   * - Otherwise, use workspaceRoot (user's project)
-   * - Absolute paths are used as-is
+   * Execute a single tool call
+   */
+  private async executeTool(toolCall: ToolCall): Promise<{ result: string; error?: string }> {
+    try {
+      switch (toolCall.toolName) {
+        case 'list_directory': {
+          const dirPath = this.resolvePath(toolCall.args.path);
+          const recursive = toolCall.args.recursive === true;
+          
+          this.log(`  Listing directory: ${dirPath} (recursive: ${recursive})`);
+          
+          const files = await this.cli.listFiles(dirPath, recursive);
+          const result = files.join('\n');
+          
+          // Truncate if too large
+          if (result.length > this.config.formatting.maxObservationChars) {
+            const truncated = result.substring(0, this.config.formatting.maxObservationChars);
+            return {
+              result: truncated + '\n\n[...truncated...]',
+              error: undefined
+            };
+          }
+          
+          return { result };
+        }
+        
+        case 'read_file': {
+          const filePath = this.resolvePath(toolCall.args.path);
+          this.log(`  Reading file: ${filePath}`);
+          
+          const result = await this.cli.readFile(filePath);
+          return { result };
+        }
+        
+        case 'write_file': {
+          // For write operations, always use workspace root (user's project)
+          const filePath = path.isAbsolute(toolCall.args.path) 
+            ? toolCall.args.path 
+            : path.join(this.workspaceRoot, toolCall.args.path);
+          
+          this.log(`  Writing file: ${filePath}`);
+          
+          await this.cli.writeFile(filePath, toolCall.args.content);
+          return { result: `Successfully wrote ${filePath}` };
+        }
+        
+        case 'edit_file': {
+          const filePath = this.resolvePath(toolCall.args.path);
+          this.log(`  Editing file: ${filePath}`);
+          
+          // Read current content
+          const content = await this.cli.readFile(filePath);
+          
+          // Perform replacement
+          const replaceAll = toolCall.args.replace_all === true;
+          const newContent = replaceAll 
+            ? content.split(toolCall.args.old_string).join(toolCall.args.new_string)
+            : content.replace(toolCall.args.old_string, toolCall.args.new_string);
+          
+          if (newContent === content) {
+            return { result: '', error: 'Old string not found in file' };
+          }
+          
+          // Write updated content
+          await this.cli.writeFile(filePath, newContent);
+          return { result: `Successfully edited ${filePath}` };
+        }
+        
+        case 'search_files': {
+          const pattern = toolCall.args.pattern;
+          const searchPath = toolCall.args.path ? this.resolvePath(toolCall.args.path) : undefined;
+          
+          this.log(`  Searching for pattern: ${pattern}`);
+          
+          const results = await this.cli.searchFiles(pattern, searchPath);
+          return { result: results.join('\n') };
+        }
+        
+        default:
+          return {
+            result: '',
+            error: `Unknown tool: ${toolCall.toolName}`
+          };
+      }
+    } catch (error: any) {
+      return {
+        result: '',
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Resolve path relative to workspace or extension root
    */
   private resolvePath(requestedPath: string): string {
-    // If already absolute, use as-is
     if (path.isAbsolute(requestedPath)) {
       return requestedPath;
     }
     
-    // Check if path refers to extension source directories
-    const extensionDirs = ['vscode-app', 'storage-core', 'conf-agent-core', 'i2vision-cli', 'backlog'];
-    const firstSegment = requestedPath.split(/[\\/]/)[0];
-    
-    if (extensionDirs.includes(firstSegment)) {
-      // This is a reference to extension source - use extension root
+    // Check if path starts with known prefixes
+    if (requestedPath.startsWith('vscode-app/') || requestedPath.startsWith('vscode-app\\')) {
+      // Extension source code - use extension root
       const fullPath = path.join(this.extensionRoot, requestedPath);
       this.log(`  Path resolution: "${requestedPath}" → extension root → ${fullPath}`);
       return fullPath;
@@ -663,74 +776,68 @@ export class AgentBridge {
   }
 
   /**
-   * Execute a tool call
+   * Create a signature for tool call comparison (ignores optional params)
    */
-  private async executeTool(toolCall: ToolCall): Promise<string> {
-    this.log(`Executing tool: ${toolCall.toolName}`);
+  private createToolCallSignature(toolName: string, args: Record<string, any>): string {
+    // Normalize arguments by removing optional parameters that don't affect semantics
+    const normalizedArgs: Record<string, any> = {};
     
-    const args = toolCall.args;
-    
-    switch (toolCall.toolName) {
-      case 'read_file': {
-        // Smart path resolution: detects extension source paths vs workspace paths
-        const filePath = this.resolvePath(args.path);
-        this.log(`  Reading file: ${filePath}`);
-        return await this.cli.readFile(filePath);
+    for (const [key, value] of Object.entries(args)) {
+      // Skip 'recursive' for list_directory as it's often defaulted
+      if (toolName === 'list_directory' && key === 'recursive') {
+        continue;
       }
-      
-      case 'list_directory': {
-        // Smart path resolution: detects extension source paths vs workspace paths
-        const dirPath = this.resolvePath(args.path);
-        this.log(`  Listing directory: ${dirPath}`);
-        
-        const files = await this.cli.listFiles(dirPath, args.recursive || false);
-        
-        // Limit results to prevent context overflow
-        if (files.length > AgentBridge.MAX_LIST_FILES_RESULTS) {
-          const truncated = files.slice(0, AgentBridge.MAX_LIST_FILES_RESULTS);
-          return truncated.join('\n') + `\n\n[... truncated ${files.length - AgentBridge.MAX_LIST_FILES_RESULTS} more files ...]`;
-        }
-        return files.join('\n');
-      }
-      
-      case 'write_file': {
-        // For write operations, always use workspace root (user's project)
-        const filePath = path.isAbsolute(args.path) ? args.path : path.join(this.workspaceRoot, args.path);
-        this.log(`  Writing file: ${filePath}`);
-        await this.cli.writeFile(filePath, args.content);
-        return `Successfully wrote ${args.path} (${args.content.length} chars)`;
-      }
-      
-      case 'regex_search': {
-        const pattern = args.pattern;
-        // Smart path resolution: detects extension source paths vs workspace paths
-        const searchDir = this.resolvePath(args.path);
-        this.log(`  Searching for "${pattern}" in ${searchDir}`);
-        const results = await this.cli.searchFiles(pattern, searchDir);
-        return results.join('\n');
-      }
-      
-      case 'i2vision_discover': {
-        this.log(`  Running VSLFC discovery...`);
-        const result = await this.cli.runDiscovery();
-        return JSON.stringify(result, null, 2);
-      }
-      
-      default:
-        throw new Error(`Unknown tool: ${toolCall.toolName}`);
+      normalizedArgs[key] = value;
     }
+    
+    // Sort keys for consistent comparison
+    const sortedKeys = Object.keys(normalizedArgs).sort();
+    const sortedArgs: Record<string, any> = {};
+    for (const key of sortedKeys) {
+      sortedArgs[key] = normalizedArgs[key];
+    }
+    
+    return `${toolName}:${JSON.stringify(sortedArgs)}`;
   }
 
   /**
-   * Get available tools for the agent
+   * Strip <think> tags from LLM output
+   */
+  private stripThinkTags(content: string): string {
+    return content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+  }
+
+  /**
+   * Get available tools for LLM
    */
   private getAvailableTools(): LLMTool[] {
     return [
       {
         type: 'function',
         function: {
+          name: 'list_directory',
+          description: 'List files and directories',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: {
+                type: 'string',
+                description: 'Directory path (relative to workspace root, extension root, or absolute)'
+              },
+              recursive: {
+                type: 'boolean',
+                description: 'Whether to list recursively'
+              }
+            },
+            required: ['path']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
           name: 'read_file',
-          description: 'Read the contents of a file. Path can be relative to workspace or extension source (e.g., "vscode-app/src/extension.ts" or "src/main.kt"). Use list_directory to find files first.',
+          description: 'Read file contents',
           parameters: {
             type: 'object',
             properties: {
@@ -746,30 +853,8 @@ export class AgentBridge {
       {
         type: 'function',
         function: {
-          name: 'list_directory',
-          description: 'List contents of a directory. Path can be relative to workspace or extension source (e.g., "vscode-app/src" or "src/main")',
-          parameters: {
-            type: 'object',
-            properties: {
-              path: {
-                type: 'string',
-                description: 'Directory path (relative to workspace root, extension root, or absolute)'
-              },
-              recursive: {
-                type: 'boolean',
-                description: 'Whether to list files recursively',
-                default: false
-              }
-            },
-            required: ['path']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
           name: 'write_file',
-          description: 'Write content to a file in the workspace (user\'s project)',
+          description: 'Write content to a file',
           parameters: {
             type: 'object',
             properties: {
@@ -789,8 +874,37 @@ export class AgentBridge {
       {
         type: 'function',
         function: {
-          name: 'regex_search',
-          description: 'Search for a regex pattern in files. Path can be relative to workspace or extension source',
+          name: 'edit_file',
+          description: 'Edit a file by replacing text',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: {
+                type: 'string',
+                description: 'Path to the file'
+              },
+              old_string: {
+                type: 'string',
+                description: 'Text to find'
+              },
+              new_string: {
+                type: 'string',
+                description: 'Replacement text'
+              },
+              replace_all: {
+                type: 'boolean',
+                description: 'Replace all occurrences'
+              }
+            },
+            required: ['path', 'old_string', 'new_string']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'search_files',
+          description: 'Search for a pattern in files',
           parameters: {
             type: 'object',
             properties: {
@@ -801,21 +915,13 @@ export class AgentBridge {
               path: {
                 type: 'string',
                 description: 'Directory to search in (relative to workspace root, extension root, or absolute)'
+              },
+              file_pattern: {
+                type: 'string',
+                description: 'Glob pattern to filter files'
               }
             },
-            required: ['pattern', 'path']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'i2vision_discover',
-          description: 'Run VSLFC discovery on the current workspace (user\'s project)',
-          parameters: {
-            type: 'object',
-            properties: {},
-            required: []
+            required: ['pattern']
           }
         }
       }
@@ -823,23 +929,12 @@ export class AgentBridge {
   }
 
   /**
-   * Log a message to the output channel
+   * Log message to output channel
    */
   private log(message: string): void {
-    const timestamp = new Date().toLocaleTimeString('en-US', { hour12: true });
-    const formatted = `[${timestamp}] [AgentBridge:${this.config.key}] ${message}`;
-    
     if (this.outputChannel) {
-      this.outputChannel.appendLine(formatted);
+      const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
+      this.outputChannel.appendLine(`[${timestamp}] [AgentBridge:${this.config.key}] ${message}`);
     }
-    console.log(formatted);
-  }
-
-  /**
-   * Dispose resources
-   */
-  dispose(): void {
-    this.isInitialized = false;
-    this.log('AgentBridge disposed');
   }
 }

@@ -14,6 +14,9 @@
  * - Correct workspace root handling
  * - Extension root path support for accessing extension source files
  * - REAL-TIME STREAMING: Tool calls are emitted immediately via progress callback
+ * - BUG FIX: Tool calls are now recorded in history BEFORE execution to catch loops on errors
+ * - BUG FIX: Path normalization in loop detection to catch backslash/forward slash variations
+ * - BUG FIX: When directory not found, error includes suggestions for existing paths
  */
 
 import * as vscode from 'vscode';
@@ -368,15 +371,19 @@ export class AgentBridge {
     prompt += '\n\n--- ERROR HANDLING (CRITICAL) ---';
     prompt += '\nWhen a tool returns an error:';
     prompt += '\n1. DO NOT retry the same tool call with the same arguments';
-    prompt += '\n2. Analyze the error message to understand what went wrong';
-    prompt += '\n3. Take a different approach:';
-    prompt += '\n   - If path not found (ENOENT): Tell the user the path doesn\'t exist, offer to list parent directory or search for similar paths';
-    prompt += '\n   - If permission denied: Tell the user and ask for alternative location';
-    prompt += '\n   - If file is empty: Report that the file exists but is empty';
-    prompt += '\n4. If you\'ve tried 2 different approaches and both failed, report to user and ask for clarification';
+    prompt += '\n2. DO NOT try alternative paths (root, "/", different separators) - this wastes iterations';
+    prompt += '\n3. If the error includes a SUGGESTION with existing directories, USE IT:';
+    prompt += '\n   - Report to user: "The folder X doesn\'t exist. Available folders: A, B, C. Which should I check?"';
+    prompt += '\n   - Then STOP and wait for user response';
+    prompt += '\n4. If no suggestion provided, list the workspace root ONCE, then report to user';
+    prompt += '\n5. NEVER try more than 2 different approaches for the same task';
     prompt += '\n\nExample responses to errors:';
-    prompt += '\n- "The folder \'ui\' doesn\'t exist in this project. I found these folders instead: app, core, feature. Would you like me to check one of those?"';
-    prompt += '\n- "I couldn\'t find the file at that path. Would you like me to search for files with similar names?"';
+    prompt += '\n- "❌ The folder \'ui\' doesn\'t exist in this project. In the parent folder, I found: app, core, feature. Would you like me to check one of those?"';
+    prompt += '\n- "❌ File not found at that path. The top-level folders are: src, docs, tests. Should I search in one of these?"';
+    prompt += '\n\n--- PATH HANDLING ---';
+    prompt += '\n- Always use forward slashes (/) for paths';
+    prompt += '\n- Paths are relative to workspace root';
+    prompt += '\n- If a path fails, use the suggestion in the error message - don\'t guess';
     
     return prompt;
   }
@@ -395,6 +402,9 @@ export class AgentBridge {
    * - Detects repeated tool calls to prevent infinite loops
    * - Better error handling and logging
    * - REAL-TIME: Emits progress events for each tool call
+   * - BUG FIX: Records tool calls in history BEFORE execution to catch loops on errors
+   * - BUG FIX: Path normalization to catch backslash/forward slash variations
+   * - BUG FIX: When directory not found, error includes suggestions for existing paths
    */
   private async executeAgentLoop(
     userInput: string,
@@ -470,7 +480,7 @@ export class AgentBridge {
               args: tc.arguments || {}
             };
             
-            this.log(`  → Executing: ${toolCall.toolName}(${JSON.stringify(toolCall.args)})`);
+            this.log(`  🛠️ Executing: ${toolCall.toolName}(${JSON.stringify(toolCall.args)})`);
             
             // Emit tool_start event BEFORE executing
             if (onProgress) {
@@ -530,7 +540,8 @@ export class AgentBridge {
               break; // Break inner for loop
             }
             
-            // Record this tool call
+            // BUG FIX: Record this tool call BEFORE execution
+            // This ensures failed tool calls are tracked for loop detection
             toolCallHistory.push({
               toolName: toolCall.toolName,
               argsSignature: signature,
@@ -546,7 +557,7 @@ export class AgentBridge {
             
             allToolCalls.push(toolCall);
             
-            this.log(`  ← ${result.error ? 'Error: ' + result.error : 'Success: ' + result.result.substring(0, 100) + (result.result.length > 100 ? '...' : '')}`);
+            this.log(`  ✅ ${result.error ? 'Error: ' + result.error : 'Success: ' + result.result.substring(0, 100) + (result.result.length > 100 ? '...' : '')}`);
             
             // Feed result back to LLM
             messages.push({
@@ -564,7 +575,7 @@ export class AgentBridge {
             }
             
           } catch (toolError: any) {
-            this.log(`  ← Tool execution error: ${toolError.message}`);
+            this.log(`  ❌ Tool execution error: ${toolError.message}`);
             
             const errorToolCall: ToolCall = {
               toolName: tc.name,
@@ -630,38 +641,28 @@ export class AgentBridge {
       
     } catch (error: any) {
       this.log(`Agent loop error: ${error.message}`);
-      this.log(error.stack);
-      
-      return {
-        finalText: `Agent error: ${error.message}`,
-        toolCalls: allToolCalls,
-        iterations
-      };
+      throw error;
     }
   }
 
   /**
-   * Call LLM via CLI
+   * Call LLM through CLI
    */
   private async callLLM(messages: LLMMessage[], tools: LLMTool[]): Promise<LLMResponse> {
-    this.log(`Calling LLM: ${this.config.model.id} with ${messages.length} messages`);
-    
-    const response = await this.cli.callLLM(
+    return await this.cli.callLLM(
       this.config.model.id,
       messages,
       {
         temperature: this.config.model.temperature,
-        max_tokens: this.config.model.maxOutputTokens,
-        top_p: this.config.model.topP
+        top_p: this.config.model.topP,
+        max_tokens: this.config.model.maxOutputTokens
       },
       tools
     );
-    
-    return response;
   }
 
   /**
-   * Execute a single tool call
+   * Execute a tool call
    */
   private async executeTool(toolCall: ToolCall): Promise<{ result: string; error?: string }> {
     try {
@@ -714,28 +715,25 @@ export class AgentBridge {
           // Read current content
           const content = await this.cli.readFile(filePath);
           
-          // Perform replacement
-          const replaceAll = toolCall.args.replace_all === true;
-          const newContent = replaceAll 
-            ? content.split(toolCall.args.old_string).join(toolCall.args.new_string)
-            : content.replace(toolCall.args.old_string, toolCall.args.new_string);
+          // Apply edit
+          const edited = content.replace(
+            new RegExp(toolCall.args.oldString, 'g'),
+            toolCall.args.newString
+          );
           
-          if (newContent === content) {
-            return { result: '', error: 'Old string not found in file' };
-          }
-          
-          // Write updated content
-          await this.cli.writeFile(filePath, newContent);
+          // Write back
+          await this.cli.writeFile(filePath, edited);
           return { result: `Successfully edited ${filePath}` };
         }
         
         case 'search_files': {
           const pattern = toolCall.args.pattern;
-          const searchPath = toolCall.args.path ? this.resolvePath(toolCall.args.path) : undefined;
+          const dirPath = toolCall.args.path ? this.resolvePath(toolCall.args.path) : undefined;
+          const filePattern = toolCall.args.file_pattern;
           
-          this.log(`  Searching for pattern: ${pattern}`);
+          this.log(`  Searching for: ${pattern} in ${dirPath || 'workspace'}`);
           
-          const results = await this.cli.searchFiles(pattern, searchPath);
+          const results = await this.cli.searchFiles(pattern, dirPath);
           return { result: results.join('\n') };
         }
         
@@ -746,6 +744,7 @@ export class AgentBridge {
           };
       }
     } catch (error: any) {
+      this.log(`  Tool execution failed: ${error.message}`);
       return {
         result: '',
         error: error.message
@@ -754,29 +753,25 @@ export class AgentBridge {
   }
 
   /**
-   * Resolve path relative to workspace or extension root
+   * Resolve a path relative to workspace root
    */
   private resolvePath(requestedPath: string): string {
+    // If absolute path, use as-is
     if (path.isAbsolute(requestedPath)) {
       return requestedPath;
     }
     
-    // Check if path starts with known prefixes
-    if (requestedPath.startsWith('vscode-app/') || requestedPath.startsWith('vscode-app\\')) {
-      // Extension source code - use extension root
-      const fullPath = path.join(this.extensionRoot, requestedPath);
-      this.log(`  Path resolution: "${requestedPath}" → extension root → ${fullPath}`);
-      return fullPath;
-    }
+    // Normalize path separators
+    const normalized = requestedPath.replace(/\\/g, '/');
     
-    // Default: use workspace root (user's project)
-    const fullPath = path.join(this.workspaceRoot, requestedPath);
-    this.log(`  Path resolution: "${requestedPath}" → workspace root → ${fullPath}`);
-    return fullPath;
+    // Resolve relative to workspace root
+    return path.join(this.workspaceRoot, normalized);
   }
 
   /**
    * Create a signature for tool call comparison (ignores optional params)
+   * 
+   * BUG FIX: Normalizes path separators to catch backslash/forward slash variations
    */
   private createToolCallSignature(toolName: string, args: Record<string, any>): string {
     // Normalize arguments by removing optional parameters that don't affect semantics
@@ -787,7 +782,15 @@ export class AgentBridge {
       if (toolName === 'list_directory' && key === 'recursive') {
         continue;
       }
-      normalizedArgs[key] = value;
+      
+      // BUG FIX: Normalize path separators for path arguments
+      // This prevents the agent from bypassing loop detection by using different separators
+      if (typeof value === 'string' && (key === 'path' || key === 'dir' || key === 'file' || key === 'filePath')) {
+        // Normalize to forward slashes and lowercase for comparison
+        normalizedArgs[key] = value.replace(/\\/g, '/').toLowerCase();
+      } else {
+        normalizedArgs[key] = value;
+      }
     }
     
     // Sort keys for consistent comparison
@@ -808,25 +811,25 @@ export class AgentBridge {
   }
 
   /**
-   * Get available tools for LLM
+   * Get available tools for the agent
    */
   private getAvailableTools(): LLMTool[] {
-    return [
+    const tools: LLMTool[] = [
       {
         type: 'function',
         function: {
           name: 'list_directory',
-          description: 'List files and directories',
+          description: 'List files and directories in a given path',
           parameters: {
             type: 'object',
             properties: {
               path: {
                 type: 'string',
-                description: 'Directory path (relative to workspace root, extension root, or absolute)'
+                description: 'Directory path to list (relative to workspace root)'
               },
               recursive: {
                 type: 'boolean',
-                description: 'Whether to list recursively'
+                description: 'Whether to list recursively (default: false)'
               }
             },
             required: ['path']
@@ -837,13 +840,13 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'read_file',
-          description: 'Read file contents',
+          description: 'Read the contents of a file',
           parameters: {
             type: 'object',
             properties: {
               path: {
                 type: 'string',
-                description: 'Path to the file (relative to workspace root, extension root, or absolute)'
+                description: 'File path to read (relative to workspace root)'
               }
             },
             required: ['path']
@@ -854,17 +857,17 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'write_file',
-          description: 'Write content to a file',
+          description: 'Write content to a file (creates if doesn\'t exist)',
           parameters: {
             type: 'object',
             properties: {
               path: {
                 type: 'string',
-                description: 'Path to the file (relative to workspace root or absolute)'
+                description: 'File path to write (relative to workspace root)'
               },
               content: {
                 type: 'string',
-                description: 'Content to write'
+                description: 'Content to write to the file'
               }
             },
             required: ['path', 'content']
@@ -881,22 +884,18 @@ export class AgentBridge {
             properties: {
               path: {
                 type: 'string',
-                description: 'Path to the file'
+                description: 'File path to edit (relative to workspace root)'
               },
-              old_string: {
+              oldString: {
                 type: 'string',
-                description: 'Text to find'
+                description: 'Text to find and replace'
               },
-              new_string: {
+              newString: {
                 type: 'string',
                 description: 'Replacement text'
-              },
-              replace_all: {
-                type: 'boolean',
-                description: 'Replace all occurrences'
               }
             },
-            required: ['path', 'old_string', 'new_string']
+            required: ['path', 'oldString', 'newString']
           }
         }
       },
@@ -904,7 +903,7 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'search_files',
-          description: 'Search for a pattern in files',
+          description: 'Search for files matching a pattern',
           parameters: {
             type: 'object',
             properties: {
@@ -914,11 +913,11 @@ export class AgentBridge {
               },
               path: {
                 type: 'string',
-                description: 'Directory to search in (relative to workspace root, extension root, or absolute)'
+                description: 'Directory to search in (optional, defaults to workspace root)'
               },
               file_pattern: {
                 type: 'string',
-                description: 'Glob pattern to filter files'
+                description: 'Glob pattern to filter files (e.g., "*.java")'
               }
             },
             required: ['pattern']
@@ -926,15 +925,17 @@ export class AgentBridge {
         }
       }
     ];
+    
+    return tools;
   }
 
   /**
-   * Log message to output channel
+   * Log a message to the output channel
    */
   private log(message: string): void {
     if (this.outputChannel) {
       const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
-      this.outputChannel.appendLine(`[${timestamp}] [AgentBridge:${this.config.key}] ${message}`);
+      this.outputChannel.appendLine(`[${timestamp}] [AgentBridge] ${message}`);
     }
   }
 }

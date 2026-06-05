@@ -20,6 +20,8 @@
  * - BUG FIX: Empty results formatted as clear messages LLM can act on
  * - BUG FIX: Simplified error format with explicit DO NOT RETRY instruction
  * - STREAMING SUPPORT: Added processStreaming method for real-time token generation
+ * - CRITICAL FIX: Added tool_call_id to link tool results with tool calls (LLM now learns from results)
+ * - CRITICAL FIX: Blocked long-running commands (npm run dev, gradlew run, etc.) in run_command tool
  */
 
 import * as vscode from 'vscode';
@@ -170,6 +172,7 @@ export interface ToolCall {
   result?: string;
   error?: string;
   durationMs?: number;
+  toolCallId?: string; // Added for OpenAI API compatibility
 }
 
 /**
@@ -255,6 +258,27 @@ export class AgentBridge {
   // Truncation settings
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000; // characters
   private static readonly MAX_LIST_FILES_RESULTS = 100; // max files to return
+
+  // Blocked command patterns to prevent long-running processes
+  private static readonly BLOCKED_COMMAND_PATTERNS = [
+    'npm run dev',
+    'npm start',
+    'yarn dev',
+    'yarn start',
+    'pnpm dev',
+    'pnpm start',
+    'gradlew run',
+    './gradlew run',
+    'gradle run',
+    'mvn spring-boot:run',
+    'mvn jetty:run',
+    'node server',
+    'nodemon',
+    'webpack-dev-server',
+    'vite',
+    'next dev',
+    'gatsby develop'
+  ];
 
   constructor(config: AgentConfig, outputChannel?: vscode.OutputChannel, extensionRoot?: string, workspaceRoot?: string) {
     this.config = config;
@@ -543,7 +567,8 @@ export class AgentBridge {
 
         const toolCallObj: ToolCall = {
           toolName: toolCall.name,
-          args: toolCall.arguments
+          args: toolCall.arguments,
+          toolCallId: toolCall.id // Store the tool call ID for linking results
         };
 
         try {
@@ -592,21 +617,23 @@ export class AgentBridge {
         this.log(`Assistant content was empty - added synthetic message: "${assistantContent}"`);
       }
       
+      // Push assistant message with content only
+      // Note: We don't include tool_calls in the message for Ollama compatibility
+      // The tool_call_id in tool results is sufficient for linking
       messages.push({
         role: 'assistant',
         content: assistantContent
       });
 
-      // Add ONLY current iteration's tool results to messages
-      // CRITICAL FIX: Include tool_call_id to link results to assistant's tool calls
+      // CRITICAL FIX: Add ONLY current iteration's tool results WITH tool_call_id
+      // This links each result to its corresponding tool call
       for (let i = 0; i < currentIterationToolCalls.length; i++) {
         const tc = currentIterationToolCalls[i];
-        // Find the matching tool call ID from streaming response
         const matchingToolCall = streamingToolCalls[i];
         messages.push({
           role: 'tool',
           content: tc.error || tc.result || 'No result',
-          tool_call_id: matchingToolCall?.id
+          tool_call_id: matchingToolCall?.id // ← Critical for LLM to learn from results
         });
       }
 
@@ -796,7 +823,8 @@ Please try a DIFFERENT approach:
 
         const toolCallObj: ToolCall = {
           toolName: toolCall.name,
-          args: toolCall.arguments
+          args: toolCall.arguments,
+          toolCallId: toolCall.id // Store the tool call ID for linking results
         };
 
         try {
@@ -848,21 +876,23 @@ Please try a DIFFERENT approach:
         this.log(`Assistant content was empty - added synthetic message: "${assistantContent}"`);
       }
       
+      // Push assistant message with content only
+      // Note: We don't include tool_calls in the message for Ollama compatibility
+      // The tool_call_id in tool results is sufficient for linking
       messages.push({
         role: 'assistant',
         content: assistantContent
       });
 
-      // Add ONLY current iteration's tool results to messages
-      // CRITICAL FIX: Include tool_call_id to link results to assistant's tool calls
+      // CRITICAL FIX: Add ONLY current iteration's tool results WITH tool_call_id
+      // This links each result to its corresponding tool call
       for (let i = 0; i < currentIterationToolCalls.length; i++) {
         const tc = currentIterationToolCalls[i];
-        // Find the matching tool call ID from the LLM response
         const matchingToolCall = response.toolCalls[i];
         messages.push({
           role: 'tool',
           content: tc.error || tc.result || 'No result',
-          tool_call_id: matchingToolCall?.id
+          tool_call_id: matchingToolCall?.id // ← Critical for LLM to learn from results
         });
       }
 
@@ -1048,6 +1078,16 @@ Please try a DIFFERENT approach:
           
           this.log(`  Running command: ${command}`);
           
+          // CRITICAL FIX: Block long-running commands that would timeout
+          const blockedPattern = AgentBridge.BLOCKED_COMMAND_PATTERNS.find(p => command.includes(p));
+          if (blockedPattern) {
+            this.log(`  BLOCKED: Command contains '${blockedPattern}'`);
+            return {
+              result: '',
+              error: `BLOCKED: This command starts a long-running server ('${blockedPattern}'). Tell the user to run it manually in a terminal instead.`
+            };
+          }
+          
           const result = await this.cli.runCommand(command, workingDir);
           
           return {
@@ -1156,7 +1196,7 @@ Please try a DIFFERENT approach:
         type: 'function',
         function: {
           name: 'run_command',
-          description: 'Run a shell command',
+          description: 'Run a shell command (BLOCKED: long-running servers like npm run dev, gradlew run, etc.)',
           parameters: {
             type: 'object',
             properties: {
@@ -1199,7 +1239,7 @@ Please try a DIFFERENT approach:
     prompt += '\nYou MUST use this exact format:';
     prompt += '\n\nExample 1 (with tool):';
     prompt += '\nreasoning: I need to read the file to understand its contents.';
-    prompt += '\ntool_call: {"tool":"read_file","args":{"path":"vscode-app/src/extension.ts"}}';
+    prompt += '\ntool_call: {"tool":"read_file","args":{"path":"vscode-app/src/extension.ts"\}\}';
     prompt += '\nEOS';
     prompt += '\n\nExample 2 (final answer, no tools):';
     prompt += '\nreasoning: I have all the information needed to answer.';
@@ -1226,6 +1266,13 @@ Please try a DIFFERENT approach:
     prompt += '\n- DO NOT retry the same tool call more than once';
     prompt += '\n- NEVER try more than 2 different approaches for the same task';
     prompt += '\n- If stuck, report to user and ask for clarification';
+    prompt += '\n\n--- BLOCKED COMMANDS ---';
+    prompt += '\nThe run_command tool BLOCKS these long-running commands:';
+    prompt += '\n- npm run dev, npm start, yarn dev, yarn start';
+    prompt += '\n- gradlew run, ./gradlew run, gradle run';
+    prompt += '\n- mvn spring-boot:run, mvn jetty:run';
+    prompt += '\n- node server, nodemon, webpack-dev-server, vite, next dev';
+    prompt += '\nIf blocked, tell the user to run the command manually in their terminal.';
     prompt += '\n\n--- PATH HANDLING ---';
     prompt += '\n- Always use forward slashes (/) for paths';
     prompt += '\n- Paths are relative to workspace root';

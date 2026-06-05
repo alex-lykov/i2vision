@@ -1,29 +1,9 @@
 /**
- * AgentBridge - Bridge between VSCode extension and conf-agent-core
+ * AgentBridge - Bridge between VSCode extension and agent core
  * 
- * This class wraps the agent core functionality and provides a clean API
- * for the AgentTabManager to interact with configured agents.
- * 
- * UPDATED: Implements modern agentic loop with reflection - LLM sees tool results
- * and decides if more tools are needed or if task is complete.
- * 
- * FIXES APPLIED:
- * - Tool result truncation to prevent context window overflow
- * - Repeated tool call detection to prevent infinite loops (FIXED: now breaks outer loop)
- * - Better logging for debugging
- * - Correct workspace root handling
- * - Extension root path support for accessing extension source files
- * - REAL-TIME STREAMING: Tool calls are emitted immediately via progress callback
- * - BUG FIX: Tool calls are now recorded in history BEFORE execution to catch loops on errors
- * - BUG FIX: Path normalization in loop detection to catch backslash/forward slash variations
- * - BUG FIX: When directory not found, error includes suggestions for existing paths
- * - BUG FIX: Empty results formatted as clear messages LLM can act on
- * - BUG FIX: Simplified error format with explicit DO NOT RETRY instruction
- * - STREAMING SUPPORT: Added processStreaming method for real-time token generation
- * - CRITICAL FIX: Added tool_call_id to link tool results with tool calls (LLM now learns from results)
- * - CRITICAL FIX: Blocked long-running commands (npm run dev, gradlew run, etc.) in run_command tool
- * - OPTIMIZATION: Tightened decision nudge to complete in 3-5 iterations instead of 10+
- * - BUG FIX: Removed tool_calls from assistant messages (Ollama incompatible - causes 400 error)
+ * Wraps agent core functionality and provides a clean API for AgentTabManager
+ * to interact with configured agents. Implements modern agentic loop with
+ * reflection - LLM sees tool results and decides if more tools are needed.
  */
 
 import * as vscode from 'vscode';
@@ -174,7 +154,7 @@ export interface ToolCall {
   result?: string;
   error?: string;
   durationMs?: number;
-  toolCallId?: string; // Added for OpenAI API compatibility
+  toolCallId?: string;
 }
 
 /**
@@ -286,16 +266,12 @@ export class AgentBridge {
     this.config = config;
     this.outputChannel = outputChannel;
     
-    // ROBUST: workspaceRoot MUST be explicitly provided - caller is responsible for passing correct value
     if (!workspaceRoot) {
-      throw new Error('CRITICAL: workspaceRoot (target project) must be explicitly provided.');
+      throw new Error('workspaceRoot must be explicitly provided');
     }
 
-    // Validate: workspaceRoot and extensionRoot must be different directories
-    // This ensures agent operates on user's project, not extension project
     if (extensionRoot && extensionRoot === workspaceRoot) {
-      throw new Error(`CRITICAL: workspaceRoot and extensionRoot cannot be the same path. ` +
-                    `workspaceRoot=${workspaceRoot}, extensionRoot=${extensionRoot}`);
+      throw new Error('workspaceRoot and extensionRoot cannot be the same path');
     }
     
     this.workspaceRoot = workspaceRoot;
@@ -606,11 +582,8 @@ export class AgentBridge {
       }
 
       // Add assistant message with tool calls to history
-      // CRITICAL FIX: If LLM returned tool calls without content, add explanatory message
-      // This prevents the LLM from repeating the same tool call in the next iteration
       let assistantContent = responseText;
       if (!assistantContent || assistantContent.trim() === '') {
-        // LLM returned only tool calls with no prose - add descriptive message
         const toolDescriptions = currentIterationToolCalls.map(tc => {
           const argsStr = JSON.stringify(tc.args);
           return `Calling ${tc.toolName}(${argsStr})`;
@@ -619,28 +592,22 @@ export class AgentBridge {
         this.log(`Assistant content was empty - added synthetic message: "${assistantContent}"`);
       }
       
-      // Push assistant message with content only
-      // Note: Ollama does NOT accept tool_calls in assistant messages (causes 400 error)
-      // The tool_call_id in tool results is sufficient for linking
       messages.push({
         role: 'assistant',
         content: assistantContent || ''
       });
 
-      // CRITICAL FIX: Add ONLY current iteration's tool results WITH tool_call_id
-      // This links each result to its corresponding tool call
+      // Add tool results with tool_call_id for linking
       for (let i = 0; i < currentIterationToolCalls.length; i++) {
         const tc = currentIterationToolCalls[i];
         const matchingToolCall = streamingToolCalls[i];
         messages.push({
           role: 'tool',
           content: tc.error || tc.result || 'No result',
-          tool_call_id: matchingToolCall?.id // ← Critical for LLM to learn from results
+          tool_call_id: matchingToolCall?.id
         });
       }
 
-      // TIGHTENED DECISION NUDGE: Push toward completion
-      // Encourages LLM to answer now instead of continuing to explore
       messages.push({
         role: 'user',
         content: `Tool results received. You have ${maxIterations - iteration} of ${maxIterations} iterations remaining. If you have enough information to answer the user's question, provide your answer now. Only call another tool if you're missing critical information.`
@@ -865,11 +832,8 @@ Please try a DIFFERENT approach:
       }
 
       // Add assistant message with tool calls to history
-      // CRITICAL FIX: If LLM returned tool calls without content, add explanatory message
-      // This prevents the LLM from repeating the same tool call in the next iteration
       let assistantContent = response.content;
       if (!assistantContent || assistantContent.trim() === '') {
-        // LLM returned only tool calls with no prose - add descriptive message
         const toolDescriptions = currentIterationToolCalls.map(tc => {
           const argsStr = JSON.stringify(tc.args);
           return `Calling ${tc.toolName}(${argsStr})`;
@@ -878,28 +842,22 @@ Please try a DIFFERENT approach:
         this.log(`Assistant content was empty - added synthetic message: "${assistantContent}"`);
       }
       
-      // Push assistant message with content only
-      // Note: Ollama does NOT accept tool_calls in assistant messages (causes 400 error)
-      // The tool_call_id in tool results is sufficient for linking
       messages.push({
         role: 'assistant',
         content: assistantContent || ''
       });
 
-      // CRITICAL FIX: Add ONLY current iteration's tool results WITH tool_call_id
-      // This links each result to its corresponding tool call
+      // Add tool results with tool_call_id for linking
       for (let i = 0; i < currentIterationToolCalls.length; i++) {
         const tc = currentIterationToolCalls[i];
         const matchingToolCall = response.toolCalls[i];
         messages.push({
           role: 'tool',
           content: tc.error || tc.result || 'No result',
-          tool_call_id: matchingToolCall?.id // ← Critical for LLM to learn from results
+          tool_call_id: matchingToolCall?.id
         });
       }
 
-      // TIGHTENED DECISION NUDGE: Push toward completion
-      // Encourages LLM to answer now instead of continuing to explore
       messages.push({
         role: 'user',
         content: `Tool results received. You have ${maxIterations - iteration} of ${maxIterations} iterations remaining. If you have enough information to answer the user's question, provide your answer now. Only call another tool if you're missing critical information.`
@@ -972,7 +930,6 @@ Please try a DIFFERENT approach:
           try {
             const files = await this.cli.listFiles(dirPath, recursive);
 
-            // BUG FIX: Format empty results explicitly
             if (files.length === 0) {
               return {
                 result: 'This directory is empty. No files found.',
@@ -982,7 +939,6 @@ Please try a DIFFERENT approach:
 
             const result = files.join('\n');
 
-            // Truncate if too large
             if (result.length > this.config.formatting.maxObservationChars) {
               const truncated = result.substring(0, this.config.formatting.maxObservationChars);
               return {
@@ -993,14 +949,12 @@ Please try a DIFFERENT approach:
 
             return { result };
           } catch (error: any) {
-            // Check for DIRECTORY_NOT_FOUND error
             if (error.code === 'DIRECTORY_NOT_FOUND' || error.message?.includes('Directory not found')) {
               return {
                 result: 'DIRECTORY_NOT_FOUND',
                 error: undefined
               };
             }
-            // Re-throw other errors
             throw error;
           }
         }
@@ -1012,7 +966,6 @@ Please try a DIFFERENT approach:
           try {
             const result = await this.cli.readFile(filePath);
 
-            // Empty file check
             if (!result || result.trim() === '') {
               return {
                 result: 'The file exists but is empty.',
@@ -1022,14 +975,12 @@ Please try a DIFFERENT approach:
 
             return { result };
           } catch (error: any) {
-            // Check for file not found error
             if (error.code === 'ENOENT' || error.code === 'FILE_NOT_FOUND' || error.message?.includes('not found') || error.message?.includes('ENOENT')) {
               return {
                 result: 'FILE_NOT_FOUND',
                 error: undefined
               };
             }
-            // Re-throw other errors
             throw error;
           }
         }
@@ -1080,7 +1031,7 @@ Please try a DIFFERENT approach:
           
           this.log(`  Running command: ${command}`);
           
-          // CRITICAL FIX: Block long-running commands that would timeout
+          // Block long-running commands that would timeout
           const blockedPattern = AgentBridge.BLOCKED_COMMAND_PATTERNS.find(p => command.includes(p));
           if (blockedPattern) {
             this.log(`  BLOCKED: Command contains '${blockedPattern}'`);

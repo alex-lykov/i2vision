@@ -21,6 +21,15 @@ const execAsync = promisify(exec);
 export interface LLMMessage {
   role: string;
   content: string;
+  tool_call_id?: string; // Links tool results to the assistant's tool_call
+  tool_calls?: {
+    id: string;
+    type: string;
+    function: {
+      name: string;
+      arguments: string;
+    };
+  }[]; // Tool calls made by assistant - enables linking results to calls
 }
 
 /**

@@ -217,6 +217,7 @@ export interface AgentResponse {
 export interface ProcessContext {
   currentFile?: string;
   projectName?: string;
+  workspaceRoot?: string; // Target project root (the project user is working on)
   task?: string;
 }
 
@@ -255,38 +256,31 @@ export class AgentBridge {
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000; // characters
   private static readonly MAX_LIST_FILES_RESULTS = 100; // max files to return
 
-  constructor(config: AgentConfig, outputChannel?: vscode.OutputChannel, extensionRoot?: string) {
+  constructor(config: AgentConfig, outputChannel?: vscode.OutputChannel, extensionRoot?: string, workspaceRoot?: string) {
     this.config = config;
     this.outputChannel = outputChannel;
     
-    // CRITICAL: Get workspace root ONCE and store it
-    // This is the USER'S project root (e.g., d:\proj\alyk\android-arch-sketch)
-    this.workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
-    this.log(`Workspace root (user project): ${this.workspaceRoot}`);
-    
-    // Extension root: where the i2-vision PROJECT root is
-    // If extension is installed from vscode-app directory, extensionRoot points to vscode-app
-    // We need to go up to the actual project root (parent of vscode-app)
-    let detectedExtensionRoot = extensionRoot || vscode.extensions.getExtension('i2vision.i2-vision-vscode')?.extensionPath || '';
-    
-    if (!detectedExtensionRoot) {
-      // Fallback: use workspace root
-      detectedExtensionRoot = this.workspaceRoot;
-    } else {
-      // Check if we're in development mode (extension running from vscode-app directory)
-      // If extension path ends with 'vscode-app', go up to project root
-      const pathSegments = detectedExtensionRoot.split(/[\\/]/);
-      if (pathSegments[pathSegments.length - 1] === 'vscode-app') {
-        // Go up one level to project root
-        detectedExtensionRoot = path.dirname(detectedExtensionRoot);
-        this.log(`Development mode detected: extension root adjusted to project root`);
-      }
+    // ROBUST: workspaceRoot MUST be explicitly provided - caller is responsible for passing correct value
+    if (!workspaceRoot) {
+      throw new Error('CRITICAL: workspaceRoot (target project) must be explicitly provided.');
+    }
+
+    // Validate: workspaceRoot and extensionRoot must be different directories
+    // This ensures agent operates on user's project, not extension project
+    if (extensionRoot && extensionRoot === workspaceRoot) {
+      throw new Error(`CRITICAL: workspaceRoot and extensionRoot cannot be the same path. ` +
+                    `workspaceRoot=${workspaceRoot}, extensionRoot=${extensionRoot}`);
     }
     
-    this.extensionRoot = detectedExtensionRoot;
-    this.log(`Extension root (project root): ${this.extensionRoot}`);
+    this.workspaceRoot = workspaceRoot;
+    this.extensionRoot = extensionRoot || '';
     
-    // Initialize CLI integration with the workspace root (for CLI operations on user's project)
+    this.log(`Workspace root (target project): ${this.workspaceRoot}`);
+    if (this.extensionRoot) {
+      this.log(`Extension root: ${this.extensionRoot}`);
+    }
+
+    // Initialize CLI with workspace root for user's project operations
     this.cli = new CLI(this.workspaceRoot, outputChannel);
   }
 
@@ -297,6 +291,18 @@ export class AgentBridge {
     this.log('Initializing AgentBridge...');
     this.isInitialized = true;
     this.log('AgentBridge initialized');
+  }
+
+  /**
+   * Set workspace root dynamically (for when target project changes)
+   */
+  setWorkspaceRoot(newWorkspaceRoot: string): void {
+    if (newWorkspaceRoot && newWorkspaceRoot !== this.workspaceRoot) {
+      this.workspaceRoot = newWorkspaceRoot;
+      this.log(`Workspace root updated to: ${this.workspaceRoot}`);
+      // Re-initialize CLI with new workspace root
+      this.cli = new CLI(this.workspaceRoot, this.outputChannel);
+    }
   }
 
   /**
@@ -350,7 +356,7 @@ export class AgentBridge {
       return {
         ...response,
         durationMs,
-        success: true
+        success: response.success ?? true
       };
     } catch (error: any) {
       const durationMs = Date.now() - startTime;
@@ -475,8 +481,42 @@ export class AgentBridge {
 
       this.log(`LLM response: ${responseText.length} chars, ${streamingToolCalls.length} tool calls`);
 
-      // If no tool calls, we're done
+      // If no tool calls, check if this is just a plan (not actual execution)
       if (streamingToolCalls.length === 0) {
+        // PLAN DETECTION: Check if response is just a plan without execution
+        const trimmedResponse = responseText.trim();
+
+        // Expanded plan patterns
+        const isPlanOnly =
+          trimmedResponse.startsWith('I will:') ||
+          trimmedResponse.startsWith('I\'ll') ||
+          trimmedResponse.toLowerCase().startsWith('calling ') ||
+          /^[Ii] will (call|use|read|search|run|execute)/.test(trimmedResponse) ||
+          /^[Ii]\'ll (call|use|read|search|run|execute)/.test(trimmedResponse) ||
+          /^(First|I\'ll first|Let me first|I will first)/i.test(trimmedResponse) ||
+          // Short responses that are likely just plans
+          (trimmedResponse.length < 100 && /^(Sure|Okay|Let me|I will|I\'ll)/i.test(trimmedResponse));
+
+        if (isPlanOnly && trimmedResponse.length < 300) {
+          // This is just a plan, not actual work - don't accept it as final answer
+          this.log(`PLAN DETECTED: "${trimmedResponse.substring(0, 50)}..." - forcing tool execution`);
+
+          yield {
+            type: 'text',
+            text: 'I understand that plan, but I need you to EXECUTE the tools to complete this task. Please call the tools now.',
+            timestamp: Date.now()
+          };
+
+          // Add nudge to continue iterating
+          messages.push({
+            role: 'user',
+            content: 'That is just a plan. You MUST call tools to complete the task. Do NOT respond with another plan - actually call the tools now.'
+          });
+
+          continue; // Continue the loop to force tool execution
+        }
+
+        // Otherwise, we have actual content - we're done
         this.log(`No tool calls - iteration complete`);
         
         yield {
@@ -558,10 +598,15 @@ export class AgentBridge {
       });
 
       // Add ONLY current iteration's tool results to messages
-      for (const tc of currentIterationToolCalls) {
+      // CRITICAL FIX: Include tool_call_id to link results to assistant's tool calls
+      for (let i = 0; i < currentIterationToolCalls.length; i++) {
+        const tc = currentIterationToolCalls[i];
+        // Find the matching tool call ID from streaming response
+        const matchingToolCall = streamingToolCalls[i];
         messages.push({
           role: 'tool',
-          content: tc.error || tc.result || 'No result'
+          content: tc.error || tc.result || 'No result',
+          tool_call_id: matchingToolCall?.id
         });
       }
 
@@ -569,11 +614,22 @@ export class AgentBridge {
       // This prevents infinite loops by giving a clear decision point after every tool result
       messages.push({
         role: 'user',
-        content: `You have new information. Can you answer the user's request: "${userInput}"? If yes, answer now. If you need ONE more piece of information, call a different tool.`
+        content: `You have new information. Analyze it carefully. If you need MORE information to complete the task, call another tool. Only stop when you have ALL the information needed. Do NOT stop prematurely.`
       });
     }
 
-    this.log(`Max iterations (${maxIterations}) reached`);
+    this.log(`Max iterations (${maxIterations}) reached without final answer - giving LLM one more chance`);
+    // Give LLM one final chance to provide a final answer
+    const finalResponse = await this.callLLM(messages, tools);
+    if (finalResponse.toolCalls.length === 0) {
+      this.log(`Final answer from LLM: ${finalResponse.content.length} chars`);
+      return {
+        finalText: finalResponse.content,
+        toolCalls,
+        iterations: maxIterations + 1,
+        success: true
+      };
+    }
     
     yield {
       type: 'done',
@@ -590,7 +646,7 @@ export class AgentBridge {
     systemPrompt: string,
     context?: ProcessContext,
     onProgress?: ProgressCallback
-  ): Promise<{ finalText: string; toolCalls: ToolCall[]; iterations: number }> {
+  ): Promise<{ finalText: string; toolCalls: ToolCall[]; iterations: number; success?: boolean; error?: string }> {
     const messages: LLMMessage[] = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userInput }
@@ -620,8 +676,36 @@ export class AgentBridge {
 
       this.log(`LLM response: ${response.content.length} chars, ${response.toolCalls.length} tool calls`);
 
-      // If no tool calls, we're done
+      // If no tool calls, check if this is just a plan (not actual execution)
       if (response.toolCalls.length === 0) {
+        // PLAN DETECTION: Check if response is just a plan without execution
+        const trimmedResponse = response.content.trim();
+
+        // Expanded plan patterns
+        const isPlanOnly =
+          trimmedResponse.startsWith('I will:') ||
+          trimmedResponse.startsWith('I\'ll') ||
+          trimmedResponse.toLowerCase().startsWith('calling ') ||
+          /^[Ii] will (call|use|read|search|run|execute)/.test(trimmedResponse) ||
+          /^[Ii]\'ll (call|use|read|search|run|execute)/.test(trimmedResponse) ||
+          /^(First|I\'ll first|Let me first|I will first)/i.test(trimmedResponse) ||
+          // Short responses that are likely just plans
+          (trimmedResponse.length < 100 && /^(Sure|Okay|Let me|I will|I\'ll)/i.test(trimmedResponse));
+
+        if (isPlanOnly && trimmedResponse.length < 300) {
+          // This is just a plan, not actual work - don't accept it as final answer
+          this.log(`PLAN DETECTED: "${trimmedResponse.substring(0, 50)}..." - forcing tool execution`);
+
+          // Add nudge to continue iterating
+          messages.push({
+            role: 'user',
+            content: 'That is just a plan. You MUST call tools to complete the task. Do NOT respond with another plan - actually call the tools now.'
+          });
+
+          continue;
+        }
+
+        // Otherwise, we have actual content - we're done
         this.log(`No tool calls - iteration complete`);
         return {
           finalText: response.content,
@@ -630,7 +714,10 @@ export class AgentBridge {
         };
       }
 
-      // Check for repeated tool calls (loop detection)
+      // Check for repeated tool calls (loop detection with nudge strategy)
+      // Track how many times each tool call has been repeated
+      const repeatCountMap = new Map<string, number>();
+
       for (const toolCall of response.toolCalls) {
         const argsSignature = JSON.stringify(toolCall.arguments);
         const normalizedToolName = toolCall.name.toLowerCase().replace(/[_-]/g, '');
@@ -642,15 +729,43 @@ export class AgentBridge {
           h.argsSignature === argsSignature
         );
         
+        // Calculate repeat count for this tool call signature
+        const repeatKey = `${normalizedToolName}:${argsSignature}`;
+        const previousRepeatCount = repeatCountMap.get(repeatKey) || 0;
+        const totalRepeatCount = previousRepeatCount + recentCalls.length;
+        repeatCountMap.set(repeatKey, totalRepeatCount);
+
         if (recentCalls.length > 0) {
-          this.log(`LOOP DETECTED: ${toolCall.name} called with same args at iterations ${recentCalls.map(h => h.iteration).join(', ')}`);
+          this.log(`LOOP DETECTED: ${toolCall.name} called with same args at iterations ${recentCalls.map(h => h.iteration).join(', ')} (repeat count: ${totalRepeatCount})`);
           
-          // Break out of both loops
-          return {
-            finalText: `Stopped to prevent infinite loop. Repeated tool call: ${toolCall.name} with args: ${argsSignature.substring(0, 100)}...`,
-            toolCalls,
-            iterations: iteration
-          };
+          // STRATEGY: Nudge instead of hard stop - let LLM try a different approach
+          if (totalRepeatCount === 2) {
+            // 2nd repeat: Inject a nudge message and continue execution
+            this.log(`Injecting nudge message for ${toolCall.name} - attempt ${totalRepeatCount + 1}`);
+
+            // Add a nudge message to the conversation
+            const nudgeMessage = `NOTICE: You just called ${toolCall.name} with the same arguments as before. This repeated call hasn't made progress. 
+            
+Please try a DIFFERENT approach:
+1. Use a different tool that might give you new information
+2. If you already have enough information, answer the user's question directly
+3. Don't repeat the same tool call again - it won't give you different results`;
+
+            messages.push({
+              role: 'user',
+              content: nudgeMessage
+            });
+          } else if (totalRepeatCount >= 4) {
+            // 4th repeat: Force completion - LLM has had multiple chances
+            this.log(`FORCE STOP: ${toolCall.name} repeated ${totalRepeatCount} times - forcing completion`);
+            return {
+              finalText: `Agent stopped after ${totalRepeatCount} repeated attempts with ${toolCall.name}. The tool returned the same result each time. You may need to try a different approach or tool.`,
+              toolCalls,
+              iterations: iteration,
+              success: false,
+              error: 'Infinite loop detected and prevented'
+            };
+          }
         }
         
         // Record BEFORE execution
@@ -739,10 +854,15 @@ export class AgentBridge {
       });
 
       // Add ONLY current iteration's tool results to messages
-      for (const tc of currentIterationToolCalls) {
+      // CRITICAL FIX: Include tool_call_id to link results to assistant's tool calls
+      for (let i = 0; i < currentIterationToolCalls.length; i++) {
+        const tc = currentIterationToolCalls[i];
+        // Find the matching tool call ID from the LLM response
+        const matchingToolCall = response.toolCalls[i];
         messages.push({
           role: 'tool',
-          content: tc.error || tc.result || 'No result'
+          content: tc.error || tc.result || 'No result',
+          tool_call_id: matchingToolCall?.id
         });
       }
 
@@ -750,7 +870,7 @@ export class AgentBridge {
       // This prevents infinite loops by giving a clear decision point after every tool result
       messages.push({
         role: 'user',
-        content: `You have new information. Can you answer the user's request: "${userInput}"? If yes, answer now. If you need ONE more piece of information, call a different tool.`
+        content: `You have new information. Analyze it carefully. If you need MORE information to complete the task, call another tool. Only stop when you have ALL the information needed. Do NOT stop prematurely.`
       });
 
       // Emit iteration complete event
@@ -762,7 +882,18 @@ export class AgentBridge {
       }
     }
 
-    this.log(`Max iterations (${maxIterations}) reached`);
+    this.log(`Max iterations (${maxIterations}) reached without final answer - giving LLM one more chance`);
+    // Give LLM one final chance to provide a final answer
+    const finalResponse = await this.callLLM(messages, tools);
+    if (finalResponse.toolCalls.length === 0) {
+      this.log(`Final answer from LLM: ${finalResponse.content.length} chars`);
+      return {
+        finalText: finalResponse.content,
+        toolCalls,
+        iterations: maxIterations + 1,
+        success: true
+      };
+    }
     return {
       finalText: 'Max iterations reached without final answer',
       toolCalls,
@@ -806,45 +937,69 @@ export class AgentBridge {
           
           this.log(`  Listing directory: ${dirPath} (recursive: ${recursive})`);
           
-          const files = await this.cli.listFiles(dirPath, recursive);
-          
-          // BUG FIX: Format empty results explicitly
-          if (files.length === 0) {
-            return {
-              result: 'This directory is empty. No files found.',
-              error: undefined
-            };
+          try {
+            const files = await this.cli.listFiles(dirPath, recursive);
+
+            // BUG FIX: Format empty results explicitly
+            if (files.length === 0) {
+              return {
+                result: 'This directory is empty. No files found.',
+                error: undefined
+              };
+            }
+
+            const result = files.join('\n');
+
+            // Truncate if too large
+            if (result.length > this.config.formatting.maxObservationChars) {
+              const truncated = result.substring(0, this.config.formatting.maxObservationChars);
+              return {
+                result: truncated + '\n\n[...truncated...]',
+                error: undefined
+              };
+            }
+
+            return { result };
+          } catch (error: any) {
+            // Check for DIRECTORY_NOT_FOUND error
+            if (error.code === 'DIRECTORY_NOT_FOUND' || error.message?.includes('Directory not found')) {
+              return {
+                result: 'DIRECTORY_NOT_FOUND',
+                error: undefined
+              };
+            }
+            // Re-throw other errors
+            throw error;
           }
-          
-          const result = files.join('\n');
-          
-          // Truncate if too large
-          if (result.length > this.config.formatting.maxObservationChars) {
-            const truncated = result.substring(0, this.config.formatting.maxObservationChars);
-            return {
-              result: truncated + '\n\n[...truncated...]',
-              error: undefined
-            };
-          }
-          
-          return { result };
         }
         
         case 'read_file': {
           const filePath = this.resolvePath(toolCall.args.path);
           this.log(`  Reading file: ${filePath}`);
           
-          const result = await this.cli.readFile(filePath);
-          
-          // Empty file check
-          if (!result || result.trim() === '') {
-            return {
-              result: 'The file exists but is empty.',
-              error: undefined
-            };
+          try {
+            const result = await this.cli.readFile(filePath);
+
+            // Empty file check
+            if (!result || result.trim() === '') {
+              return {
+                result: 'The file exists but is empty.',
+                error: undefined
+              };
+            }
+
+            return { result };
+          } catch (error: any) {
+            // Check for file not found error
+            if (error.code === 'ENOENT' || error.code === 'FILE_NOT_FOUND' || error.message?.includes('not found') || error.message?.includes('ENOENT')) {
+              return {
+                result: 'FILE_NOT_FOUND',
+                error: undefined
+              };
+            }
+            // Re-throw other errors
+            throw error;
           }
-          
-          return { result };
         }
         
         case 'write_file': {

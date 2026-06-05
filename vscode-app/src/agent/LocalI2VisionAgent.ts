@@ -139,8 +139,18 @@ export class LocalI2VisionAgent implements vscode.Disposable {
     
     // Create the agent bridge
     // Pass extension root so agent can access extension source files
-    this.bridge = new AgentBridge(config, outputChannel, 
-      vscode.extensions.getExtension('i2vision.i2-vision-vscode')?.extensionPath);
+    // CRITICAL: workspaceRoot MUST be provided - get from workspace folders
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+    if (!workspaceRoot) {
+      throw new Error('CRITICAL: No workspace folder open. Please open a project folder first.');
+    }
+    
+    this.bridge = new AgentBridge(
+      config, 
+      outputChannel,
+      vscode.extensions.getExtension('i2vision.i2-vision-vscode')?.extensionPath,
+      workspaceRoot
+    );
     
     this.log(`LocalI2VisionAgent created: ${this.id}`);
   }

@@ -22,6 +22,8 @@
  * - STREAMING SUPPORT: Added processStreaming method for real-time token generation
  * - CRITICAL FIX: Added tool_call_id to link tool results with tool calls (LLM now learns from results)
  * - CRITICAL FIX: Blocked long-running commands (npm run dev, gradlew run, etc.) in run_command tool
+ * - OPTIMIZATION: Tightened decision nudge to complete in 3-5 iterations instead of 10+
+ * - BUG FIX: Removed tool_calls from assistant messages (Ollama incompatible - causes 400 error)
  */
 
 import * as vscode from 'vscode';
@@ -618,11 +620,11 @@ export class AgentBridge {
       }
       
       // Push assistant message with content only
-      // Note: We don't include tool_calls in the message for Ollama compatibility
+      // Note: Ollama does NOT accept tool_calls in assistant messages (causes 400 error)
       // The tool_call_id in tool results is sufficient for linking
       messages.push({
         role: 'assistant',
-        content: assistantContent
+        content: assistantContent || ''
       });
 
       // CRITICAL FIX: Add ONLY current iteration's tool results WITH tool_call_id
@@ -637,11 +639,11 @@ export class AgentBridge {
         });
       }
 
-      // DECISION NUDGE: Force LLM to decide - answer or one more tool
-      // This prevents infinite loops by giving a clear decision point after every tool result
+      // TIGHTENED DECISION NUDGE: Push toward completion
+      // Encourages LLM to answer now instead of continuing to explore
       messages.push({
         role: 'user',
-        content: `You have new information. Analyze it carefully. If you need MORE information to complete the task, call another tool. Only stop when you have ALL the information needed. Do NOT stop prematurely.`
+        content: `Tool results received. You have ${maxIterations - iteration} of ${maxIterations} iterations remaining. If you have enough information to answer the user's question, provide your answer now. Only call another tool if you're missing critical information.`
       });
     }
 
@@ -877,11 +879,11 @@ Please try a DIFFERENT approach:
       }
       
       // Push assistant message with content only
-      // Note: We don't include tool_calls in the message for Ollama compatibility
+      // Note: Ollama does NOT accept tool_calls in assistant messages (causes 400 error)
       // The tool_call_id in tool results is sufficient for linking
       messages.push({
         role: 'assistant',
-        content: assistantContent
+        content: assistantContent || ''
       });
 
       // CRITICAL FIX: Add ONLY current iteration's tool results WITH tool_call_id
@@ -896,11 +898,11 @@ Please try a DIFFERENT approach:
         });
       }
 
-      // DECISION NUDGE: Force LLM to decide - answer or one more tool
-      // This prevents infinite loops by giving a clear decision point after every tool result
+      // TIGHTENED DECISION NUDGE: Push toward completion
+      // Encourages LLM to answer now instead of continuing to explore
       messages.push({
         role: 'user',
-        content: `You have new information. Analyze it carefully. If you need MORE information to complete the task, call another tool. Only stop when you have ALL the information needed. Do NOT stop prematurely.`
+        content: `Tool results received. You have ${maxIterations - iteration} of ${maxIterations} iterations remaining. If you have enough information to answer the user's question, provide your answer now. Only call another tool if you're missing critical information.`
       });
 
       // Emit iteration complete event

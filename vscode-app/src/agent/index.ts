@@ -22,3 +22,22 @@ export {
 export {
   AgentTabManager
 } from './AgentTabManager';
+
+export {
+  ToolCardConfig,
+  ToolDisplayOptions,
+  FormattedToolCard,
+  DEFAULT_TOOL_CARD_CONFIG,
+  SETTINGS_PREFIX,
+  SETTING_KEYS
+} from './ToolCardConfig';
+
+export {
+  ToolCardFormatter
+} from './ToolCardFormatter';
+
+export {
+  ToolCardManager,
+  FormattedProgressEvent,
+  FormattedAgentResponse
+} from './ToolCardManager';

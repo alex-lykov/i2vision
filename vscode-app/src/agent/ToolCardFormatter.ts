@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * ToolCardFormatter - Formats tool results for display in the webview
  * 
@@ -18,7 +25,7 @@ export class ToolCardFormatter {
     private config: ToolCardConfig;
 
     constructor(config?: ToolCardConfig) {
-        this.config = config || this.loadConfigFromSettings();
+        this.config = config || ToolCardFormatter.loadConfigFromSettings();
     }
 
     /**
@@ -41,8 +48,8 @@ export class ToolCardFormatter {
             collapseOnSuccess: config.get<boolean>(SETTING_KEYS.defaultCollapseOnSuccess, true)
         };
 
-        // Load per-tool overrides from settings
-        const perToolConfig = config.get<Record<string, Partial<ToolDisplayOptions>>>(SETTING_KEYS.perToolConfig, {});
+        // Load per-tool overrides from settings (guard against null/undefined)
+        const perToolConfig = config.get<Record<string, Partial<ToolDisplayOptions>>>(SETTING_KEYS.perToolConfig, {}) || {};
         const tools: Record<string, ToolDisplayOptions> = {};
 
         // Start with defaults from DEFAULT_TOOL_CARD_CONFIG

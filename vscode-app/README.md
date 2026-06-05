@@ -380,7 +380,7 @@ class I2VisionTreeProvider implements TreeDataProvider<I2VisionTreeItem> {
 
 ## 📄 License
 
-MIT License - see [LICENSE](../LICENSE) file for details.
+MIT License - see [LICENSE](LICENSE) file for details.
 
 ## 🆘 Support
 
@@ -398,3 +398,4 @@ MIT License - see [LICENSE](../LICENSE) file for details.
 ---
 
 **Enjoy exploring your architecture! 🚀**
+

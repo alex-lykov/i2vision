@@ -1,18 +1,21 @@
 /**
  * AgentTabManager - Creates and manages agent tabs
- * 
+ *
  * UPDATED: Added real-time progress streaming for tool calls
  * UPDATED: Added stop/cancel control with combined send/stop button
  * UPDATED: Display tool results in real-time
+ * UPDATED: Configurable tool card display with formatting, truncation, folding
+ * FIXED: Added error handling in webview to prevent tool card errors from breaking input
  */
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as fs from 'fs';
-import * as yaml from 'js-yaml';
+import * as crypto from 'crypto';
 import { LocalAgentProvider } from './LocalAgentProvider';
 import { LocalI2VisionAgent, VslfcLayer, AgentContext } from './LocalI2VisionAgent';
 import { AgentConfig, InteractionRecord, ToolCall, ProgressEvent } from './AgentBridge';
+import { ToolCardManager } from './ToolCardManager';
+import { FormattedToolCard } from './ToolCardConfig';
 
 /**
  * Agent tab representation
@@ -34,17 +37,21 @@ export class AgentTabManager {
   private tabs: Map<string, AgentTab> = new Map();
   private provider: LocalAgentProvider;
   private outputChannel: vscode.OutputChannel;
+  private toolCardManager: ToolCardManager;
 
   constructor(
     private context: vscode.ExtensionContext,
     outputChannel: vscode.OutputChannel
   ) {
     this.outputChannel = outputChannel;
-    
+
     // Create the local agent provider
     this.provider = new LocalAgentProvider(context, outputChannel);
-    
-    this.log('AgentTabManager initialized with LocalAgentProvider');
+
+    // Create the tool card manager for configurable tool display
+    this.toolCardManager = new ToolCardManager(outputChannel);
+
+    this.log('AgentTabManager initialized with LocalAgentProvider and ToolCardManager');
   }
 
   /**
@@ -60,6 +67,7 @@ export class AgentTabManager {
    */
   clearConfigCache(): void {
     this.provider.clearConfigCache();
+    this.toolCardManager.reloadConfig();
     this.log('Config cache cleared - next agent creation will reload from disk');
   }
 
@@ -68,12 +76,12 @@ export class AgentTabManager {
    */
   async createTab(layer: 'vision' | 'structure' | 'logic' | 'flow' | 'code'): Promise<string> {
     this.log(`Creating ${layer} agent tab...`);
-    
+
     try {
       // Create the agent using the provider
       const vslfcLayer = VslfcLayer[layer.toUpperCase() as keyof typeof VslfcLayer];
       const agent = await this.provider.createAgent(vslfcLayer);
-      
+
       // Create the webview panel
       const panel = vscode.window.createWebviewPanel(
         `i2vision-agent-${layer}`,
@@ -85,7 +93,7 @@ export class AgentTabManager {
           localResourceRoots: [vscode.Uri.file(path.join(this.context.extensionPath, 'resources'))]
         }
       );
-      
+
       const tab: AgentTab = {
         id: agent.id,
         layer,
@@ -94,25 +102,25 @@ export class AgentTabManager {
         history: [],
         isProcessing: false
       };
-      
+
       // Set up webview communication
       panel.webview.onDidReceiveMessage(async (message) => {
         await this.handleWebviewMessage(tab, message);
       });
-      
+
       // Set up panel disposal
       panel.onDidDispose(() => {
         this.closeTab(tab.id);
       });
-      
+
       // Store the tab
       this.tabs.set(tab.id, tab);
-      
+
       // Initialize the webview content
       this.updateWebview(tab);
-      
+
       this.log(`Created ${layer} agent tab: ${tab.id}`);
-      
+
       return tab.id;
     } catch (error: any) {
       this.log(`Error creating tab: ${error.message}`);
@@ -149,21 +157,21 @@ export class AgentTabManager {
       this.log('Agent is not processing, nothing to stop');
       return;
     }
-    
+
     this.log('Stopping agent...');
-    
+
     // Cancel the token
     if (tab.cancelToken) {
       tab.cancelToken.cancel();
       tab.cancelToken.dispose();
       tab.cancelToken = undefined;
     }
-    
+
     // Update UI
     tab.panel.webview.postMessage({
       command: 'stopped'
     });
-    
+
     tab.isProcessing = false;
     this.log('Agent stopped');
   }
@@ -176,68 +184,75 @@ export class AgentTabManager {
       this.log('Agent is already processing, ignoring input');
       return;
     }
-    
+
     tab.isProcessing = true;
     const startTime = Date.now();
-    
+
     // Create cancellation token
     tab.cancelToken = new vscode.CancellationTokenSource();
-    
+
     this.log(`Processing user input (${userInput.length} chars)`);
-    
+
     // Update webview to show processing state
     tab.panel.webview.postMessage({
       command: 'processing',
       userInput
     });
-    
+
     try {
       // Get current file context
       const currentFile = vscode.window.activeTextEditor?.document.uri.fsPath;
-      
+
       // Prepare agent request
       const context: AgentContext = {
         workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '',
         currentFile,
         sessionId: tab.id
       };
-      
+
       // Call the agent with timeout protection and progress callback
       this.log(`=== DIAGNOSTIC: Calling agent.process() with progress callback ===`);
-      
+
       const AGENT_TIMEOUT_MS = 60000; // 60 second timeout
-      
+
       const agentPromise = tab.agent.process({
         id: `request-${Date.now()}`,
         task: userInput,
         context: context
       }, undefined, (event: ProgressEvent) => {
+        // Format progress event through ToolCardManager
+        const formattedEvent = this.toolCardManager.formatProgressEvent(event);
+
         // Forward progress events to webview in real-time
         this.log(`Progress event: ${event.type} at iteration ${event.iteration}`);
         tab.panel.webview.postMessage({
           command: 'progress',
-          event: event
+          event: formattedEvent
         });
       });
-      
+
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
           reject(new Error(`agent.process() timed out after ${AGENT_TIMEOUT_MS}ms`));
         }, AGENT_TIMEOUT_MS);
       });
-      
+
       const response = await Promise.race([agentPromise, timeoutPromise]);
-      
+
       this.log(`=== DIAGNOSTIC: agent.process() returned ===`);
-      this.log(`=== DIAGNOSTIC: Response object keys: ${Object.keys(response).join(', ')} `);
-      this.log(`=== DIAGNOSTIC: Response type: ${typeof response}`);
-      this.log(`=== DIAGNOSTIC: Response.finalText type: ${typeof response.finalText}`);
-      this.log(`=== DIAGNOSTIC: Response.toolCalls type: ${typeof response.toolCalls}`);
-      this.log(`=== DIAGNOSTIC: About to build postMessage payload`);
       this.log(`Response finalText length: ${response.finalText?.length || 0}`);
       this.log(`Response toolCalls count: ${response.toolCalls?.length || 0}`);
       this.log(`Response success: ${response.success}`);
-      
+
+      // Format the response through ToolCardManager
+      const formattedResponse = this.toolCardManager.formatAgentResponse(
+        response.finalText || '',
+        response.toolCalls || [],
+        response.iterations,
+        response.durationMs,
+        response.success
+      );
+
       // Record the interaction
       const record: InteractionRecord = {
         timestamp: Date.now(),
@@ -250,30 +265,22 @@ export class AgentTabManager {
         iterations: response.iterations,
         durationMs: Date.now() - startTime
       };
-      
+
       tab.history.push(record);
       this.log(`Interaction recorded: ${record.iterations} iterations, ${record.durationMs}ms`);
       this.log(`Tool calls: ${response.toolCalls?.map(tc => tc.toolName).join(', ') || 'none'}`);
-      
-      // Update webview with result - include full tool call data
+
+      // Update webview with formatted response
       this.log(`=== DIAGNOSTIC: About to postMessage to webview ===`);
-      this.log(`=== DIAGNOSTIC: response.finalText length: ${response.finalText?.length || 0}`);
-      this.log(`=== DIAGNOSTIC: response.toolCalls count: ${response.toolCalls?.length || 0}`);
       tab.panel.webview.postMessage({
         command: 'response',
-        response: {
-          text: response.finalText,
-          toolCalls: response.toolCalls, // Send full tool call objects, not just names
-          iterations: response.iterations,
-          durationMs: response.durationMs,
-          success: response.success
-        }
+        response: formattedResponse
       });
       this.log(`=== DIAGNOSTIC: postMessage sent successfully ===`);
     } catch (error: any) {
       this.log(`Error processing input: ${error.message}`);
       this.log(`Stack trace: ${error.stack}`);
-      
+
       // Check if it was a cancellation
       if (error.message === 'cancelled' || (tab.cancelToken && tab.cancelToken.token.isCancellationRequested)) {
         tab.panel.webview.postMessage({
@@ -304,46 +311,37 @@ export class AgentTabManager {
       '.vision-ai',
       `${tab.layer.toLowerCase()}-agent.yaml`
     );
-    
+
     try {
       const doc = await vscode.workspace.openTextDocument(configPath);
       await vscode.window.showTextDocument(doc);
       this.log(`Opened config file: ${configPath}`);
     } catch (error: any) {
       this.log(`Error opening config file: ${error.message}`);
-      vscode.window.showErrorMessage(`Could not open config file: ${error.message}`);
+      vscode.window.showErrorMessage(`Could not open config file: ${configPath}`);
     }
   }
 
   /**
-   * Reload agent with new configuration
+   * Reload the agent with fresh configuration
    */
   private async reloadAgent(tab: AgentTab) {
+    this.log(`Reloading agent configuration for ${tab.layer}...`);
+
     try {
-      // Clear the config cache to force reload from disk
-      this.provider.clearConfigCache();
-      this.log('Config cache cleared before reload');
-      
-      // Create a new agent with the same layer (will load fresh config from disk)
+      // Recreate the agent with fresh config
       const vslfcLayer = VslfcLayer[tab.layer.toUpperCase() as keyof typeof VslfcLayer];
       const newAgent = await this.provider.createAgent(vslfcLayer);
-      
-      // Dispose old agent
-      await tab.agent.dispose();
-      
-      // Replace with new agent
+
+      // Update the tab with new agent
       tab.agent = newAgent;
-      
-      this.log(`Reloaded agent for tab: ${tab.id}`);
-      this.log(`New config - Model: ${newAgent.getConfig().model.id}, Max Iterations: ${newAgent.getConfig().iterationSettings.maxIterations}`);
-      
+
+      // Notify webview to reload
       tab.panel.webview.postMessage({
-        command: 'configReloaded',
-        config: {
-          model: newAgent.getConfig().model.id,
-          maxIterations: newAgent.getConfig().iterationSettings.maxIterations
-        }
+        command: 'configReloaded'
       });
+
+      this.log(`Agent reloaded successfully`);
     } catch (error: any) {
       this.log(`Error reloading agent: ${error.message}`);
       vscode.window.showErrorMessage(`Failed to reload agent: ${error.message}`);
@@ -353,149 +351,137 @@ export class AgentTabManager {
   /**
    * Close an agent tab
    */
-  async closeTab(tabId: string): Promise<void> {
+  private async closeTab(tabId: string): Promise<void> {
     const tab = this.tabs.get(tabId);
-    if (!tab) {
-      this.log(`Tab ${tabId} not found`);
-      return;
+    if (tab) {
+      this.log(`Closing tab: ${tabId}`);
+
+      // Cancel any running agent
+      if (tab.cancelToken) {
+        tab.cancelToken.cancel();
+        tab.cancelToken.dispose();
+      }
+
+      // Dispose the panel
+      tab.panel.dispose();
+
+      // Remove from map
+      this.tabs.delete(tabId);
+
+      this.log(`Tab closed: ${tabId}`);
     }
-    
-    this.log(`Closing tab: ${tabId}`);
-    
-    // Cancel any ongoing processing
-    if (tab.cancelToken) {
-      tab.cancelToken.cancel();
-      tab.cancelToken.dispose();
-    }
-    
-    // Dispose the agent
-    await tab.agent.dispose();
-    
-    // Remove from tracking
-    this.tabs.delete(tabId);
-    
-    this.log(`Tab closed: ${tabId}`);
   }
 
   /**
-   * Update webview HTML content
+   * Update webview content
    */
-  private updateWebview(tab: AgentTab) {
-    const modelId = this.provider.getConfig(tab.layer).model.id;
-    const maxIterations = this.provider.getConfig(tab.layer).iterationSettings.maxIterations;
-    
-    tab.panel.webview.html = this.getWebviewContent(tab, modelId, maxIterations);
+  private updateWebview(tab: AgentTab): void {
+    // Get agent config to display model info
+    const agentConfig = this.provider.getConfig(tab.layer);
+    const modelId = agentConfig.model.id;
+    const maxIterations = agentConfig.iterationSettings.maxIterations;
+
+    tab.panel.webview.html = this.getWebviewContent(modelId, maxIterations);
   }
 
   /**
-   * Get webview HTML content
+   * Generate a nonce for Content Security Policy
    */
-  private getWebviewContent(tab: AgentTab, modelId: string, maxIterations: number): string {
+  private getNonce(): string {
+    return crypto.randomBytes(16).toString('base64');
+  }
+
+  /**
+   * Get webview HTML content with configurable tool card display
+   */
+  private getWebviewContent(modelId: string, maxIterations: number): string {
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>i2-Vision ${this.capitalize(tab.layer)} Agent</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+    <title>i2-Vision Agent</title>
     <style>
         :root {
-            --vscode-font-family: var(--vscode-font-family, 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif);
-            --vscode-foreground: var(--vscode-foreground, #333);
-            --vscode-editor-background: var(--vscode-editor-background, #fff);
-            --vscode-input-background: var(--vscode-input-background, #f0f0f0);
-            --vscode-input-foreground: var(--vscode-input-foreground, #333);
-            --vscode-button-background: var(--vscode-button-background, #007acc);
-            --vscode-button-foreground: var(--vscode-button-foreground, #fff);
-            --vscode-button-hoverBackground: var(--vscode-button-hoverBackground, #005a9e);
-            --vscode-focusBorder: var(--vscode-focusBorder, #007acc);
-            --vscode-errorForeground: var(--vscode-errorForeground, #f00);
-            --vscode-descriptionForeground: var(--vscode-descriptionForeground, #666);
+            --container-padding: 20px;
         }
-        
+
         body {
             font-family: var(--vscode-font-family);
+            padding: var(--container-padding);
             color: var(--vscode-foreground);
-            background: var(--vscode-editor-background);
+            background-color: var(--vscode-editor-background);
             margin: 0;
-            padding: 10px;
-            display: flex;
-            flex-direction: column;
-            height: 100vh;
-            box-sizing: border-box;
         }
-        
-        .config-info {
-            font-size: 12px;
-            color: var(--vscode-descriptionForeground);
-            margin-bottom: 10px;
-            padding: 5px;
-            border-bottom: 1px solid var(--vscode-editor-background);
-        }
-        
+
         #messages {
-            flex: 1;
+            min-height: 300px;
+            max-height: 60vh;
             overflow-y: auto;
-            margin-bottom: 10px;
-            padding: 10px;
-            border: 1px solid var(--vscode-editor-background);
+            margin-bottom: 16px;
+            padding: 8px;
+            border: 1px solid var(--vscode-panel-border, #ccc);
             border-radius: 4px;
+            background: var(--vscode-editor-background);
         }
-        
+
         .message {
-            margin-bottom: 10px;
+            margin-bottom: 12px;
             padding: 8px 12px;
             border-radius: 4px;
-            max-width: 90%;
+            line-height: 1.5;
         }
-        
+
         .user-message {
             background: var(--vscode-button-background);
             color: var(--vscode-button-foreground);
-            margin-left: auto;
-            text-align: right;
+            margin-left: 20%;
         }
-        
+
         .agent-message {
-            background: var(--vscode-input-background);
-            color: var(--vscode-input-foreground);
-            margin-right: auto;
+            background: var(--vscode-editor-inactiveSelectionBackground);
+            margin-right: 20%;
         }
-        
-        .tool-call-message {
-            font-family: monospace;
-            font-size: 11px;
-            padding: 4px 8px;
-            margin: 2px 0;
-            background: rgba(0, 0, 0, 0.05);
-            border-left: 3px solid var(--vscode-button-background);
-            border-radius: 2px;
-        }
-        
-        .tool-call-complete {
-            border-left-color: #28a745;
-            background: rgba(40, 167, 69, 0.1);
-        }
-        
-        .tool-call-error {
-            border-left-color: var(--vscode-errorForeground);
-            background: rgba(255, 0, 0, 0.1);
-        }
-        
-        .tool-result {
-            font-family: monospace;
-            font-size: 10px;
-            padding: 4px 8px;
-            margin: 2px 0 2px 12px;
-            background: rgba(0, 0, 0, 0.03);
-            border-left: 2px solid #28a745;
-            border-radius: 2px;
+
+        .config-info {
+            font-size: 12px;
             color: var(--vscode-descriptionForeground);
-            max-height: 200px;
-            overflow-y: auto;
+            margin-bottom: 12px;
+            padding: 8px;
+            background: var(--vscode-editor-inactiveSelectionBackground);
+            border-radius: 4px;
+        }
+
+        .tool-call-message {
+            font-family: var(--vscode-editor-font-family);
+            font-size: 12px;
+            padding: 4px 8px;
+            margin: 4px 0;
+            background: var(--vscode-editor-inactiveSelectionBackground);
+            border-radius: 3px;
+        }
+
+        .tool-call-complete {
+            border-left: 3px solid var(--vscode-terminal-ansiGreen);
+        }
+
+        .tool-call-error {
+            border-left: 3px solid var(--vscode-errorForeground);
+        }
+
+        .tool-result {
+            font-family: var(--vscode-editor-font-family);
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            margin: 4px 0;
+            padding: 4px 8px;
+            background: var(--vscode-editor-inactiveSelectionBackground);
+            border-radius: 3px;
             white-space: pre-wrap;
             word-break: break-all;
         }
-        
+
         .progress-indicator {
             display: flex;
             align-items: center;
@@ -504,7 +490,7 @@ export class AgentTabManager {
             color: var(--vscode-descriptionForeground);
             font-style: italic;
         }
-        
+
         .spinner {
             width: 12px;
             height: 12px;
@@ -513,31 +499,40 @@ export class AgentTabManager {
             border-radius: 50%;
             animation: spin 1s linear infinite;
         }
-        
+
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
-        
+
         .input-row {
             display: flex;
             gap: 8px;
             align-items: center;
+            position: sticky;
+            bottom: 0;
+            background: var(--vscode-editor-background);
+            padding-top: 8px;
         }
-        
+
         #userInput {
             flex: 1;
             padding: 8px 12px;
-            border: 1px solid var(--vscode-editor-background);
+            border: 1px solid var(--vscode-input-border, var(--vscode-panel-border, #ccc));
             border-radius: 4px;
             background: var(--vscode-input-background);
             color: var(--vscode-input-foreground);
             font-family: var(--vscode-font-family);
         }
-        
+
         #userInput:focus {
             outline: 2px solid var(--vscode-focusBorder);
         }
-        
+
+        #userInput:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+
         #actionButton {
             padding: 8px 16px;
             background: var(--vscode-button-background);
@@ -548,24 +543,24 @@ export class AgentTabManager {
             min-width: 80px;
             font-weight: 600;
         }
-        
+
         #actionButton:hover {
             background: var(--vscode-button-hoverBackground);
         }
-        
+
         #actionButton:disabled {
             opacity: 0.5;
             cursor: not-allowed;
         }
-        
+
         #actionButton.stop-button {
             background: #dc3545;
         }
-        
+
         #actionButton.stop-button:hover {
             background: #c82333;
         }
-        
+
         .iteration-info {
             font-size: 11px;
             color: var(--vscode-descriptionForeground);
@@ -573,15 +568,146 @@ export class AgentTabManager {
             padding-top: 8px;
             border-top: 1px solid rgba(0, 0, 0, 0.1);
         }
+
+        /* ===== TOOL CARD STYLES ===== */
+        .tool-card {
+            margin: 8px 0;
+            border: 1px solid var(--vscode-panel-border, #ccc);
+            border-radius: 4px;
+            overflow: hidden;
+            background: var(--vscode-editor-inactiveSelectionBackground);
+        }
+
+        .tool-card-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            cursor: pointer;
+            user-select: none;
+            background: var(--vscode-editor-background);
+            border-bottom: 1px solid var(--vscode-panel-border, #ccc);
+        }
+
+        .tool-card-header:hover {
+            background: var(--vscode-list-hoverBackground);
+        }
+
+        .tool-card-header.success {
+            border-left: 4px solid var(--vscode-terminal-ansiGreen);
+        }
+
+        .tool-card-header.error {
+            border-left: 4px solid var(--vscode-errorForeground);
+        }
+
+        .tool-card-header.pending {
+            border-left: 4px solid var(--vscode-terminal-ansiYellow);
+        }
+
+        .tool-card-toggle {
+            font-size: 10px;
+            transition: transform 0.2s;
+            width: 12px;
+            text-align: center;
+        }
+
+        .tool-card-toggle.collapsed {
+            transform: rotate(-90deg);
+        }
+
+        .tool-card-icon {
+            font-size: 14px;
+        }
+
+        .tool-card-name {
+            font-weight: 600;
+            flex: 1;
+        }
+
+        .tool-card-meta {
+            display: flex;
+            gap: 12px;
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+        }
+
+        .tool-card-duration {
+            font-family: var(--vscode-editor-font-family);
+        }
+
+        .tool-card-truncated {
+            color: var(--vscode-terminal-ansiYellow);
+        }
+
+        .tool-card-body {
+            padding: 12px;
+            transition: max-height 0.3s ease-out;
+            max-height: 1000px;
+            overflow: hidden;
+        }
+
+        .tool-card-body.collapsed {
+            max-height: 0;
+            padding: 0 12px;
+        }
+
+        .tool-card-args {
+            font-family: var(--vscode-editor-font-family);
+            font-size: 11px;
+            color: var(--vscode-descriptionForeground);
+            margin-bottom: 8px;
+            padding: 4px 8px;
+            background: var(--vscode-editor-background);
+            border-radius: 3px;
+        }
+
+        .tool-card-args-label {
+            font-weight: 600;
+            color: var(--vscode-foreground);
+        }
+
+        .tool-card-result {
+            font-family: var(--vscode-editor-font-family);
+            font-size: 11px;
+            white-space: pre-wrap;
+            word-break: break-word;
+            padding: 8px;
+            background: var(--vscode-editor-background);
+            border-radius: 3px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .tool-card-result.tree-format {
+            color: var(--vscode-terminal-ansiGreen);
+        }
+
+        .tool-card-result.table-format {
+            color: var(--vscode-terminal-ansiCyan);
+        }
+
+        .tool-card-result.markdown-format {
+            color: var(--vscode-terminal-ansiBlue);
+        }
+
+        .line-number {
+            display: inline-block;
+            width: 30px;
+            color: var(--vscode-descriptionForeground);
+            text-align: right;
+            margin-right: 8px;
+            user-select: none;
+        }
     </style>
 </head>
 <body>
     <div class="config-info">
         <strong>Model:</strong> ${modelId} | <strong>Max Iterations:</strong> ${maxIterations}
     </div>
-    
+
     <div id="messages"></div>
-    
+
     <div class="input-row">
         <input type="text" id="userInput" placeholder="Ask me anything about your code..." onkeypress="handleKeyPress(event)">
         <button onclick="toggleAction()" id="actionButton">Send</button>
@@ -592,10 +718,21 @@ export class AgentTabManager {
         const messagesDiv = document.getElementById('messages');
         const actionButton = document.getElementById('actionButton');
         const userInput = document.getElementById('userInput');
-        
+
         let currentProgressDiv = null;
         let isProcessing = false;
-        
+
+        // ===== ERROR HANDLING =====
+        window.addEventListener('error', (event) => {
+            console.error('WebView JavaScript error:', event.error);
+            // Ensure input is re-enabled even if there's an error
+            isProcessing = false;
+            userInput.disabled = false;
+            updateActionButton();
+            userInput.focus();
+            addMessage('agent', '<strong style="color: var(--vscode-errorForeground)">⚠️ A JavaScript error occurred. Input has been re-enabled.</strong>', true);
+        });
+
         function handleKeyPress(event) {
             if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
@@ -604,7 +741,7 @@ export class AgentTabManager {
                 }
             }
         }
-        
+
         function toggleAction() {
             if (isProcessing) {
                 stopAgent();
@@ -612,35 +749,37 @@ export class AgentTabManager {
                 sendMessage();
             }
         }
-        
+
         function sendMessage() {
-            const text = userInput.value.trim();
-            if (!text) return;
-            
-            // Set processing state
-            isProcessing = true;
-            updateActionButton();
-            
-            // Add user message to chat
-            addMessage('user', text);
-            
-            // Clear previous progress indicators
-            if (currentProgressDiv) {
-                currentProgressDiv.remove();
-                currentProgressDiv = null;
+            try {
+                const text = userInput.value.trim();
+                if (!text) return;
+
+                isProcessing = true;
+                userInput.disabled = true;
+                updateActionButton();
+
+                addMessage('user', text);
+
+                if (currentProgressDiv) {
+                    currentProgressDiv.remove();
+                    currentProgressDiv = null;
+                }
+
+                vscode.postMessage({ command: 'sendMessage', text });
+                userInput.value = '';
+            } catch (error) {
+                console.error('Error in sendMessage:', error);
+                isProcessing = false;
+                userInput.disabled = false;
+                updateActionButton();
             }
-            
-            // Send to extension
-            vscode.postMessage({ command: 'sendMessage', text });
-            
-            // Clear input
-            userInput.value = '';
         }
-        
+
         function stopAgent() {
             vscode.postMessage({ command: 'stopAgent' });
         }
-        
+
         function updateActionButton() {
             if (isProcessing) {
                 actionButton.textContent = 'Stop';
@@ -650,167 +789,301 @@ export class AgentTabManager {
                 actionButton.className = '';
             }
         }
-        
+
         function addMessage(type, content, isHtml = false) {
             const div = document.createElement('div');
             div.className = 'message ' + (type === 'user' ? 'user-message' : 'agent-message');
-            
+
             if (isHtml) {
                 div.innerHTML = content;
             } else {
                 div.textContent = content;
             }
-            
+
             messagesDiv.appendChild(div);
             div.scrollIntoView({ behavior: 'smooth' });
         }
-        
+
+        // ===== FORMATTED TOOL CARD FUNCTIONS =====
+
+        function createToolCard(toolCard) {
+            try {
+                const card = document.createElement('div');
+                card.className = 'tool-card';
+                card.id = 'tool-card-' + toolCard.toolName + '-' + Date.now();
+
+                const headerState = toolCard.foldState === 'collapsed' ? 'collapsed' : '';
+                const bodyState = toolCard.foldState === 'collapsed' ? 'collapsed' : '';
+                const successState = toolCard.success ? 'success' : 'error';
+
+                let headerHtml = '<div class="tool-card-header ' + successState + '" onclick="toggleToolCard(this)">';
+                headerHtml += '<span class="tool-card-toggle ' + headerState + '">&#9662;</span>';
+                headerHtml += '<span class="tool-card-icon">&#9881;</span>';
+                headerHtml += '<span class="tool-card-name">' + escapeHtml(toolCard.toolName) + '</span>';
+
+                headerHtml += '<span class="tool-card-meta">';
+                if (toolCard.durationMs !== undefined) {
+                    headerHtml += '<span class="tool-card-duration">' + toolCard.durationMs + 'ms</span>';
+                }
+                if (toolCard.isTruncated) {
+                    headerHtml += '<span class="tool-card-truncated">&#9888; truncated</span>';
+                }
+                headerHtml += '</span></div>';
+
+                let bodyHtml = '<div class="tool-card-body ' + bodyState + '">';
+
+                // Args
+                if (toolCard.args && Object.keys(toolCard.args).length > 0) {
+                    bodyHtml += '<div class="tool-card-args">';
+                    bodyHtml += '<span class="tool-card-args-label">Args:</span> ';
+                    const argPairs = [];
+                    for (const [key, value] of Object.entries(toolCard.args)) {
+                        argPairs.push(key + '=' + JSON.stringify(value));
+                    }
+                    bodyHtml += escapeHtml(argPairs.join(', '));
+                    bodyHtml += '</div>';
+                }
+
+                // Result
+                let resultClass = 'tool-card-result';
+                if (toolCard.format === 'tree') resultClass += ' tree-format';
+                if (toolCard.format === 'table') resultClass += ' table-format';
+                if (toolCard.format === 'markdown') resultClass += ' markdown-format';
+
+                bodyHtml += '<div class="' + resultClass + '">';
+
+                if (toolCard.showLineNumbers) {
+                    const lines = (toolCard.result || '').split('\\n');
+                    const numberedLines = lines.map((line, i) => {
+                        return '<span class="line-number">' + (i + 1) + '</span>' + escapeHtml(line);
+                    });
+                    bodyHtml += numberedLines.join('\\n');
+                } else {
+                    bodyHtml += escapeHtml(toolCard.result || '');
+                }
+
+                bodyHtml += '</div>';
+                bodyHtml += '</div>';
+
+                card.innerHTML = headerHtml + bodyHtml;
+                return card;
+            } catch (error) {
+                console.error('Error creating tool card:', error, toolCard);
+                // Return a simple error card instead of breaking
+                const errorCard = document.createElement('div');
+                errorCard.className = 'tool-card';
+                errorCard.innerHTML = '<div class="tool-card-header error"><span class="tool-card-name">⚠️ Error rendering tool card</span></div><div class="tool-card-body"><div class="tool-card-result">' + escapeHtml(error.message) + '</div></div>';
+                return errorCard;
+            }
+        }
+
+        function toggleToolCard(header) {
+            try {
+                const toggle = header.querySelector('.tool-card-toggle');
+                const body = header.nextElementSibling;
+
+                if (body.classList.contains('collapsed')) {
+                    body.classList.remove('collapsed');
+                    toggle.classList.remove('collapsed');
+                } else {
+                    body.classList.add('collapsed');
+                    toggle.classList.add('collapsed');
+                }
+            } catch (error) {
+                console.error('Error toggling tool card:', error);
+            }
+        }
+
+        function addToolCardToChat(toolCard) {
+            try {
+                const card = createToolCard(toolCard);
+                messagesDiv.appendChild(card);
+                card.scrollIntoView({ behavior: 'smooth' });
+            } catch (error) {
+                console.error('Error adding tool card to chat:', error);
+                addMessage('agent', '<span style="color: var(--vscode-errorForeground)">⚠️ Error displaying tool card: ' + escapeHtml(error.message) + '</span>', true);
+            }
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // ===== LEGACY TOOL CALL FUNCTIONS (for backward compatibility) =====
+
         function addToolCallMessage(toolCall, type) {
-            const div = document.createElement('div');
-            div.className = 'tool-call-message ' + (type === 'complete' ? 'tool-call-complete' : (toolCall.error ? 'tool-call-error' : ''));
-            
-            let content = '<strong>' + toolCall.toolName + '</strong>(';
-            for (const [key, value] of Object.entries(toolCall.args || {})) {
-                content += key + ': ' + JSON.stringify(value) + ', ';
+            try {
+                const div = document.createElement('div');
+                div.className = 'tool-call-message ' + (type === 'complete' ? 'tool-call-complete' : (toolCall.error ? 'tool-call-error' : ''));
+
+                let content = '<strong>' + toolCall.toolName + '</strong>(';
+                for (const [key, value] of Object.entries(toolCall.args || {})) {
+                    content += key + ': ' + JSON.stringify(value) + ', ';
+                }
+                content = content.replace(/, $/, '') + ')';
+
+                if (type === 'complete') {
+                    content += ' ✅ <em>Completed</em>';
+                }
+                if (toolCall.error) {
+                    content += ' ❌ <strong style="color: var(--vscode-errorForeground)">Error: ' + toolCall.error + '</strong>';
+                }
+
+                div.innerHTML = content;
+                messagesDiv.appendChild(div);
+                div.scrollIntoView({ behavior: 'smooth' });
+            } catch (error) {
+                console.error('Error adding tool call message:', error);
             }
-            content = content.replace(/, $/, '') + ')';
-            
-            if (type === 'complete') {
-                content += ' ✓ <em>Completed</em>';
-            }
-            if (toolCall.error) {
-                content += ' ✗ <strong style="color: var(--vscode-errorForeground)">Error: ' + toolCall.error + '</strong>';
-            }
-            
-            div.innerHTML = content;
-            messagesDiv.appendChild(div);
-            div.scrollIntoView({ behavior: 'smooth' });
         }
-        
+
         function addToolResult(toolName, result) {
-            if (!result || result.trim() === '') return;
-            
-            const div = document.createElement('div');
-            div.className = 'tool-result';
-            
-            // Truncate long results
-            let displayResult = result;
-            if (result.length > 500) {
-                displayResult = result.substring(0, 500) + '... (truncated)';
+            try {
+                if (!result || result.trim() === '') return;
+
+                const div = document.createElement('div');
+                div.className = 'tool-result';
+
+                let displayResult = result;
+                if (result.length > 500) {
+                    displayResult = result.substring(0, 500) + '... (truncated)';
+                }
+
+                div.textContent = '📃 ' + toolName + ' result: ' + displayResult;
+                messagesDiv.appendChild(div);
+                div.scrollIntoView({ behavior: 'smooth' });
+            } catch (error) {
+                console.error('Error adding tool result:', error);
             }
-            
-            div.textContent = '↳ ' + toolName + ' result: ' + displayResult;
-            messagesDiv.appendChild(div);
-            div.scrollIntoView({ behavior: 'smooth' });
         }
-        
+
         function showProgress(message) {
-            if (currentProgressDiv) {
-                currentProgressDiv.remove();
+            try {
+                if (currentProgressDiv) {
+                    currentProgressDiv.remove();
+                }
+
+                currentProgressDiv = document.createElement('div');
+                currentProgressDiv.className = 'progress-indicator';
+                currentProgressDiv.innerHTML = '<div class="spinner"></div><span>' + message + '</span>';
+                messagesDiv.appendChild(currentProgressDiv);
+                currentProgressDiv.scrollIntoView({ behavior: 'smooth' });
+            } catch (error) {
+                console.error('Error showing progress:', error);
             }
-            
-            currentProgressDiv = document.createElement('div');
-            currentProgressDiv.className = 'progress-indicator';
-            currentProgressDiv.innerHTML = '<div class="spinner"></div><span>' + message + '</span>';
-            messagesDiv.appendChild(currentProgressDiv);
-            currentProgressDiv.scrollIntoView({ behavior: 'smooth' });
         }
-        
+
         function hideProgress() {
-            if (currentProgressDiv) {
-                currentProgressDiv.remove();
-                currentProgressDiv = null;
+            try {
+                if (currentProgressDiv) {
+                    currentProgressDiv.remove();
+                    currentProgressDiv = null;
+                }
+            } catch (error) {
+                console.error('Error hiding progress:', error);
             }
         }
-        
+
         // Handle messages from extension
         window.addEventListener('message', event => {
             const message = event.data;
-            
-            switch (message.command) {
-                case 'processing':
-                    showProgress('Processing: ' + message.userInput.substring(0, 50) + '...');
-                    break;
-                    
-                case 'progress':
-                    const event = message.event;
-                    if (event.type === 'thinking') {
-                        showProgress(event.message);
-                    } else if (event.type === 'tool_start') {
-                        if (event.toolCall) {
-                            addToolCallMessage(event.toolCall, 'start');
-                        }
-                    } else if (event.type === 'tool_complete') {
-                        if (event.toolCall) {
-                            addToolCallMessage(event.toolCall, 'complete');
-                            // Display tool result
-                            if (event.toolCall.result) {
-                                addToolResult(event.toolCall.toolName, event.toolCall.result);
+
+            try {
+                switch (message.command) {
+                    case 'processing':
+                        showProgress('Processing: ' + message.userInput.substring(0, 50) + '...');
+                        break;
+
+                    case 'progress':
+                        const evt = message.event;
+                        if (evt.type === 'thinking') {
+                            showProgress(evt.message);
+                        } else if (evt.type === 'tool_start') {
+                            if (evt.toolCall) {
+                                addToolCallMessage(evt.toolCall, 'start');
                             }
+                        } else if (evt.type === 'tool_complete') {
+                            if (evt.toolCard) {
+                                // New formatted tool card
+                                addToolCardToChat(evt.toolCard);
+                            } else if (evt.toolCall) {
+                                // Legacy fallback
+                                addToolCallMessage(evt.toolCall, 'complete');
+                                if (evt.toolCall.result) {
+                                    addToolResult(evt.toolCall.toolName, evt.toolCall.result);
+                                }
+                            }
+                        } else if (evt.type === 'iteration_complete') {
+                            // Optional: show iteration complete message
                         }
-                    } else if (event.type === 'iteration_complete') {
-                        // Optional: show iteration complete message
-                    }
-                    break;
-                    
-                case 'response':
-                    hideProgress();
-                    
-                    let responseHtml = '';
-                    
-                    // Show final text if available
-                    if (message.response.text && message.response.text.trim() !== '') {
-                        responseHtml = '<div>' + message.response.text.replace(/\\n/g, '<br>') + '</div>';
-                    } else if (message.response.toolCalls && message.response.toolCalls.length > 0) {
-                        // No text but tool calls were made - explain what happened
-                        responseHtml = '<div><em>Completed tool operations:</em></div>';
-                    } else {
-                        responseHtml = '<div><em>No response generated.</em></div>';
-                    }
-                    
-                    if (message.response.toolCalls && message.response.toolCalls.length > 0) {
-                        responseHtml += '<div class="iteration-info">Tools Used: ' + message.response.toolCalls.map(tc => tc.toolName).join(', ') + '</div>';
-                    }
-                    
-                    responseHtml += '<div class="iteration-info">Iterations: ' + message.response.iterations + ' | Duration: ' + message.response.durationMs + 'ms</div>';
-                    
-                    if (message.response.success !== undefined) {
-                        responseHtml += '<div class="iteration-info">Status: ' + (message.response.success ? '✓ Success' : '✗ Failed') + '</div>';
-                    }
-                    
-                    addMessage('agent', responseHtml, true);
-                    
-                    // Reset processing state
-                    isProcessing = false;
-                    updateActionButton();
-                    userInput.disabled = false;
-                    userInput.focus();
-                    break;
-                    
-                case 'stopped':
-                    hideProgress();
-                    addMessage('agent', '<strong>⏹ Stopped by user</strong>', true);
-                    isProcessing = false;
-                    updateActionButton();
-                    userInput.disabled = false;
-                    userInput.focus();
-                    break;
-                    
-                case 'error':
-                    hideProgress();
-                    addMessage('agent', 'Error: ' + message.error, false);
-                    isProcessing = false;
-                    updateActionButton();
-                    userInput.disabled = false;
-                    break;
-                    
-                case 'configReloaded':
-                    location.reload();
-                    break;
+                        break;
+
+                    case 'response':
+                        hideProgress();
+
+                        let responseHtml = '';
+
+                        // Show final text if available
+                        if (message.response.text && message.response.text.trim() !== '') {
+                            responseHtml = '<div>' + message.response.text.replace(/\\n/g, '<br>') + '</div>';
+                        } else if (message.response.toolCards && message.response.toolCards.length > 0) {
+                            responseHtml = '<div><em>Completed tool operations:</em></div>';
+                        } else {
+                            responseHtml = '<div><em>No response generated.</em></div>';
+                        }
+
+                        // Show tool cards summary
+                        if (message.response.toolCards && message.response.toolCards.length > 0) {
+                            responseHtml += '<div class="iteration-info">Tools Used: ' + message.response.toolCards.map(tc => tc.toolName).join(', ') + '</div>';
+                        }
+
+                        responseHtml += '<div class="iteration-info">Iterations: ' + message.response.iterations + ' | Duration: ' + message.response.durationMs + 'ms</div>';
+
+                        if (message.response.success !== undefined) {
+                            responseHtml += '<div class="iteration-info">Status: ' + (message.response.success ? '✅ Success' : '❌ Failed') + '</div>';
+                        }
+
+                        addMessage('agent', responseHtml, true);
+
+                        isProcessing = false;
+                        updateActionButton();
+                        userInput.disabled = false;
+                        userInput.focus();
+                        break;
+
+                    case 'stopped':
+                        hideProgress();
+                        addMessage('agent', '<strong>⏹️ Stopped by user</strong>', true);
+                        isProcessing = false;
+                        updateActionButton();
+                        userInput.disabled = false;
+                        userInput.focus();
+                        break;
+
+                    case 'error':
+                        hideProgress();
+                        addMessage('agent', 'Error: ' + message.error, false);
+                        isProcessing = false;
+                        updateActionButton();
+                        userInput.disabled = false;
+                        break;
+
+                    case 'configReloaded':
+                        location.reload();
+                        break;
+                }
+            } catch (error) {
+                console.error('Error handling webview message:', error, message);
+                // Ensure input is re-enabled even if there's an error
+                isProcessing = false;
+                userInput.disabled = false;
+                updateActionButton();
             }
         });
-        
-        // Initialize button state
+
         updateActionButton();
     </script>
 </body>
@@ -836,15 +1109,16 @@ export class AgentTabManager {
    */
   async dispose(): Promise<void> {
     this.log('Disposing AgentTabManager...');
-    
+
     // Close all tabs
     for (const tab of this.tabs.values()) {
       await this.closeTab(tab.id);
     }
-    
-    // Dispose provider
+
+    // Dispose provider and tool card manager
     await this.provider.dispose();
-    
+    this.toolCardManager.dispose();
+
     this.log('AgentTabManager disposed');
   }
 }

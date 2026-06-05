@@ -169,6 +169,7 @@ export interface ToolCall {
   args: Record<string, any>;
   result?: string;
   error?: string;
+  durationMs?: number;
 }
 
 /**
@@ -487,7 +488,9 @@ export class AgentBridge {
         return;
       }
 
-      // Execute tool calls
+      // Execute tool calls - collect results for THIS iteration only
+      const currentIterationToolCalls: ToolCall[] = [];
+
       for (const toolCall of streamingToolCalls) {
         this.log(`Executing tool: ${toolCall.name}`);
         
@@ -531,6 +534,7 @@ export class AgentBridge {
           };
         }
 
+        currentIterationToolCalls.push(toolCallObj);
         toolCalls.push(toolCallObj);
       }
 
@@ -540,7 +544,7 @@ export class AgentBridge {
       let assistantContent = responseText;
       if (!assistantContent || assistantContent.trim() === '') {
         // LLM returned only tool calls with no prose - add descriptive message
-        const toolDescriptions = toolCalls.map(tc => {
+        const toolDescriptions = currentIterationToolCalls.map(tc => {
           const argsStr = JSON.stringify(tc.args);
           return `Calling ${tc.toolName}(${argsStr})`;
         }).join('; ');
@@ -553,8 +557,8 @@ export class AgentBridge {
         content: assistantContent
       });
 
-      // Add tool results to messages
-      for (const tc of toolCalls) {
+      // Add ONLY current iteration's tool results to messages
+      for (const tc of currentIterationToolCalls) {
         messages.push({
           role: 'tool',
           content: tc.error || tc.result || 'No result'
@@ -657,7 +661,9 @@ export class AgentBridge {
         });
       }
 
-      // Execute tool calls
+      // Execute tool calls - collect results for THIS iteration only
+      const currentIterationToolCalls: ToolCall[] = [];
+
       for (const toolCall of response.toolCalls) {
         this.log(`Executing tool: ${toolCall.name}`);
         
@@ -709,6 +715,7 @@ export class AgentBridge {
           }
         }
 
+        currentIterationToolCalls.push(toolCallObj);
         toolCalls.push(toolCallObj);
       }
 
@@ -718,7 +725,7 @@ export class AgentBridge {
       let assistantContent = response.content;
       if (!assistantContent || assistantContent.trim() === '') {
         // LLM returned only tool calls with no prose - add descriptive message
-        const toolDescriptions = toolCalls.map(tc => {
+        const toolDescriptions = currentIterationToolCalls.map(tc => {
           const argsStr = JSON.stringify(tc.args);
           return `Calling ${tc.toolName}(${argsStr})`;
         }).join('; ');
@@ -731,8 +738,8 @@ export class AgentBridge {
         content: assistantContent
       });
 
-      // Add tool results to messages
-      for (const tc of toolCalls) {
+      // Add ONLY current iteration's tool results to messages
+      for (const tc of currentIterationToolCalls) {
         messages.push({
           role: 'tool',
           content: tc.error || tc.result || 'No result'

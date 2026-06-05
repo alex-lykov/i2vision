@@ -196,6 +196,103 @@
                     "when": "false"
                 }
             ]
+        },
+        "configuration": {
+            "title": "i2-Vision",
+            "properties": {
+                "i2vision.toolCards.showTools": {
+                    "type": "string",
+                    "default": "all",
+                    "enum": [
+                        "all",
+                        "failed_only",
+                        "none"
+                    ],
+                    "enumDescriptions": [
+                        "Show all tool results",
+                        "Show only failed tool results",
+                        "Hide all tool results"
+                    ],
+                    "description": "Which tool results to display in agent chat"
+                },
+                "i2vision.toolCards.defaultMaxLines": {
+                    "type": "integer",
+                    "default": 20,
+                    "minimum": 0,
+                    "description": "Default max lines to show per tool result (0 = unlimited)"
+                },
+                "i2vision.toolCards.defaultMaxChars": {
+                    "type": "integer",
+                    "default": 3000,
+                    "minimum": 0,
+                    "description": "Default max characters per tool result (0 = unlimited)"
+                },
+                "i2vision.toolCards.defaultFoldThreshold": {
+                    "type": "integer",
+                    "default": 10,
+                    "minimum": 0,
+                    "description": "Lines before fold toggle appears (0 = always folded)"
+                },
+                "i2vision.toolCards.defaultFoldDefault": {
+                    "type": "string",
+                    "default": "collapsed",
+                    "enum": [
+                        "expanded",
+                        "collapsed"
+                    ],
+                    "description": "Default fold state for tool cards"
+                },
+                "i2vision.toolCards.defaultFormat": {
+                    "type": "string",
+                    "default": "raw",
+                    "enum": [
+                        "raw",
+                        "markdown",
+                        "tree",
+                        "table"
+                    ],
+                    "enumDescriptions": [
+                        "Show raw text output",
+                        "Format as markdown",
+                        "Format as directory tree",
+                        "Format as markdown table"
+                    ],
+                    "description": "Default output format for tool results"
+                },
+                "i2vision.toolCards.defaultShowLineNumbers": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show line numbers for code output"
+                },
+                "i2vision.toolCards.defaultSyntaxHighlight": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Enable syntax highlighting for code blocks"
+                },
+                "i2vision.toolCards.defaultShowArgs": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show tool arguments in the card header"
+                },
+                "i2vision.toolCards.defaultShowDuration": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show execution time in the card header"
+                },
+                "i2vision.toolCards.defaultCollapseOnSuccess": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Auto-collapse cards for successful tool calls"
+                },
+                "i2vision.toolCards.perToolConfig": {
+                    "type": [
+                        "object",
+                        "null"
+                    ],
+                    "default": null,
+                    "description": "Per-tool display overrides. Key = tool name, value = partial ToolDisplayOptions object. Example: {\"read_file\": {\"maxLines\": 50, \"syntaxHighlight\": true}}"
+                }
+            }
         }
     },
     "scripts": {
@@ -206,16 +303,19 @@
         "publish": "vsce publish"
     },
     "devDependencies": {
+        "@types/js-yaml": "^4.0.9",
+        "@types/mocha": "^10.0.10",
         "@types/node": "^20.0.0",
         "@types/vscode": "^1.90.0",
         "@typescript-eslint/eslint-plugin": "^7.0.0",
         "@typescript-eslint/parser": "^7.0.0",
+        "@vscode/test-electron": "^2.5.2",
+        "@vscode/vsce": "^2.24.0",
         "eslint": "^8.57.0",
-        "typescript": "^5.4.0",
-        "@vscode/vsce": "^2.24.0"
+        "typescript": "^5.4.0"
     },
     "dependencies": {
-        "js-yaml": "^4.1.0",
-        "glob": "^10.3.0"
+        "glob": "^10.3.0",
+        "js-yaml": "^4.1.0"
     }
 }

@@ -3,6 +3,8 @@
  * 
  * This module provides direct HTTP integration with Ollama,
  * bypassing the need for external CLI tools.
+ * 
+ * UPDATED: All shell commands now use workspace root as working directory
  */
 
 import * as fs from 'fs';
@@ -154,10 +156,23 @@ export class CLI {
     this.workspaceRoot = workspaceRoot;
     this.outputChannel = outputChannel;
     
+    // Validate workspace root
+    if (!this.workspaceRoot) {
+      this.log('⚠️ WARNING: No workspace folder open - using current directory');
+      this.workspaceRoot = process.cwd();
+    } else {
+      this.log(`Workspace root: ${this.workspaceRoot}`);
+    }
+    
     // Get CLI path from VSCode settings (may have been set by LocalAgentProvider from project config)
     try {
       const config = vscode.workspace.getConfiguration('i2vision');
       this.cliPath = config.get<string>('cli.path');
+      const configuredOllamaUrl = config.get<string>('ollamaUrl');
+      if (configuredOllamaUrl) {
+        this.ollamaUrl = configuredOllamaUrl;
+        this.log(`Ollama URL from settings: ${this.ollamaUrl}`);
+      }
       if (this.cliPath) {
         this.log(`CLI path from settings: ${this.cliPath}`);
       } else {
@@ -170,6 +185,14 @@ export class CLI {
     } catch (error: any) {
       this.log(`Could not read CLI path from settings: ${error.message}`);
     }
+  }
+
+  /**
+   * Get the workspace root directory
+   * This is the authoritative source for all shell command working directories
+   */
+  getWorkspaceRoot(): string {
+    return this.workspaceRoot;
   }
 
   /**
@@ -371,39 +394,36 @@ export class CLI {
           break;
         }
 
-        // Decode chunk and add to buffer
+        // Decode chunk and parse NDJSON
         buffer += decoder.decode(value, { stream: true });
-        
-        // Process complete lines (NDJSON format)
         const lines = buffer.split('\n');
-        buffer = lines.pop() || ''; // Keep incomplete line in buffer
-        
+        buffer = lines.pop() || '';
+
         for (const line of lines) {
           if (!line.trim()) continue;
-          
+
           try {
             const chunk = JSON.parse(line) as any;
             
-            // Extract content from chunk
-            const content = chunk.message?.content || '';
-            if (content) {
-              accumulatedContent += content;
+            // Accumulate content
+            const delta = chunk.message?.content || '';
+            accumulatedContent += delta;
+            
+            if (delta) {
               yield {
-                text: content,
+                text: delta,
                 done: false
               };
             }
-            
-            // Check for tool calls in chunk
-            const toolCallsData = chunk.message?.tool_calls || [];
-            if (toolCallsData.length > 0) {
-              const newToolCalls: LLMToolCall[] = toolCallsData.map((tc: any) => {
+
+            // Accumulate tool calls
+            if (chunk.message?.tool_calls) {
+              const newToolCalls: LLMToolCall[] = chunk.message.tool_calls.map((tc: any) => {
                 let args = tc.function?.arguments || {};
                 if (typeof args === 'string') {
                   try {
                     args = JSON.parse(args);
                   } catch (e) {
-                    this.log(`Warning: Could not parse tool arguments as JSON: ${args}`);
                     args = {};
                   }
                 }
@@ -414,39 +434,66 @@ export class CLI {
                 };
               });
               toolCalls.push(...newToolCalls);
-              this.log(`Tool calls detected in stream: ${newToolCalls.map(tc => tc.name).join(', ')}`);
             }
-            
-            // Check if done
-            if (chunk.done) {
-              this.log(`Stream marked as done after ${Date.now() - startTime}ms`);
-              yield {
-                text: '',
-                done: true,
-                toolCalls: toolCalls.length > 0 ? toolCalls : undefined
-              };
-              return;
-            }
-          } catch (e: any) {
-            this.log(`Warning: Could not parse chunk as JSON: ${line.substring(0, 100)}`);
+          } catch (e) {
+            this.log(`Warning: Could not parse chunk: ${line}`);
           }
         }
       }
     } catch (error: any) {
       this.log(`Streaming error: ${error.message}`);
+      yield {
+        text: `Error: ${error.message}`,
+        done: true
+      };
+    }
+  }
+
+  /**
+   * Run a shell command
+   * 
+   * CRITICAL: Always uses workspace root as working directory unless explicitly overridden
+   * This ensures Git and other tools work correctly with the project
+   * 
+   * @param command - The command to execute
+   * @param workingDir - Optional override (defaults to workspace root)
+   */
+  async runCommand(command: string, workingDir?: string): Promise<{ stdout: string, stderr: string }> {
+    // ALWAYS use workspace root if not explicitly provided
+    // This is critical for Git, build tools, and file operations
+    const effectiveWorkingDir = workingDir || this.workspaceRoot;
+    
+    this.log(`Running command: ${command}`);
+    this.log(`Working directory: ${effectiveWorkingDir}`);
+    
+    try {
+      const options = { cwd: effectiveWorkingDir };
+      const { stdout, stderr } = await execAsync(command, options);
+      this.log(`Command completed successfully`);
+      return { stdout, stderr };
+    } catch (error: any) {
+      this.log(`Command failed: ${error.message}`);
+      this.log(`Stderr: ${error.stderr}`);
       throw error;
     }
   }
 
   /**
-   * Read file using Node.js fs module
+   * Run a Git command with workspace root as working directory
+   * This is a convenience wrapper that ensures Git always works correctly
+   */
+  async runGitCommand(args: string[]): Promise<{ stdout: string, stderr: string }> {
+    const command = `git ${args.join(' ')}`;
+    this.log(`Running Git command: ${command}`);
+    return this.runCommand(command);
+  }
+
+  /**
+   * Read a file's contents
    */
   async readFile(filePath: string): Promise<string> {
     this.log(`Reading file: ${filePath}`);
     try {
-      if (!fs.existsSync(filePath)) {
-        throw new Error(`File not found: ${filePath}`);
-      }
       const content = await fs.promises.readFile(filePath, 'utf8');
       this.log(`File read successfully (${content.length} chars)`);
       return content;
@@ -457,7 +504,7 @@ export class CLI {
   }
 
   /**
-   * Write file using Node.js fs module
+   * Write content to a file
    */
   async writeFile(filePath: string, content: string): Promise<void> {
     this.log(`Writing file: ${filePath} (${content.length} chars)`);
@@ -470,90 +517,6 @@ export class CLI {
       this.log(`File written successfully`);
     } catch (error: any) {
       this.log(`Error writing file: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
-   * List files in a directory
-   * 
-   * ENHANCED: When directory not found, provides clear alternatives
-   */
-  async listFiles(dirPath: string, recursive: boolean = false): Promise<string[]> {
-    this.log(`Listing files in: ${dirPath} (recursive: ${recursive})`);
-    try {
-      // Check if directory exists first
-      if (!fs.existsSync(dirPath)) {
-        this.log(`Directory does not exist: ${dirPath}`);
-        
-        // Get simple list of what exists at workspace root
-        const alternatives = await this.getTopLevelDirectories();
-        
-        throw new Error(
-          `DIRECTORY_NOT_FOUND: ${dirPath}\n\n` +
-          `Available top-level folders: ${alternatives.join(', ')}\n\n` +
-          `DO NOT retry this path. Tell the user the folder doesn't exist and offer these alternatives.`
-        );
-      }
-      
-      const stat = await fs.promises.stat(dirPath);
-      if (!stat.isDirectory()) {
-        this.log(`Path is not a directory: ${dirPath}`);
-        throw new Error(`Path is not a directory: ${dirPath}`);
-      }
-      
-      const files: string[] = [];
-      
-      const walk = async (dir: string) => {
-        const entries = await fs.promises.readdir(dir, { withFileTypes: true });
-        for (const entry of entries) {
-          const fullPath = path.join(dir, entry.name);
-          if (entry.isDirectory()) {
-            if (recursive && !entry.name.startsWith('.')) {
-              await walk(fullPath);
-            }
-          } else {
-            files.push(fullPath);
-          }
-        }
-      };
-      
-      await walk(dirPath);
-      this.log(`Found ${files.length} files`);
-      return files;
-    } catch (error: any) {
-      this.log(`Error listing files: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
-   * Get top-level directories in workspace
-   */
-  private async getTopLevelDirectories(): Promise<string[]> {
-    try {
-      const entries = await fs.promises.readdir(this.workspaceRoot, { withFileTypes: true });
-      return entries
-        .filter(e => e.isDirectory() && !e.name.startsWith('.'))
-        .map(e => e.name)
-        .sort();
-    } catch (e: any) {
-      return [];
-    }
-  }
-
-  /**
-   * Run a shell command
-   */
-  async runCommand(command: string, workingDir?: string): Promise<{ stdout: string, stderr: string }> {
-    this.log(`Running command: ${command}`);
-    try {
-      const options = workingDir ? { cwd: workingDir } : {};
-      const { stdout, stderr } = await execAsync(command, options);
-      this.log(`Command completed`);
-      return { stdout, stderr };
-    } catch (error: any) {
-      this.log(`Command failed: ${error.message}`);
       throw error;
     }
   }
@@ -816,38 +779,29 @@ public class ${appClass}Application {
     
     <dependencies>
         <dependency>
-          <groupId>org.springframework.boot</groupId>
-          <artifactId>spring-boot-starter-web</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
     </dependencies>
-    
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-            </plugin>
-        </plugins>
-    </build>
 </project>`;
         await fs.promises.writeFile(path.join(targetDir, 'pom.xml'), pomContent);
         
+        this.log(`Spring Boot project created successfully`);
+        return true;
       } else if (templateName === 'express') {
         const projectName = variables.projectName || 'my-api';
         
-        // Create src directory
+        // Create directory structure
         const srcDir = path.join(targetDir, 'src');
         await fs.promises.mkdir(srcDir, { recursive: true });
         
         // Create index.ts
-        const indexContent = `import express, { Application, Request, Response } from 'express';
+        const indexContent = `import express from 'express';
 
-const app: Application = express();
-const port = process.env.PORT || 3000;
+const app = express();
+const port = 3000;
 
-app.use(express.json());
-
-app.get('/', (req: Request, res: Response) => {
+app.get('/', (req, res) => {
   res.json({ message: 'Hello World!' });
 });
 
@@ -857,31 +811,34 @@ app.listen(port, () => {
         await fs.promises.writeFile(path.join(srcDir, 'index.ts'), indexContent);
         
         // Create package.json
-        const packageContent = `{
-  "name": "${projectName}",
-  "version": "1.0.0",
-  "description": "Express.js REST API",
-  "main": "dist/index.js",
-  "scripts": {
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts"
-  },
-  "dependencies": {
-    "express": "^4.18.2"
-  },
-  "devDependencies": {
-    "@types/express": "^4.17.21",
-    "@types/node": "^20.10.0",
-    "typescript": "^5.3.0",
-    "ts-node": "^10.9.2"
-  }
-}`;
-        await fs.promises.writeFile(path.join(targetDir, 'package.json'), packageContent);
+        const packageJson = {
+          name: projectName,
+          version: '1.0.0',
+          description: 'Express.js REST API',
+          main: 'dist/index.js',
+          scripts: {
+            build: 'tsc',
+            start: 'node dist/index.js',
+            dev: 'ts-node src/index.ts'
+          },
+          dependencies: {
+            express: '^4.18.2'
+          },
+          devDependencies: {
+            '@types/express': '^4.17.21',
+            '@types/node': '^20.10.0',
+            'ts-node': '^10.9.2',
+            typescript: '^5.3.0'
+          }
+        };
+        await fs.promises.writeFile(path.join(targetDir, 'package.json'), JSON.stringify(packageJson, null, 2));
+        
+        this.log(`Express.js project created successfully`);
+        return true;
       }
       
-      this.log(`Project created successfully in ${targetDir}`);
-      return true;
+      this.log(`Unknown template: ${templateName}`);
+      return false;
     } catch (error: any) {
       this.log(`Error creating project: ${error.message}`);
       return false;
@@ -889,147 +846,103 @@ app.listen(port, () => {
   }
 
   /**
-   * Get context for a specific file
+   * Get context for a file
    */
-  async getContext(filePath: string): Promise<FileContext> {
-    this.log(`Getting context for: ${filePath}`);
+  async getContext(filePath: string): Promise<FileContext | null> {
+    this.log(`Getting context for file: ${filePath}`);
     try {
       const content = await fs.promises.readFile(filePath, 'utf8');
-      const ext = path.extname(filePath).toLowerCase();
+      const lines = content.split('\n');
       
-      let language = 'unknown';
-      const languageMap: Record<string, string> = {
-        '.java': 'java',
-        '.ts': 'typescript',
-        '.js': 'javascript',
-        '.py': 'python',
-        '.go': 'go',
-        '.rs': 'rust',
-        '.kt': 'kotlin',
-        '.scala': 'scala',
-        '.cs': 'csharp',
-        '.cpp': 'cpp',
-        '.c': 'c',
-        '.rb': 'ruby',
-        '.php': 'php',
-        '.swift': 'swift',
-        '.sql': 'sql',
-        '.xml': 'xml',
-        '.json': 'json',
-        '.yaml': 'yaml',
-        '.yml': 'yaml',
-        '.md': 'markdown',
-        '.html': 'html',
-        '.css': 'css',
-        '.scss': 'scss',
-        '.sh': 'shell',
-        '.bash': 'shell'
-      };
+      // Extract imports
+      const imports = content.match(/import.*from.*['"].*['"]/g) || [];
       
-      language = languageMap[ext] || 'unknown';
+      // Extract classes
+      const classes = content.match(/(class|interface|type)\s+\w+/g) || [];
       
-      // Infer component and layer from path
-      const relativePath = path.relative(this.workspaceRoot, filePath);
-      const pathParts = relativePath.split(path.sep);
-      const component = pathParts.length > 1 ? pathParts[0] : 'root';
-      const layer = this.inferLayer(component);
+      // Extract functions
+      const functions = content.match(/(function|const|let|var)\s+\w+\s*=\s*\(.*\)/g) || [];
       
       const context: FileContext = {
         path: filePath,
         filePath: filePath,
         name: path.basename(filePath),
-        language,
+        language: path.extname(filePath).slice(1),
         content,
         size: content.length,
-        lines: content.split('\n').length,
-        imports: this.extractImports(content, language),
-        classes: this.extractClasses(content, language),
-        functions: this.extractFunctions(content, language),
-        component,
-        layer,
-        dependencies: []
+        lines: lines.length,
+        imports,
+        classes,
+        functions,
+        component: path.basename(path.dirname(filePath)),
+        layer: this.inferLayer(path.basename(path.dirname(filePath)))
       };
       
-      this.log(`Context extracted: ${context.classes.length} classes, ${context.functions.length} functions`);
+      this.log(`Context extracted: ${context.lines} lines, ${imports.length} imports`);
       return context;
     } catch (error: any) {
       this.log(`Error getting context: ${error.message}`);
-      throw error;
+      return null;
     }
   }
 
   /**
-   * Extract imports from file content
+   * List files in a directory
+   * @param dirPath - Directory path (optional, defaults to workspace root)
+   * @param recursive - Whether to search recursively (optional, defaults to false)
    */
-  private extractImports(content: string, language: string): string[] {
-    const imports: string[] = [];
+  async listFiles(dirPath?: string, recursive?: boolean): Promise<string[]> {
+    const targetDir = dirPath || this.workspaceRoot;
+    this.log(`Listing files in: ${targetDir} (recursive: ${recursive})`);
     
-    if (language === 'java') {
-      const importRegex = /^import\s+(static\s+)?([\w.*]+);/gm;
-      let match;
-      while ((match = importRegex.exec(content)) !== null) {
-        imports.push(match[2]);
-      }
-    } else if (language === 'typescript' || language === 'javascript') {
-      const importRegex = /^import\s+.*?\s+from\s+['"](.+?)['"];?/gm;
-      let match;
-      while ((match = importRegex.exec(content)) !== null) {
-        imports.push(match[1]);
-      }
-    } else if (language === 'python') {
-      const importRegex = /^(?:import\s+(\w+)|from\s+(\w+)\s+import)/gm;
-      let match;
-      while ((match = importRegex.exec(content)) !== null) {
-        imports.push(match[1] || match[2]);
-      }
-    }
+    const results: string[] = [];
     
-    return imports;
+    const listInDir = async (dir: string) => {
+      try {
+        const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+        
+        for (const entry of entries) {
+          // Skip excluded directories
+          if (entry.isDirectory() && ['build', '.gradle', '.idea', 'node_modules', '.git', 'out', 'bin', 'target', 'dist'].includes(entry.name)) {
+            continue;
+          }
+          
+          const fullPath = path.join(dir, entry.name);
+          
+          if (entry.isDirectory() && recursive && !entry.name.startsWith('.')) {
+            await listInDir(fullPath);
+          } else if (entry.isFile() && !entry.name.startsWith('.')) {
+            results.push(fullPath);
+          }
+        }
+      } catch (e: any) {
+        this.log(`Error listing directory ${dir}: ${e.message}`);
+      }
+    };
+    
+    await listInDir(targetDir);
+    
+    this.log(`Found ${results.length} files`);
+    return results;
   }
 
   /**
-   * Extract classes from file content
+   * List directories in a path
    */
-  private extractClasses(content: string, language: string): string[] {
-    const classes: string[] = [];
-    
-    if (language === 'java' || language === 'typescript' || language === 'javascript') {
-      const classRegex = /(?:public\s+|class\s+)?class\s+(\w+)/g;
-      let match;
-      while ((match = classRegex.exec(content)) !== null) {
-        classes.push(match[1]);
-      }
-    } else if (language === 'python') {
-      const classRegex = /^class\s+(\w+)/gm;
-      let match;
-      while ((match = classRegex.exec(content)) !== null) {
-        classes.push(match[1]);
-      }
+  async listDirectories(dirPath?: string): Promise<string[]> {
+    const targetDir = dirPath || this.workspaceRoot;
+    this.log(`Listing directories in: ${targetDir}`);
+    try {
+      const entries = await fs.promises.readdir(targetDir, { withFileTypes: true });
+      const dirs = entries
+        .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+        .map(e => e.name)
+        .sort();
+      this.log(`Found ${dirs.length} directories`);
+      return dirs;
+    } catch (e: any) {
+      this.log(`Error listing directories: ${e.message}`);
+      return [];
     }
-    
-    return classes;
-  }
-
-  /**
-   * Extract functions from file content
-   */
-  private extractFunctions(content: string, language: string): string[] {
-    const functions: string[] = [];
-    
-    if (language === 'java' || language === 'typescript' || language === 'javascript') {
-      const functionRegex = /(?:public\s+|private\s+|protected\s+)?(?:static\s+)?\w+\s+(\w+)\s*\([^)]*\)\s*(?:\{|:)/g;
-      let match;
-      while ((match = functionRegex.exec(content)) !== null) {
-        functions.push(match[1]);
-      }
-    } else if (language === 'python') {
-      const functionRegex = /^def\s+(\w+)/gm;
-      let match;
-      while ((match = functionRegex.exec(content)) !== null) {
-        functions.push(match[1]);
-      }
-    }
-    
-    return functions;
   }
 }

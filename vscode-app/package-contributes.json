@@ -1,0 +1,173 @@
+﻿{
+    "viewsContainers":  {
+                            "activitybar":  [
+                                                {
+                                                    "id":  "i2vision-explorer",
+                                                    "title":  "i2-Vision Explorer",
+                                                    "icon":  "resources/i2vision-icon.svg"
+                                                }
+                                            ]
+                        },
+    "views":  {
+                  "i2vision-explorer":  [
+                                            {
+                                                "id":  "i2visionTreeView",
+                                                "name":  "i2-Vision Projects",
+                                                "icon":  "resources/i2vision-icon.svg",
+                                                "contextualTitle":  "i2-Vision"
+                                            }
+                                        ]
+              },
+    "commands":  [
+                     {
+                         "command":  "i2vision.refreshTree",
+                         "title":  "Refresh",
+                         "icon":  {
+                                      "light":  "resources/refresh.svg",
+                                      "dark":  "resources/refresh.svg"
+                                  },
+                         "category":  "i2-Vision"
+                     },
+                     {
+                         "command":  "i2vision.openProject",
+                         "title":  "Open Project",
+                         "category":  "i2-Vision",
+                         "icon":  {
+                                      "light":  "resources/open.svg",
+                                      "dark":  "resources/open.svg"
+                                  }
+                     },
+                     {
+                         "command":  "i2vision.createProject",
+                         "title":  "Create New Project",
+                         "category":  "i2-Vision"
+                     },
+                     {
+                         "command":  "i2vision.init",
+                         "title":  "Initialize VSLFC Structure (i2vision.init)",
+                         "category":  "i2-Vision"
+                     },
+                     {
+                         "command":  "i2vision.helloWorld",
+                         "title":  "Hello World",
+                         "category":  "i2-Vision"
+                     },
+                     {
+                         "command":  "i2vision.openFile",
+                         "title":  "Open File",
+                         "category":  "i2-Vision"
+                     },
+                     {
+                         "command":  "i2vision.showDiscovery",
+                         "title":  "Show Discovery Results",
+                         "category":  "i2-Vision"
+                     },
+                     {
+                         "command":  "i2vision.analyzeArchitecture",
+                         "title":  "Analyze Architecture",
+                         "category":  "i2-Vision"
+                     },
+                     {
+                         "command":  "i2vision.viewDocumentation",
+                         "title":  "View Documentation",
+                         "category":  "i2-Vision"
+                     },
+                     {
+                         "command":  "i2vision.toggleFileSystemScan",
+                         "title":  "Toggle File System Scan",
+                         "category":  "i2-Vision"
+                     },
+                     {
+                         "command":  "i2vision.scanWorkspace",
+                         "title":  "Scan Workspace",
+                         "category":  "i2-Vision"
+                     },
+                     {
+                         "command":  "i2vision.showFileInfo",
+                         "title":  "Show File Information",
+                         "category":  "i2-Vision"
+                     },
+                     {
+                         "command":  "i2vision.openContainingFolder",
+                         "title":  "Open Containing Folder",
+                         "category":  "i2-Vision"
+                     },
+                     {
+                         "command":  "i2vision.newCodingAgent",
+                         "title":  "New Coding Agent Tab",
+                         "category":  "i2-Vision Agents",
+                         "icon":  {
+                                      "light":  "resources/robot.svg",
+                                      "dark":  "resources/robot.svg"
+                                  }
+                     },
+                     {
+                         "command":  "i2vision.newVisionAgent",
+                         "title":  "New Vision Agent Tab",
+                         "category":  "i2-Vision Agents"
+                     },
+                     {
+                         "command":  "i2vision.newStructureAgent",
+                         "title":  "New Structure Agent Tab",
+                         "category":  "i2-Vision Agents"
+                     },
+                     {
+                         "command":  "i2vision.newLogicAgent",
+                         "title":  "New Logic Agent Tab",
+                         "category":  "i2-Vision Agents"
+                     },
+                     {
+                         "command":  "i2vision.newFlowAgent",
+                         "title":  "New Flow Agent Tab",
+                         "category":  "i2-Vision Agents"
+                     },
+                     {
+                         "command":  "i2vision.debugToolCalls",
+                         "title":  "Debug Tool Calls",
+                         "category":  "i2-Vision Debug"
+                     },
+                     {
+                         "command":  "i2vision.verifyTools",
+                         "title":  "Verify Tool Definitions",
+                         "category":  "i2-Vision Debug"
+                     },
+                     {
+                         "command":  "i2vision.checkAgentConfig",
+                         "title":  "Check Agent Configuration",
+                         "category":  "i2-Vision Debug"
+                     },
+                     {
+                         "title":  "Quick Diagnostic",
+                         "command":  "i2vision.quickDiagnostic",
+                         "category":  "i2-Vision Debug"
+                     },
+                     {
+                         "title":  "Reload Agent Config",
+                         "command":  "i2vision.reloadAgentConfig",
+                         "category":  "i2-Vision Debug"
+                     }
+                 ],
+    "menus":  {
+                  "view/title":  [
+                                     {
+                                         "command":  "i2vision.refreshTree",
+                                         "when":  "view == i2visionTreeView",
+                                         "group":  "navigation"
+                                     }
+                                 ],
+                  "commandPalette":  [
+                                         {
+                                             "command":  "i2vision.openFile",
+                                             "when":  "false"
+                                         },
+                                         {
+                                             "command":  "i2vision.showFileInfo",
+                                             "when":  "false"
+                                         },
+                                         {
+                                             "command":  "i2vision.openContainingFolder",
+                                             "when":  "false"
+                                         }
+                                     ]
+              }
+}

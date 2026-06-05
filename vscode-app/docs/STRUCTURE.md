@@ -1,0 +1,124 @@
+# VSCode Extension Structure
+
+## Directory Layout
+
+```
+vscode-app/
+├── src/                          # Source code
+│   ├── extension.ts              # Extension entry point
+│   ├── cliIntegration.ts         # CLI wrapper for agent tools
+│   ├── fileSystemIntegration.ts  # VSCode FileSystemProvider
+│   ├── treeViewProvider.ts       # Sidebar tree view
+│   ├── agent/                    # Agent-related code
+│   │   ├── AgentBridge.ts        # Bridge between VSCode and agent core
+│   │   └── AgentTabManager.ts    # Manages agent tab UI
+│   ├── bridge/                   # Integration bridges
+│   │   └── UniversalBridge.ts    # Cross-module communication
+│   └── test/                     # Test files
+│       └── extension.test.ts
+│
+├── .vscode/                      # VSCode configuration
+│   ├── launch.json               # Debug configurations
+│   ├── settings.json             # Workspace settings
+│   ├── tasks.json                # Build tasks
+│   └── i2vision/                 # Extension-specific config
+│       └── agents/               # Agent YAML configurations
+│           ├── coding-agent.yaml
+│           ├── logic-agent.yaml
+│           ├── flow-agent.yaml
+│           ├── structure-agent.yaml
+│           └── vision-agent.yaml
+│
+├── resources/                    # Static resources (icons, images)
+├── scripts/                      # Build and utility scripts
+│   └── copy-resources.js         # Resource copying script
+│
+├── package.json                  # Extension manifest
+├── tsconfig.json                 # TypeScript configuration
+├── .gitignore                    # Git ignore rules
+├── .vscodeignore                 # VSCE packaging ignore
+├── LICENSE                       # License file
+├── README.md                     # User-facing documentation
+└── CHANGELOG.md                  # Version history
+```
+
+## Key Files
+
+### `extension.ts`
+Main entry point. Activates extension, registers commands, initializes providers.
+
+### `AgentBridge.ts`
+Bridges VSCode extension with agent core. Handles:
+- Agent lifecycle
+- Tool execution
+- Streaming responses
+- Loop detection
+- Plan detection
+
+### `AgentTabManager.ts`
+Manages agent tab UI in webview. Handles:
+- Message display
+- Tool call visualization
+- Progress updates
+- User input
+
+### `cliIntegration.ts`
+Wrapper around CLI commands. Provides:
+- LLM calls via Ollama
+- File operations
+- Command execution
+- Context retrieval
+
+## Agent Configuration
+
+Agents are configured in `.vscode/i2vision/agents/*.yaml`:
+
+```yaml
+key: coding-agent
+agentType: code-assistant
+systemPromptTemplate: |
+  You are a coding assistant...
+model:
+  id: qwen2.5-coder:7b
+  provider: ollama
+iterationSettings:
+  maxIterations: 10
+toolSelection:
+  toolTimeoutSeconds: 30
+```
+
+## Development Workflow
+
+1. **Edit Code**: Modify files in `src/`
+2. **Compile**: `npm run compile` or F5 to debug
+3. **Test**: Use Extension Development Host
+4. **Package**: `vsce package` creates `.vsix`
+
+## Testing
+
+### Manual Testing
+1. Press F5 to launch Extension Development Host
+2. Create agent tab via Command Palette
+3. Test tool calls with various prompts
+
+### Agent Tool Testing
+See `docs/AGENT_TOOL_CALLING_TEST.md` for detailed test procedures.
+
+## Packaging
+
+```bash
+# Install vsce
+npm install -g @vscode/vsce
+
+# Package extension
+vsce package
+
+# Install from .vsix
+code --install-extension i2-vision-vscode-1.0.0.vsix
+```
+
+## Related Documentation
+
+- [Main Documentation](../../docs/README.md)
+- [Agent Implementation Guide](../../docs/guides/agent-implementation.md)
+- [Agent Configuration Reference](../../docs/reference/agent-config.md)

@@ -1,401 +1,288 @@
 # i2-Vision VSCode Extension
 
-**Version:** 1.0.0  
-**Publisher:** i2vision  
-**License:** MIT
+AI-powered coding assistant with agent-based automation, integrated directly into VSCode.
 
-A powerful VSCode extension that brings i2-Vision's architecture discovery and analysis capabilities directly into your IDE.
+## Features
 
-## ✨ Features
+- **5 Pre-configured Agents**: Coding, Logic, Flow, Structure, Vision
+- **6 Built-in Tools**: read_file, write_file, list_directory, search_files, run_command, get_file_context
+- **Real-time Streaming**: Watch tool calls execute in real-time
+- **Smart Loop Detection**: Prevents infinite loops with intelligent nudging
+- **Plan Detection**: Forces tool execution when LLM describes plans
+- **Safety First**: Path validation, command blocking, workspace isolation
 
-### 🌳 Interactive Tree View
-- **Project Explorer**: Browse discovered components organized by architecture layers
-- **Template Gallery**: Access project templates for quick scaffolding
-- **Quick Settings**: Direct access to extension and CLI configuration
-- **Documentation Hub**: Links to guides and references
+## Requirements
 
-### 🔌 CLI Integration
-- **Real-time Discovery**: Connect to i2vision CLI for live codebase analysis
-- **Architecture Analysis**: Detect and visualize architecture violations
-- **Project Creation**: Scaffold new projects from templates
-- **Context Extraction**: Get VSLF context for any file
+- **VSCode**: 1.80.0 or higher
+- **Ollama**: Required for LLM inference
+- **Node.js**: 18.x or higher
 
-### 🎯 Smart Commands
-- `i2vision.refreshTree` - Refresh discovery data
-- `i2vision.createProject` - Create new projects
-- `i2vision.openProject` - Open existing projects
-- `i2vision.showDiscovery` - View discovery results
-- `i2vision.analyzeArchitecture` - Run architecture analysis
-- `i2vision.viewDocumentation` - Access documentation
-
-### 📊 Architecture Visualization
-- **Layer-based Grouping**: Components organized by architectural layer
-- **Dependency Tracking**: Visualize component relationships
-- **Violation Detection**: Highlight architecture rule violations
-- **Metrics Display**: View complexity, coupling, and cohesion
-
-## 🚀 Quick Start
-
-### Installation
-
-1. **Clone the repository:**
-   ```bash
-   git clone https://github.com/i2vision/i2-vision.git
-   cd i2-vision/vscode-app
-   ```
-
-2. **Install dependencies:**
-   ```bash
-   npm install
-   ```
-
-3. **Compile TypeScript:**
-   ```bash
-   npm run compile
-   ```
-
-4. **Launch Extension:**
-   - Open `vscode-app` folder in VSCode
-   - Press `F5` to launch Extension Development Host
-   - Look for the **i2-Vision Explorer** icon in the Activity Bar
-
-### Building the CLI Backend (Optional)
-
-For full functionality with real discovery data:
+### Install Ollama
 
 ```bash
-# From project root
-cd D:/proj/AI/i2-vision
+# Windows
+winget install Ollama.Ollama
 
-# Build CLI module
-./gradlew :i2vision-cli:build
+# macOS
+brew install ollama
 
-# Install to system
-./gradlew :i2vision-cli:installDist
-
-# Add to PATH (Windows)
-$env:PATH += ";D:\proj\AI\i2-vision\i2vision-cli\build\install\i2vision-cli\bin"
+# Linux
+curl -fsSL https://ollama.com/install.sh | sh
 ```
 
-## 📁 Project Structure
-
-```
-vscode-app/
-├── src/
-│   ├── extension.ts              # Extension entry point
-│   ├── cliIntegration.ts         # CLI wrapper and interfaces
-│   ├── treeViewProvider.ts       # Tree view data provider
-│   └── test/
-│       ├── suite/
-│       │   ├── index.ts          # Test runner
-│       │   └── extension.test.ts # Unit tests
-│       └── runTest.ts            # Test entry point
-├── resources/
-│   ├── i2vision-icon.svg         # Extension icon
-│   ├── refresh.svg               # Refresh icon
-│   └── open.svg                  # Open icon
-├── out/                          # Compiled JavaScript
-├── .vscode/
-│   ├── launch.json               # Debug configurations
-│   └── tasks.json                # Build tasks
-├── package.json                  # Extension manifest
-├── tsconfig.json                 # TypeScript config
-├── README.md                     # This file
-├── QUICKSTART.md                 # Quick start guide
-├── INTEGRATION_GUIDE.md          # CLI integration docs
-├── CHANGELOG.md                  # Version history
-├── .vscodeignore                 # Package exclusions
-└── .gitignore                    # Git ignore rules
-```
-
-## 🎨 Tree View Structure
-
-```
-i2-Vision Explorer
-├── 📁 Projects
-│   └── i2-vision v1.0.0
-│       ├── 🏗️ presentation (1)
-│       │   └── 📦 vscode-app
-│       ├── 🏗️ application (2)
-│       │   ├── 📦 app
-│       │   └── 📄 DiscoveryService
-│       ├── 🏗️ infrastructure (2)
-│       │   ├── 📦 storage-core
-│       │   └── 📦 index-provider
-│       └── ⚠️ Violations (0)
-├── 📁 Templates
-│   ├── 📄 Basic Template (basic)
-│   ├── 📄 Advanced Template (advanced)
-│   ├── 📄 Enterprise Template (enterprise)
-│   └── 📄 Microservice Template (microservice)
-├── ⚙️ Settings
-│   ├── Extension Settings
-│   ├── CLI Configuration
-│   └── Architecture Rules
-└── 📖 Documentation
-    ├── Quick Start Guide
-    ├── Architecture Documentation
-    ├── API Reference
-    └── GitHub Repository
-```
-
-## 🔧 Commands
-
-### Available Commands
-
-| Command | Description | How to Access |
-|---------|-------------|---------------|
-| `i2vision.helloWorld` | Display greeting | Command Palette |
-| `i2vision.refreshTree` | Refresh tree view | Tree title bar / Command Palette |
-| `i2vision.createProject` | Create new project | Command Palette |
-| `i2vision.openProject` | Open project/file | Tree item context menu |
-| `i2vision.showDiscovery` | Display discovery results | Command Palette |
-| `i2vision.analyzeArchitecture` | Run architecture analysis | Command Palette |
-| `i2vision.viewDocumentation` | View documentation | Command Palette |
-
-### Using Commands
-
-**Command Palette:**
-1. Press `Ctrl+Shift+P` (Windows/Linux) or `Cmd+Shift+P` (macOS)
-2. Type `i2-Vision` to filter commands
-3. Select desired command
-
-**Tree View:**
-- Click items to expand/collapse
-- Right-click for context menu
-- Click refresh icon in title bar
-
-## 🧪 Development
-
-### Build Commands
+### Pull Required Models
 
 ```bash
-# Compile TypeScript
+ollama pull qwen2.5-coder:7b
+ollama pull qwen2.5:7b
+```
+
+## Installation
+
+### From VSIX (Recommended)
+
+1. Download `i2-vision-vscode-1.0.0.vsix`
+2. Open VSCode
+3. Extensions → ⋯ (More Actions) → Install from VSIX
+4. Select the `.vsix` file
+5. Reload VSCode
+
+### From Source
+
+```bash
+cd vscode-app
+npm install
 npm run compile
-
-# Watch for changes
-npm run watch
-
-# Run linter
-npm run lint
-
-# Run tests
-npm test
-
-# Package extension
-vsce package
+npm run package
+# Installs the extension automatically
 ```
 
-### Debugging
+## Quick Start
 
-1. **Open vscode-app in VSCode**
-2. **Press F5** to launch Extension Development Host
-3. **Set breakpoints** in TypeScript files
-4. **Debug** in the new VSCode window
+1. **Open Command Palette**: `Ctrl+Shift+P` (Windows/Linux) or `Cmd+Shift+P` (macOS)
+2. **Create Agent Tab**: Select `i2-Vision: Create Agent Tab`
+3. **Choose Agent**: Select from Coding, Logic, Flow, Structure, or Vision
+4. **Start Chatting**: Ask the agent to help with your task
 
-### Testing
+### Example Prompts
+
+```
+"List all TypeScript files in the current directory"
+"Read the package.json file"
+"Search for 'export function' in all .ts files"
+"Create a new file called test.ts with a hello world function"
+"Run npm test and show me the results"
+```
+
+## Agents
+
+### Coding Agent
+- **Model**: qwen2.5-coder:7b
+- **Purpose**: Code generation, refactoring, debugging
+- **Tools**: All file operations, command execution
+
+### Logic Agent
+- **Model**: qwen2.5:7b
+- **Purpose**: Problem solving, algorithm design
+- **Tools**: Read/search operations, analysis
+
+### Flow Agent
+- **Model**: qwen2.5:7b
+- **Purpose**: Workflow automation, task orchestration
+- **Tools**: Command execution, file operations
+
+### Structure Agent
+- **Model**: qwen2.5:7b
+- **Purpose**: Architecture analysis, project structure
+- **Tools**: Directory listing, search, context retrieval
+
+### Vision Agent
+- **Model**: qwen2.5-coder:7b
+- **Purpose**: Visual understanding, UI analysis
+- **Tools**: File operations, search
+
+## Configuration
+
+Agents are configured in `.vscode/i2vision/agents/*.yaml`. You can customize:
+
+- System prompts
+- Model selection
+- Iteration limits
+- Tool selection
+- Timeouts
+
+### Example Configuration
+
+```yaml
+key: my-custom-agent
+agentType: code-assistant
+name: "My Custom Agent"
+description: "Custom coding assistant"
+systemPromptTemplate: |
+  You are a helpful coding assistant...
+model:
+  id: qwen2.5-coder:7b
+  provider: ollama
+  baseUrl: http://localhost:11434
+iterationSettings:
+  maxIterations: 10
+  maxToolCallsPerIteration: 5
+toolSelection:
+  allowedTools:
+    - read_file
+    - write_file
+    - list_directory
+  toolTimeoutSeconds: 30
+```
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `i2-Vision: Create Agent Tab` | Create a new agent chat tab |
+| `i2-Vision: Focus Agent Tab` | Focus an existing agent tab |
+| `i2-Vision: Clear Agent History` | Clear chat history in current tab |
+
+## Tool Calling
+
+The extension supports 6 built-in tools:
+
+### read_file
+```
+Read the contents of a file
+
+Parameters:
+- path: string (relative to workspace root)
+```
+
+### write_file
+```
+Write content to a file
+
+Parameters:
+- path: string (relative to workspace root)
+- content: string
+```
+
+### list_directory
+```
+List files and directories
+
+Parameters:
+- path: string (relative to workspace root, default: ".")
+- recursive: boolean (default: false)
+```
+
+### search_files
+```
+Search for a pattern in files
+
+Parameters:
+- pattern: string (regex)
+- path: string (optional, default: workspace root)
+- file_pattern: string (optional, e.g., "*.ts")
+```
+
+### run_command
+```
+Execute a terminal command
+
+Parameters:
+- command: string
+- working_dir: string (optional, default: workspace root)
+
+Note: Long-running servers are blocked (npm run dev, gradlew run, etc.)
+```
+
+### get_file_context
+```
+Get context around a specific location in a file
+
+Parameters:
+- file: string
+- line: number
+- context_lines: number (default: 10)
+```
+
+## Safety Features
+
+### Path Validation
+- Blocks paths outside workspace
+- Prevents directory traversal attacks
+- Validates absolute vs relative paths
+
+### Command Blocking
+Blocked command patterns:
+- `npm run dev`, `npm run start`
+- `gradlew run`, `mvn spring-boot:run`
+- `python app.py`, `node server.js`
+- Any long-running server process
+
+### Workspace Isolation
+- Agents operate on workspace files only
+- Extension files are protected
+- Prevents accidental modification of extension code
+
+## Troubleshooting
+
+### Agent Not Responding
+1. Check Ollama is running: `ollama list`
+2. Verify model is pulled: `ollama pull qwen2.5-coder:7b`
+3. Check Ollama server: `http://localhost:11434`
+
+### Tool Calls Failing
+1. Verify file paths are relative to workspace root
+2. Check file permissions
+3. Ensure commands don't match blocked patterns
+
+### Loop Detection Triggered
+- Agent detected repeated tool calls
+- Try a different approach or be more specific in your request
+- Agent will automatically nudge the LLM to try alternatives
+
+### Plan Detection Triggered
+- LLM described a plan instead of executing tools
+- Agent will force tool execution
+- Be direct in your requests: "Read file X" not "I should read file X"
+
+## Development
+
+See [docs/STRUCTURE.md](docs/STRUCTURE.md) for development workflow.
+
+### Quick Start
 
 ```bash
-# Run all tests
-npm test
-
-# Test specific suite
-npm test -- --grep "CLI Integration"
+cd vscode-app
+npm install
+npm run compile
+# Press F5 to debug
 ```
 
-**Test Coverage:**
-- CLI integration methods
-- Tree provider functionality
-- Command registration
-- Data structure validation
+### Packaging
 
-## 📊 Architecture
-
-### Component Diagram
-
-```
-┌─────────────────────────────────────────────────┐
-│           VSCode Extension Host                 │
-├─────────────────────────────────────────────────┤
-│  extension.ts                                   │
-│  - Command registration                         │
-│  - Event handling                               │
-│  - Output channel                               │
-├─────────────────────────────────────────────────┤
-│  treeViewProvider.ts                            │
-│  - TreeDataProvider implementation              │
-│  - Dynamic tree building                        │
-│  - Caching layer                                │
-├─────────────────────────────────────────────────┤
-│  cliIntegration.ts                              │
-│  - CLI wrapper                                  │
-│  - Mock data fallback                           │
-│  - Interface definitions                        │
-└─────────────────────────────────────────────────┘
-                        │
-                        │ CLI commands (JSON)
-                        ▼
-┌─────────────────────────────────────────────────┐
-│         i2vision CLI Backend                    │
-│  - Code discovery                               │
-│  - Architecture analysis                        │
-│  - Template management                          │
-└─────────────────────────────────────────────────┘
+```bash
+npm install -g @vscode/vsce
+vsce package
+# Creates: i2-vision-vscode-1.0.0.vsix
 ```
 
-### Data Flow
+## Documentation
 
-1. **User Action** → Extension Command
-2. **Command** → CLI Integration
-3. **CLI** → Execute i2vision-cli
-4. **Backend** → Return JSON
-5. **CLI** → Parse to TypeScript interfaces
-6. **Tree Provider** → Build tree items
-7. **VSCode** → Render tree view
+- **[Extension Docs](docs/README.md)** - Extension-specific documentation
+- **[Structure Guide](docs/STRUCTURE.md)** - File layout and architecture
+- **[Tool Testing](docs/AGENT_TOOL_CALLING_TEST.md)** - How to test agent tools
+- **[Main Project Docs](../docs/README.md)** - Core i2-vision documentation
 
-## 🔌 API Reference
+## Changelog
 
-### I2VisionCLI Class
+See [CHANGELOG.md](CHANGELOG.md) for version history.
 
-```typescript
-class I2VisionCLI {
-  constructor(workspaceRoot: string, outputChannel?: OutputChannel)
-  
-  // Discovery
-  runDiscovery(): Promise<DiscoveryResult>
-  
-  // Context
-  getContext(filePath: string): Promise<VSLFContext>
-  
-  // Templates
-  listTemplates(): Promise<TemplateInfo[]>
-  createProject(template: string, name: string, variables: Record<string, string>): Promise<boolean>
-  
-  // Analysis
-  analyzeViolations(): Promise<Violation[]>
-  
-  // Utility
-  isAvailable(): Promise<boolean>
-}
-```
+## License
 
-### I2VisionTreeProvider Class
+MIT + Commercial (see [LICENSE](LICENSE))
 
-```typescript
-class I2VisionTreeProvider implements TreeDataProvider<I2VisionTreeItem> {
-  constructor(workspaceRoot: string, outputChannel?: OutputChannel)
-  
-  // TreeDataProvider methods
-  getTreeItem(element: I2VisionTreeItem): TreeItem
-  getChildren(element?: I2VisionTreeItem): Promise<I2VisionTreeItem[]>
-  
-  // Custom methods
-  refresh(): void
-  getDiscoveryCache(): DiscoveryResult | null
-  getTemplatesCache(): TemplateInfo[] | null
-}
-```
+## Support
 
-## 📦 Dependencies
-
-### Runtime
-- **VSCode API**: ^1.90.0
-- **Node.js**: 18+
-- **TypeScript**: 5.4+
-
-### Development
-- **@types/vscode**: ^1.90.0
-- **@types/node**: ^20.0.0
-- **@types/mocha**: ^10.0.0
-- **eslint**: ^8.57.0
-- **@vscode/test-electron**: ^2.3.9
-
-## 🎯 Use Cases
-
-### 1. Explore Project Architecture
-```
-1. Open i2-Vision Explorer
-2. Click "Projects" folder
-3. Expand layers to see components
-4. Click components to open files
-```
-
-### 2. Create New Project
-```
-1. Press Ctrl+Shift+P
-2. Run "i2-Vision: Create New Project"
-3. Select template
-4. Enter project name and variables
-5. Project is created and opened
-```
-
-### 3. Analyze Architecture
-```
-1. Press Ctrl+Shift+P
-2. Run "i2-Vision: Analyze Architecture"
-3. View violations in Output panel
-4. Fix violations in code
-5. Re-run analysis to verify
-```
-
-### 4. Browse Templates
-```
-1. Open i2-Vision Explorer
-2. Click "Templates" folder
-3. Expand templates to see variables
-4. Select template for project creation
-```
-
-## ⚠️ Known Limitations
-
-1. **Mock Data**: Without CLI backend, only mock data is shown
-2. **File Opening**: Requires workspace folder to be open
-3. **Real-time Updates**: Manual refresh required for changes
-4. **LSP Features**: Not yet implemented (planned)
-
-## 🚧 Roadmap
-
-### v1.1.0 (Next)
-- [ ] Webview architecture diagrams
-- [ ] Status bar integration
-- [ ] File system integration improvements
-
-### v1.2.0
-- [ ] LSP integration for semantic navigation
-- [ ] CodeLens for layer information
-- [ ] Hover tooltips with VSLF context
-
-### v2.0.0
-- [ ] AI chat panel with codebase context
-- [ ] Real-time background analysis
-- [ ] Quick fixes for violations
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests: `npm test`
-5. Submit a pull request
-
-## 📄 License
-
-MIT License - see [LICENSE](LICENSE) file for details.
-
-## 🆘 Support
-
-- **Documentation**: See [INTEGRATION_GUIDE.md](INTEGRATION_GUIDE.md)
-- **Quick Start**: See [QUICKSTART.md](QUICKSTART.md)
-- **Issues**: Open an issue on GitHub
-- **Discussions**: GitHub Discussions tab
-
-## 🙏 Acknowledgments
-
-- Built with [VSCode Extension API](https://code.visualstudio.com/api)
-- Powered by [i2vision CLI](../i2vision-cli)
-- Icons from [VSCode Codicons](https://github.com/microsoft/vscode-codicons)
-
----
-
-**Enjoy exploring your architecture! 🚀**
-
+- **Issues**: GitHub Issues
+- **Discussions**: GitHub Discussions
+- **Documentation**: [docs/README.md](docs/README.md)

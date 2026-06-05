@@ -1,39 +1,26 @@
-# Change Log
+# Changelog
 
-All notable changes to the i2-Vision VSCode Extension will be documented in this file.
-
-## [1.0.0] - 2026-01-01
+## [1.0.0] - 2024
 
 ### Added
-- Initial release of i2-Vision VSCode Extension
-- Tree View implementation with project explorer
-- Activity bar icon for i2-Vision Explorer
-- Commands:
-  - `i2vision.helloWorld` - Display Hello World message
-  - `i2vision.createProject` - Create new i2-Vision projects
-  - `i2vision.openProject` - Open existing projects
-  - `i2vision.refreshTree` - Refresh the tree view
-- Tree structure with:
-  - Projects folder with sample projects
-  - Templates folder with sample templates
-  - Settings quick access
-  - Documentation link
-- Context menu actions for tree items
-- TypeScript configuration and build setup
-- Unit test framework with Mocha
-- VSCode launch configurations for debugging
+- Agent-based AI assistance with configurable agents
+- Real-time streaming progress updates
+- Tool calling: read_file, write_file, list_directory, search_files, run_command, get_file_context
+- Smart loop detection with nudge strategy
+- Plan detection to force tool execution
+- Blocked commands for long-running servers
+- Workspace-aware path resolution
+- Extension isolation (workspaceRoot ≠ extensionRoot)
 
 ### Changed
-- N/A
-
-### Deprecated
-- N/A
-
-### Removed
-- N/A
+- Removed `tool_calls` from assistant messages (Ollama compatibility)
+- Added `tool_call_id` linking for proper tool result association
+- Simplified error messages and removed temporary comments
+- Improved documentation structure
 
 ### Fixed
-- N/A
-
-### Security
-- N/A
+- Ollama 400 errors from incompatible message format
+- Infinite tool call loops
+- Plan-only responses without execution
+- Directory not found handling
+- Empty result formatting

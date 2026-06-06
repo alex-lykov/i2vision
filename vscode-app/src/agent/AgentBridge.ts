@@ -917,10 +917,12 @@ Please try a DIFFERENT approach:
 
   /**
    * Execute a tool call
+   * Modern approach: idempotent reads, guarded writes, structured output, timeouts
    */
   private async executeTool(toolCall: ToolCall): Promise<{ result: string; error?: string }> {
     try {
       switch (toolCall.toolName) {
+        // ===== FILE OPERATIONS =====
         case 'list_directory': {
           const dirPath = this.resolvePath(toolCall.args.path);
           const recursive = toolCall.args.recursive === true;
@@ -1025,6 +1027,136 @@ Please try a DIFFERENT approach:
           return { result };
         }
         
+        case 'get_file_context': {
+          const filePath = this.resolvePath(toolCall.args.path);
+          this.log(`  Getting file context: ${filePath}`);
+          
+          const context = await this.cli.getContext(filePath);
+          
+          return {
+            result: JSON.stringify(context, null, 2)
+          };
+        }
+        
+        // ===== GIT OPERATIONS =====
+        case 'git_status': {
+          this.log(`  Running: git status --porcelain`);
+          const result = await this.cli.runCommand('git status --porcelain');
+          
+          if (!result.stdout.trim()) {
+            return { result: 'Working tree clean. No changes.' };
+          }
+          
+          return { result: this.formatGitStatus(result.stdout) };
+        }
+        
+        case 'git_diff': {
+          const target = toolCall.args.target || 'unstaged';
+          const filePath = toolCall.args.path || '';
+          const flag = target === 'staged' ? '--staged' : '';
+          
+          this.log(`  Running: git diff ${flag} ${filePath}`);
+          const result = await this.cli.runCommand(`git diff ${flag} ${filePath}`);
+          
+          return { result: result.stdout || 'No differences.' };
+        }
+        
+        case 'git_log': {
+          const count = Math.min(toolCall.args.count || 10, 50);
+          
+          this.log(`  Running: git log --oneline -${count}`);
+          const result = await this.cli.runCommand(`git log --oneline -${count}`);
+          
+          return { result: result.stdout || 'No commits.' };
+        }
+        
+        case 'git_branch': {
+          const action = toolCall.args.action || 'current';
+          
+          if (action === 'current') {
+            this.log(`  Running: git branch --show-current`);
+            const result = await this.cli.runCommand('git branch --show-current');
+            return { result: result.stdout.trim() || 'Not in a git repository' };
+          } else {
+            this.log(`  Running: git branch`);
+            const result = await this.cli.runCommand('git branch');
+            return { result: result.stdout || 'No branches found' };
+          }
+        }
+        
+        case 'git_commit': {
+          const message = toolCall.args.message;
+          const files = toolCall.args.files || ['.'];
+          
+          this.log(`  Git commit: "${message}" for ${files.length} files`);
+          
+          // Stage files
+          for (const f of files) {
+            this.log(`    Staging: ${f}`);
+            await this.cli.runCommand(`git add "${f}"`);
+          }
+          
+          // Commit
+          const safeMessage = message.replace(/"/g, '\\"');
+          const result = await this.cli.runCommand(`git commit -m "${safeMessage}"`);
+          
+          const output = result.stdout || result.stderr || 'Committed successfully.';
+          return { result: output };
+        }
+        
+        // ===== BUILD & TERMINAL OPERATIONS =====
+        case 'run_build': {
+          const command = toolCall.args.command;
+          const timeout = 120000; // 2 minutes
+          
+          this.log(`  Running build: ${command} (timeout: ${timeout}ms)`);
+          
+          const result = await this.runCommandWithTimeout(command, timeout);
+          
+          // Parse build results
+          const hasError = result.stderr?.includes('FAILED') || 
+                          result.stderr?.includes('BUILD FAILED') ||
+                          result.stderr?.includes('error') ||
+                          result.stdout?.includes('FAILED');
+          
+          const summary = hasError 
+            ? `Build failed:\n${this.extractBuildErrors(result.stderr || result.stdout)}`
+            : 'Build successful ✅';
+          
+          // Return structured result
+          return {
+            result: `${summary}\n\n--- Output (last 1000 chars) ---\n${(result.stdout || '').slice(-1000)}`
+          };
+        }
+        
+        case 'run_terminal': {
+          const command = toolCall.args.command;
+          const workingDir = toolCall.args.workingDir 
+            ? this.resolvePath(toolCall.args.workingDir) 
+            : undefined;
+          
+          this.log(`  Running terminal: ${command}`);
+          
+          // Block dangerous/long-running commands
+          const blocked = AgentBridge.BLOCKED_COMMAND_PATTERNS;
+          const isBlocked = blocked.some(b => command.includes(b));
+          
+          if (isBlocked) {
+            return { 
+              result: '', 
+              error: `BLOCKED: This command starts a server or long-running process ('${blocked.find(b => command.includes(b))}'). Tell the user to run it manually in their terminal instead.`
+            };
+          }
+          
+          const timeout = 30000; // 30 seconds
+          const result = await this.runCommandWithTimeout(command, timeout, workingDir);
+          
+          return { 
+            result: result.stdout || result.stderr || 'Command completed with no output.' 
+          };
+        }
+        
+        // Legacy - kept for backward compatibility
         case 'run_command': {
           const command = toolCall.args.command;
           const workingDir = toolCall.args.workingDir ? this.resolvePath(toolCall.args.workingDir) : undefined;
@@ -1048,17 +1180,6 @@ Please try a DIFFERENT approach:
           };
         }
         
-        case 'get_file_context': {
-          const filePath = this.resolvePath(toolCall.args.path);
-          this.log(`  Getting file context: ${filePath}`);
-          
-          const context = await this.cli.getContext(filePath);
-          
-          return {
-            result: JSON.stringify(context, null, 2)
-          };
-        }
-        
         default:
           throw new Error(`Unknown tool: ${toolCall.toolName}`);
       }
@@ -1069,6 +1190,111 @@ Please try a DIFFERENT approach:
         error: error.message
       };
     }
+  }
+
+  /**
+   * Run command with timeout and structured output
+   * Modern approach: spawn with timeout, truncate large output
+   */
+  private async runCommandWithTimeout(
+    command: string,
+    timeoutMs: number,
+    workingDir?: string
+  ): Promise<{ stdout: string; stderr: string }> {
+    const { spawn } = require('child_process');
+    const path = require('path');
+    
+    return new Promise((resolve) => {
+      const proc = spawn(command, {
+        shell: true,
+        cwd: workingDir || this.workspaceRoot,
+        timeout: timeoutMs
+      });
+      
+      let stdout = '';
+      let stderr = '';
+      let timedOut = false;
+      
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        proc.kill();
+        stderr += `\n\n[TIMEOUT] Command exceeded ${timeoutMs}ms limit`;
+      }, timeoutMs);
+      
+      proc.stdout?.on('data', (data: Buffer) => {
+        stdout += data.toString();
+        // Truncate if too large (prevent memory issues)
+        if (stdout.length > 10000) {
+          stdout = stdout.slice(0, 10000) + '\n... (output truncated - exceeded 10KB)';
+          proc.kill();
+        }
+      });
+      
+      proc.stderr?.on('data', (data: Buffer) => {
+        stderr += data.toString();
+        if (stderr.length > 5000) {
+          stderr = stderr.slice(0, 5000) + '\n... (stderr truncated - exceeded 5KB)';
+        }
+      });
+      
+      proc.on('close', (code: number | null) => {
+        clearTimeout(timeout);
+        resolve({ stdout, stderr });
+      });
+      
+      proc.on('error', (err: Error) => {
+        clearTimeout(timeout);
+        resolve({ stdout, stderr: err.message });
+      });
+      
+      proc.on('timeout', () => {
+        timedOut = true;
+        proc.kill();
+      });
+    });
+  }
+
+  /**
+   * Format git status output into structured sections
+   */
+  private formatGitStatus(output: string): string {
+    if (!output.trim()) return 'No changes.';
+    
+    const lines = output.trim().split('\n');
+    const staged = lines.filter(l => /^[MADRC]/.test(l.charAt(0)));
+    const unstaged = lines.filter(l => /^.[MADRC]/.test(l));
+    const untracked = lines.filter(l => l.startsWith('??'));
+    
+    let result = '';
+    if (staged.length) result += `**Staged changes:**\n${staged.map(l => '  ' + l).join('\n')}\n\n`;
+    if (unstaged.length) result += `**Unstaged changes:**\n${unstaged.map(l => '  ' + l).join('\n')}\n\n`;
+    if (untracked.length) result += `**Untracked files:**\n${untracked.map(l => '  ' + l).join('\n')}`;
+    
+    return result || output;
+  }
+
+  /**
+   * Extract build errors from output
+   */
+  private extractBuildErrors(output: string): string {
+    if (!output) return 'Unknown error';
+    
+    // Look for common error patterns
+    const errorLines = output.split('\n')
+      .filter(line => 
+        line.toLowerCase().includes('error') ||
+        line.toLowerCase().includes('failed') ||
+        line.includes('❌') ||
+        line.includes('^') // Compiler error marker
+      )
+      .slice(0, 10); // Limit to first 10 error lines
+    
+    if (errorLines.length > 0) {
+      return errorLines.join('\n');
+    }
+    
+    // Fallback: return last 500 chars of output
+    return output.slice(-500);
   }
 
   /**
@@ -1083,9 +1309,11 @@ Please try a DIFFERENT approach:
 
   /**
    * Get available tools
+   * Modern tool design: idempotent reads, guarded writes, structured output, timeouts
    */
   private getTools(): LLMTool[] {
     return [
+      // ===== FILE OPERATIONS =====
       {
         type: 'function',
         function: {
@@ -1119,7 +1347,7 @@ Please try a DIFFERENT approach:
         type: 'function',
         function: {
           name: 'write_file',
-          description: 'Write content to a file',
+          description: 'Write content to a file. ALWAYS show the user what will be written first.',
           parameters: {
             type: 'object',
             properties: {
@@ -1148,21 +1376,6 @@ Please try a DIFFERENT approach:
       {
         type: 'function',
         function: {
-          name: 'run_command',
-          description: 'Run a shell command (BLOCKED: long-running servers like npm run dev, gradlew run, etc.)',
-          parameters: {
-            type: 'object',
-            properties: {
-              command: { type: 'string', description: 'Command to execute' },
-              workingDir: { type: 'string', description: 'Working directory (optional)' }
-            },
-            required: ['command']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
           name: 'get_file_context',
           description: 'Get context for a specific file (classes, functions, imports)',
           parameters: {
@@ -1171,6 +1384,155 @@ Please try a DIFFERENT approach:
               path: { type: 'string', description: 'File path (relative to workspace root)' }
             },
             required: ['path']
+          }
+        }
+      },
+      
+      // ===== GIT OPERATIONS (Read-only by default) =====
+      {
+        type: 'function',
+        function: {
+          name: 'git_status',
+          description: 'Show working tree status — modified, staged, untracked files. Read-only.',
+          parameters: {
+            type: 'object',
+            properties: {},
+            required: []
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'git_diff',
+          description: 'Show changes between commits, staged, or working tree. Read-only.',
+          parameters: {
+            type: 'object',
+            properties: {
+              target: { 
+                type: 'string', 
+                enum: ['staged', 'unstaged', 'all'], 
+                description: 'What to diff' 
+              },
+              path: { 
+                type: 'string', 
+                description: 'Specific file or directory (optional)' 
+              }
+            },
+            required: ['target']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'git_log',
+          description: 'Show commit history. Read-only.',
+          parameters: {
+            type: 'object',
+            properties: {
+              count: { 
+                type: 'number', 
+                description: 'Number of commits (default 10, max 50)' 
+              }
+            },
+            required: []
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'git_branch',
+          description: 'List branches or show current branch. Read-only.',
+          parameters: {
+            type: 'object',
+            properties: {
+              action: { 
+                type: 'string', 
+                enum: ['list', 'current'], 
+                description: 'What to show' 
+              }
+            },
+            required: []
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'git_commit',
+          description: 'Stage and commit changes. ALWAYS show the user what will be committed first and get confirmation.',
+          parameters: {
+            type: 'object',
+            properties: {
+              message: { 
+                type: 'string', 
+                description: 'Commit message' 
+              },
+              files: { 
+                type: 'array', 
+                items: { type: 'string' }, 
+                description: 'Files to stage (empty = all modified)' 
+              }
+            },
+            required: ['message']
+          }
+        }
+      },
+      
+      // ===== BUILD & TERMINAL OPERATIONS (With timeouts and safety) =====
+      {
+        type: 'function',
+        function: {
+          name: 'run_build',
+          description: 'Run a build command and return results. Commands time out after 120 seconds. Use predefined commands only.',
+          parameters: {
+            type: 'object',
+            properties: {
+              command: { 
+                type: 'string', 
+                enum: [
+                  './gradlew build',
+                  './gradlew compileKotlin',
+                  './gradlew test',
+                  './gradlew :app:test',
+                  'gradlew.bat build',
+                  'gradlew.bat compileKotlin',
+                  'gradlew.bat test',
+                  'npm run build',
+                  'npm test',
+                  'npm run lint',
+                  'npm run compile',
+                  'tsc',
+                  'mvn clean install',
+                  'mvn test'
+                ],
+                description: 'Build command to run'
+              }
+            },
+            required: ['command']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'run_terminal',
+          description: 'Run a short-lived terminal command and return stdout/stderr. Max 30 seconds. BLOCKED: servers, watchers, interactive commands.',
+          parameters: {
+            type: 'object',
+            properties: {
+              command: { 
+                type: 'string', 
+                description: 'Shell command to execute' 
+              },
+              workingDir: { 
+                type: 'string', 
+                description: 'Working directory relative to project root (optional)' 
+              }
+            },
+            required: ['command']
           }
         }
       }

@@ -240,7 +240,7 @@ export class AgentTabManager {
       // Use streaming for better UX - shows "Hi!" instantly
       this.log(`=== Using streaming mode ===`);
       
-      const AGENT_TIMEOUT_MS = 60000; // 60 second timeout
+      const AGENT_TIMEOUT_MS = 180000; // 3 minute timeout (for builds and multi-step operations)
       const requestId = `request-${Date.now()}`;
       
       let accumulatedText = '';

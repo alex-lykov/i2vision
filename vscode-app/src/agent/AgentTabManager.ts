@@ -238,45 +238,108 @@ export class AgentTabManager {
       };
 
       // Use streaming for better UX - shows "Hi!" instantly
-      this.log(`=== Using streaming mode ===`);
+      this.log(`=== Using streaming mode with idle-based timeout ===`);
       
-      const AGENT_TIMEOUT_MS = 180000; // 3 minute timeout (for builds and multi-step operations)
       const requestId = `request-${Date.now()}`;
+      
+      // Idle-based timeout: only timeout if agent is idle for 30 seconds
+      // Progress events (tool calls, text streaming) reset the timer
+      const IDLE_TIMEOUT_MS = 30000; // 30 seconds of no activity = timeout
+      let idleTimer: NodeJS.Timeout | null = null;
+      
+      const resetIdleTimer = () => {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          this.log(`⚠️ Agent idle for ${IDLE_TIMEOUT_MS}ms - timing out`);
+          throw new Error(`Agent idle for ${IDLE_TIMEOUT_MS / 1000} seconds (no progress events)`);
+        }, IDLE_TIMEOUT_MS);
+        this.log(`Idle timer reset (will timeout in ${IDLE_TIMEOUT_MS / 1000}s if no progress)`);
+      };
       
       let accumulatedText = '';
       let toolCalls: any[] = [];
       let iterations = 1;
 
       const agentPromise = (async () => {
-        // Stream the response
-        for await (const chunk of tab.agent.processStreaming({
-          id: requestId,
-          task: userInput,
-          context: context
-        })) {
-          // Handle different chunk types
-          if (chunk.type === 'text') {
-            // Clean chunk text before streaming (strip reasoning:, EOS, etc.)
-            const cleanChunkText = this.cleanResponseText(chunk.text);
-            if (cleanChunkText) {
-              accumulatedText += cleanChunkText;
-              // Stream to webview immediately for better UX
+        // Start idle timer
+        resetIdleTimer();
+        
+        try {
+          // Stream the response
+          for await (const chunk of tab.agent.processStreaming({
+            id: requestId,
+            task: userInput,
+            context: context
+          })) {
+            // Reset idle timer on every chunk (agent is making progress)
+            resetIdleTimer();
+            
+            // Handle different chunk types
+            if (chunk.type === 'text') {
+              // Clean chunk text before streaming (strip reasoning:, EOS, etc.)
+              const cleanChunkText = this.cleanResponseText(chunk.text);
+              if (cleanChunkText) {
+                accumulatedText += cleanChunkText;
+                // Stream to webview immediately for better UX
+                tab.panel.webview.postMessage({
+                  command: 'streamingText',
+                  text: cleanChunkText,
+                  accumulated: accumulatedText
+                });
+              }
+            } else if (chunk.type === 'tool_call_started') {
+              this.log(`Tool call started: ${chunk.toolName}`);
+              // Send progress event to webview as heartbeat
               tab.panel.webview.postMessage({
-                command: 'streamingText',
-                text: cleanChunkText,
-                accumulated: accumulatedText
+                command: 'progress',
+                event: {
+                  type: 'tool_start',
+                  toolCall: {
+                    toolName: chunk.toolName,
+                    args: chunk.args
+                  }
+                }
               });
+            } else if (chunk.type === 'tool_call_completed') {
+              this.log(`Tool call completed: ${chunk.toolName}`);
+              const completedChunk = chunk as { type: 'tool_call_completed'; toolName: string; args: any; result: string; timestamp: number };
+              toolCalls.push({
+                toolName: completedChunk.toolName,
+                args: completedChunk.args,
+                result: completedChunk.result
+              });
+              // Send completion event to webview
+              tab.panel.webview.postMessage({
+                command: 'progress',
+                event: {
+                  type: 'tool_complete',
+                  toolCall: {
+                    toolName: completedChunk.toolName,
+                    args: completedChunk.args,
+                    result: completedChunk.result
+                  }
+                }
+              });
+            } else if (chunk.type === 'iteration_complete') {
+              this.log(`Iteration ${chunk.iteration} complete`);
+              tab.panel.webview.postMessage({
+                command: 'progress',
+                event: {
+                  type: 'iteration_complete',
+                  iteration: chunk.iteration
+                }
+              });
+            } else if (chunk.type === 'done') {
+              const doneChunk = chunk as { type: 'done'; outcome: string; timestamp: number; iterations?: number };
+              iterations = doneChunk.iterations || 1;
+              this.log(`Streaming done: ${iterations} iterations`);
             }
-          } else if (chunk.type === 'tool_call_started') {
-            this.log(`Tool call started: ${chunk.toolName}`);
-          } else if (chunk.type === 'tool_call_completed') {
-            toolCalls.push({
-              toolName: chunk.toolName,
-              args: chunk.args,
-              result: chunk.result
-            });
-          } else if (chunk.type === 'done') {
-            iterations = 1; // Streaming doesn't track iterations yet
+          }
+        } finally {
+          // Clean up idle timer
+          if (idleTimer) {
+            clearTimeout(idleTimer);
+            idleTimer = null;
           }
         }
         
@@ -290,13 +353,7 @@ export class AgentTabManager {
         };
       })();
 
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => {
-          reject(new Error(`agent.processStreaming() timed out after ${AGENT_TIMEOUT_MS}ms`));
-        }, AGENT_TIMEOUT_MS);
-      });
-
-      const response = await Promise.race([agentPromise, timeoutPromise]);
+      const response = await agentPromise;
 
       this.log(`=== DIAGNOSTIC: agent.processStreaming() returned ===`);
       this.log(`Response finalText length: ${response.finalText?.length || 0}`);

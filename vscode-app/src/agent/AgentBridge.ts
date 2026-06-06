@@ -161,10 +161,11 @@ export interface ToolCall {
  * Progress event for real-time updates
  */
 export interface ProgressEvent {
-  type: 'tool_start' | 'tool_complete' | 'iteration_complete' | 'thinking';
+  type: 'tool_start' | 'tool_complete' | 'iteration_complete' | 'thinking' | 'tool_output';
   iteration: number;
   toolCall?: ToolCall;
   message?: string;
+  partialOutput?: string; // For streaming build output
 }
 
 /**
@@ -214,7 +215,8 @@ export type AgentChunk =
   | { type: 'tool_call_started'; toolName: string; args: Record<string, any>; timestamp: number }
   | { type: 'tool_call_completed'; toolName: string; result: string; timestamp: number }
   | { type: 'text'; text: string; timestamp: number }
-  | { type: 'done'; outcome: 'success' | 'error'; timestamp: number }
+  | { type: 'done'; outcome: 'success' | 'error'; timestamp: number; iterations?: number }
+  | { type: 'iteration_complete'; iteration: number; timestamp: number }
   | { type: 'error'; error: string; timestamp: number };
 
 /**
@@ -236,6 +238,8 @@ export class AgentBridge {
   private outputChannel?: vscode.OutputChannel;
   private workspaceRoot: string;
   private extensionRoot: string;
+  private currentIteration: number = 1;
+  private progressCallback?: ProgressCallback;
 
   // Truncation settings
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000; // characters
@@ -317,6 +321,15 @@ export class AgentBridge {
       this.outputChannel.appendLine(formatted);
     }
     console.log(formatted);
+  }
+
+  /**
+   * Emit progress event to callback
+   */
+  private emitProgress(event: ProgressEvent): void {
+    if (this.progressCallback) {
+      this.progressCallback(event);
+    }
   }
 
   /**
@@ -612,6 +625,13 @@ export class AgentBridge {
         role: 'user',
         content: `Tool results received. You have ${maxIterations - iteration} of ${maxIterations} iterations remaining. If you have enough information to answer the user's question, provide your answer now. Only call another tool if you're missing critical information.`
       });
+
+      // Emit iteration complete chunk
+      yield {
+        type: 'iteration_complete',
+        iteration,
+        timestamp: Date.now()
+      };
     }
 
     this.log(`Max iterations (${maxIterations}) reached without final answer - giving LLM one more chance`);
@@ -619,18 +639,20 @@ export class AgentBridge {
     const finalResponse = await this.callLLM(messages, tools);
     if (finalResponse.toolCalls.length === 0) {
       this.log(`Final answer from LLM: ${finalResponse.content.length} chars`);
-      return {
-        finalText: finalResponse.content,
-        toolCalls,
-        iterations: maxIterations + 1,
-        success: true
+      yield {
+        type: 'done',
+        outcome: 'success',
+        timestamp: Date.now(),
+        iterations: maxIterations + 1
       };
+      return;
     }
     
     yield {
       type: 'done',
       outcome: 'success',
-      timestamp: Date.now()
+      timestamp: Date.now(),
+      iterations: maxIterations
     };
   }
 
@@ -643,6 +665,9 @@ export class AgentBridge {
     context?: ProcessContext,
     onProgress?: ProgressCallback
   ): Promise<{ finalText: string; toolCalls: ToolCall[]; iterations: number; success?: boolean; error?: string }> {
+    // Set progress callback for this execution
+    this.progressCallback = onProgress;
+    
     const messages: LLMMessage[] = [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userInput }
@@ -656,6 +681,7 @@ export class AgentBridge {
     this.log(`Starting agent loop with max ${maxIterations} iterations`);
 
     for (let iteration = 1; iteration <= maxIterations; iteration++) {
+      this.currentIteration = iteration;
       this.log(`=== Iteration ${iteration}/${maxIterations} ===`);
 
       // Emit thinking event
@@ -1111,21 +1137,65 @@ Please try a DIFFERENT approach:
           
           this.log(`  Running build: ${command} (timeout: ${timeout}ms)`);
           
-          const result = await this.runCommandWithTimeout(command, timeout);
+          // Run build with progress streaming
+          const result = await this.runCommandWithTimeout(command, timeout, undefined, (output: string) => {
+            // Send partial output as heartbeat during long builds
+            // This resets the idle timeout and shows user progress
+            const partialOutput = output.slice(-200); // Last 200 chars
+            this.emitProgress({
+              type: 'tool_output',
+              toolCall: { toolName: 'run_build', args: toolCall.args },
+              partialOutput: partialOutput,
+              iteration: this.currentIteration
+            });
+          });
           
-          // Parse build results
-          const hasError = result.stderr?.includes('FAILED') || 
+          this.log(`  Build completed: exitCode=${result.exitCode}, stdout=${result.stdout.length} chars, stderr=${result.stderr.length} chars`);
+          
+          // Parse build results - check for errors in both stdout and stderr
+          const hasError = result.exitCode !== 0 ||
+                          result.stderr?.includes('FAILED') || 
                           result.stderr?.includes('BUILD FAILED') ||
                           result.stderr?.includes('error') ||
-                          result.stdout?.includes('FAILED');
+                          result.stdout?.includes('FAILED') ||
+                          result.stdout?.includes('error:');
           
-          const summary = hasError 
-            ? `Build failed:\n${this.extractBuildErrors(result.stderr || result.stdout)}`
-            : 'Build successful ✅';
+          // Build comprehensive result message
+          let resultMessage = '';
           
-          // Return structured result
+          // Add exit code info
+          if (result.exitCode !== null) {
+            resultMessage += `Exit code: ${result.exitCode}\n`;
+          }
+          
+          // Add summary
+          if (hasError) {
+            resultMessage += `\n❌ Build FAILED\n`;
+            resultMessage += `\n--- Errors ---\n${this.extractBuildErrors(result.stderr || result.stdout)}`;
+          } else {
+            resultMessage += `\n✅ Build successful\n`;
+          }
+          
+          // Add output (even if empty, to show agent something was run)
+          const stdoutContent = result.stdout?.trim();
+          const stderrContent = result.stderr?.trim();
+          
+          if (stdoutContent || stderrContent) {
+            resultMessage += `\n\n--- Build Output ---\n`;
+            if (stdoutContent) {
+              resultMessage += `STDOUT:\n${stdoutContent.slice(-2000)}\n`;
+            }
+            if (stderrContent && !hasError) {
+              resultMessage += `STDERR:\n${stderrContent.slice(-1000)}\n`;
+            }
+          } else {
+            resultMessage += `\n⚠️ Build produced no output (likely cached/UP-TO-DATE)\n`;
+            resultMessage += `This usually means Gradle found cached results and skipped compilation.\n`;
+            resultMessage += `To force a rebuild, run: ./gradlew clean build\n`;
+          }
+          
           return {
-            result: `${summary}\n\n--- Output (last 1000 chars) ---\n${(result.stdout || '').slice(-1000)}`
+            result: resultMessage
           };
         }
         
@@ -1151,8 +1221,12 @@ Please try a DIFFERENT approach:
           const timeout = 30000; // 30 seconds
           const result = await this.runCommandWithTimeout(command, timeout, workingDir);
           
+          // Include exit code and both stdout/stderr for better diagnostics
+          const output = result.stdout || result.stderr || 'Command completed with no output.';
+          const exitCodeInfo = result.exitCode !== null ? ` (exit: ${result.exitCode})` : '';
+          
           return { 
-            result: result.stdout || result.stderr || 'Command completed with no output.' 
+            result: `${output}${exitCodeInfo}`
           };
         }
         
@@ -1175,8 +1249,12 @@ Please try a DIFFERENT approach:
           
           const result = await this.cli.runCommand(command, workingDir);
           
+          // Include exit code info if available
+          const output = result.stdout || result.stderr || 'Command completed with no output';
+          const exitCodeInfo = (result as any).exitCode !== undefined ? ` (exit: ${(result as any).exitCode})` : '';
+          
           return {
-            result: result.stdout || result.stderr || 'Command completed with no output'
+            result: `${output}${exitCodeInfo}`
           };
         }
         
@@ -1194,13 +1272,14 @@ Please try a DIFFERENT approach:
 
   /**
    * Run command with timeout and structured output
-   * Modern approach: spawn with timeout, truncate large output
+   * Modern approach: spawn with timeout, truncate large output, capture exit code
    */
   private async runCommandWithTimeout(
     command: string,
     timeoutMs: number,
-    workingDir?: string
-  ): Promise<{ stdout: string; stderr: string }> {
+    workingDir?: string,
+    onOutput?: (output: string) => void
+  ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
     const { spawn } = require('child_process');
     const path = require('path');
     
@@ -1213,16 +1292,23 @@ Please try a DIFFERENT approach:
       
       let stdout = '';
       let stderr = '';
+      let exitCode: number | null = null;
       let timedOut = false;
       
       const timeout = setTimeout(() => {
         timedOut = true;
         proc.kill();
         stderr += `\n\n[TIMEOUT] Command exceeded ${timeoutMs}ms limit`;
+        exitCode = null; // Mark as timed out
+        resolve({ stdout, stderr, exitCode });
       }, timeoutMs);
       
       proc.stdout?.on('data', (data: Buffer) => {
         stdout += data.toString();
+        // Stream output if callback provided
+        if (onOutput) {
+          onOutput(stdout);
+        }
         // Truncate if too large (prevent memory issues)
         if (stdout.length > 10000) {
           stdout = stdout.slice(0, 10000) + '\n... (output truncated - exceeded 10KB)';
@@ -1232,6 +1318,10 @@ Please try a DIFFERENT approach:
       
       proc.stderr?.on('data', (data: Buffer) => {
         stderr += data.toString();
+        // Stream stderr too
+        if (onOutput) {
+          onOutput(stderr);
+        }
         if (stderr.length > 5000) {
           stderr = stderr.slice(0, 5000) + '\n... (stderr truncated - exceeded 5KB)';
         }
@@ -1239,17 +1329,20 @@ Please try a DIFFERENT approach:
       
       proc.on('close', (code: number | null) => {
         clearTimeout(timeout);
-        resolve({ stdout, stderr });
+        exitCode = code;
+        resolve({ stdout, stderr, exitCode });
       });
       
       proc.on('error', (err: Error) => {
         clearTimeout(timeout);
-        resolve({ stdout, stderr: err.message });
+        exitCode = -1;
+        resolve({ stdout, stderr: err.message, exitCode });
       });
       
       proc.on('timeout', () => {
         timedOut = true;
         proc.kill();
+        exitCode = null;
       });
     });
   }

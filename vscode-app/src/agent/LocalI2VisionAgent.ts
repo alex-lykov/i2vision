@@ -10,6 +10,7 @@
 
 import * as vscode from 'vscode';
 import { AgentBridge, AgentConfig, AgentResponse as BridgeAgentResponse, ProgressCallback } from './AgentBridge';
+import type { AgentChunk } from './AgentBridge';
 
 /**
  * VSLFC Layer enumeration (matches Kotlin VslfcLayer)
@@ -73,16 +74,7 @@ export interface AgentContext {
   [key: string]: any;
 }
 
-/**
- * Agent response chunk for streaming (matches Kotlin AgentChunk)
- */
-export type AgentChunk = 
-  | { type: 'reasoning'; text: string; timestamp: number }
-  | { type: 'tool_call_started'; toolName: string; args: any; timestamp: number }
-  | { type: 'tool_call_completed'; toolName: string; args: any; result: string; timestamp: number }
-  | { type: 'text'; text: string; timestamp: number }
-  | { type: 'done'; outcome: string; timestamp: number }
-  | { type: 'error'; error: string; timestamp: number };
+
 
 /**
  * Agent configuration overrides (matches Kotlin AgentConfigOverrides)
@@ -221,57 +213,16 @@ export class LocalI2VisionAgent implements vscode.Disposable {
     try {
       const startTime = Date.now();
 
-      // Emit reasoning start
-      yield {
-        type: 'reasoning',
-        text: `Starting task: ${request.task}`,
-        timestamp: Date.now()
-      };
-
-      // Process through the bridge (currently non-streaming)
-      const response = await this.bridge.process(request.task, {
+      // Use the bridge's streaming method directly
+      for await (const chunk of this.bridge.processStreaming(request.task, {
         currentFile: request.context.currentFile,
         projectName: vscode.workspace.workspaceFolders?.[0]?.name,
         task: request.task
-      });
-
-      // Emit tool calls if any
-      if (response.toolCalls && response.toolCalls.length > 0) {
-        for (const toolCall of response.toolCalls) {
-          yield {
-            type: 'tool_call_started',
-            toolName: toolCall.toolName,
-            args: toolCall.args,
-            timestamp: Date.now()
-          };
-          
-          yield {
-            type: 'tool_call_completed',
-            toolName: toolCall.toolName,
-            args: toolCall.args,
-            result: toolCall.result || toolCall.error || 'No result',
-            timestamp: Date.now()
-          };
-        }
+      })) {
+        yield chunk;
       }
 
-      // Emit final text
-      if (response.finalText) {
-        yield {
-          type: 'text',
-          text: response.finalText,
-          timestamp: Date.now()
-        };
-      }
-
-      // Emit done
-      yield {
-        type: 'done',
-        outcome: response.success ? 'success' : 'error',
-        timestamp: Date.now()
-      };
-
-      this.log(`Streaming completed [${request.id}]: ${response.iterations} iterations, ${Date.now() - startTime}ms`);
+      this.log(`Streaming completed [${request.id}]: ${Date.now() - startTime}ms`);
     } catch (error: any) {
       this.log(`Streaming failed [${request.id}]: ${error.message}`);
       yield {

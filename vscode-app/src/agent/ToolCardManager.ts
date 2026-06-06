@@ -14,7 +14,7 @@ import { ProgressEvent, ToolCall } from './AgentBridge';
  * Formatted progress event for webview
  */
 export interface FormattedProgressEvent {
-    type: 'tool_start' | 'tool_complete' | 'iteration_complete' | 'thinking';
+    type: 'tool_start' | 'tool_complete' | 'iteration_complete' | 'thinking' | 'tool_output';
     iteration: number;
     toolCard?: FormattedToolCard;
     toolCall?: {
@@ -22,6 +22,7 @@ export interface FormattedProgressEvent {
         args: Record<string, any>;
     };
     message?: string;
+    partialOutput?: string; // For streaming build output
 }
 
 /**

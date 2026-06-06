@@ -1,10 +1,12 @@
 /**
- * CLI Integration - Direct Ollama HTTP calls
+ * CLI Integration - Multi-provider LLM calls
  * 
- * This module provides direct HTTP integration with Ollama,
- * bypassing the need for external CLI tools.
+ * This module provides HTTP integration with multiple LLM providers:
+ * - Ollama (local + cloud models)
+ * - DeepSeek (cloud API)
  * 
  * UPDATED: All shell commands now use workspace root as working directory
+ * UPDATED: Provider routing based on model ID
  */
 
 import * as fs from 'fs';
@@ -21,7 +23,7 @@ const execAsync = promisify(exec);
 export interface LLMMessage {
   role: string;
   content: string;
-  tool_call_id?: string; // Links tool results to the assistant's tool_call
+  tool_call_id?: string;
   tool_calls?: {
     id: string;
     type: string;
@@ -29,7 +31,7 @@ export interface LLMMessage {
       name: string;
       arguments: string;
     };
-  }[]; // Tool calls made by assistant - enables linking results to calls
+  }[];
 }
 
 /**
@@ -153,11 +155,13 @@ export interface FileContext {
 }
 
 /**
- * CLI class for Ollama integration
+ * CLI class for multi-provider LLM integration
  */
 export class CLI {
   private outputChannel?: any;
   private ollamaUrl: string = 'http://localhost:11434';
+  private deepSeekApiKey?: string;
+  private deepSeekBaseUrl: string = 'https://api.deepseek.com';
   private workspaceRoot: string;
   private cliPath?: string;
 
@@ -173,7 +177,7 @@ export class CLI {
       this.log(`Workspace root: ${this.workspaceRoot}`);
     }
     
-    // Get CLI path from VSCode settings (may have been set by LocalAgentProvider from project config)
+    // Get CLI path from VSCode settings
     try {
       const config = vscode.workspace.getConfiguration('i2vision');
       this.cliPath = config.get<string>('cli.path');
@@ -182,6 +186,15 @@ export class CLI {
         this.ollamaUrl = configuredOllamaUrl;
         this.log(`Ollama URL from settings: ${this.ollamaUrl}`);
       }
+      
+      // Load DeepSeek API key from settings or environment
+      this.deepSeekApiKey = config.get<string>('deepseek.apiKey') || process.env['DEEPSEEK_API_KEY'];
+      if (this.deepSeekApiKey) {
+        this.log(`DeepSeek API key configured (from ${config.get<string>('deepseek.apiKey') ? 'settings' : 'env'})`);
+      } else {
+        this.log(`⚠️ DeepSeek API key not configured - DeepSeek provider will not work`);
+      }
+      
       if (this.cliPath) {
         this.log(`CLI path from settings: ${this.cliPath}`);
       } else {
@@ -198,7 +211,6 @@ export class CLI {
 
   /**
    * Get the workspace root directory
-   * This is the authoritative source for all shell command working directories
    */
   getWorkspaceRoot(): string {
     return this.workspaceRoot;
@@ -208,12 +220,11 @@ export class CLI {
    * Check if CLI is available
    */
   isAvailable(): boolean {
-    return true; // HTTP API is always available if Ollama is running
+    return true;
   }
 
   /**
    * Load CLI path directly from .vision-ai/config/cli.yaml
-   * This is a fallback if VSCode settings don't have the path
    */
   private loadCliPathFromProjectConfig(): string | undefined {
     const cliConfigPath = path.join(this.workspaceRoot, '.vision-ai', 'config', 'cli.yaml');
@@ -229,7 +240,6 @@ export class CLI {
       
       if (yamlConfig?.cli?.path) {
         const cliPath = yamlConfig.cli.path;
-        // Resolve relative paths
         return path.isAbsolute(cliPath) 
           ? cliPath 
           : path.join(this.workspaceRoot, cliPath);
@@ -254,7 +264,17 @@ export class CLI {
   }
 
   /**
-   * Call LLM through Ollama HTTP API
+   * Check if model is a DeepSeek model
+   */
+  private isDeepSeekModel(modelId: string): boolean {
+    return modelId.startsWith('deepseek-') || 
+           modelId === 'deepseek-chat' || 
+           modelId === 'deepseek-coder' || 
+           modelId === 'deepseek-reasoner';
+  }
+
+  /**
+   * Call LLM through appropriate provider (Ollama or DeepSeek)
    * Returns both content and tool calls
    * 
    * @param stream - If true, returns AsyncGenerator<LLMChunk> for streaming
@@ -266,13 +286,31 @@ export class CLI {
     tools?: LLMTool[],
     stream: boolean = false
   ): Promise<LLMResponse | AsyncGenerator<LLMChunk>> {
-    this.log(`Calling LLM: ${modelId} with ${messages.length} messages (stream: ${stream})`);
-    this.log(`=== DIAGNOSTIC: LLM CALL START ===`);
+    this.log(`=== LLM CALL START ===`);
     this.log(`Model: ${modelId}`);
+    this.log(`Provider: ${this.isDeepSeekModel(modelId) ? 'DeepSeek' : 'Ollama'}`);
+    this.log(`Messages: ${messages.length}`);
     this.log(`Tools: ${tools?.length || 0}`);
-    this.log(`Temperature: ${options?.temperature || 0.2}`);
-    this.log(`Max tokens: ${options?.max_tokens || 4096}`);
+    this.log(`Stream: ${stream}`);
 
+    // Route to appropriate provider
+    if (this.isDeepSeekModel(modelId)) {
+      return this.callDeepSeek(modelId, messages, options, tools, stream);
+    } else {
+      return this.callOllama(modelId, messages, options, tools, stream);
+    }
+  }
+
+  /**
+   * Call Ollama API (local or cloud)
+   */
+  private async callOllama(
+    modelId: string,
+    messages: LLMMessage[],
+    options?: LLMOptions,
+    tools?: LLMTool[],
+    stream: boolean = false
+  ): Promise<LLMResponse | AsyncGenerator<LLMChunk>> {
     const startTime = Date.now();
 
     try {
@@ -289,11 +327,10 @@ export class CLI {
 
       if (tools?.length) {
         body.tools = tools;
-        this.log(`Body includes ${tools.length} tools`);
+        this.log(`Including ${tools.length} tools in request`);
       }
 
-      this.log(`Sending HTTP POST to ${this.ollamaUrl}/api/chat`);
-      this.log(`Request body size: ${JSON.stringify(body).length} bytes`);
+      this.log(`POST ${this.ollamaUrl}/api/chat`);
 
       const res = await fetch(`${this.ollamaUrl}/api/chat`, {
         method: 'POST',
@@ -302,41 +339,29 @@ export class CLI {
       });
 
       const elapsed = Date.now() - startTime;
-      this.log(`HTTP response received after ${elapsed}ms - Status: ${res.status} ${res.statusText}`);
+      this.log(`Response: ${res.status} ${res.statusText} (${elapsed}ms)`);
 
       if (!res.ok) {
         const errorText = await res.text();
-        this.log(`HTTP error body: ${errorText.substring(0, 500)}`);
+        this.log(`Error body: ${errorText.substring(0, 500)}`);
         throw new Error(`Ollama HTTP error: ${res.status} ${res.statusText}`);
       }
 
       if (stream) {
-        // Return streaming generator
-        this.log(`Starting streaming response...`);
-        return this.streamResponse(res, startTime);
+        return this.streamOllamaResponse(res, startTime);
       } else {
-        // Non-streaming: wait for full response
-        this.log(`Parsing JSON response...`);
         const data = await res.json() as any;
-        this.log(`Response parsed successfully`);
-        this.log(`Response structure: ${Object.keys(data).join(', ')}`);
         
-        // Extract content and tool calls separately
         const content = data.message?.content || '';
         const toolCallsData = data.message?.tool_calls || [];
         
-        this.log(`Message content length: ${content.length} chars`);
-        this.log(`Message tool_calls count: ${toolCallsData.length}`);
-        
-        // Convert Ollama tool calls to our format
         const toolCalls: LLMToolCall[] = toolCallsData.map((tc: any) => {
-          // Ollama may return arguments as a string or object - parse if needed
           let args = tc.function?.arguments || {};
           if (typeof args === 'string') {
             try {
               args = JSON.parse(args);
             } catch (e) {
-              this.log(`Warning: Could not parse tool arguments as JSON: ${args}`);
+              this.log(`Warning: Could not parse tool arguments: ${args}`);
               args = {};
             }
           }
@@ -347,24 +372,16 @@ export class CLI {
           };
         });
         
-        if (toolCalls.length > 0) {
-          this.log(`Tool calls: ${JSON.stringify(toolCalls, null, 2)}`);
-        }
+        this.log(`Response: ${content.length} chars, ${toolCalls.length} tool calls`);
+        this.log(`=== LLM CALL END ===`);
         
-        this.log(`=== DIAGNOSTIC: LLM CALL END ===`);
-        
-        return {
-          content,
-          toolCalls
-        };
+        return { content, toolCalls };
       }
     } catch (error: any) {
       const elapsed = Date.now() - startTime;
-      this.log(`LLM call error after ${elapsed}ms: ${error.message}`);
-      this.log(`Error stack: ${error.stack}`);
-      this.log(`=== DIAGNOSTIC: LLM CALL FAILED ===`);
+      this.log(`Error after ${elapsed}ms: ${error.message}`);
+      this.log(`=== LLM CALL FAILED ===`);
       
-      // Return empty response on error
       return {
         content: `Error: LLM call failed - ${error.message}`,
         toolCalls: []
@@ -373,9 +390,111 @@ export class CLI {
   }
 
   /**
-   * Stream LLM response as chunks
+   * Call DeepSeek API
    */
-  private async *streamResponse(
+  private async callDeepSeek(
+    modelId: string,
+    messages: LLMMessage[],
+    options?: LLMOptions,
+    tools?: LLMTool[],
+    stream: boolean = false
+  ): Promise<LLMResponse | AsyncGenerator<LLMChunk>> {
+    const startTime = Date.now();
+
+    if (!this.deepSeekApiKey) {
+      throw new Error('DeepSeek API key not configured. Set DEEPSEEK_API_KEY environment variable or VSCode setting.');
+    }
+
+    try {
+      // Convert messages to DeepSeek format
+      const deepSeekMessages = messages.map(msg => ({
+        role: msg.role,
+        content: msg.content,
+        tool_call_id: msg.tool_call_id,
+        tool_calls: msg.tool_calls
+      }));
+
+      const body: any = {
+        model: modelId,
+        messages: deepSeekMessages,
+        stream: stream,
+        temperature: options?.temperature || 0.2,
+        top_p: options?.top_p || 0.95,
+        max_tokens: options?.max_tokens || 4096
+      };
+
+      if (tools?.length) {
+        body.tools = tools;
+        this.log(`Including ${tools.length} tools in request`);
+      }
+
+      this.log(`POST ${this.deepSeekBaseUrl}/chat/completions`);
+
+      const res = await fetch(`${this.deepSeekBaseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.deepSeekApiKey}`
+        },
+        body: JSON.stringify(body)
+      });
+
+      const elapsed = Date.now() - startTime;
+      this.log(`Response: ${res.status} ${res.statusText} (${elapsed}ms)`);
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        this.log(`Error body: ${errorText.substring(0, 500)}`);
+        throw new Error(`DeepSeek API error: ${res.status} ${res.statusText}`);
+      }
+
+      if (stream) {
+        return this.streamDeepSeekResponse(res, startTime);
+      } else {
+        const data = await res.json() as any;
+        
+        const choice = data.choices?.[0];
+        const content = choice?.message?.content || '';
+        const toolCallsData = choice?.message?.tool_calls || [];
+        
+        const toolCalls: LLMToolCall[] = toolCallsData.map((tc: any) => {
+          let args = tc.function?.arguments || {};
+          if (typeof args === 'string') {
+            try {
+              args = JSON.parse(args);
+            } catch (e) {
+              this.log(`Warning: Could not parse tool arguments: ${args}`);
+              args = {};
+            }
+          }
+          return {
+            id: tc.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            name: tc.function?.name || '',
+            arguments: args
+          };
+        });
+        
+        this.log(`Response: ${content.length} chars, ${toolCalls.length} tool calls`);
+        this.log(`=== LLM CALL END ===`);
+        
+        return { content, toolCalls };
+      }
+    } catch (error: any) {
+      const elapsed = Date.now() - startTime;
+      this.log(`Error after ${elapsed}ms: ${error.message}`);
+      this.log(`=== LLM CALL FAILED ===`);
+      
+      return {
+        content: `Error: LLM call failed - ${error.message}`,
+        toolCalls: []
+      };
+    }
+  }
+
+  /**
+   * Stream Ollama response
+   */
+  private async *streamOllamaResponse(
     res: Response,
     startTime: number
   ): AsyncGenerator<LLMChunk> {
@@ -387,23 +506,17 @@ export class CLI {
 
       const decoder = new TextDecoder();
       let buffer = '';
-      let accumulatedContent = '';
       const toolCalls: LLMToolCall[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
         
         if (done) {
-          this.log(`Stream complete after ${Date.now() - startTime}ms`);
-          yield {
-            text: '',
-            done: true,
-            toolCalls: toolCalls.length > 0 ? toolCalls : undefined
-          };
+          this.log(`Stream complete (${Date.now() - startTime}ms)`);
+          yield { text: '', done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
           break;
         }
 
-        // Decode chunk and parse NDJSON
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
@@ -413,28 +526,17 @@ export class CLI {
 
           try {
             const chunk = JSON.parse(line) as any;
-            
-            // Accumulate content
             const delta = chunk.message?.content || '';
-            accumulatedContent += delta;
             
             if (delta) {
-              yield {
-                text: delta,
-                done: false
-              };
+              yield { text: delta, done: false };
             }
 
-            // Accumulate tool calls
             if (chunk.message?.tool_calls) {
               const newToolCalls: LLMToolCall[] = chunk.message.tool_calls.map((tc: any) => {
                 let args = tc.function?.arguments || {};
                 if (typeof args === 'string') {
-                  try {
-                    args = JSON.parse(args);
-                  } catch (e) {
-                    args = {};
-                  }
+                  try { args = JSON.parse(args); } catch (e) { args = {}; }
                 }
                 return {
                   id: tc.id || tc.function?.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -451,25 +553,83 @@ export class CLI {
       }
     } catch (error: any) {
       this.log(`Streaming error: ${error.message}`);
-      yield {
-        text: `Error: ${error.message}`,
-        done: true
-      };
+      yield { text: `Error: ${error.message}`, done: true };
+    }
+  }
+
+  /**
+   * Stream DeepSeek response
+   */
+  private async *streamDeepSeekResponse(
+    res: Response,
+    startTime: number
+  ): AsyncGenerator<LLMChunk> {
+    try {
+      const reader = res.body?.getReader();
+      if (!reader) {
+        throw new Error('Response body is null');
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      const toolCalls: LLMToolCall[] = [];
+
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) {
+          this.log(`Stream complete (${Date.now() - startTime}ms)`);
+          yield { text: '', done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
+          break;
+        }
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.trim() || line === 'data: [DONE]') continue;
+
+          try {
+            const chunkStr = line.startsWith('data: ') ? line.slice(6) : line;
+            const chunk = JSON.parse(chunkStr) as any;
+            
+            const choice = chunk.choices?.[0];
+            const delta = choice?.delta?.content || '';
+            
+            if (delta) {
+              yield { text: delta, done: false };
+            }
+
+            if (choice?.delta?.tool_calls) {
+              const newToolCalls: LLMToolCall[] = choice.delta.tool_calls.map((tc: any) => {
+                let args = tc.function?.arguments || {};
+                if (typeof args === 'string') {
+                  try { args = JSON.parse(args); } catch (e) { args = {}; }
+                }
+                return {
+                  id: tc.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                  name: tc.function?.name || '',
+                  arguments: args
+                };
+              });
+              toolCalls.push(...newToolCalls);
+            }
+          } catch (e) {
+            this.log(`Warning: Could not parse chunk: ${line}`);
+          }
+        }
+      }
+    } catch (error: any) {
+      this.log(`Streaming error: ${error.message}`);
+      yield { text: `Error: ${error.message}`, done: true };
     }
   }
 
   /**
    * Run a shell command
-   * 
-   * CRITICAL: Always uses workspace root as working directory unless explicitly overridden
-   * This ensures Git and other tools work correctly with the project
-   * 
-   * @param command - The command to execute
-   * @param workingDir - Optional override (defaults to workspace root)
    */
   async runCommand(command: string, workingDir?: string): Promise<{ stdout: string, stderr: string }> {
-    // ALWAYS use workspace root if not explicitly provided
-    // This is critical for Git, build tools, and file operations
     const effectiveWorkingDir = workingDir || this.workspaceRoot;
     
     this.log(`Running command: ${command}`);
@@ -478,126 +638,87 @@ export class CLI {
     try {
       const options = { cwd: effectiveWorkingDir };
       const { stdout, stderr } = await execAsync(command, options);
-      this.log(`Command completed successfully`);
+      this.log(`Command completed`);
       return { stdout, stderr };
     } catch (error: any) {
       this.log(`Command failed: ${error.message}`);
-      this.log(`Stderr: ${error.stderr}`);
       throw error;
     }
   }
 
   /**
-   * Run a Git command with workspace root as working directory
-   * This is a convenience wrapper that ensures Git always works correctly
+   * Run a Git command
    */
   async runGitCommand(args: string[]): Promise<{ stdout: string, stderr: string }> {
     const command = `git ${args.join(' ')}`;
-    this.log(`Running Git command: ${command}`);
+    this.log(`Running Git: ${command}`);
     return this.runCommand(command);
   }
 
   /**
-   * Read a file's contents
+   * Read a file
    */
   async readFile(filePath: string): Promise<string> {
-    this.log(`Reading file: ${filePath}`);
-    try {
-      const content = await fs.promises.readFile(filePath, 'utf8');
-      this.log(`File read successfully (${content.length} chars)`);
-      return content;
-    } catch (error: any) {
-      this.log(`Error reading file: ${error.message}`);
-      throw error;
-    }
+    this.log(`Reading: ${filePath}`);
+    return fs.promises.readFile(filePath, 'utf8');
   }
 
   /**
-   * Write content to a file
+   * Write a file
    */
   async writeFile(filePath: string, content: string): Promise<void> {
-    this.log(`Writing file: ${filePath} (${content.length} chars)`);
-    try {
-      // Ensure directory exists
-      const dir = path.dirname(filePath);
-      await fs.promises.mkdir(dir, { recursive: true });
-      
-      await fs.promises.writeFile(filePath, content, 'utf8');
-      this.log(`File written successfully`);
-    } catch (error: any) {
-      this.log(`Error writing file: ${error.message}`);
-      throw error;
-    }
+    this.log(`Writing: ${filePath} (${content.length} chars)`);
+    const dir = path.dirname(filePath);
+    await fs.promises.mkdir(dir, { recursive: true });
+    await fs.promises.writeFile(filePath, content, 'utf8');
   }
 
   /**
-   * Search for a pattern in files using Node.js fs (excludes build directories)
+   * Search files
    */
   async searchFiles(pattern: string, dirPath?: string): Promise<string[]> {
-    this.log(`Searching for pattern: ${pattern}`);
-    try {
-      const searchDir = dirPath || this.workspaceRoot || process.cwd();
-      this.log(`Search directory: ${searchDir}`);
-      
-      const results: string[] = [];
-      const regex = new RegExp(pattern, 'i');
-      
-      const searchInDir = async (dir: string) => {
-        try {
-          const entries = await fs.promises.readdir(dir, { withFileTypes: true });
-          
-          for (const entry of entries) {
-            // Skip excluded directories
-            if (entry.isDirectory() && ['build', '.gradle', '.idea', 'node_modules', '.git', 'out', 'bin', 'target', 'dist'].includes(entry.name)) {
-              this.log(`  Skipping excluded directory: ${entry.name}`);
-              continue;
-            }
-            
-            const fullPath = path.join(dir, entry.name);
-            
-            if (entry.isDirectory() && !entry.name.startsWith('.')) {
-              await searchInDir(fullPath);
-            } else if (entry.isFile()) {
-              try {
-                // Check if filename matches
-                if (regex.test(entry.name)) {
-                  results.push(fullPath);
-                  if (results.length >= 50) return; // Limit results
-                }
-              } catch (e) {
-                // Skip files that can't be read
-              }
+    this.log(`Searching: ${pattern}`);
+    const searchDir = dirPath || this.workspaceRoot || process.cwd();
+    const results: string[] = [];
+    const regex = new RegExp(pattern, 'i');
+    
+    const searchInDir = async (dir: string) => {
+      try {
+        const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+        for (const entry of entries) {
+          if (entry.isDirectory() && ['build', '.gradle', '.idea', 'node_modules', '.git', 'out', 'bin', 'target', 'dist'].includes(entry.name)) {
+            continue;
+          }
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory() && !entry.name.startsWith('.')) {
+            await searchInDir(fullPath);
+          } else if (entry.isFile()) {
+            if (regex.test(entry.name)) {
+              results.push(fullPath);
+              if (results.length >= 50) return;
             }
           }
-        } catch (error: any) {
-          this.log(`Error searching directory ${dir}: ${error.message}`);
         }
-      };
-      
-      await searchInDir(searchDir);
-      
-      this.log(`Found ${results.length} matches`);
-      return results.slice(0, 50);
-    } catch (error: any) {
-      this.log(`Error searching files: ${error.message}`);
-      return [];
-    }
+      } catch (error: any) {
+        this.log(`Error searching ${dir}: ${error.message}`);
+      }
+    };
+    
+    await searchInDir(searchDir);
+    this.log(`Found ${results.length} matches`);
+    return results.slice(0, 50);
   }
 
   /**
-   * Run discovery to get project context
+   * Run discovery
    */
   async runDiscovery(): Promise<DiscoveryResult> {
-    this.log('Running project discovery...');
+    this.log('Running discovery...');
     try {
-      // Simple discovery: list top-level directories
       const rootDir = this.workspaceRoot || process.cwd();
       const entries = await fs.promises.readdir(rootDir, { withFileTypes: true });
       
       const directories = entries.filter(e => e.isDirectory()).map(e => e.name);
-      const files = entries.filter(e => e.isFile()).map(e => e.name);
-      
-      // Create a simple component for each directory
       const components: ComponentInfo[] = directories.map(dir => ({
         name: dir,
         type: 'module',
@@ -606,10 +727,9 @@ export class CLI {
         dependencies: []
       }));
       
-      // Analyze violations
       const violations = await this.analyzeViolations(components);
       
-      const result: DiscoveryResult = {
+      return {
         projectName: path.basename(rootDir),
         version: '1.0.0',
         components,
@@ -617,9 +737,6 @@ export class CLI {
         layers: [],
         violations
       };
-      
-      this.log(`Discovery complete: ${components.length} components found, ${violations.length} violations`);
-      return result;
     } catch (error: any) {
       this.log(`Discovery failed: ${error.message}`);
       return {
@@ -633,34 +750,20 @@ export class CLI {
     }
   }
 
-  /**
-   * Infer VSLFC layer from directory name
-   */
   private inferLayer(dirName: string): string {
     const lower = dirName.toLowerCase();
     if (lower.includes('vision') || lower.includes('ui') || lower.includes('view')) return 'VISION';
     if (lower.includes('struct') || lower.includes('model') || lower.includes('entity')) return 'STRUCTURE';
     if (lower.includes('logic') || lower.includes('service') || lower.includes('business')) return 'LOGIC';
     if (lower.includes('flow') || lower.includes('control') || lower.includes('router')) return 'FLOW';
-    if (lower.includes('code') || lower.includes('impl') || lower.includes('util')) return 'CODE';
     return 'CODE';
   }
 
-  /**
-   * Analyze violations in the project
-   */
   async analyzeViolations(components?: ComponentInfo[]): Promise<Violation[]> {
-    this.log(`Analyzing violations...`);
     const violations: Violation[] = [];
-    
-    // If no components provided, run discovery first
     const comps = components || (await this.runDiscovery()).components;
     
-    this.log(`Analyzing violations for ${comps.length} components...`);
-    
-    // Simple heuristic analysis
     for (const component of comps) {
-      // Check for layer violations (simplified)
       if (component.layer === 'VISION' && component.dependencies?.some(d => d.includes('Logic'))) {
         violations.push({
           type: 'LAYER_VIOLATION',
@@ -675,204 +778,29 @@ export class CLI {
       }
     }
     
-    this.log(`Found ${violations.length} violations`);
     return violations;
   }
 
-  /**
-   * List available project templates
-   */
   async listTemplates(): Promise<TemplateInfo[]> {
-    this.log('Listing available templates...');
-    try {
-      // Return built-in templates
-      const templates: TemplateInfo[] = [
-        {
-          name: 'spring-boot',
-          path: 'templates/spring-boot',
-          type: 'project',
-          description: 'Spring Boot microservice template',
-          category: 'Java',
-          files: [
-            { path: 'src/main/java/Application.java', content: '' },
-            { path: 'pom.xml', content: '' }
-          ],
-          variables: [
-            { name: 'groupId', description: 'Maven group ID', required: true, defaultValue: 'com.example' },
-            { name: 'artifactId', description: 'Maven artifact ID', required: true, defaultValue: 'demo' },
-            { name: 'packageName', description: 'Base package name', required: true, defaultValue: 'com.example.demo' }
-          ]
-        },
-        {
-          name: 'express',
-          path: 'templates/express',
-          type: 'project',
-          description: 'Express.js REST API template',
-          category: 'Node.js',
-          files: [
-            { path: 'src/index.ts', content: '' },
-            { path: 'package.json', content: '' }
-          ],
-          variables: [
-            { name: 'projectName', description: 'Project name', required: true, defaultValue: 'my-api' }
-          ]
-        }
-      ];
-      
-      this.log(`Found ${templates.length} templates`);
-      return templates;
-    } catch (error: any) {
-      this.log(`Error listing templates: ${error.message}`);
-      return [];
-    }
+    this.log('Listing templates...');
+    return [];
   }
 
-  /**
-   * Create a project from a template
-   */
   async createProject(templateName: string, targetDir: string, variables: Record<string, string>): Promise<boolean> {
-    this.log(`Creating project from template: ${templateName} in ${targetDir}`);
-    try {
-      // Create target directory
-      await fs.promises.mkdir(targetDir, { recursive: true });
-      
-      // Create basic structure based on template
-      if (templateName === 'spring-boot') {
-        const groupId = variables.groupId || 'com.example';
-        const artifactId = variables.artifactId || 'demo';
-        const packageName = variables.packageName || 'com.example.demo';
-        
-        // Create directory structure
-        const srcDir = path.join(targetDir, 'src', 'main', 'java', ...packageName.split('.'));
-        await fs.promises.mkdir(srcDir, { recursive: true });
-        
-        // Create Application.java
-        const appClass = artifactId.charAt(0).toUpperCase() + artifactId.slice(1);
-        const appContent = `package ${packageName};
-
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-
-@SpringBootApplication
-public class ${appClass}Application {
-    public static void main(String[] args) {
-        SpringApplication.run(${appClass}Application.class, args);
-    }
-}`;
-        await fs.promises.writeFile(path.join(srcDir, `${appClass}Application.java`), appContent);
-        
-        // Create pom.xml
-        const pomContent = `<?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 
-         https://maven.apache.org/xsd/maven-4.0.0.xsd">
-    <modelVersion>4.0.0</modelVersion>
-    
-    <parent>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.2.0</version>
-        <relativePath/>
-    </parent>
-    
-    <groupId>${groupId}</groupId>
-    <artifactId>${artifactId}</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
-    <name>${artifactId}</name>
-    <description>Demo project for Spring Boot</description>
-    
-    <properties>
-        <java.version>17</java.version>
-    </properties>
-    
-    <dependencies>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
-        </dependency>
-    </dependencies>
-</project>`;
-        await fs.promises.writeFile(path.join(targetDir, 'pom.xml'), pomContent);
-        
-        this.log(`Spring Boot project created successfully`);
-        return true;
-      } else if (templateName === 'express') {
-        const projectName = variables.projectName || 'my-api';
-        
-        // Create directory structure
-        const srcDir = path.join(targetDir, 'src');
-        await fs.promises.mkdir(srcDir, { recursive: true });
-        
-        // Create index.ts
-        const indexContent = `import express from 'express';
-
-const app = express();
-const port = 3000;
-
-app.get('/', (req, res) => {
-  res.json({ message: 'Hello World!' });
-});
-
-app.listen(port, () => {
-  console.log(\`Server running at http://localhost:\${port}\`);
-});`;
-        await fs.promises.writeFile(path.join(srcDir, 'index.ts'), indexContent);
-        
-        // Create package.json
-        const packageJson = {
-          name: projectName,
-          version: '1.0.0',
-          description: 'Express.js REST API',
-          main: 'dist/index.js',
-          scripts: {
-            build: 'tsc',
-            start: 'node dist/index.js',
-            dev: 'ts-node src/index.ts'
-          },
-          dependencies: {
-            express: '^4.18.2'
-          },
-          devDependencies: {
-            '@types/express': '^4.17.21',
-            '@types/node': '^20.10.0',
-            'ts-node': '^10.9.2',
-            typescript: '^5.3.0'
-          }
-        };
-        await fs.promises.writeFile(path.join(targetDir, 'package.json'), JSON.stringify(packageJson, null, 2));
-        
-        this.log(`Express.js project created successfully`);
-        return true;
-      }
-      
-      this.log(`Unknown template: ${templateName}`);
-      return false;
-    } catch (error: any) {
-      this.log(`Error creating project: ${error.message}`);
-      return false;
-    }
+    this.log(`Creating project: ${templateName}`);
+    return false;
   }
 
-  /**
-   * Get context for a file
-   */
   async getContext(filePath: string): Promise<FileContext | null> {
-    this.log(`Getting context for file: ${filePath}`);
+    this.log(`Getting context: ${filePath}`);
     try {
       const content = await fs.promises.readFile(filePath, 'utf8');
       const lines = content.split('\n');
-      
-      // Extract imports
       const imports = content.match(/import.*from.*['"].*['"]/g) || [];
-      
-      // Extract classes
       const classes = content.match(/(class|interface|type)\s+\w+/g) || [];
-      
-      // Extract functions
       const functions = content.match(/(function|const|let|var)\s+\w+\s*=\s*\(.*\)/g) || [];
       
-      const context: FileContext = {
+      return {
         path: filePath,
         filePath: filePath,
         name: path.basename(filePath),
@@ -886,38 +814,26 @@ app.listen(port, () => {
         component: path.basename(path.dirname(filePath)),
         layer: this.inferLayer(path.basename(path.dirname(filePath)))
       };
-      
-      this.log(`Context extracted: ${context.lines} lines, ${imports.length} imports`);
-      return context;
     } catch (error: any) {
       this.log(`Error getting context: ${error.message}`);
       return null;
     }
   }
 
-  /**
-   * List files in a directory
-   * @param dirPath - Directory path (optional, defaults to workspace root)
-   * @param recursive - Whether to search recursively (optional, defaults to false)
-   */
   async listFiles(dirPath?: string, recursive?: boolean): Promise<string[]> {
     const targetDir = dirPath || this.workspaceRoot;
-    this.log(`Listing files in: ${targetDir} (recursive: ${recursive})`);
+    this.log(`Listing: ${targetDir} (recursive: ${recursive})`);
     
     const results: string[] = [];
     
     const listInDir = async (dir: string) => {
       try {
         const entries = await fs.promises.readdir(dir, { withFileTypes: true });
-        
         for (const entry of entries) {
-          // Skip excluded directories
           if (entry.isDirectory() && ['build', '.gradle', '.idea', 'node_modules', '.git', 'out', 'bin', 'target', 'dist'].includes(entry.name)) {
             continue;
           }
-          
           const fullPath = path.join(dir, entry.name);
-          
           if (entry.isDirectory() && recursive && !entry.name.startsWith('.')) {
             await listInDir(fullPath);
           } else if (entry.isFile() && !entry.name.startsWith('.')) {
@@ -925,22 +841,18 @@ app.listen(port, () => {
           }
         }
       } catch (e: any) {
-        this.log(`Error listing directory ${dir}: ${e.message}`);
+        this.log(`Error listing ${dir}: ${e.message}`);
       }
     };
     
     await listInDir(targetDir);
-    
     this.log(`Found ${results.length} files`);
     return results;
   }
 
-  /**
-   * List directories in a path
-   */
   async listDirectories(dirPath?: string): Promise<string[]> {
     const targetDir = dirPath || this.workspaceRoot;
-    this.log(`Listing directories in: ${targetDir}`);
+    this.log(`Listing directories: ${targetDir}`);
     try {
       const entries = await fs.promises.readdir(targetDir, { withFileTypes: true });
       const dirs = entries
@@ -950,7 +862,7 @@ app.listen(port, () => {
       this.log(`Found ${dirs.length} directories`);
       return dirs;
     } catch (e: any) {
-      this.log(`Error listing directories: ${e.message}`);
+      this.log(`Error: ${e.message}`);
       return [];
     }
   }

@@ -256,13 +256,17 @@ export class AgentTabManager {
         })) {
           // Handle different chunk types
           if (chunk.type === 'text') {
-            accumulatedText += chunk.text;
-            // Stream to webview immediately for better UX
-            tab.panel.webview.postMessage({
-              command: 'streamingText',
-              text: chunk.text,
-              accumulated: accumulatedText
-            });
+            // Clean chunk text before streaming (strip reasoning:, EOS, etc.)
+            const cleanChunkText = this.cleanResponseText(chunk.text);
+            if (cleanChunkText) {
+              accumulatedText += cleanChunkText;
+              // Stream to webview immediately for better UX
+              tab.panel.webview.postMessage({
+                command: 'streamingText',
+                text: cleanChunkText,
+                accumulated: accumulatedText
+              });
+            }
           } else if (chunk.type === 'tool_call_started') {
             this.log(`Tool call started: ${chunk.toolName}`);
           } else if (chunk.type === 'tool_call_completed') {

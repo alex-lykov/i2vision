@@ -13,11 +13,23 @@ Understanding the fundamental concepts behind i2vision:
 
 Step-by-step guides for specific tasks:
 
+### LLM Providers & Configuration
+
+- [Ollama Integration](guides/ollama-integration.md) - **Primary provider** (local + cloud models)
+- [DeepSeek Integration](guides/deepseek-integration.md) - Direct DeepSeek API (advanced)
+- [VSCode Provider Selection](guides/vscode-provider-model-selection.md) - VSCode extension UI guide
+
+### MCP & Tools
+
 - [MCP Tools](guides/mcp-tools.md) - Model Context Protocol toolset reference
 - [MCP Integration](guides/mcp-integration.md) - Claude Desktop, Cursor setup
 - [Custom Tools](guides/custom-tools.md) - Creating custom MCP tools
+
+### Deployment & Configuration
+
 - [Deployment](guides/deployment.md) - Deployment guide
 - [Presets](guides/presets.md) - Discovery preset configuration
+- [Agent Implementation](guides/agent-implementation.md) - Agent framework guide
 
 ## Reference
 

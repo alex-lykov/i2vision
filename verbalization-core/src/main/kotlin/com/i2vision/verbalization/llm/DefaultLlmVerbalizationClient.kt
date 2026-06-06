@@ -8,6 +8,7 @@
 package com.i2vision.verbalization.llm
 
 import com.i2vision.arch.signature.EnrichedSymbol
+import com.i2vision.llm.*
 import com.i2vision.vslfc.Symbol
 import com.i2vision.vslfc.SymbolKind
 import com.i2vision.verbalization.modifier.KotlinModifierVerbalizer
@@ -19,30 +20,104 @@ import java.io.File
 import java.util.Properties
 
 /**
- * Default implementation of LlmVerbalizationClient.
- * Provides configurable LLM integration with fallback to heuristic descriptions.
+ * Multi-provider LLM verbalization client.
+ * Supports Ollama (local) and DeepSeek (cloud) backends.
  * 
- * REFACTORED: Uses structured modifier detection instead of regex-based detection.
+ * ## Features:
+ * - Provider selection via configuration
+ * - Automatic fallback to mock mode if no provider configured
+ * - Unified interface for all LLM providers
+ * - Support for both simple and chat-based generation
+ * 
+ * ## Configuration:
+ * Create `.i2vision/llm.config` with:
+ * ```properties
+ * provider=deepseek  # or ollama
+ * deepseek.api_key=sk-xxx
+ * deepseek.model=deepseek-chat
+ * ollama.base_url=http://localhost:11434
+ * ollama.model=llama3.2:3b
+ * ```
  */
 class DefaultLlmVerbalizationClient(
     private val config: LlmClientConfig = LlmClientConfig(),
     private val modifierVerbalizer: ModifierVerbalizer = KotlinModifierVerbalizer()
 ) : LlmVerbalizationClient {
 
-    // Placeholder for actual LLM integration - would use llm-client module
-    private var mockMode = true
-
+    private val llmClient: ModelProvider?
+    private val providerType: LLMProvider?
+    
     init {
-        // Check if LLM is configured
-        mockMode = !isLlmConfigured()
+        // Initialize LLM client based on configuration
+        val (client, provider) = initializeClient(config)
+        this.llmClient = client
+        this.providerType = provider
+    }
+
+    /**
+     * Initialize LLM client from configuration.
+     */
+    private fun initializeClient(config: LlmClientConfig): Pair<ModelProvider?, LLMProvider?> {
+        return try {
+            val configFile = File(config.configPath)
+            if (!configFile.exists()) {
+                println("[LLM] No config file found at ${config.configPath}, using mock mode")
+                return Pair(null, null)
+            }
+
+            val props = Properties()
+            configFile.inputStream().use { props.load(it) }
+            
+            val provider = props.getProperty("provider", config.provider).lowercase()
+            
+            when (provider) {
+                "deepseek" -> {
+                    val apiKey = props.getProperty("deepseek.api_key") 
+                        ?: System.getenv("DEEPSEEK_API_KEY")
+                        ?: run {
+                            println("[LLM] DeepSeek API key not found, using mock mode")
+                            return Pair(null, null)
+                        }
+                    
+                    val model = props.getProperty("deepseek.model", "deepseek-chat")
+                    val baseUrl = props.getProperty("deepseek.base_url", "https://api.deepseek.com")
+                    
+                    println("[LLM] Using DeepSeek provider with model: $model")
+                    Pair(
+                        LLMClientFactory.createDeepSeekClient(apiKey, baseUrl, model),
+                        LLMProvider.DEEPSEEK
+                    )
+                }
+                
+                "ollama" -> {
+                    val baseUrl = props.getProperty("ollama.base_url", "http://localhost:11434")
+                    val model = props.getProperty("ollama.model", "llama3.2:3b")
+                    
+                    println("[LLM] Using Ollama provider with model: $model")
+                    Pair(
+                        LLMClientFactory.createOllamaClient(baseUrl, model),
+                        LLMProvider.OLLAMA
+                    )
+                }
+                
+                else -> {
+                    println("[LLM] Unknown provider '$provider', using mock mode")
+                    Pair(null, null)
+                }
+            }
+        } catch (e: Exception) {
+            println("[LLM] Failed to initialize LLM client: ${e.message}, using mock mode")
+            Pair(null, null)
+        }
     }
 
     override suspend fun generate(request: LlmVerbalizationRequest): LlmVerbalizationResponse? {
         return withContext(Dispatchers.IO) {
-            if (mockMode) {
+            val client = llmClient
+            if (client == null) {
                 generateMockResponse(request)
             } else {
-                generateLlmResponse(request)
+                generateLlmResponse(request, client)
             }
         }
     }
@@ -52,20 +127,7 @@ class DefaultLlmVerbalizationClient(
     }
 
     override fun isAvailable(): Boolean {
-        return !mockMode || config.allowMockFallback
-    }
-
-    private fun isLlmConfigured(): Boolean {
-        val configFile = File(config.configPath)
-        if (!configFile.exists()) return false
-
-        return try {
-            val props = Properties()
-            configFile.inputStream().use { props.load(it) }
-            props.containsKey("apiKey") || props.containsKey("provider")
-        } catch (e: Exception) {
-            false
-        }
+        return llmClient != null || config.allowMockFallback
     }
 
     private suspend fun generateMockResponse(request: LlmVerbalizationRequest): LlmVerbalizationResponse {
@@ -85,15 +147,121 @@ class DefaultLlmVerbalizationClient(
         )
     }
 
-    private suspend fun generateLlmResponse(request: LlmVerbalizationRequest): LlmVerbalizationResponse? {
-        // In real implementation, this would:
-        // 1. Build the prompt from template
-        // 2. Call the LLM API via llm-client module
-        // 3. Parse and validate the response
-        // 4. Return structured response
+    private suspend fun generateLlmResponse(
+        request: LlmVerbalizationRequest,
+        client: ModelProvider
+    ): LlmVerbalizationResponse {
+        val startTime = System.currentTimeMillis()
+        
+        try {
+            // Build prompt from template
+            val prompt = buildPrompt(request)
+            
+            // Generate response using the unified ModelProvider interface
+            val response = client.generate(
+                prompt = prompt,
+                temperature = config.temperature,
+                topP = 0.9,
+                topK = 40,
+                maxTokens = config.maxTokens,
+                timeoutSeconds = (config.timeoutMs / 1000).toLong()
+            )
+            
+            val generationTime = System.currentTimeMillis() - startTime
+            
+            println("[LLM] Generated response in ${generationTime}ms using ${providerType ?: "unknown"}")
+            
+            return LlmVerbalizationResponse(
+                description = response.trim(),
+                confidence = 0.9,
+                tokensUsed = estimateTokens(response),
+                model = config.model,
+                generationTimeMs = generationTime
+            )
+            
+        } catch (e: Exception) {
+            println("[LLM] Generation failed: ${e.message}, falling back to mock mode")
+            
+            // Fallback to mock response on error
+            return generateMockResponse(request).copy(
+                confidence = 0.7,
+                model = "${config.model} (fallback)"
+            )
+        }
+    }
 
-        // Placeholder for actual LLM integration
-        return generateMockResponse(request)
+    /**
+     * Build prompt from template and request data.
+     */
+    private fun buildPrompt(request: LlmVerbalizationRequest): String {
+        val template = request.promptTemplate
+        
+        return template
+            .replace("{symbolName}", request.symbol.name)
+            .replace("{symbolKind}", request.symbol.kind.name)
+            .replace("{symbolFile}", request.symbol.filePath)
+            .replace("{symbolContent}", request.symbol.content.take(2000))
+            .replace("{heuristicDescription}", request.heuristicDescription ?: "None")
+            .replace("{moduleName}", request.context.moduleName)
+            .replace("{clusterId}", request.context.clusterId)
+            .replace("{dependencies}", request.context.dependencies.joinToString(", "))
+            .replace("{relatedSymbols}", request.context.relatedSymbols.joinToString(", "))
+            .replace("{feedbackHistory}", formatFeedbackHistory(request.feedbackHistory))
+            .replace("{kotlinFeatures}", extractKotlinFeatures(request.symbol.content))
+            .replace("{modifiers}", formatModifiers(request.enrichedSymbol))
+            .replace("{structuralRole}", request.enrichedSymbol?.structuralRole?.name ?: "Unknown")
+            .replace("{technicalContext}", formatTechnicalContext(request.enrichedSymbol))
+    }
+
+    private fun formatFeedbackHistory(feedback: List<FeedbackHistoryEntry>): String {
+        if (feedback.isEmpty()) return "No feedback history"
+        
+        return feedback.joinToString("\n") { entry ->
+            "- Original: ${entry.originalDescription}\n  Corrected: ${entry.correctedDescription}\n  Rating: ${entry.rating}/5"
+        }
+    }
+
+    private fun extractKotlinFeatures(content: String): String {
+        val features = mutableListOf<String>()
+        
+        if (content.contains("suspend ")) features.add("Suspend function (coroutine)")
+        if (content.contains("data class")) features.add("Data class")
+        if (content.contains("sealed class")) features.add("Sealed class")
+        if (content.contains("companion object")) features.add("Companion object")
+        if (content.contains(" by ")) features.add("Delegation")
+        if (content.contains("inline ")) features.add("Inline function")
+        if (content.contains("reified ")) features.add("Reified type parameter")
+        if (content.contains("extension") || Regex("""fun \w+\.\w+""").containsMatchIn(content)) {
+            features.add("Extension function")
+        }
+        
+        return if (features.isEmpty()) "None detected" else features.joinToString(", ")
+    }
+
+    private fun formatModifiers(enriched: EnrichedSymbol?): String {
+        if (enriched == null) return "No structured modifiers available"
+        
+        val modifiers = mutableListOf<String>()
+        
+        // Add modifiers from enriched symbol
+        enriched.modifiers.forEach { modifier ->
+            modifiers.add(modifier.kind.name)
+        }
+        
+        return if (modifiers.isEmpty()) "None detected" else modifiers.joinToString(", ")
+    }
+
+    private fun formatTechnicalContext(enriched: EnrichedSymbol?): String {
+        if (enriched == null) return "No technical context available"
+        
+        val contexts = mutableListOf<String>()
+        
+        if (enriched.hasDatabaseAccess()) contexts.add("Database access")
+        if (enriched.hasExternalCalls()) contexts.add("External API calls")
+        if (enriched.technicalContext.isTransactional) contexts.add("Transactional")
+        if (enriched.technicalContext.hasCacheAccess) contexts.add("Cacheable")
+        
+        return if (contexts.isEmpty()) "None detected" else contexts.joinToString(", ")
     }
 
     private fun enhanceDescription(request: LlmVerbalizationRequest): String {
@@ -108,15 +276,11 @@ class DefaultLlmVerbalizationClient(
             // New structured approach with ModifierVerbalizer
             enhanceWithStructuredData(request.enrichedSymbol, fromFeedback)
         } else {
-            // Legacy fallback: simple keyword-based enhancement (no regex)
+            // Legacy fallback: simple keyword-based enhancement
             enhanceWithKeywords(fromFeedback, symbol)
         }
     }
 
-    /**
-     * Enhance description using structured data from EnrichedSymbol.
-     * Uses ModifierVerbalizer to convert structured facts to natural language.
-     */
     private fun enhanceWithStructuredData(
         enriched: EnrichedSymbol,
         baseDescription: String
@@ -133,15 +297,6 @@ class DefaultLlmVerbalizationClient(
         )
     }
 
-    /**
-     * LEGACY: Simple keyword-based enhancement without regex.
-     * 
-     * DEPRECATED: This is a temporary fallback for backward compatibility.
-     * It will be removed after all callers migrate to structured detection.
-     * 
-     * @see enhanceWithStructuredData
-     */
-    @Deprecated("Use enhanceWithStructuredData() with EnrichedSymbol instead")
     private fun enhanceWithKeywords(description: String, symbol: Symbol): String {
         val content = symbol.content.lowercase()
         var result = description

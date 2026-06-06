@@ -146,6 +146,12 @@ export class AgentTabManager {
       case 'reloadConfig':
         await this.reloadAgent(tab);
         break;
+      case 'changeProvider':
+        await this.changeProvider(tab, message.provider);
+        break;
+      case 'changeModel':
+        await this.changeModel(tab, message.model);
+        break;
     }
   }
 
@@ -336,9 +342,21 @@ export class AgentTabManager {
       // Update the tab with new agent
       tab.agent = newAgent;
 
-      // Notify webview to reload
+      // Get fresh config to send to webview
+      const agentConfig = this.provider.getConfig(tab.layer);
+      const modelId = agentConfig.model.id;
+      const providerId = agentConfig.model.provider;
+      const maxIterations = agentConfig.iterationSettings.maxIterations;
+
+      // Update webview HTML with fresh config
+      this.updateWebview(tab);
+
+      // Notify webview to update UI with new config (NO reload needed)
       tab.panel.webview.postMessage({
-        command: 'configReloaded'
+        command: 'configUpdated',
+        provider: providerId,
+        model: modelId,
+        maxIterations: maxIterations
       });
 
       this.log(`Agent reloaded successfully`);
@@ -346,6 +364,136 @@ export class AgentTabManager {
       this.log(`Error reloading agent: ${error.message}`);
       vscode.window.showErrorMessage(`Failed to reload agent: ${error.message}`);
     }
+  }
+
+  /**
+   * Change the LLM provider for this agent
+   */
+  private async changeProvider(tab: AgentTab, provider: string) {
+    this.log(`Changing provider to ${provider} for ${tab.layer} agent...`);
+
+    try {
+      // Get current config
+      const agentConfig = this.provider.getConfig(tab.layer);
+      
+      // Update provider in config
+      agentConfig.model.provider = provider;
+      
+      // Set default model for the provider
+      const defaultModel = provider === 'deepseek' ? 'deepseek-chat' : 'llama3.2:3b';
+      agentConfig.model.id = defaultModel;
+      
+      // Save config to YAML file
+      await this.saveAgentConfig(tab.layer, agentConfig);
+      
+      // Reload agent with new config
+      await this.reloadAgent(tab);
+      
+      // Notify webview of successful update
+      tab.panel.webview.postMessage({
+        command: 'configUpdated',
+        provider: provider,
+        model: defaultModel
+      });
+      
+      this.log(`Provider changed to ${provider}, model set to ${defaultModel}`);
+    } catch (error: any) {
+      this.log(`Error changing provider: ${error.message}`);
+      vscode.window.showErrorMessage(`Failed to change provider: ${error.message}`);
+    }
+  }
+
+  /**
+   * Change the LLM model for this agent
+   */
+  private async changeModel(tab: AgentTab, model: string) {
+    this.log(`Changing model to ${model} for ${tab.layer} agent...`);
+
+    try {
+      // Get current config
+      const agentConfig = this.provider.getConfig(tab.layer);
+      
+      // Update model in config
+      agentConfig.model.id = model;
+      
+      // Save config to YAML file
+      await this.saveAgentConfig(tab.layer, agentConfig);
+      
+      // Reload agent with new config
+      await this.reloadAgent(tab);
+      
+      // Notify webview of successful update
+      tab.panel.webview.postMessage({
+        command: 'configUpdated',
+        provider: agentConfig.model.provider,
+        model: model
+      });
+      
+      this.log(`Model changed to ${model}`);
+    } catch (error: any) {
+      this.log(`Error changing model: ${error.message}`);
+      vscode.window.showErrorMessage(`Failed to change model: ${error.message}`);
+    }
+  }
+
+  /**
+   * Save agent configuration to YAML file
+   */
+  private async saveAgentConfig(layer: string, config: AgentConfig): Promise<void> {
+    const fs = require('fs');
+    const path = require('path');
+    const yaml = require('js-yaml');
+    
+    const layerName = layer.toLowerCase();
+    const configPath = path.join(
+      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '',
+      '.vision-ai',
+      `${layerName}-agent.yaml`
+    );
+    
+    // Convert AgentConfig to YAML format
+    const yamlConfig: any = {
+      key: config.key,
+      agentType: config.agentType,
+      version: config.version,
+      isActive: config.isActive,
+      systemPromptTemplate: config.systemPromptTemplate,
+      templateVariables: config.templateVariables,
+      model: {
+        id: config.model.id,
+        provider: config.model.provider,
+        contextLength: config.model.contextLength,
+        maxOutputTokens: config.model.maxOutputTokens,
+        temperature: config.model.temperature,
+        topP: config.model.topP
+      },
+      llm: config.llm,
+      formattingRules: config.formattingRules,
+      iterationSettings: config.iterationSettings,
+      toolSelection: config.toolSelection,
+      safety: config.safety,
+      parsing: config.parsing,
+      discovery: config.discovery,
+      execution: config.execution,
+      formatting: config.formatting,
+      streaming: config.streaming,
+      mcp: config.mcp
+    };
+    
+    // Ensure .vision-ai directory exists
+    const visionAiDir = path.dirname(configPath);
+    await fs.promises.mkdir(visionAiDir, { recursive: true });
+    
+    // Write YAML file
+    const yamlContent = yaml.dump(yamlConfig, {
+      lineWidth: -1, // Don't wrap lines
+      noRefs: true,  // Don't use anchors/aliases
+      quotingType: '"',
+      forceQuotes: false
+    });
+    
+    await fs.promises.writeFile(configPath, yamlContent, 'utf8');
+    this.log(`Saved config to ${configPath}`);
   }
 
   /**
@@ -379,9 +527,10 @@ export class AgentTabManager {
     // Get agent config to display model info
     const agentConfig = this.provider.getConfig(tab.layer);
     const modelId = agentConfig.model.id;
+    const providerId = agentConfig.model.provider;
     const maxIterations = agentConfig.iterationSettings.maxIterations;
 
-    tab.panel.webview.html = this.getWebviewContent(modelId, maxIterations);
+    tab.panel.webview.html = this.getWebviewContent(modelId, providerId, maxIterations);
   }
 
   /**
@@ -394,7 +543,7 @@ export class AgentTabManager {
   /**
    * Get webview HTML content with configurable tool card display
    */
-  private getWebviewContent(modelId: string, maxIterations: number): string {
+  private getWebviewContent(modelId: string, providerId: string, maxIterations: number): string {
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -699,11 +848,42 @@ export class AgentTabManager {
             margin-right: 8px;
             user-select: none;
         }
+
+        optgroup {
+            font-weight: 600;
+            color: var(--vscode-foreground);
+        }
+
+        optgroup[label*="Local"] {
+            color: var(--vscode-terminal-ansiGreen);
+        }
+
+        optgroup[label*="Cloud"] {
+            color: var(--vscode-terminal-ansiBlue);
+        }
     </style>
 </head>
 <body>
     <div class="config-info">
-        <strong>Model:</strong> ${modelId} | <strong>Max Iterations:</strong> ${maxIterations}
+        <div style="display: flex; gap: 16px; align-items: center; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <label for="providerSelect" style="font-weight: 600;">Provider:</label>
+                <select id="providerSelect" onchange="onProviderChange()" style="padding: 4px 8px; border: 1px solid var(--vscode-input-border); border-radius: 4px; background: var(--vscode-input-background); color: var(--vscode-input-foreground);">
+                    <option value="ollama" ${providerId === 'ollama' ? 'selected' : ''}>Ollama (Local + Cloud)</option>
+                    <option value="deepseek" ${providerId === 'deepseek' ? 'selected' : ''}>DeepSeek Direct (Cloud)</option>
+                </select>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <label for="modelSelect" style="font-weight: 600;">Model:</label>
+                <select id="modelSelect" onchange="onModelChange()" style="padding: 4px 8px; border: 1px solid var(--vscode-input-border); border-radius: 4px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); min-width: 200px;">
+                    <!-- Options populated dynamically based on provider -->
+                </select>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px; margin-left: auto;">
+                <label style="font-weight: 600;">Max Iterations:</label>
+                <span style="font-family: var(--vscode-editor-font-family);">${maxIterations}</span>
+            </div>
+        </div>
     </div>
 
     <div id="messages"></div>
@@ -718,9 +898,117 @@ export class AgentTabManager {
         const messagesDiv = document.getElementById('messages');
         const actionButton = document.getElementById('actionButton');
         const userInput = document.getElementById('userInput');
+        const providerSelect = document.getElementById('providerSelect');
+        const modelSelect = document.getElementById('modelSelect');
 
         let currentProgressDiv = null;
         let isProcessing = false;
+
+        // Available models per provider
+        // Ollama provides BOTH local and cloud models through the same API
+        const MODELS_BY_PROVIDER = {
+            'ollama': [
+                // Local models (run on your machine)
+                { id: 'gemma3:1b', name: 'Gemma 3 1B (Local, Fast)', type: 'local' },
+                { id: 'qwen2.5-coder:0.5b-instruct', name: 'Qwen 2.5 Coder 0.5B (Local)', type: 'local' },
+                { id: 'llama3.2:3b', name: 'Llama 3.2 3B (Local, Fast)', type: 'local' },
+                { id: 'llama3.2:7b', name: 'Llama 3.2 7B (Local)', type: 'local' },
+                { id: 'llama3.1:8b', name: 'Llama 3.1 8B (Local)', type: 'local' },
+                { id: 'qwen3:4b', name: 'Qwen 3 4B (Local)', type: 'local' },
+                { id: 'codellama:7b', name: 'CodeLlama 7B (Local)', type: 'local' },
+                { id: 'codellama:13b', name: 'CodeLlama 13B (Local)', type: 'local' },
+                { id: 'mistral:7b', name: 'Mistral 7B (Local)', type: 'local' },
+                { id: 'qwen2.5:7b', name: 'Qwen 2.5 7B (Local)', type: 'local' },
+                { id: 'llama2:7b', name: 'Llama 2 7B (Local)', type: 'local' },
+                
+                // Cloud models (via Ollama Cloud API)
+                { id: 'minimax-m2.1:cloud', name: 'MiniMax M2.1 (Cloud)', type: 'cloud' },
+                { id: 'mistral-large-3:675b-cloud', name: 'Mistral Large 3 675B (Cloud)', type: 'cloud' },
+                { id: 'gemma4:31b-cloud', name: 'Gemma 4 31B (Cloud)', type: 'cloud' },
+                { id: 'deepseek-v3.1:671b-cloud', name: 'DeepSeek V3.1 671B (Cloud)', type: 'cloud' },
+                { id: 'qwen3-coder:480b-cloud', name: 'Qwen 3 Coder 480B (Cloud)', type: 'cloud' },
+                { id: 'qwen3.5:cloud', name: 'Qwen 3.5 (Cloud)', type: 'cloud' },
+                { id: 'glm-5.1:cloud', name: 'GLM 5.1 (Cloud)', type: 'cloud' },
+                { id: 'glm-4.7:cloud', name: 'GLM 4.7 (Cloud)', type: 'cloud' },
+                { id: 'glm-4.6:cloud', name: 'GLM 4.6 (Cloud)', type: 'cloud' },
+                { id: 'kimi-k2.6:cloud', name: 'Kimi K2.6 (Cloud)', type: 'cloud' },
+                { id: 'nemotron-3-super:cloud', name: 'Nemotron 3 Super (Cloud)', type: 'cloud' },
+                { id: 'gpt-oss:20b-cloud', name: 'GPT-OSS 20B (Cloud)', type: 'cloud' }
+            ],
+            'deepseek': [
+                { id: 'deepseek-chat', name: 'DeepSeek Chat (V3)', type: 'cloud' },
+                { id: 'deepseek-coder', name: 'DeepSeek Coder', type: 'cloud' },
+                { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner (R1)', type: 'cloud' }
+            ]
+        };
+
+        // Initialize model dropdown based on current provider
+        function initializeModelDropdown() {
+            const currentProvider = providerSelect.value;
+            const models = MODELS_BY_PROVIDER[currentProvider] || [];
+            
+            modelSelect.innerHTML = '';
+            
+            // Group models by type (local/cloud)
+            const localModels = models.filter(m => m.type === 'local');
+            const cloudModels = models.filter(m => m.type === 'cloud');
+            
+            // Add local models
+            if (localModels.length > 0) {
+                const localOptgroup = document.createElement('optgroup');
+                localOptgroup.label = 'Local Models (Run on your machine)';
+                localModels.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model.id;
+                    option.textContent = model.name;
+                    if (model.id === '${modelId}') {
+                        option.selected = true;
+                    }
+                    localOptgroup.appendChild(option);
+                });
+                modelSelect.appendChild(localOptgroup);
+            }
+            
+            // Add cloud models
+            if (cloudModels.length > 0) {
+                const cloudOptgroup = document.createElement('optgroup');
+                cloudOptgroup.label = 'Cloud Models (Via Ollama Cloud API)';
+                cloudModels.forEach(model => {
+                    const option = document.createElement('option');
+                    option.value = model.id;
+                    option.textContent = model.name;
+                    if (model.id === '${modelId}') {
+                        option.selected = true;
+                    }
+                    cloudOptgroup.appendChild(option);
+                });
+                modelSelect.appendChild(cloudOptgroup);
+            }
+        }
+
+        // Handle provider change
+        function onProviderChange() {
+            const newProvider = providerSelect.value;
+            vscode.postMessage({ 
+                command: 'changeProvider', 
+                provider: newProvider 
+            });
+            
+            // Update model dropdown
+            initializeModelDropdown();
+        }
+
+        // Handle model change
+        function onModelChange() {
+            const newModel = modelSelect.value;
+            vscode.postMessage({ 
+                command: 'changeModel', 
+                model: newModel 
+            });
+        }
+
+        // Initialize on load
+        initializeModelDropdown();
 
         // ===== ERROR HANDLING =====
         window.addEventListener('error', (event) => {
@@ -1021,6 +1309,21 @@ export class AgentTabManager {
                         }
                         break;
 
+                    case 'configUpdated':
+                        // Configuration updated successfully - update dropdowns
+                        if (message.provider) {
+                            providerSelect.value = message.provider;
+                        }
+                        if (message.model) {
+                            // Re-initialize model dropdown to get correct options
+                            initializeModelDropdown();
+                            // Set the selected model
+                            modelSelect.value = message.model;
+                        }
+                        showProgress('Configuration updated: ' + (message.provider || '') + ' / ' + (message.model || ''));
+                        setTimeout(hideProgress, 2000);
+                        break;
+
                     case 'response':
                         hideProgress();
 
@@ -1072,7 +1375,8 @@ export class AgentTabManager {
                         break;
 
                     case 'configReloaded':
-                        location.reload();
+                        // No longer needed - configUpdated handles UI updates without reload
+                        // This is kept for backward compatibility but does nothing
                         break;
                 }
             } catch (error) {

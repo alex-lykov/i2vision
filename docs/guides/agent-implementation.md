@@ -157,8 +157,27 @@ console.log(`Iterations: ${response.iterations}`);
 
 See `docs/AGENT_TOOL_CALLING_TEST.md` for test procedures.
 
+## LLM Provider Support
+
+The AgentBridge supports multiple LLM providers through the `llm-client` module:
+
+### Ollama (Local)
+- **Setup**: Install Ollama, pull models locally
+- **Cost**: Free
+- **Models**: llama3.2, mistral, codellama, etc.
+- **Best for**: Development, testing, privacy-sensitive tasks
+
+### DeepSeek (Cloud)
+- **Setup**: API key only
+- **Cost**: ~$0.14/1M tokens
+- **Models**: deepseek-chat, deepseek-reasoner
+- **Best for**: Complex reasoning, large context (64K), production
+
+See [DeepSeek Integration Guide](./deepseek-integration.md) for configuration details.
+
 ## Related Documents
 
 - [Agent Configuration](../reference/agent-config.md)
 - [Tool API Reference](../reference/tools.md)
+- [DeepSeek Integration](./deepseek-integration.md)
 - [Architecture Decision Records](../adr/)

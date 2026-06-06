@@ -965,36 +965,36 @@ export class AgentTabManager {
         const MODELS_BY_PROVIDER = {
             'ollama': [
                 // Local models (run on your machine)
-                { id: 'gemma3:1b', name: 'Gemma 3 1B (Local, Fast)', type: 'local' },
-                { id: 'qwen2.5-coder:0.5b-instruct', name: 'Qwen 2.5 Coder 0.5B (Local)', type: 'local' },
-                { id: 'llama3.2:3b', name: 'Llama 3.2 3B (Local, Fast)', type: 'local' },
-                { id: 'llama3.2:7b', name: 'Llama 3.2 7B (Local)', type: 'local' },
-                { id: 'llama3.1:8b', name: 'Llama 3.1 8B (Local)', type: 'local' },
-                { id: 'qwen3:4b', name: 'Qwen 3 4B (Local)', type: 'local' },
-                { id: 'codellama:7b', name: 'CodeLlama 7B (Local)', type: 'local' },
-                { id: 'codellama:13b', name: 'CodeLlama 13B (Local)', type: 'local' },
-                { id: 'mistral:7b', name: 'Mistral 7B (Local)', type: 'local' },
-                { id: 'qwen2.5:7b', name: 'Qwen 2.5 7B (Local)', type: 'local' },
-                { id: 'llama2:7b', name: 'Llama 2 7B (Local)', type: 'local' },
+                { id: 'gemma3:1b', name: '⚠️ Gemma 3 1B (Local) - Too small for chat', type: 'local', quality: 'poor' },
+                { id: 'qwen2.5-coder:0.5b-instruct', name: '⚠️ Qwen 2.5 Coder 0.5B (Local) - Too small for chat', type: 'local', quality: 'poor' },
+                { id: 'llama3.2:3b', name: '✅ Llama 3.2 3B (Local) - Recommended for chat', type: 'local', quality: 'good' },
+                { id: 'llama3.2:7b', name: '✅ Llama 3.2 7B (Local) - Good balance', type: 'local', quality: 'good' },
+                { id: 'llama3.1:8b', name: '✅ Llama 3.1 8B (Local) - Good general purpose', type: 'local', quality: 'good' },
+                { id: 'qwen3:4b', name: '✅ Qwen 3 4B (Local) - Good for code', type: 'local', quality: 'good' },
+                { id: 'codellama:7b', name: '✅ CodeLlama 7B (Local) - Code specialist', type: 'local', quality: 'good' },
+                { id: 'codellama:13b', name: '✅ CodeLlama 13B (Local) - Advanced coding', type: 'local', quality: 'excellent' },
+                { id: 'mistral:7b', name: '✅ Mistral 7B (Local) - Good general purpose', type: 'local', quality: 'good' },
+                { id: 'qwen2.5:7b', name: '✅ Qwen 2.5 7B (Local) - Multilingual', type: 'local', quality: 'good' },
+                { id: 'llama2:7b', name: '⚠️ Llama 2 7B (Local) - Legacy model', type: 'local', quality: 'fair' },
                 
                 // Cloud models (via Ollama Cloud API)
-                { id: 'minimax-m2.1:cloud', name: 'MiniMax M2.1 (Cloud)', type: 'cloud' },
-                { id: 'mistral-large-3:675b-cloud', name: 'Mistral Large 3 675B (Cloud)', type: 'cloud' },
-                { id: 'gemma4:31b-cloud', name: 'Gemma 4 31B (Cloud)', type: 'cloud' },
-                { id: 'deepseek-v3.1:671b-cloud', name: 'DeepSeek V3.1 671B (Cloud)', type: 'cloud' },
-                { id: 'qwen3-coder:480b-cloud', name: 'Qwen 3 Coder 480B (Cloud)', type: 'cloud' },
-                { id: 'qwen3.5:cloud', name: 'Qwen 3.5 (Cloud)', type: 'cloud' },
-                { id: 'glm-5.1:cloud', name: 'GLM 5.1 (Cloud)', type: 'cloud' },
-                { id: 'glm-4.7:cloud', name: 'GLM 4.7 (Cloud)', type: 'cloud' },
-                { id: 'glm-4.6:cloud', name: 'GLM 4.6 (Cloud)', type: 'cloud' },
-                { id: 'kimi-k2.6:cloud', name: 'Kimi K2.6 (Cloud)', type: 'cloud' },
-                { id: 'nemotron-3-super:cloud', name: 'Nemotron 3 Super (Cloud)', type: 'cloud' },
-                { id: 'gpt-oss:20b-cloud', name: 'GPT-OSS 20B (Cloud)', type: 'cloud' }
+                { id: 'minimax-m2.1:cloud', name: '✅ MiniMax M2.1 (Cloud) - Multilingual code', type: 'cloud', quality: 'excellent' },
+                { id: 'mistral-large-3:675b-cloud', name: '✅ Mistral Large 3 675B (Cloud) - Enterprise', type: 'cloud', quality: 'excellent' },
+                { id: 'gemma4:31b-cloud', name: '✅ Gemma 4 31B (Cloud) - Multimodal', type: 'cloud', quality: 'excellent' },
+                { id: 'deepseek-v3.1:671b-cloud', name: '✅ DeepSeek V3.1 671B (Cloud) - Advanced reasoning', type: 'cloud', quality: 'excellent' },
+                { id: 'qwen3-coder:480b-cloud', name: '✅ Qwen 3 Coder 480B (Cloud) - Expert coding', type: 'cloud', quality: 'excellent' },
+                { id: 'qwen3.5:cloud', name: '✅ Qwen 3.5 (Cloud) - Best balance', type: 'cloud', quality: 'excellent' },
+                { id: 'glm-5.1:cloud', name: '✅ GLM 5.1 (Cloud) - Agentic tasks', type: 'cloud', quality: 'excellent' },
+                { id: 'glm-4.7:cloud', name: '✅ GLM 4.7 (Cloud) - Engineering', type: 'cloud', quality: 'excellent' },
+                { id: 'glm-4.6:cloud', name: '✅ GLM 4.6 (Cloud) - Engineering', type: 'cloud', quality: 'excellent' },
+                { id: 'kimi-k2.6:cloud', name: '✅ Kimi K2.6 (Cloud) - Long context', type: 'cloud', quality: 'excellent' },
+                { id: 'nemotron-3-super:cloud', name: '✅ Nemotron 3 Super (Cloud) - Multi-agent', type: 'cloud', quality: 'excellent' },
+                { id: 'gpt-oss:20b-cloud', name: '✅ GPT-OSS 20B (Cloud) - Open alternative', type: 'cloud', quality: 'good' }
             ],
             'deepseek': [
-                { id: 'deepseek-chat', name: 'DeepSeek Chat (V3)', type: 'cloud' },
-                { id: 'deepseek-coder', name: 'DeepSeek Coder', type: 'cloud' },
-                { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner (R1)', type: 'cloud' }
+                { id: 'deepseek-chat', name: '✅ DeepSeek Chat (V3) - General purpose', type: 'cloud', quality: 'excellent' },
+                { id: 'deepseek-coder', name: '✅ DeepSeek Coder - Code specialist', type: 'cloud', quality: 'excellent' },
+                { id: 'deepseek-reasoner', name: '✅ DeepSeek Reasoner (R1) - Complex reasoning', type: 'cloud', quality: 'excellent' }
             ]
         };
 
@@ -1005,7 +1005,7 @@ export class AgentTabManager {
             
             modelSelect.innerHTML = '';
             
-            // Group models by type (local/cloud)
+            // Group models by type (local/cloud) and quality
             const localModels = models.filter(m => m.type === 'local');
             const cloudModels = models.filter(m => m.type === 'cloud');
             
@@ -1017,6 +1017,14 @@ export class AgentTabManager {
                     const option = document.createElement('option');
                     option.value = model.id;
                     option.textContent = model.name;
+                    // Color-code by quality
+                    if (model.quality === 'poor') {
+                        option.style.color = '#e74c3c'; // Red warning
+                    } else if (model.quality === 'fair') {
+                        option.style.color = '#f39c12'; // Orange caution
+                    } else if (model.quality === 'excellent') {
+                        option.style.color = '#27ae60'; // Green recommended
+                    }
                     if (model.id === '${modelId}') {
                         option.selected = true;
                     }
@@ -1033,6 +1041,10 @@ export class AgentTabManager {
                     const option = document.createElement('option');
                     option.value = model.id;
                     option.textContent = model.name;
+                    // Color-code by quality
+                    if (model.quality === 'excellent') {
+                        option.style.color = '#27ae60'; // Green recommended
+                    }
                     if (model.id === '${modelId}') {
                         option.selected = true;
                     }
@@ -1057,6 +1069,21 @@ export class AgentTabManager {
         // Handle model change
         function onModelChange() {
             const newModel = modelSelect.value;
+            
+            // Warn if selecting a poor quality model
+            const allModels = MODELS_BY_PROVIDER['ollama'].concat(MODELS_BY_PROVIDER['deepseek']);
+            const selectedModel = allModels.find(m => m.id === newModel);
+            if (selectedModel && selectedModel.quality === 'poor') {
+                if (!confirm('⚠️ Warning: This model is too small for natural conversation. It may output raw JSON instead of friendly responses. Continue anyway?')) {
+                    // Revert to a good model
+                    const goodModel = allModels.find(m => m.quality === 'good' || m.quality === 'excellent');
+                    if (goodModel) {
+                        modelSelect.value = goodModel.id;
+                    }
+                    return;
+                }
+            }
+            
             vscode.postMessage({ 
                 command: 'changeModel', 
                 model: newModel 

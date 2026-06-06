@@ -445,7 +445,17 @@ export class CLI {
       if (!res.ok) {
         const errorText = await res.text();
         this.log(`Error body: ${errorText.substring(0, 500)}`);
-        throw new Error(`DeepSeek API error: ${res.status} ${res.statusText}`);
+        
+        // Provide helpful message for common errors
+        let errorMessage = `DeepSeek API error: ${res.status} ${res.statusText}`;
+        
+        if (res.status === 402) {
+          errorMessage = 'DeepSeek API error: 402 Payment Required - Your API key has insufficient credits. Please add credits at https://platform.deepseek.com/';
+        } else if (res.status === 401) {
+          errorMessage = 'DeepSeek API error: 401 Unauthorized - Invalid API key. Check your DEEPSEEK_API_KEY environment variable or VSCode settings.';
+        }
+        
+        throw new Error(errorMessage);
       }
 
       if (stream) {

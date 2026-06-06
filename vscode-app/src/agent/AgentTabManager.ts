@@ -388,15 +388,17 @@ export class AgentTabManager {
    * Reload the agent with fresh configuration
    */
   private async reloadAgent(tab: AgentTab) {
-    this.log(`Reloading agent configuration for ${tab.layer}...`);
+    this.log(`=== Reloading agent configuration for ${tab.layer}... ===`);
 
     try {
-      // Recreate the agent with fresh config
+      // Recreate the agent with fresh config (provider.createAgent clears cache internally)
       const vslfcLayer = VslfcLayer[tab.layer.toUpperCase() as keyof typeof VslfcLayer];
+      this.log(`Creating new agent for layer: ${vslfcLayer}`);
       const newAgent = await this.provider.createAgent(vslfcLayer);
 
       // Update the tab with new agent
       tab.agent = newAgent;
+      this.log(`New agent created: ${newAgent.id}`);
 
       // Get fresh config to send to webview
       const agentConfig = this.provider.getConfig(tab.layer);
@@ -404,8 +406,11 @@ export class AgentTabManager {
       const providerId = agentConfig.model.provider;
       const maxIterations = agentConfig.iterationSettings.maxIterations;
 
+      this.log(`Loaded config: provider=${providerId}, model=${modelId}, maxIterations=${maxIterations}`);
+
       // Update webview HTML with fresh config
       this.updateWebview(tab);
+      this.log(`Webview HTML updated`);
 
       // Notify webview to update UI with new config (NO reload needed)
       tab.panel.webview.postMessage({
@@ -414,11 +419,14 @@ export class AgentTabManager {
         model: modelId,
         maxIterations: maxIterations
       });
+      this.log(`Config update message sent to webview`);
 
-      this.log(`Agent reloaded successfully`);
+      this.log(`✅ Agent reloaded successfully`);
     } catch (error: any) {
-      this.log(`Error reloading agent: ${error.message}`);
+      this.log(`❌ Error reloading agent: ${error.message}`);
+      this.log(`Stack: ${error.stack}`);
       vscode.window.showErrorMessage(`Failed to reload agent: ${error.message}`);
+      throw error;
     }
   }
 
@@ -426,10 +434,14 @@ export class AgentTabManager {
    * Change the LLM provider for this agent
    */
   private async changeProvider(tab: AgentTab, provider: string) {
-    this.log(`Changing provider to ${provider} for ${tab.layer} agent...`);
+    this.log(`=== Changing provider to ${provider} for ${tab.layer} agent... ===`);
 
     try {
-      // Get current config
+      // Clear cache FIRST to ensure fresh load
+      this.provider.clearConfigCache();
+      this.log(`Config cache cleared`);
+      
+      // Get current config (will be defaults after cache clear)
       const agentConfig = this.provider.getConfig(tab.layer);
       
       // Update provider in config
@@ -439,11 +451,18 @@ export class AgentTabManager {
       const defaultModel = provider === 'deepseek' ? 'deepseek-chat' : 'llama3.2:3b';
       agentConfig.model.id = defaultModel;
       
+      this.log(`Config updated: provider=${provider}, model=${defaultModel}`);
+      
       // Save config to YAML file
       await this.saveAgentConfig(tab.layer, agentConfig);
+      this.log(`Config saved to YAML`);
       
-      // Reload agent with new config
+      // Small delay to ensure file is written
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Reload agent with new config (will load from YAML)
       await this.reloadAgent(tab);
+      this.log(`Agent reloaded`);
       
       // Notify webview of successful update
       tab.panel.webview.postMessage({
@@ -452,9 +471,10 @@ export class AgentTabManager {
         model: defaultModel
       });
       
-      this.log(`Provider changed to ${provider}, model set to ${defaultModel}`);
+      this.log(`✅ Provider changed to ${provider}, model set to ${defaultModel}`);
     } catch (error: any) {
-      this.log(`Error changing provider: ${error.message}`);
+      this.log(`❌ Error changing provider: ${error.message}`);
+      this.log(`Stack: ${error.stack}`);
       vscode.window.showErrorMessage(`Failed to change provider: ${error.message}`);
     }
   }

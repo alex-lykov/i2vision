@@ -152,23 +152,29 @@ export class LocalAgentProvider {
    * Create an agent for a specific VSLFC layer
    */
   async createAgent(layer: VslfcLayer): Promise<LocalI2VisionAgent> {
-    this.log(`Creating agent for layer: ${layer}`);
+    this.log(`=== Creating agent for layer: ${layer} ===`);
     
     try {
       // Clear cache to ensure fresh config is loaded on each agent creation
       // This ensures any YAML changes are picked up immediately
       this.clearConfigCache();
+      this.log(`Config cache cleared`);
       
       // Load configuration (defaults merged with layer overrides)
+      this.log(`Loading config for layer: ${layer}`);
       const config = await this.loadConfigForLayer(layer);
+      
+      this.log(`Config loaded: provider=${config.model.provider}, model=${config.model.id}`);
       
       // Create the agent
       const agent = new LocalI2VisionAgent(layer, config, this.outputChannel);
       
-      this.log(`Created agent: ${agent.id} (${agent.displayName})`);
+      this.log(`✅ Created agent: ${agent.id} (${agent.displayName})`);
+      this.log(`   Provider: ${config.model.provider}, Model: ${config.model.id}`);
       return agent;
     } catch (error: any) {
-      this.log(`Error creating agent: ${error.message}`);
+      this.log(`❌ Error creating agent: ${error.message}`);
+      this.log(`Stack: ${error.stack}`);
       throw error;
     }
   }

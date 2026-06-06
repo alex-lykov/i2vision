@@ -79,7 +79,7 @@ export interface AgentContext {
 export type AgentChunk = 
   | { type: 'reasoning'; text: string; timestamp: number }
   | { type: 'tool_call_started'; toolName: string; args: any; timestamp: number }
-  | { type: 'tool_call_completed'; toolName: string; result: string; timestamp: number }
+  | { type: 'tool_call_completed'; toolName: string; args: any; result: string; timestamp: number }
   | { type: 'text'; text: string; timestamp: number }
   | { type: 'done'; outcome: string; timestamp: number }
   | { type: 'error'; error: string; timestamp: number };
@@ -248,6 +248,7 @@ export class LocalI2VisionAgent implements vscode.Disposable {
           yield {
             type: 'tool_call_completed',
             toolName: toolCall.toolName,
+            args: toolCall.args,
             result: toolCall.result || toolCall.error || 'No result',
             timestamp: Date.now()
           };

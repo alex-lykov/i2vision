@@ -183,6 +183,27 @@ export class AgentTabManager {
   }
 
   /**
+   * Clean up agent response text (strip reasoning headers, EOS markers, etc.)
+   */
+  private cleanResponseText(text: string): string {
+    if (!text) return '';
+    
+    // Strip reasoning: header (case-insensitive)
+    text = text.replace(/^reasoning:\s*/gmi, '');
+    
+    // Strip EOS marker
+    text = text.replace(/\bEOS\b/g, '');
+    
+    // Strip tool_calls: header if present
+    text = text.replace(/^tool_calls:\s*/gmi, '');
+    
+    // Clean up extra whitespace
+    text = text.trim();
+    
+    return text;
+  }
+
+  /**
    * Process user input through the agent with timeout protection and real-time progress
    */
   private async processUserInput(tab: AgentTab, userInput: string) {
@@ -216,43 +237,74 @@ export class AgentTabManager {
         sessionId: tab.id
       };
 
-      // Call the agent with timeout protection and progress callback
-      this.log(`=== DIAGNOSTIC: Calling agent.process() with progress callback ===`);
-
+      // Use streaming for better UX - shows "Hi!" instantly
+      this.log(`=== Using streaming mode ===`);
+      
       const AGENT_TIMEOUT_MS = 60000; // 60 second timeout
+      const requestId = `request-${Date.now()}`;
+      
+      let accumulatedText = '';
+      let toolCalls: any[] = [];
+      let iterations = 1;
 
-      const agentPromise = tab.agent.process({
-        id: `request-${Date.now()}`,
-        task: userInput,
-        context: context
-      }, undefined, (event: ProgressEvent) => {
-        // Format progress event through ToolCardManager
-        const formattedEvent = this.toolCardManager.formatProgressEvent(event);
-
-        // Forward progress events to webview in real-time
-        this.log(`Progress event: ${event.type} at iteration ${event.iteration}`);
-        tab.panel.webview.postMessage({
-          command: 'progress',
-          event: formattedEvent
-        });
-      });
+      const agentPromise = (async () => {
+        // Stream the response
+        for await (const chunk of tab.agent.processStreaming({
+          id: requestId,
+          task: userInput,
+          context: context
+        })) {
+          // Handle different chunk types
+          if (chunk.type === 'text') {
+            accumulatedText += chunk.text;
+            // Stream to webview immediately for better UX
+            tab.panel.webview.postMessage({
+              command: 'streamingText',
+              text: chunk.text,
+              accumulated: accumulatedText
+            });
+          } else if (chunk.type === 'tool_call_started') {
+            this.log(`Tool call started: ${chunk.toolName}`);
+          } else if (chunk.type === 'tool_call_completed') {
+            toolCalls.push({
+              toolName: chunk.toolName,
+              args: chunk.args,
+              result: chunk.result
+            });
+          } else if (chunk.type === 'done') {
+            iterations = 1; // Streaming doesn't track iterations yet
+          }
+        }
+        
+        // Return final response
+        return {
+          finalText: accumulatedText,
+          toolCalls: toolCalls,
+          iterations: iterations,
+          durationMs: Date.now() - startTime,
+          success: true
+        };
+      })();
 
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => {
-          reject(new Error(`agent.process() timed out after ${AGENT_TIMEOUT_MS}ms`));
+          reject(new Error(`agent.processStreaming() timed out after ${AGENT_TIMEOUT_MS}ms`));
         }, AGENT_TIMEOUT_MS);
       });
 
       const response = await Promise.race([agentPromise, timeoutPromise]);
 
-      this.log(`=== DIAGNOSTIC: agent.process() returned ===`);
+      this.log(`=== DIAGNOSTIC: agent.processStreaming() returned ===`);
       this.log(`Response finalText length: ${response.finalText?.length || 0}`);
       this.log(`Response toolCalls count: ${response.toolCalls?.length || 0}`);
       this.log(`Response success: ${response.success}`);
 
+      // Clean up response text (strip reasoning:, EOS, etc.)
+      const cleanedText = this.cleanResponseText(response.finalText || '');
+
       // Format the response through ToolCardManager
       const formattedResponse = this.toolCardManager.formatAgentResponse(
-        response.finalText || '',
+        cleanedText,
         response.toolCalls || [],
         response.iterations,
         response.durationMs,
@@ -263,7 +315,7 @@ export class AgentTabManager {
       const record: InteractionRecord = {
         timestamp: Date.now(),
         userInput,
-        agentResponse: response.finalText || 'No response',
+        agentResponse: cleanedText,
         toolCalls: response.toolCalls?.map(tc => ({
           toolName: tc.toolName,
           args: tc.args || {}
@@ -276,7 +328,7 @@ export class AgentTabManager {
       this.log(`Interaction recorded: ${record.iterations} iterations, ${record.durationMs}ms`);
       this.log(`Tool calls: ${response.toolCalls?.map(tc => tc.toolName).join(', ') || 'none'}`);
 
-      // Update webview with formatted response
+      // Update webview with final formatted response
       this.log(`=== DIAGNOSTIC: About to postMessage to webview ===`);
       tab.panel.webview.postMessage({
         command: 'response',
@@ -1285,6 +1337,21 @@ export class AgentTabManager {
                         showProgress('Processing: ' + message.userInput.substring(0, 50) + '...');
                         break;
 
+                    case 'streamingText':
+                        // Real-time streaming - show text as it arrives
+                        hideProgress();
+                        
+                        // If we have an existing agent message, update it
+                        const lastMessage = messagesDiv.lastElementChild;
+                        if (lastMessage && lastMessage.classList.contains('agent-message')) {
+                            // Update existing message
+                            lastMessage.innerHTML = message.accumulated.replace(/\\n/g, '<br>');
+                        } else {
+                            // Create new message
+                            addMessage('agent', message.accumulated.replace(/\\n/g, '<br>'), true);
+                        }
+                        break;
+
                     case 'progress':
                         const evt = message.event;
                         if (evt.type === 'thinking') {
@@ -1327,29 +1394,47 @@ export class AgentTabManager {
                     case 'response':
                         hideProgress();
 
-                        let responseHtml = '';
-
-                        // Show final text if available
-                        if (message.response.text && message.response.text.trim() !== '') {
-                            responseHtml = '<div>' + message.response.text.replace(/\\n/g, '<br>') + '</div>';
-                        } else if (message.response.toolCards && message.response.toolCards.length > 0) {
-                            responseHtml = '<div><em>Completed tool operations:</em></div>';
+                        // If streaming already showed text, just update with final stats
+                        const lastMsg = messagesDiv.lastElementChild;
+                        if (lastMsg && lastMsg.classList.contains('agent-message')) {
+                            // Add iteration info to existing message
+                            let statsHtml = '<div class="iteration-info">Iterations: ' + message.response.iterations + ' | Duration: ' + message.response.durationMs + 'ms</div>';
+                            
+                            if (message.response.toolCards && message.response.toolCards.length > 0) {
+                                statsHtml += '<div class="iteration-info">Tools Used: ' + message.response.toolCards.map(tc => tc.toolName).join(', ') + '</div>';
+                            }
+                            
+                            if (message.response.success !== undefined) {
+                                statsHtml += '<div class="iteration-info">Status: ' + (message.response.success ? '✅ Success' : '❌ Failed') + '</div>';
+                            }
+                            
+                            lastMsg.innerHTML += statsHtml;
                         } else {
-                            responseHtml = '<div><em>No response generated.</em></div>';
+                            // No streaming happened, show full response
+                            let responseHtml = '';
+
+                            // Show final text if available
+                            if (message.response.text && message.response.text.trim() !== '') {
+                                responseHtml = '<div>' + message.response.text.replace(/\\n/g, '<br>') + '</div>';
+                            } else if (message.response.toolCards && message.response.toolCards.length > 0) {
+                                responseHtml = '<div><em>Completed tool operations:</em></div>';
+                            } else {
+                                responseHtml = '<div><em>No response generated.</em></div>';
+                            }
+
+                            // Show tool cards summary
+                            if (message.response.toolCards && message.response.toolCards.length > 0) {
+                                responseHtml += '<div class="iteration-info">Tools Used: ' + message.response.toolCards.map(tc => tc.toolName).join(', ') + '</div>';
+                            }
+
+                            responseHtml += '<div class="iteration-info">Iterations: ' + message.response.iterations + ' | Duration: ' + message.response.durationMs + 'ms</div>';
+
+                            if (message.response.success !== undefined) {
+                                responseHtml += '<div class="iteration-info">Status: ' + (message.response.success ? '✅ Success' : '❌ Failed') + '</div>';
+                            }
+
+                            addMessage('agent', responseHtml, true);
                         }
-
-                        // Show tool cards summary
-                        if (message.response.toolCards && message.response.toolCards.length > 0) {
-                            responseHtml += '<div class="iteration-info">Tools Used: ' + message.response.toolCards.map(tc => tc.toolName).join(', ') + '</div>';
-                        }
-
-                        responseHtml += '<div class="iteration-info">Iterations: ' + message.response.iterations + ' | Duration: ' + message.response.durationMs + 'ms</div>';
-
-                        if (message.response.success !== undefined) {
-                            responseHtml += '<div class="iteration-info">Status: ' + (message.response.success ? '✅ Success' : '❌ Failed') + '</div>';
-                        }
-
-                        addMessage('agent', responseHtml, true);
 
                         isProcessing = false;
                         updateActionButton();

@@ -127,8 +127,9 @@ export class AgentTabManager {
   }
 
   private cleanResponseText(text: string): string {
+    // AgentBridge already cleans text chunks during streaming
+    // This is a safety net for any remaining markers
     if (!text) return '';
-    text = text.replace(/^reasoning:\s*/gmi, '');
     text = text.replace(/\bEOS\b/g, '');
     text = text.replace(/^tool_calls:\s*/gmi, '');
     return text.trim();
@@ -1032,11 +1033,8 @@ export class AgentTabManager {
 
                     case 'streamingText':
                         hideProgress();
-                        // Clean the accumulated text before display (remove reasoning:, EOS, etc.)
-                        let cleanAccumulated = message.accumulated;
-                        cleanAccumulated = cleanAccumulated.replace(/^reasoning:\s*/gmi, '');
-                        cleanAccumulated = cleanAccumulated.replace(/\bEOS\b/g, '');
-                        cleanAccumulated = cleanAccumulated.replace(/^tool_calls:\s*/gmi, '');
+                        // Text already cleaned by AgentBridge - just display
+                        const cleanAccumulated = message.accumulated;
                         const lastMessage = messagesDiv.lastElementChild;
                         if (lastMessage && lastMessage.classList.contains('agent-message')) {
                             lastMessage.innerHTML = cleanAccumulated.replace(/\\n/g, '<br>');

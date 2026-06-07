@@ -324,6 +324,18 @@ export class AgentBridge {
   }
 
   /**
+   * Clean response markers from text (reasoning:, EOS, tool_call:, tool_calls:)
+   */
+  private cleanResponseMarkers(text: string): string {
+    if (!text) return '';
+    text = text.replace(/^reasoning:\s*/gmi, '');
+    text = text.replace(/\bEOS\b/g, '');
+    text = text.replace(/^tool_call:\s*/gmi, '');
+    text = text.replace(/^tool_calls:\s*/gmi, '');
+    return text.trim();
+  }
+
+  /**
    * Emit progress event to callback
    */
   private emitProgress(event: ProgressEvent): void {
@@ -472,15 +484,15 @@ export class AgentBridge {
         true // Enable streaming
       ) as AsyncGenerator<LLMChunk>;
 
-      // Collect streaming response - BUFFER text until we know if it's a plan
+      // Collect streaming response - BUFFER all text until we know response type
       let responseText = '';
       let streamingToolCalls: LLMToolCall[] = [];
-      let textBuffer: string[] = []; // Buffer text chunks until we confirm not a plan
+      let textBuffer: string[] = [];
 
       for await (const chunk of streamResponse) {
         if (chunk.text) {
           responseText += chunk.text;
-          textBuffer.push(chunk.text); // Buffer for now
+          textBuffer.push(chunk.text);
         }
         if (chunk.toolCalls) {
           streamingToolCalls = chunk.toolCalls;
@@ -492,7 +504,7 @@ export class AgentBridge {
 
       // FALLBACK: Parse tool calls from text if structured tool calls not provided
       if (streamingToolCalls.length === 0 && responseText.includes('tool_call:')) {
-        this.log(`No structured tool calls - attempting to parse from text response`);
+        this.log(`No structured tool calls - parsing from text`);
         const toolCallPattern = /tool_call:\s*({"tool":\s*"[^"]+",\s*"args":\s*{[^}]+}})/g;
         let match;
         while ((match = toolCallPattern.exec(responseText)) !== null) {
@@ -503,18 +515,22 @@ export class AgentBridge {
               name: toolCallObj.tool,
               arguments: toolCallObj.args
             });
-            this.log(`Parsed tool call from text: ${toolCallObj.tool}`);
+            this.log(`Parsed tool call: ${toolCallObj.tool}`);
           } catch (e: any) {
-            this.log(`Warning: Could not parse tool call from text: ${match[1]}`);
+            this.log(`Warning: Could not parse tool call: ${match[1]}`);
           }
         }
-        // Remove tool_call lines from response text
+        // Remove tool_call: lines from text
         responseText = responseText.replace(/tool_call:\s*{"tool":\s*"[^"]+",\s*"args":\s*{[^}]+}}/g, '').trim();
       }
 
+      // Clean text: remove reasoning:, EOS, tool_calls: markers
+      responseText = this.cleanResponseMarkers(responseText);
+      textBuffer = textBuffer.map(chunk => this.cleanResponseMarkers(chunk));
+
       this.log(`[Iter ${iteration}] LLM: ${responseText.length} chars, ${streamingToolCalls.length} tool(s)`);
 
-      // If no tool calls, check if this is just a plan
+      // No tool calls - check if plan or final answer
       if (streamingToolCalls.length === 0) {
         const trimmedResponse = responseText.trim();
         const isPlanOnly =
@@ -527,8 +543,7 @@ export class AgentBridge {
           (trimmedResponse.length < 100 && /^(Sure|Okay|Let me|I will|I\'ll)/i.test(trimmedResponse));
 
         if (isPlanOnly && trimmedResponse.length < 300) {
-          this.log(`[Iter ${iteration}] Plan detected - discarding buffered text`);
-          // DON'T yield buffered text - just continue to next iteration
+          this.log(`[Iter ${iteration}] Plan detected - discarding text`);
           messages.push({
             role: 'user',
             content: 'That is just a plan. You MUST call tools to complete the task. Do NOT respond with another plan - actually call the tools now.'
@@ -536,8 +551,8 @@ export class AgentBridge {
           continue;
         }
 
-        // Not a plan - yield all buffered text now
-        this.log(`[Iter ${iteration}] Final answer received - yielding ${textBuffer.length} text chunks`);
+        // Final answer - yield cleaned text
+        this.log(`[Iter ${iteration}] Final answer - yielding ${textBuffer.length} chunks`);
         for (const textChunk of textBuffer) {
           yield {
             type: 'text',
@@ -555,7 +570,7 @@ export class AgentBridge {
         return;
       }
 
-      // Has tool calls - yield buffered text (if any) then execute tools
+      // Has tool calls - yield cleaned text, then execute tools
       for (const textChunk of textBuffer) {
         yield {
           type: 'text',

@@ -325,13 +325,16 @@ export class AgentBridge {
 
   /**
    * Clean response markers from text (reasoning:, EOS, tool_call:, tool_calls:)
+   * Only removes markers at line boundaries to preserve normal text
    */
   private cleanResponseMarkers(text: string): string {
     if (!text) return '';
-    text = text.replace(/^reasoning:\s*/gmi, '');
+    // Only remove markers at start of lines or as standalone words
+    text = text.replace(/^\s*reasoning:\s*/gmi, '');
+    text = text.replace(/\n\s*reasoning:\s*/gmi, '\n');
     text = text.replace(/\bEOS\b/g, '');
-    text = text.replace(/^tool_call:\s*/gmi, '');
-    text = text.replace(/^tool_calls:\s*/gmi, '');
+    text = text.replace(/^\s*tool_call:\s*/gmi, '');
+    text = text.replace(/^\s*tool_calls:\s*/gmi, '');
     return text.trim();
   }
 

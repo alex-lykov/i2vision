@@ -494,6 +494,29 @@ export class AgentBridge {
         }
       }
 
+      // FALLBACK: Parse tool calls from text if structured tool calls not provided
+      // Some models (like Qwen via Ollama) may output tool calls as text instead of structured format
+      if (streamingToolCalls.length === 0 && responseText.includes('tool_call:')) {
+        this.log(`No structured tool calls - attempting to parse from text response`);
+        const toolCallPattern = /tool_call:\s*({"tool":\s*"[^"]+",\s*"args":\s*{[^}]+}})/g;
+        let match;
+        while ((match = toolCallPattern.exec(responseText)) !== null) {
+          try {
+            const toolCallObj = JSON.parse(match[1]);
+            streamingToolCalls.push({
+              id: `call_${Date.now()}_${streamingToolCalls.length}`,
+              name: toolCallObj.tool,
+              arguments: toolCallObj.args
+            });
+            this.log(`Parsed tool call from text: ${toolCallObj.tool}`);
+          } catch (e: any) {
+            this.log(`Warning: Could not parse tool call from text: ${match[1]}`);
+          }
+        }
+        // Remove tool_call lines from response text to avoid displaying them
+        responseText = responseText.replace(/tool_call:\s*{"tool":\s*"[^"]+",\s*"args":\s*{[^}]+}}/g, '').trim();
+      }
+
       this.log(`LLM response: ${responseText.length} chars, ${streamingToolCalls.length} tool calls`);
 
       // If no tool calls, check if this is just a plan (not actual execution)

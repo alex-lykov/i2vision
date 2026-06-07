@@ -187,15 +187,14 @@ export class AgentTabManager {
             resetIdleTimer();
             
             if (chunk.type === 'text') {
-              const cleanChunkText = this.cleanResponseText(chunk.text);
-              if (cleanChunkText) {
-                accumulatedText += cleanChunkText;
-                tab.panel.webview.postMessage({
-                  command: 'streamingText',
-                  text: cleanChunkText,
-                  accumulated: accumulatedText
-                });
-              }
+              // Don't clean individual chunks - preserve spaces and formatting
+              // Only clean the final accumulated text before display
+              accumulatedText += chunk.text;
+              tab.panel.webview.postMessage({
+                command: 'streamingText',
+                text: chunk.text,
+                accumulated: accumulatedText
+              });
             } else if (chunk.type === 'tool_call_started') {
               tab.panel.webview.postMessage({
                 command: 'progress',
@@ -247,6 +246,7 @@ export class AgentTabManager {
       this.log(`Response finalText length: ${response.finalText?.length || 0}`);
       this.log(`Response toolCalls count: ${response.toolCalls?.length || 0}`);
 
+      // Clean the final accumulated text (remove reasoning:, EOS, tool_calls: markers)
       const cleanedText = this.cleanResponseText(response.finalText || '');
       const formattedResponse = this.toolCardManager.formatAgentResponse(
         cleanedText,
@@ -1028,11 +1028,16 @@ export class AgentTabManager {
 
                     case 'streamingText':
                         hideProgress();
+                        // Clean the accumulated text before display (remove reasoning:, EOS, etc.)
+                        let cleanAccumulated = message.accumulated;
+                        cleanAccumulated = cleanAccumulated.replace(/^reasoning:\s*/gmi, '');
+                        cleanAccumulated = cleanAccumulated.replace(/\bEOS\b/g, '');
+                        cleanAccumulated = cleanAccumulated.replace(/^tool_calls:\s*/gmi, '');
                         const lastMessage = messagesDiv.lastElementChild;
                         if (lastMessage && lastMessage.classList.contains('agent-message')) {
-                            lastMessage.innerHTML = message.accumulated.replace(/\\n/g, '<br>');
+                            lastMessage.innerHTML = cleanAccumulated.replace(/\\n/g, '<br>');
                         } else {
-                            addMessage('agent', message.accumulated.replace(/\\n/g, '<br>'), true);
+                            addMessage('agent', cleanAccumulated.replace(/\\n/g, '<br>'), true);
                         }
                         break;
 

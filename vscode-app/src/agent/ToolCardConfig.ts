@@ -69,6 +69,7 @@ export interface FormattedToolCard {
     format: string;
     showLineNumbers: boolean;
     syntaxHighlight: boolean;
+    toolCallId?: string; // OpenAI-compatible ID for linking results to tool calls
 }
 
 /**

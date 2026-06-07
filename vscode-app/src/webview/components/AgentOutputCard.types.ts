@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * Agent Output Card Types
  * 
@@ -35,6 +42,7 @@ export interface ToolCallData {
   durationMs?: number;
   success?: boolean;
   error?: string;
+  toolCallId?: string; // OpenAI-compatible ID for linking results to tool calls
 }
 
 /**

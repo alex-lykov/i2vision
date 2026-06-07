@@ -206,11 +206,20 @@ export class AgentTabManager {
               toolCalls.push({
                 toolName: completedChunk.toolName,
                 args: completedChunk.args || {},
-                result: completedChunk.result
+                result: completedChunk.result,
+                toolCallId: completedChunk.toolCallId
               });
               tab.panel.webview.postMessage({
                 command: 'progress',
-                event: { type: 'tool_complete', toolCall: { toolName: completedChunk.toolName, args: completedChunk.args, result: completedChunk.result } }
+                event: { 
+                  type: 'tool_complete', 
+                  toolCall: { 
+                    toolName: completedChunk.toolName, 
+                    args: completedChunk.args, 
+                    result: completedChunk.result,
+                    toolCallId: completedChunk.toolCallId
+                  } 
+                }
               });
             } else if (chunk.type === 'done') {
               const doneChunk = chunk as { type: 'done'; iterations?: number };
@@ -455,6 +464,9 @@ export class AgentTabManager {
 
     const settingsJson = JSON.stringify(outputSettings).replace(/"/g, '&quot;');
     
+    // Note: AgentOutputCard is plain TypeScript (not React) - generates HTML via template strings
+    // No bundler required - works directly in VSCode webviews
+    
     return `<!DOCTYPE html>
 <html lang="en" data-output-settings="${settingsJson}">
 <head>
@@ -591,6 +603,7 @@ export class AgentTabManager {
         .tool-call-name { font-weight: 600; flex: 1; font-size: 12px; }
         .tool-call-meta { display: flex; gap: 10px; font-size: 11px; color: var(--vscode-descriptionForeground); }
         .tool-call-duration { font-family: var(--vscode-editor-font-family); }
+        .tool-call-id { font-family: var(--vscode-editor-font-family); font-size: 9px; opacity: 0.6; cursor: help; }
         .tool-call-body { padding: 10px 12px; display: block; }
         .tool-call-body[style*="display: none"] { display: none !important; }
         .tool-call-args, .tool-call-result, .tool-call-error { margin-top: 8px; font-size: 11px; }

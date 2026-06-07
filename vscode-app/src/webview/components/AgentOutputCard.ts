@@ -6,10 +6,13 @@
  */
 
 /**
- * AgentOutputCard Component
+ * AgentOutputCard - Plain TypeScript HTML Generator
  * 
  * Unified agent output display with configurable formatting, collapsing, and styling.
  * Used in webview to display agent responses consistently across all agent types.
+ * 
+ * NOTE: This is NOT React/JSX - it's plain TypeScript that generates HTML strings.
+ * No bundler required - works directly in VSCode webviews.
  */
 
 import {
@@ -193,13 +196,14 @@ function createToolCallCard(toolCall: ToolCallData): string {
   const icon = toolCall.success !== false ? '✅' : '❌';
 
   return `
-    <div class="tool-call-card ${successClass}">
+    <div class="tool-call-card ${successClass}" data-tool-call-id="${toolCall.toolCallId || ''}">
       <div class="tool-call-header" onclick="toggleToolCallCard(this)">
         <span class="tool-call-toggle">▼</span>
         <span class="tool-call-icon">${icon}</span>
         <span class="tool-call-name">${escapeHtml(toolCall.toolName)}</span>
         <span class="tool-call-meta">
           ${toolCall.durationMs ? `<span class="tool-call-duration">${formatDuration(toolCall.durationMs)}</span>` : ''}
+          ${toolCall.toolCallId ? `<span class="tool-call-id" title="Tool Call ID">${escapeHtml(toolCall.toolCallId)}</span>` : ''}
         </span>
       </div>
       <div class="tool-call-body">

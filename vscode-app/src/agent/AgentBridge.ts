@@ -154,7 +154,7 @@ export interface ToolCall {
   result?: string;
   error?: string;
   durationMs?: number;
-  toolCallId?: string;
+  toolCallId?: string; // OpenAI-compatible ID for linking results
 }
 
 /**

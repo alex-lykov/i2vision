@@ -113,6 +113,10 @@ export class ToolCardManager implements vscode.Disposable {
             );
 
             if (card) {
+                // Preserve toolCallId for linking results to tool calls
+                if (tc.toolCallId) {
+                    card.toolCallId = tc.toolCallId;
+                }
                 toolCards.push(card);
             }
         }

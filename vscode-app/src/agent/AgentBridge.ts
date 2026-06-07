@@ -461,6 +461,7 @@ export class AgentBridge {
     const tools = this.getTools();
     const maxIterations = this.config.iterationSettings.maxIterations;
     const toolCalls: ToolCall[] = [];
+    const history: ToolCallHistory[] = [];
 
     this.log(`Starting streaming loop with max ${maxIterations} iterations`);
 
@@ -581,6 +582,76 @@ export class AgentBridge {
           timestamp: Date.now()
         };
       }
+
+      // ===== LOOP DETECTION (same as non-streaming path) =====
+      const repeatCountMap = new Map<string, number>();
+      const shouldNudge: string[] = [];
+      const shouldForceStop: { toolName: string; count: number } | null = null;
+
+      for (const toolCall of streamingToolCalls) {
+        const argsSignature = JSON.stringify(toolCall.arguments);
+        const normalizedToolName = toolCall.name.toLowerCase().replace(/[_-]/g, '');
+        
+        // Check if this exact tool call was made in the last 2 iterations
+        const recentCalls = history.filter(h => 
+          h.iteration >= iteration - 2 && 
+          h.toolName.toLowerCase().replace(/[_-]/g, '') === normalizedToolName &&
+          h.argsSignature === argsSignature
+        );
+        
+        // Calculate repeat count
+        const repeatKey = `${normalizedToolName}:${argsSignature}`;
+        const previousRepeatCount = repeatCountMap.get(repeatKey) || 0;
+        const totalRepeatCount = previousRepeatCount + recentCalls.length;
+        repeatCountMap.set(repeatKey, totalRepeatCount);
+
+        if (recentCalls.length > 0) {
+          this.log(`LOOP DETECTED [Stream]: ${toolCall.name} called with same args at iterations ${recentCalls.map(h => h.iteration).join(', ')} (repeat count: ${totalRepeatCount})`);
+          
+          if (totalRepeatCount === 2) {
+            shouldNudge.push(toolCall.name);
+          } else if (totalRepeatCount >= 4) {
+            this.log(`FORCE STOP [Stream]: ${toolCall.name} repeated ${totalRepeatCount} times`);
+            // Force stop - yield final message
+            yield {
+              type: 'text',
+              text: `⚠️ Agent stopped after ${totalRepeatCount} repeated attempts with ${toolCall.name}. The tool returned the same result each time. Try a different approach.`,
+              timestamp: Date.now()
+            };
+            yield {
+              type: 'done',
+              outcome: 'error',
+              timestamp: Date.now(),
+              iterations: iteration
+            };
+            return;
+          }
+        }
+        
+        // Record BEFORE execution
+        history.push({
+          toolName: toolCall.name,
+          argsSignature,
+          iteration
+        });
+      }
+
+      // Inject nudge messages if needed
+      if (shouldNudge.length > 0) {
+        const uniqueTools = [...new Set(shouldNudge)];
+        const nudgeMessage = `NOTICE: You just called ${uniqueTools.join(', ')} with the same arguments as before. This repeated call hasn't made progress. 
+        
+Please try a DIFFERENT approach:
+1. Use a different tool that might give you new information
+2. If you already have enough information, answer the user's question directly
+3. Don't repeat the same tool call again - it won't give you different results`;
+
+        messages.push({
+          role: 'user',
+          content: nudgeMessage
+        });
+      }
+      // ===== END LOOP DETECTION =====
 
       // Execute tool calls
       const currentIterationToolCalls: ToolCall[] = [];
@@ -1002,10 +1073,22 @@ Please try a DIFFERENT approach:
             const files = await this.cli.listFiles(dirPath, recursive);
 
             if (files.length === 0) {
-              return {
-                result: 'This directory is empty. No files found.',
-                error: undefined
-              };
+              // Check if directory exists or if it's a real "not found" error
+              const fs = require('fs');
+              try {
+                fs.accessSync(dirPath);
+                // Directory exists but is empty
+                return {
+                  result: 'This directory is empty. No files found.',
+                  error: undefined
+                };
+              } catch (accessError: any) {
+                // Directory doesn't exist
+                return {
+                  result: `DIRECTORY_NOT_FOUND: The folder '${toolCall.args.path}' does not exist.`,
+                  error: undefined
+                };
+              }
             }
 
             const result = files.join('\n');
@@ -1020,9 +1103,10 @@ Please try a DIFFERENT approach:
 
             return { result };
           } catch (error: any) {
-            if (error.code === 'DIRECTORY_NOT_FOUND' || error.message?.includes('Directory not found')) {
+            // ENOENT = directory doesn't exist
+            if (error.code === 'ENOENT' || error.message?.includes('no such file') || error.message?.includes('Directory not found')) {
               return {
-                result: 'DIRECTORY_NOT_FOUND',
+                result: `DIRECTORY_NOT_FOUND: The folder '${toolCall.args.path}' does not exist.`,
                 error: undefined
               };
             }

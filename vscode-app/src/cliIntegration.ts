@@ -286,12 +286,7 @@ export class CLI {
     tools?: LLMTool[],
     stream: boolean = false
   ): Promise<LLMResponse | AsyncGenerator<LLMChunk>> {
-    this.log(`=== LLM CALL START ===`);
-    this.log(`Model: ${modelId}`);
-    this.log(`Provider: ${this.isDeepSeekModel(modelId) ? 'DeepSeek' : 'Ollama'}`);
-    this.log(`Messages: ${messages.length}`);
-    this.log(`Tools: ${tools?.length || 0}`);
-    this.log(`Stream: ${stream}`);
+    this.log(`[LLM] ${modelId} | ${this.isDeepSeekModel(modelId) ? 'DeepSeek' : 'Ollama'} | ${messages.length} msg | ${tools?.length || 0} tools | stream=${stream}`);
 
     // Route to appropriate provider
     if (this.isDeepSeekModel(modelId)) {
@@ -831,8 +826,17 @@ export class CLI {
   }
 
   async listFiles(dirPath?: string, recursive?: boolean): Promise<string[]> {
-    const targetDir = dirPath || this.workspaceRoot;
-    this.log(`Listing: ${targetDir} (recursive: ${recursive})`);
+    // Handle "." as workspace root
+    let targetDir: string;
+    if (!dirPath || dirPath === '.' || dirPath === './') {
+      targetDir = this.workspaceRoot;
+    } else if (path.isAbsolute(dirPath)) {
+      targetDir = dirPath;
+    } else {
+      targetDir = path.join(this.workspaceRoot, dirPath);
+    }
+    
+    this.log(`list_files: ${path.basename(targetDir)}${recursive ? ' (recursive)' : ''} → ${targetDir}`);
     
     const results: string[] = [];
     

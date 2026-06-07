@@ -472,18 +472,15 @@ export class AgentBridge {
         true // Enable streaming
       ) as AsyncGenerator<LLMChunk>;
 
-      // Collect streaming response
+      // Collect streaming response - BUFFER text until we know if it's a plan
       let responseText = '';
       let streamingToolCalls: LLMToolCall[] = [];
+      let textBuffer: string[] = []; // Buffer text chunks until we confirm not a plan
 
       for await (const chunk of streamResponse) {
         if (chunk.text) {
           responseText += chunk.text;
-          yield {
-            type: 'text',
-            text: chunk.text,
-            timestamp: Date.now()
-          };
+          textBuffer.push(chunk.text); // Buffer for now
         }
         if (chunk.toolCalls) {
           streamingToolCalls = chunk.toolCalls;
@@ -494,7 +491,6 @@ export class AgentBridge {
       }
 
       // FALLBACK: Parse tool calls from text if structured tool calls not provided
-      // Some models (like Qwen via Ollama) may output tool calls as text instead of structured format
       if (streamingToolCalls.length === 0 && responseText.includes('tool_call:')) {
         this.log(`No structured tool calls - attempting to parse from text response`);
         const toolCallPattern = /tool_call:\s*({"tool":\s*"[^"]+",\s*"args":\s*{[^}]+}})/g;
@@ -512,18 +508,15 @@ export class AgentBridge {
             this.log(`Warning: Could not parse tool call from text: ${match[1]}`);
           }
         }
-        // Remove tool_call lines from response text to avoid displaying them
+        // Remove tool_call lines from response text
         responseText = responseText.replace(/tool_call:\s*{"tool":\s*"[^"]+",\s*"args":\s*{[^}]+}}/g, '').trim();
       }
 
       this.log(`[Iter ${iteration}] LLM: ${responseText.length} chars, ${streamingToolCalls.length} tool(s)`);
 
-      // If no tool calls, check if this is just a plan (not actual execution)
+      // If no tool calls, check if this is just a plan
       if (streamingToolCalls.length === 0) {
-        // PLAN DETECTION: Check if response is just a plan without execution
         const trimmedResponse = responseText.trim();
-
-        // Expanded plan patterns
         const isPlanOnly =
           trimmedResponse.startsWith('I will:') ||
           trimmedResponse.startsWith('I\'ll') ||
@@ -531,27 +524,27 @@ export class AgentBridge {
           /^[Ii] will (call|use|read|search|run|execute)/.test(trimmedResponse) ||
           /^[Ii]\'ll (call|use|read|search|run|execute)/.test(trimmedResponse) ||
           /^(First|I\'ll first|Let me first|I will first)/i.test(trimmedResponse) ||
-          // Short responses that are likely just plans
           (trimmedResponse.length < 100 && /^(Sure|Okay|Let me|I will|I\'ll)/i.test(trimmedResponse));
 
         if (isPlanOnly && trimmedResponse.length < 300) {
-          this.log(`[Iter ${iteration}] Plan detected - forcing tool execution`);
-
-          yield {
-            type: 'text',
-            text: 'I understand that plan, but I need you to EXECUTE the tools to complete this task. Please call the tools now.',
-            timestamp: Date.now()
-          };
-
+          this.log(`[Iter ${iteration}] Plan detected - discarding buffered text`);
+          // DON'T yield buffered text - just continue to next iteration
           messages.push({
             role: 'user',
             content: 'That is just a plan. You MUST call tools to complete the task. Do NOT respond with another plan - actually call the tools now.'
           });
-
           continue;
         }
 
-        this.log(`[Iter ${iteration}] Final answer received`);
+        // Not a plan - yield all buffered text now
+        this.log(`[Iter ${iteration}] Final answer received - yielding ${textBuffer.length} text chunks`);
+        for (const textChunk of textBuffer) {
+          yield {
+            type: 'text',
+            text: textChunk,
+            timestamp: Date.now()
+          };
+        }
         
         yield {
           type: 'done',
@@ -560,6 +553,15 @@ export class AgentBridge {
         };
         
         return;
+      }
+
+      // Has tool calls - yield buffered text (if any) then execute tools
+      for (const textChunk of textBuffer) {
+        yield {
+          type: 'text',
+          text: textChunk,
+          timestamp: Date.now()
+        };
       }
 
       // Execute tool calls
@@ -617,6 +619,7 @@ export class AgentBridge {
       }
 
       // Add assistant message with tool calls to history
+      // Note: This is for LLM conversation history only, not displayed to user
       let assistantContent = responseText;
       if (!assistantContent || assistantContent.trim() === '') {
         const toolDescriptions = currentIterationToolCalls.map(tc => {
@@ -624,7 +627,7 @@ export class AgentBridge {
           return `Calling ${tc.toolName}(${argsStr})`;
         }).join('; ');
         assistantContent = `I will: ${toolDescriptions}`;
-        this.log(`Assistant content was empty - added synthetic message: "${assistantContent}"`);
+        this.log(`[Internal] Added synthetic assistant message for LLM history`);
       }
       
       messages.push({

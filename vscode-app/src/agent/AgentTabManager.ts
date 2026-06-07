@@ -173,7 +173,7 @@ export class AgentTabManager {
       
       let accumulatedText = '';
       let toolCalls: any[] = [];
-      let iterations = 1;
+      let iterationCount = 0;
 
       const agentPromise = (async () => {
         resetIdleTimer();
@@ -187,8 +187,6 @@ export class AgentTabManager {
             resetIdleTimer();
             
             if (chunk.type === 'text') {
-              // Don't clean individual chunks - preserve spaces and formatting
-              // Only clean the final accumulated text before display
               accumulatedText += chunk.text;
               tab.panel.webview.postMessage({
                 command: 'streamingText',
@@ -220,9 +218,12 @@ export class AgentTabManager {
                   } 
                 }
               });
+            } else if (chunk.type === 'iteration_complete') {
+              iterationCount++;
             } else if (chunk.type === 'done') {
               const doneChunk = chunk as { type: 'done'; iterations?: number };
-              iterations = doneChunk.iterations || 1;
+              // Use explicit iterations if provided, otherwise use counted iterations
+              iterationCount = doneChunk.iterations || (iterationCount > 0 ? iterationCount : 1);
             }
           }
         } finally {
@@ -235,7 +236,7 @@ export class AgentTabManager {
         return {
           finalText: accumulatedText,
           toolCalls: toolCalls,
-          iterations: iterations,
+          iterations: iterationCount,
           durationMs: Date.now() - startTime,
           success: true
         };
@@ -243,8 +244,11 @@ export class AgentTabManager {
 
       const response = await agentPromise;
 
-      this.log(`Response finalText length: ${response.finalText?.length || 0}`);
-      this.log(`Response toolCalls count: ${response.toolCalls?.length || 0}`);
+      // Log concise summary
+      const toolSummary = response.toolCalls?.map(tc => 
+        `${tc.toolName}${tc.error ? '❌' : '✅'}`
+      ).join(', ') || 'none';
+      this.log(`✅ Complete: ${response.iterations} iter, ${response.toolCalls?.length || 0} tools (${toolSummary}), ${response.durationMs}ms`);
 
       // Clean the final accumulated text (remove reasoning:, EOS, tool_calls: markers)
       const cleanedText = this.cleanResponseText(response.finalText || '');

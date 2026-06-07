@@ -450,7 +450,7 @@ export class AgentBridge {
     this.log(`Starting streaming loop with max ${maxIterations} iterations`);
 
     for (let iteration = 1; iteration <= maxIterations; iteration++) {
-      this.log(`=== Iteration ${iteration}/${maxIterations} ===`);
+      this.log(`[Iter ${iteration}/${maxIterations}] Calling LLM...`);
 
       // Emit thinking event
       yield {
@@ -460,7 +460,6 @@ export class AgentBridge {
       };
 
       // Call LLM with streaming
-      this.log(`Calling LLM with streaming enabled...`);
       const streamResponse = await this.cli.callLLM(
         this.config.model.id,
         messages,
@@ -517,7 +516,7 @@ export class AgentBridge {
         responseText = responseText.replace(/tool_call:\s*{"tool":\s*"[^"]+",\s*"args":\s*{[^}]+}}/g, '').trim();
       }
 
-      this.log(`LLM response: ${responseText.length} chars, ${streamingToolCalls.length} tool calls`);
+      this.log(`[Iter ${iteration}] LLM: ${responseText.length} chars, ${streamingToolCalls.length} tool(s)`);
 
       // If no tool calls, check if this is just a plan (not actual execution)
       if (streamingToolCalls.length === 0) {
@@ -536,8 +535,7 @@ export class AgentBridge {
           (trimmedResponse.length < 100 && /^(Sure|Okay|Let me|I will|I\'ll)/i.test(trimmedResponse));
 
         if (isPlanOnly && trimmedResponse.length < 300) {
-          // This is just a plan, not actual work - don't accept it as final answer
-          this.log(`PLAN DETECTED: "${trimmedResponse.substring(0, 50)}..." - forcing tool execution`);
+          this.log(`[Iter ${iteration}] Plan detected - forcing tool execution`);
 
           yield {
             type: 'text',
@@ -545,17 +543,15 @@ export class AgentBridge {
             timestamp: Date.now()
           };
 
-          // Add nudge to continue iterating
           messages.push({
             role: 'user',
             content: 'That is just a plan. You MUST call tools to complete the task. Do NOT respond with another plan - actually call the tools now.'
           });
 
-          continue; // Continue the loop to force tool execution
+          continue;
         }
 
-        // Otherwise, we have actual content - we're done
-        this.log(`No tool calls - iteration complete`);
+        this.log(`[Iter ${iteration}] Final answer received`);
         
         yield {
           type: 'done',
@@ -566,12 +562,10 @@ export class AgentBridge {
         return;
       }
 
-      // Execute tool calls - collect results for THIS iteration only
+      // Execute tool calls
       const currentIterationToolCalls: ToolCall[] = [];
 
       for (const toolCall of streamingToolCalls) {
-        this.log(`Executing tool: ${toolCall.name}`);
-        
         yield {
           type: 'tool_call_started',
           toolName: toolCall.name,
@@ -582,7 +576,7 @@ export class AgentBridge {
         const toolCallObj: ToolCall = {
           toolName: toolCall.name,
           args: toolCall.arguments,
-          toolCallId: toolCall.id // Store the tool call ID for linking results
+          toolCallId: toolCall.id
         };
 
         try {
@@ -596,6 +590,10 @@ export class AgentBridge {
             toolCallObj.error = result.error;
           }
           
+          // Log tool result summary (first 100 chars)
+          const resultSummary = result.result.substring(0, 100).replace(/\n/g, ' ');
+          this.log(`[Iter ${iteration}] ✅ ${toolCall.name}: ${resultSummary}${result.result.length > 100 ? '...' : ''}`);
+          
           yield {
             type: 'tool_call_completed',
             toolName: toolCall.name,
@@ -604,6 +602,7 @@ export class AgentBridge {
           };
         } catch (error: any) {
           toolCallObj.error = error.message;
+          this.log(`[Iter ${iteration}] ❌ ${toolCall.name}: ${error.message}`);
           
           yield {
             type: 'tool_call_completed',

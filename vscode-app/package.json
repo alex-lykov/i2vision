@@ -291,6 +291,70 @@
                     ],
                     "default": null,
                     "description": "Per-tool display overrides. Key = tool name, value = partial ToolDisplayOptions object. Example: {\"read_file\": {\"maxLines\": 50, \"syntaxHighlight\": true}}"
+                },
+                "i2vision.output.showReasoning": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Show LLM reasoning headers in output (reasoning:, tool_calls:, etc.)"
+                },
+                "i2vision.output.autoCollapse": {
+                    "type": "integer",
+                    "default": 500,
+                    "minimum": 0,
+                    "description": "Auto-collapse responses longer than N characters (0 = never collapse)"
+                },
+                "i2vision.output.maxPreviewLines": {
+                    "type": "integer",
+                    "default": 10,
+                    "minimum": 1,
+                    "description": "Show N lines in preview mode when collapsed"
+                },
+                "i2vision.output.theme": {
+                    "type": "string",
+                    "default": "system",
+                    "enum": [
+                        "system",
+                        "light",
+                        "dark",
+                        "compact"
+                    ],
+                    "enumDescriptions": [
+                        "Follow VSCode theme",
+                        "Light theme",
+                        "Dark theme",
+                        "Compact mode (minimal spacing)"
+                    ],
+                    "description": "Output card visual theme"
+                },
+                "i2vision.output.fontSize": {
+                    "type": "string",
+                    "default": "medium",
+                    "enum": [
+                        "small",
+                        "medium",
+                        "large"
+                    ],
+                    "description": "Font size for output text"
+                },
+                "i2vision.output.showTokenCount": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Show token usage in output card footer"
+                },
+                "i2vision.output.showConfidence": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Show confidence score in output card footer"
+                },
+                "i2vision.output.showToolDetails": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Show detailed tool call cards with args and results"
+                },
+                "i2vision.output.codeHighlight": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Enable syntax highlighting for code blocks"
                 }
             }
         }

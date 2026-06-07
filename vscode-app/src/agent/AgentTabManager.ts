@@ -1,11 +1,5 @@
 /**
  * AgentTabManager - Creates and manages agent tabs
- *
- * UPDATED: Added real-time progress streaming for tool calls
- * UPDATED: Added stop/cancel control with combined send/stop button
- * UPDATED: Display tool results in real-time
- * UPDATED: Configurable tool card display with formatting, truncation, folding
- * FIXED: Added error handling in webview to prevent tool card errors from breaking input
  */
 
 import * as vscode from 'vscode';
@@ -13,13 +7,9 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { LocalAgentProvider } from './LocalAgentProvider';
 import { LocalI2VisionAgent, VslfcLayer, AgentContext } from './LocalI2VisionAgent';
-import { AgentConfig, InteractionRecord, ToolCall, ProgressEvent } from './AgentBridge';
+import { AgentConfig, InteractionRecord } from './AgentBridge';
 import { ToolCardManager } from './ToolCardManager';
-import { FormattedToolCard } from './ToolCardConfig';
 
-/**
- * Agent tab representation
- */
 interface AgentTab {
   id: string;
   layer: 'vision' | 'structure' | 'logic' | 'flow' | 'code';
@@ -30,9 +20,6 @@ interface AgentTab {
   cancelToken?: vscode.CancellationTokenSource;
 }
 
-/**
- * AgentTabManager - Creates and manages agent tabs
- */
 export class AgentTabManager {
   private tabs: Map<string, AgentTab> = new Map();
   private provider: LocalAgentProvider;
@@ -44,45 +31,29 @@ export class AgentTabManager {
     outputChannel: vscode.OutputChannel
   ) {
     this.outputChannel = outputChannel;
-
-    // Create the local agent provider
     this.provider = new LocalAgentProvider(context, outputChannel);
-
-    // Create the tool card manager for configurable tool display
     this.toolCardManager = new ToolCardManager(outputChannel);
-
-    this.log('AgentTabManager initialized with LocalAgentProvider and ToolCardManager');
+    this.log('AgentTabManager initialized');
   }
 
-  /**
-   * Initialize the manager and provider
-   */
   async initialize(): Promise<void> {
     await this.provider.initialize();
     this.log('AgentTabManager initialization complete');
   }
 
-  /**
-   * Clear the config cache to force reload from disk
-   */
   clearConfigCache(): void {
     this.provider.clearConfigCache();
     this.toolCardManager.reloadConfig();
-    this.log('Config cache cleared - next agent creation will reload from disk');
+    this.log('Config cache cleared');
   }
 
-  /**
-   * Create a new agent tab for a specific VSLFC layer
-   */
   async createTab(layer: 'vision' | 'structure' | 'logic' | 'flow' | 'code'): Promise<string> {
     this.log(`Creating ${layer} agent tab...`);
 
     try {
-      // Create the agent using the provider
       const vslfcLayer = VslfcLayer[layer.toUpperCase() as keyof typeof VslfcLayer];
       const agent = await this.provider.createAgent(vslfcLayer);
 
-      // Create the webview panel
       const panel = vscode.window.createWebviewPanel(
         `i2vision-agent-${layer}`,
         `i2-Vision ${this.capitalize(layer)} Agent`,
@@ -103,24 +74,18 @@ export class AgentTabManager {
         isProcessing: false
       };
 
-      // Set up webview communication
       panel.webview.onDidReceiveMessage(async (message) => {
         await this.handleWebviewMessage(tab, message);
       });
 
-      // Set up panel disposal
       panel.onDidDispose(() => {
         this.closeTab(tab.id);
       });
 
-      // Store the tab
       this.tabs.set(tab.id, tab);
-
-      // Initialize the webview content
       this.updateWebview(tab);
 
       this.log(`Created ${layer} agent tab: ${tab.id}`);
-
       return tab.id;
     } catch (error: any) {
       this.log(`Error creating tab: ${error.message}`);
@@ -129,9 +94,6 @@ export class AgentTabManager {
     }
   }
 
-  /**
-   * Handle messages from the webview
-   */
   private async handleWebviewMessage(tab: AgentTab, message: any) {
     switch (message.command) {
       case 'sendMessage':
@@ -139,12 +101,6 @@ export class AgentTabManager {
         break;
       case 'stopAgent':
         await this.stopAgent(tab);
-        break;
-      case 'openConfig':
-        await this.openConfigFile(tab);
-        break;
-      case 'reloadConfig':
-        await this.reloadAgent(tab);
         break;
       case 'changeProvider':
         await this.changeProvider(tab, message.provider);
@@ -155,57 +111,29 @@ export class AgentTabManager {
     }
   }
 
-  /**
-   * Stop/cancel the currently running agent
-   */
   private async stopAgent(tab: AgentTab): Promise<void> {
-    if (!tab.isProcessing) {
-      this.log('Agent is not processing, nothing to stop');
-      return;
-    }
+    if (!tab.isProcessing) return;
 
     this.log('Stopping agent...');
-
-    // Cancel the token
     if (tab.cancelToken) {
       tab.cancelToken.cancel();
       tab.cancelToken.dispose();
       tab.cancelToken = undefined;
     }
 
-    // Update UI
-    tab.panel.webview.postMessage({
-      command: 'stopped'
-    });
-
+    tab.panel.webview.postMessage({ command: 'stopped' });
     tab.isProcessing = false;
     this.log('Agent stopped');
   }
 
-  /**
-   * Clean up agent response text (strip reasoning headers, EOS markers, etc.)
-   */
   private cleanResponseText(text: string): string {
     if (!text) return '';
-    
-    // Strip reasoning: header (case-insensitive)
     text = text.replace(/^reasoning:\s*/gmi, '');
-    
-    // Strip EOS marker
     text = text.replace(/\bEOS\b/g, '');
-    
-    // Strip tool_calls: header if present
     text = text.replace(/^tool_calls:\s*/gmi, '');
-    
-    // Clean up extra whitespace
-    text = text.trim();
-    
-    return text;
+    return text.trim();
   }
 
-  /**
-   * Process user input through the agent with timeout protection and real-time progress
-   */
   private async processUserInput(tab: AgentTab, userInput: string) {
     if (tab.isProcessing) {
       this.log('Agent is already processing, ignoring input');
@@ -214,46 +142,33 @@ export class AgentTabManager {
 
     tab.isProcessing = true;
     const startTime = Date.now();
-
-    // Create cancellation token
     tab.cancelToken = new vscode.CancellationTokenSource();
 
     this.log(`Processing user input (${userInput.length} chars)`);
 
-    // Update webview to show processing state
     tab.panel.webview.postMessage({
       command: 'processing',
       userInput
     });
 
     try {
-      // Get current file context
       const currentFile = vscode.window.activeTextEditor?.document.uri.fsPath;
-
-      // Prepare agent request
       const context: AgentContext = {
         workspaceRoot: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '',
         currentFile,
         sessionId: tab.id
       };
 
-      // Use streaming for better UX - shows "Hi!" instantly
-      this.log(`=== Using streaming mode with idle-based timeout ===`);
-      
       const requestId = `request-${Date.now()}`;
-      
-      // Idle-based timeout: only timeout if agent is idle for 30 seconds
-      // Progress events (tool calls, text streaming) reset the timer
-      const IDLE_TIMEOUT_MS = 30000; // 30 seconds of no activity = timeout
+      const IDLE_TIMEOUT_MS = 30000;
       let idleTimer: NodeJS.Timeout | null = null;
       
       const resetIdleTimer = () => {
         if (idleTimer) clearTimeout(idleTimer);
         idleTimer = setTimeout(() => {
           this.log(`⚠️ Agent idle for ${IDLE_TIMEOUT_MS}ms - timing out`);
-          throw new Error(`Agent idle for ${IDLE_TIMEOUT_MS / 1000} seconds (no progress events)`);
+          throw new Error(`Agent idle for ${IDLE_TIMEOUT_MS / 1000} seconds`);
         }, IDLE_TIMEOUT_MS);
-        this.log(`Idle timer reset (will timeout in ${IDLE_TIMEOUT_MS / 1000}s if no progress)`);
       };
       
       let accumulatedText = '';
@@ -261,26 +176,20 @@ export class AgentTabManager {
       let iterations = 1;
 
       const agentPromise = (async () => {
-        // Start idle timer
         resetIdleTimer();
         
         try {
-          // Stream the response
           for await (const chunk of tab.agent.processStreaming({
             id: requestId,
             task: userInput,
             context: context
           })) {
-            // Reset idle timer on every chunk (agent is making progress)
             resetIdleTimer();
             
-            // Handle different chunk types
             if (chunk.type === 'text') {
-              // Clean chunk text before streaming (strip reasoning:, EOS, etc.)
               const cleanChunkText = this.cleanResponseText(chunk.text);
               if (cleanChunkText) {
                 accumulatedText += cleanChunkText;
-                // Stream to webview immediately for better UX
                 tab.panel.webview.postMessage({
                   command: 'streamingText',
                   text: cleanChunkText,
@@ -288,62 +197,33 @@ export class AgentTabManager {
                 });
               }
             } else if (chunk.type === 'tool_call_started') {
-              this.log(`Tool call started: ${chunk.toolName}`);
-              // Send progress event to webview as heartbeat
               tab.panel.webview.postMessage({
                 command: 'progress',
-                event: {
-                  type: 'tool_start',
-                  toolCall: {
-                    toolName: chunk.toolName,
-                    args: chunk.args
-                  }
-                }
+                event: { type: 'tool_start', toolCall: { toolName: chunk.toolName, args: chunk.args } }
               });
             } else if (chunk.type === 'tool_call_completed') {
-              this.log(`Tool call completed: ${chunk.toolName}`);
-              const completedChunk = chunk as { type: 'tool_call_completed'; toolName: string; args: any; result: string; timestamp: number };
+              const completedChunk = chunk as any;
               toolCalls.push({
                 toolName: completedChunk.toolName,
-                args: completedChunk.args,
+                args: completedChunk.args || {},
                 result: completedChunk.result
               });
-              // Send completion event to webview
               tab.panel.webview.postMessage({
                 command: 'progress',
-                event: {
-                  type: 'tool_complete',
-                  toolCall: {
-                    toolName: completedChunk.toolName,
-                    args: completedChunk.args,
-                    result: completedChunk.result
-                  }
-                }
-              });
-            } else if (chunk.type === 'iteration_complete') {
-              this.log(`Iteration ${chunk.iteration} complete`);
-              tab.panel.webview.postMessage({
-                command: 'progress',
-                event: {
-                  type: 'iteration_complete',
-                  iteration: chunk.iteration
-                }
+                event: { type: 'tool_complete', toolCall: { toolName: completedChunk.toolName, args: completedChunk.args, result: completedChunk.result } }
               });
             } else if (chunk.type === 'done') {
-              const doneChunk = chunk as { type: 'done'; outcome: string; timestamp: number; iterations?: number };
+              const doneChunk = chunk as { type: 'done'; iterations?: number };
               iterations = doneChunk.iterations || 1;
-              this.log(`Streaming done: ${iterations} iterations`);
             }
           }
         } finally {
-          // Clean up idle timer
           if (idleTimer) {
             clearTimeout(idleTimer);
             idleTimer = null;
           }
         }
         
-        // Return final response
         return {
           finalText: accumulatedText,
           toolCalls: toolCalls,
@@ -355,15 +235,10 @@ export class AgentTabManager {
 
       const response = await agentPromise;
 
-      this.log(`=== DIAGNOSTIC: agent.processStreaming() returned ===`);
       this.log(`Response finalText length: ${response.finalText?.length || 0}`);
       this.log(`Response toolCalls count: ${response.toolCalls?.length || 0}`);
-      this.log(`Response success: ${response.success}`);
 
-      // Clean up response text (strip reasoning:, EOS, etc.)
       const cleanedText = this.cleanResponseText(response.finalText || '');
-
-      // Format the response through ToolCardManager
       const formattedResponse = this.toolCardManager.formatAgentResponse(
         cleanedText,
         response.toolCalls || [],
@@ -372,47 +247,31 @@ export class AgentTabManager {
         response.success
       );
 
-      // Record the interaction
       const record: InteractionRecord = {
         timestamp: Date.now(),
         userInput,
         agentResponse: cleanedText,
-        toolCalls: response.toolCalls?.map(tc => ({
-          toolName: tc.toolName,
-          args: tc.args || {}
-        })) || [],
+        toolCalls: response.toolCalls?.map(tc => ({ toolName: tc.toolName, args: tc.args || {} })) || [],
         iterations: response.iterations,
         durationMs: Date.now() - startTime
       };
 
       tab.history.push(record);
       this.log(`Interaction recorded: ${record.iterations} iterations, ${record.durationMs}ms`);
-      this.log(`Tool calls: ${response.toolCalls?.map(tc => tc.toolName).join(', ') || 'none'}`);
 
-      // Update webview with final formatted response
-      this.log(`=== DIAGNOSTIC: About to postMessage to webview ===`);
       tab.panel.webview.postMessage({
         command: 'response',
         response: formattedResponse
       });
-      this.log(`=== DIAGNOSTIC: postMessage sent successfully ===`);
     } catch (error: any) {
       this.log(`Error processing input: ${error.message}`);
-      this.log(`Stack trace: ${error.stack}`);
 
-      // Check if it was a cancellation
       if (error.message === 'cancelled' || (tab.cancelToken && tab.cancelToken.token.isCancellationRequested)) {
-        tab.panel.webview.postMessage({
-          command: 'stopped'
-        });
+        tab.panel.webview.postMessage({ command: 'stopped' });
       } else {
-        tab.panel.webview.postMessage({
-          command: 'error',
-          error: String(error)
-        });
+        tab.panel.webview.postMessage({ command: 'error', error: String(error) });
       }
     } finally {
-      // Clean up cancellation token
       if (tab.cancelToken) {
         tab.cancelToken.dispose();
         tab.cancelToken = undefined;
@@ -421,141 +280,42 @@ export class AgentTabManager {
     }
   }
 
-  /**
-   * Open the configuration file for editing
-   */
-  private async openConfigFile(tab: AgentTab) {
-    const configPath = path.join(
-      vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '',
-      '.vision-ai',
-      `${tab.layer.toLowerCase()}-agent.yaml`
-    );
-
-    try {
-      const doc = await vscode.workspace.openTextDocument(configPath);
-      await vscode.window.showTextDocument(doc);
-      this.log(`Opened config file: ${configPath}`);
-    } catch (error: any) {
-      this.log(`Error opening config file: ${error.message}`);
-      vscode.window.showErrorMessage(`Could not open config file: ${configPath}`);
-    }
-  }
-
-  /**
-   * Reload the agent with fresh configuration
-   */
-  private async reloadAgent(tab: AgentTab) {
-    this.log(`=== Reloading agent configuration for ${tab.layer}... ===`);
-
-    try {
-      // Recreate the agent with fresh config (provider.createAgent clears cache internally)
-      const vslfcLayer = VslfcLayer[tab.layer.toUpperCase() as keyof typeof VslfcLayer];
-      this.log(`Creating new agent for layer: ${vslfcLayer}`);
-      const newAgent = await this.provider.createAgent(vslfcLayer);
-
-      // Update the tab with new agent
-      tab.agent = newAgent;
-      this.log(`New agent created: ${newAgent.id}`);
-
-      // Get fresh config to send to webview
-      const agentConfig = this.provider.getConfig(tab.layer);
-      const modelId = agentConfig.model.id;
-      const providerId = agentConfig.model.provider;
-      const maxIterations = agentConfig.iterationSettings.maxIterations;
-
-      this.log(`Loaded config: provider=${providerId}, model=${modelId}, maxIterations=${maxIterations}`);
-
-      // Update webview HTML with fresh config
-      this.updateWebview(tab);
-      this.log(`Webview HTML updated`);
-
-      // Notify webview to update UI with new config (NO reload needed)
-      tab.panel.webview.postMessage({
-        command: 'configUpdated',
-        provider: providerId,
-        model: modelId,
-        maxIterations: maxIterations
-      });
-      this.log(`Config update message sent to webview`);
-
-      this.log(`✅ Agent reloaded successfully`);
-    } catch (error: any) {
-      this.log(`❌ Error reloading agent: ${error.message}`);
-      this.log(`Stack: ${error.stack}`);
-      vscode.window.showErrorMessage(`Failed to reload agent: ${error.message}`);
-      throw error;
-    }
-  }
-
-  /**
-   * Change the LLM provider for this agent
-   */
   private async changeProvider(tab: AgentTab, provider: string) {
-    this.log(`=== Changing provider to ${provider} for ${tab.layer} agent... ===`);
+    this.log(`Changing provider to ${provider} for ${tab.layer} agent...`);
 
     try {
-      // Clear cache FIRST to ensure fresh load
       this.provider.clearConfigCache();
-      this.log(`Config cache cleared`);
-      
-      // Get current config (will be defaults after cache clear)
       const agentConfig = this.provider.getConfig(tab.layer);
-      
-      // Update provider in config
       agentConfig.model.provider = provider;
-      
-      // Set default model for the provider
       const defaultModel = provider === 'deepseek' ? 'deepseek-chat' : 'llama3.2:3b';
       agentConfig.model.id = defaultModel;
       
-      this.log(`Config updated: provider=${provider}, model=${defaultModel}`);
-      
-      // Save config to YAML file
       await this.saveAgentConfig(tab.layer, agentConfig);
-      this.log(`Config saved to YAML`);
-      
-      // Small delay to ensure file is written
       await new Promise(resolve => setTimeout(resolve, 100));
-      
-      // Reload agent with new config (will load from YAML)
       await this.reloadAgent(tab);
-      this.log(`Agent reloaded`);
       
-      // Notify webview of successful update
       tab.panel.webview.postMessage({
         command: 'configUpdated',
         provider: provider,
         model: defaultModel
       });
       
-      this.log(`✅ Provider changed to ${provider}, model set to ${defaultModel}`);
+      this.log(`Provider changed to ${provider}`);
     } catch (error: any) {
-      this.log(`❌ Error changing provider: ${error.message}`);
-      this.log(`Stack: ${error.stack}`);
+      this.log(`Error changing provider: ${error.message}`);
       vscode.window.showErrorMessage(`Failed to change provider: ${error.message}`);
     }
   }
 
-  /**
-   * Change the LLM model for this agent
-   */
   private async changeModel(tab: AgentTab, model: string) {
     this.log(`Changing model to ${model} for ${tab.layer} agent...`);
 
     try {
-      // Get current config
       const agentConfig = this.provider.getConfig(tab.layer);
-      
-      // Update model in config
       agentConfig.model.id = model;
-      
-      // Save config to YAML file
       await this.saveAgentConfig(tab.layer, agentConfig);
-      
-      // Reload agent with new config
       await this.reloadAgent(tab);
       
-      // Notify webview of successful update
       tab.panel.webview.postMessage({
         command: 'configUpdated',
         provider: agentConfig.model.provider,
@@ -569,12 +329,39 @@ export class AgentTabManager {
     }
   }
 
-  /**
-   * Save agent configuration to YAML file
-   */
+  private async reloadAgent(tab: AgentTab) {
+    this.log(`Reloading agent configuration for ${tab.layer}...`);
+
+    try {
+      const vslfcLayer = VslfcLayer[tab.layer.toUpperCase() as keyof typeof VslfcLayer];
+      const newAgent = await this.provider.createAgent(vslfcLayer);
+      tab.agent = newAgent;
+      this.log(`New agent created: ${newAgent.id}`);
+
+      const agentConfig = this.provider.getConfig(tab.layer);
+      const modelId = agentConfig.model.id;
+      const providerId = agentConfig.model.provider;
+      const maxIterations = agentConfig.iterationSettings.maxIterations;
+
+      this.updateWebview(tab);
+
+      tab.panel.webview.postMessage({
+        command: 'configUpdated',
+        provider: providerId,
+        model: modelId,
+        maxIterations: maxIterations
+      });
+
+      this.log(`Agent reloaded successfully`);
+    } catch (error: any) {
+      this.log(`Error reloading agent: ${error.message}`);
+      vscode.window.showErrorMessage(`Failed to reload agent: ${error.message}`);
+      throw error;
+    }
+  }
+
   private async saveAgentConfig(layer: string, config: AgentConfig): Promise<void> {
     const fs = require('fs');
-    const path = require('path');
     const yaml = require('js-yaml');
     
     const layerName = layer.toLowerCase();
@@ -584,7 +371,6 @@ export class AgentTabManager {
       `${layerName}-agent.yaml`
     );
     
-    // Convert AgentConfig to YAML format
     const yamlConfig: any = {
       key: config.key,
       agentType: config.agentType,
@@ -613,14 +399,12 @@ export class AgentTabManager {
       mcp: config.mcp
     };
     
-    // Ensure .vision-ai directory exists
     const visionAiDir = path.dirname(configPath);
     await fs.promises.mkdir(visionAiDir, { recursive: true });
     
-    // Write YAML file
     const yamlContent = yaml.dump(yamlConfig, {
-      lineWidth: -1, // Don't wrap lines
-      noRefs: true,  // Don't use anchors/aliases
+      lineWidth: -1,
+      noRefs: true,
       quotingType: '"',
       forceQuotes: false
     });
@@ -629,66 +413,57 @@ export class AgentTabManager {
     this.log(`Saved config to ${configPath}`);
   }
 
-  /**
-   * Close an agent tab
-   */
   private async closeTab(tabId: string): Promise<void> {
     const tab = this.tabs.get(tabId);
     if (tab) {
       this.log(`Closing tab: ${tabId}`);
-
-      // Cancel any running agent
       if (tab.cancelToken) {
         tab.cancelToken.cancel();
         tab.cancelToken.dispose();
       }
-
-      // Dispose the panel
       tab.panel.dispose();
-
-      // Remove from map
       this.tabs.delete(tabId);
-
       this.log(`Tab closed: ${tabId}`);
     }
   }
 
-  /**
-   * Update webview content
-   */
   private updateWebview(tab: AgentTab): void {
-    // Get agent config to display model info
     const agentConfig = this.provider.getConfig(tab.layer);
     const modelId = agentConfig.model.id;
     const providerId = agentConfig.model.provider;
     const maxIterations = agentConfig.iterationSettings.maxIterations;
-
     tab.panel.webview.html = this.getWebviewContent(modelId, providerId, maxIterations);
   }
 
-  /**
-   * Generate a nonce for Content Security Policy
-   */
   private getNonce(): string {
     return crypto.randomBytes(16).toString('base64');
   }
 
-  /**
-   * Get webview HTML content with configurable tool card display
-   */
   private getWebviewContent(modelId: string, providerId: string, maxIterations: number): string {
+    const config = vscode.workspace.getConfiguration('i2vision.output');
+    const outputSettings = {
+      showReasoning: config.get<boolean>('showReasoning', false),
+      autoCollapse: config.get<number>('autoCollapse', 500),
+      maxPreviewLines: config.get<number>('maxPreviewLines', 10),
+      theme: config.get<string>('theme', 'system'),
+      fontSize: config.get<string>('fontSize', 'medium'),
+      showTokenCount: config.get<boolean>('showTokenCount', false),
+      showConfidence: config.get<boolean>('showConfidence', false),
+      showToolDetails: config.get<boolean>('showToolDetails', true),
+      codeHighlight: config.get<boolean>('codeHighlight', true),
+    };
+
+    const settingsJson = JSON.stringify(outputSettings).replace(/"/g, '&quot;');
+    
     return `<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-output-settings="${settingsJson}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
     <title>i2-Vision Agent</title>
     <style>
-        :root {
-            --container-padding: 20px;
-        }
-
+        :root { --container-padding: 20px; }
         body {
             font-family: var(--vscode-font-family);
             padding: var(--container-padding);
@@ -696,171 +471,112 @@ export class AgentTabManager {
             background-color: var(--vscode-editor-background);
             margin: 0;
         }
-
-        #messages {
-            min-height: 300px;
-            max-height: 60vh;
-            overflow-y: auto;
+        body.theme-light { --card-bg: #ffffff; --card-border: #e0e0e0; }
+        body.theme-dark { --card-bg: #1e1e1e; --card-border: #404040; }
+        body.theme-compact { --container-padding: 10px; }
+        body.font-small { font-size: 12px; }
+        body.font-medium { font-size: 14px; }
+        body.font-large { font-size: 16px; }
+        
+        .agent-output-card {
+            border: 1px solid var(--card-border, var(--vscode-panel-border, #ccc));
+            border-radius: 6px;
+            background: var(--card-bg, var(--vscode-editor-background));
             margin-bottom: 16px;
-            padding: 8px;
-            border: 1px solid var(--vscode-panel-border, #ccc);
-            border-radius: 4px;
-            background: var(--vscode-editor-background);
+            overflow: hidden;
         }
-
-        .message {
-            margin-bottom: 12px;
-            padding: 8px 12px;
-            border-radius: 4px;
-            line-height: 1.5;
-        }
-
-        .user-message {
-            background: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-            margin-left: 20%;
-        }
-
-        .agent-message {
+        .output-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
             background: var(--vscode-editor-inactiveSelectionBackground);
-            margin-right: 20%;
+            border-bottom: 1px solid var(--card-border, var(--vscode-panel-border, #ccc));
         }
-
-        .config-info {
+        .header-left { display: flex; align-items: center; gap: 10px; }
+        .provider-badge {
+            padding: 3px 8px;
+            border-radius: 4px;
+            color: white;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .model-name {
             font-size: 12px;
             color: var(--vscode-descriptionForeground);
-            margin-bottom: 12px;
-            padding: 8px;
-            background: var(--vscode-editor-inactiveSelectionBackground);
-            border-radius: 4px;
-        }
-
-        .tool-call-message {
             font-family: var(--vscode-editor-font-family);
-            font-size: 12px;
-            padding: 4px 8px;
-            margin: 4px 0;
-            background: var(--vscode-editor-inactiveSelectionBackground);
-            border-radius: 3px;
         }
-
-        .tool-call-complete {
-            border-left: 3px solid var(--vscode-terminal-ansiGreen);
-        }
-
-        .tool-call-error {
-            border-left: 3px solid var(--vscode-errorForeground);
-        }
-
-        .tool-result {
-            font-family: var(--vscode-editor-font-family);
+        .header-right { display: flex; align-items: center; gap: 10px; }
+        .status-icon { font-size: 14px; }
+        .duration-badge, .iterations-badge {
             font-size: 11px;
             color: var(--vscode-descriptionForeground);
-            margin: 4px 0;
-            padding: 4px 8px;
-            background: var(--vscode-editor-inactiveSelectionBackground);
-            border-radius: 3px;
-            white-space: pre-wrap;
-            word-break: break-all;
+            font-family: var(--vscode-editor-font-family);
         }
-
-        .progress-indicator {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            padding: 8px;
-            color: var(--vscode-descriptionForeground);
-            font-style: italic;
+        .output-card-content { padding: 14px; }
+        .response-text-section { margin-bottom: 12px; }
+        .response-text-section.collapsed .response-text {
+            max-height: 200px;
+            overflow: hidden;
+            position: relative;
         }
-
-        .spinner {
-            width: 12px;
-            height: 12px;
-            border: 2px solid var(--vscode-button-background);
-            border-top-color: transparent;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        .input-row {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-            position: sticky;
+        .response-text-section.collapsed .response-text::after {
+            content: '';
+            position: absolute;
             bottom: 0;
-            background: var(--vscode-editor-background);
-            padding-top: 8px;
+            left: 0;
+            right: 0;
+            height: 40px;
+            background: linear-gradient(transparent, var(--card-bg, var(--vscode-editor-background)));
         }
-
-        #userInput {
-            flex: 1;
-            padding: 8px 12px;
-            border: 1px solid var(--vscode-input-border, var(--vscode-panel-border, #ccc));
-            border-radius: 4px;
-            background: var(--vscode-input-background);
-            color: var(--vscode-input-foreground);
-            font-family: var(--vscode-font-family);
-        }
-
-        #userInput:focus {
-            outline: 2px solid var(--vscode-focusBorder);
-        }
-
-        #userInput:disabled {
-            opacity: 0.6;
-            cursor: not-allowed;
-        }
-
-        #actionButton {
-            padding: 8px 16px;
+        .response-text { line-height: 1.6; }
+        .expand-button {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-top: 8px;
+            padding: 6px 10px;
             background: var(--vscode-button-background);
             color: var(--vscode-button-foreground);
             border: none;
             border-radius: 4px;
             cursor: pointer;
-            min-width: 80px;
-            font-weight: 600;
+            font-size: 12px;
+            width: fit-content;
         }
-
-        #actionButton:hover {
-            background: var(--vscode-button-hoverBackground);
+        .expand-button:hover { background: var(--vscode-button-hoverBackground); }
+        .error-section {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 14px;
+            background: var(--vscode-inputValidation-errorBackground);
+            border: 1px solid var(--vscode-inputValidation-errorBorder);
+            border-radius: 4px;
+            margin-bottom: 12px;
         }
-
-        #actionButton:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
+        .error-icon { font-size: 16px; }
+        .error-text { color: var(--vscode-errorForeground); font-size: 13px; }
+        .section-title {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 16px 0 10px 0;
+            padding-bottom: 6px;
+            border-bottom: 1px solid var(--card-border, var(--vscode-panel-border, #ccc));
         }
-
-        #actionButton.stop-button {
-            background: #dc3545;
-        }
-
-        #actionButton.stop-button:hover {
-            background: #c82333;
-        }
-
-        .iteration-info {
-            font-size: 11px;
-            color: var(--vscode-descriptionForeground);
-            margin-top: 8px;
-            padding-top: 8px;
-            border-top: 1px solid rgba(0, 0, 0, 0.1);
-        }
-
-        /* ===== TOOL CARD STYLES ===== */
-        .tool-card {
-            margin: 8px 0;
-            border: 1px solid var(--vscode-panel-border, #ccc);
+        .section-icon { font-size: 14px; }
+        .section-label { font-weight: 600; font-size: 12px; color: var(--vscode-foreground); }
+        .tool-calls-list { display: flex; flex-direction: column; gap: 8px; }
+        .tool-call-card {
+            border: 1px solid var(--card-border, var(--vscode-panel-border, #ccc));
             border-radius: 4px;
             overflow: hidden;
             background: var(--vscode-editor-inactiveSelectionBackground);
         }
-
-        .tool-card-header {
+        .tool-call-card.success { border-left: 3px solid var(--vscode-terminal-ansiGreen); }
+        .tool-call-card.error { border-left: 3px solid var(--vscode-errorForeground); }
+        .tool-call-header {
             display: flex;
             align-items: center;
             gap: 8px;
@@ -868,132 +584,75 @@ export class AgentTabManager {
             cursor: pointer;
             user-select: none;
             background: var(--vscode-editor-background);
-            border-bottom: 1px solid var(--vscode-panel-border, #ccc);
         }
-
-        .tool-card-header:hover {
-            background: var(--vscode-list-hoverBackground);
-        }
-
-        .tool-card-header.success {
-            border-left: 4px solid var(--vscode-terminal-ansiGreen);
-        }
-
-        .tool-card-header.error {
-            border-left: 4px solid var(--vscode-errorForeground);
-        }
-
-        .tool-card-header.pending {
-            border-left: 4px solid var(--vscode-terminal-ansiYellow);
-        }
-
-        .tool-card-toggle {
-            font-size: 10px;
-            transition: transform 0.2s;
-            width: 12px;
-            text-align: center;
-        }
-
-        .tool-card-toggle.collapsed {
-            transform: rotate(-90deg);
-        }
-
-        .tool-card-icon {
-            font-size: 14px;
-        }
-
-        .tool-card-name {
-            font-weight: 600;
-            flex: 1;
-        }
-
-        .tool-card-meta {
-            display: flex;
-            gap: 12px;
-            font-size: 11px;
-            color: var(--vscode-descriptionForeground);
-        }
-
-        .tool-card-duration {
-            font-family: var(--vscode-editor-font-family);
-        }
-
-        .tool-card-truncated {
-            color: var(--vscode-terminal-ansiYellow);
-        }
-
-        .tool-card-body {
-            padding: 12px;
-            transition: max-height 0.3s ease-out;
-            max-height: 1000px;
-            overflow: hidden;
-        }
-
-        .tool-card-body.collapsed {
-            max-height: 0;
-            padding: 0 12px;
-        }
-
-        .tool-card-args {
-            font-family: var(--vscode-editor-font-family);
-            font-size: 11px;
-            color: var(--vscode-descriptionForeground);
-            margin-bottom: 8px;
-            padding: 4px 8px;
+        .tool-call-header:hover { background: var(--vscode-list-hoverBackground); }
+        .tool-call-toggle { font-size: 10px; width: 12px; text-align: center; }
+        .tool-call-icon { font-size: 14px; }
+        .tool-call-name { font-weight: 600; flex: 1; font-size: 12px; }
+        .tool-call-meta { display: flex; gap: 10px; font-size: 11px; color: var(--vscode-descriptionForeground); }
+        .tool-call-duration { font-family: var(--vscode-editor-font-family); }
+        .tool-call-body { padding: 10px 12px; display: block; }
+        .tool-call-body[style*="display: none"] { display: none !important; }
+        .tool-call-args, .tool-call-result, .tool-call-error { margin-top: 8px; font-size: 11px; }
+        .tool-call-args code, .tool-call-result pre {
             background: var(--vscode-editor-background);
-            border-radius: 3px;
-        }
-
-        .tool-card-args-label {
-            font-weight: 600;
-            color: var(--vscode-foreground);
-        }
-
-        .tool-card-result {
-            font-family: var(--vscode-editor-font-family);
-            font-size: 11px;
-            white-space: pre-wrap;
-            word-break: break-word;
             padding: 8px;
-            background: var(--vscode-editor-background);
             border-radius: 3px;
-            max-height: 400px;
-            overflow-y: auto;
+            font-family: var(--vscode-editor-font-family);
+            font-size: 11px;
+            display: block;
+            margin-top: 4px;
+            overflow-x: auto;
         }
-
-        .tool-card-result.tree-format {
-            color: var(--vscode-terminal-ansiGreen);
+        .tool-call-result pre { white-space: pre-wrap; word-break: break-word; max-height: 300px; overflow-y: auto; }
+        .args-label, .result-label, .error-label { font-weight: 600; color: var(--vscode-foreground); display: block; margin-bottom: 4px; }
+        .output-card-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 14px;
+            background: var(--vscode-editor-inactiveSelectionBackground);
+            border-top: 1px solid var(--card-border, var(--vscode-panel-border, #ccc));
         }
-
-        .tool-card-result.table-format {
-            color: var(--vscode-terminal-ansiCyan);
+        .footer-meta { display: flex; gap: 12px; font-size: 11px; color: var(--vscode-descriptionForeground); }
+        .meta-item { font-family: var(--vscode-editor-font-family); }
+        .footer-actions { display: flex; gap: 8px; }
+        .footer-action-btn {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
         }
-
-        .tool-card-result.markdown-format {
-            color: var(--vscode-terminal-ansiBlue);
-        }
-
-        .line-number {
-            display: inline-block;
-            width: 30px;
-            color: var(--vscode-descriptionForeground);
-            text-align: right;
-            margin-right: 8px;
-            user-select: none;
-        }
-
-        optgroup {
-            font-weight: 600;
-            color: var(--vscode-foreground);
-        }
-
-        optgroup[label*="Local"] {
-            color: var(--vscode-terminal-ansiGreen);
-        }
-
-        optgroup[label*="Cloud"] {
-            color: var(--vscode-terminal-ansiBlue);
-        }
+        .footer-action-btn:hover { background: var(--vscode-button-hoverBackground); }
+        .action-icon { font-size: 14px; }
+        .text-muted { color: var(--vscode-descriptionForeground); font-style: italic; }
+        .code-block { background: var(--vscode-editor-background); padding: 8px; border-radius: 3px; overflow-x: auto; margin: 8px 0; }
+        .inline-code { background: var(--vscode-editor-inactiveSelectionBackground); padding: 2px 6px; border-radius: 3px; font-family: var(--vscode-editor-font-family); font-size: 0.9em; }
+        
+        .config-info { font-size: 12px; color: var(--vscode-descriptionForeground); margin-bottom: 12px; padding: 8px; background: var(--vscode-editor-inactiveSelectionBackground); border-radius: 4px; }
+        #messages { min-height: 300px; max-height: 60vh; overflow-y: auto; margin-bottom: 16px; padding: 8px; border: 1px solid var(--vscode-panel-border, #ccc); border-radius: 4px; background: var(--vscode-editor-background); }
+        .message { margin-bottom: 12px; padding: 8px 12px; border-radius: 4px; line-height: 1.5; }
+        .user-message { background: var(--vscode-button-background); color: var(--vscode-button-foreground); margin-left: 20%; }
+        .agent-message { background: var(--vscode-editor-inactiveSelectionBackground); margin-right: 20%; }
+        .input-row { display: flex; gap: 8px; align-items: center; position: sticky; bottom: 0; background: var(--vscode-editor-background); padding-top: 8px; }
+        #userInput { flex: 1; padding: 8px 12px; border: 1px solid var(--vscode-input-border, var(--vscode-panel-border, #ccc)); border-radius: 4px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); font-family: var(--vscode-font-family); }
+        #userInput:focus { outline: 2px solid var(--vscode-focusBorder); }
+        #userInput:disabled { opacity: 0.6; cursor: not-allowed; }
+        #actionButton { padding: 8px 16px; background: var(--vscode-button-background); color: var(--vscode-button-foreground); border: none; border-radius: 4px; cursor: pointer; min-width: 80px; font-weight: 600; }
+        #actionButton:hover { background: var(--vscode-button-hoverBackground); }
+        #actionButton:disabled { opacity: 0.5; cursor: not-allowed; }
+        #actionButton.stop-button { background: #dc3545; }
+        #actionButton.stop-button:hover { background: #c82333; }
+        
+        optgroup { font-weight: 600; color: var(--vscode-foreground); }
+        optgroup[label*="Local"] { color: var(--vscode-terminal-ansiGreen); }
+        optgroup[label*="Cloud"] { color: var(--vscode-terminal-ansiBlue); }
     </style>
 </head>
 <body>
@@ -1009,7 +668,6 @@ export class AgentTabManager {
             <div style="display: flex; align-items: center; gap: 8px;">
                 <label for="modelSelect" style="font-weight: 600;">Model:</label>
                 <select id="modelSelect" onchange="onModelChange()" style="padding: 4px 8px; border: 1px solid var(--vscode-input-border); border-radius: 4px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); min-width: 200px;">
-                    <!-- Options populated dynamically based on provider -->
                 </select>
             </div>
             <div style="display: flex; align-items: center; gap: 8px; margin-left: auto;">
@@ -1037,191 +695,113 @@ export class AgentTabManager {
         let currentProgressDiv = null;
         let isProcessing = false;
 
-        // Available models per provider
-        // Ollama provides BOTH local and cloud models through the same API
+        const htmlEl = document.documentElement;
+        const outputSettings = htmlEl.dataset.outputSettings ? JSON.parse(htmlEl.dataset.outputSettings) : {};
+        
+        if (outputSettings.theme && outputSettings.theme !== 'system') {
+            document.body.classList.add('theme-' + outputSettings.theme);
+        }
+        if (outputSettings.fontSize) {
+            document.body.classList.add('font-' + outputSettings.fontSize);
+        }
+        window.outputSettings = outputSettings;
+
         const MODELS_BY_PROVIDER = {
             'ollama': [
-                // Local models (run on your machine)
-                { id: 'gemma3:1b', name: '⚠️ Gemma 3 1B (Local) - Too small for chat', type: 'local', quality: 'poor' },
-                { id: 'qwen2.5-coder:0.5b-instruct', name: '⚠️ Qwen 2.5 Coder 0.5B (Local) - Too small for chat', type: 'local', quality: 'poor' },
-                { id: 'llama3.2:3b', name: '✅ Llama 3.2 3B (Local) - Recommended for chat', type: 'local', quality: 'good' },
-                { id: 'llama3.2:7b', name: '✅ Llama 3.2 7B (Local) - Good balance', type: 'local', quality: 'good' },
-                { id: 'llama3.1:8b', name: '✅ Llama 3.1 8B (Local) - Good general purpose', type: 'local', quality: 'good' },
-                { id: 'qwen3:4b', name: '✅ Qwen 3 4B (Local) - Good for code', type: 'local', quality: 'good' },
-                { id: 'codellama:7b', name: '✅ CodeLlama 7B (Local) - Code specialist', type: 'local', quality: 'good' },
-                { id: 'codellama:13b', name: '✅ CodeLlama 13B (Local) - Advanced coding', type: 'local', quality: 'excellent' },
-                { id: 'mistral:7b', name: '✅ Mistral 7B (Local) - Good general purpose', type: 'local', quality: 'good' },
-                { id: 'qwen2.5:7b', name: '✅ Qwen 2.5 7B (Local) - Multilingual', type: 'local', quality: 'good' },
-                { id: 'llama2:7b', name: '⚠️ Llama 2 7B (Local) - Legacy model', type: 'local', quality: 'fair' },
-                
-                // Cloud models (via Ollama Cloud API)
-                { id: 'minimax-m2.1:cloud', name: '✅ MiniMax M2.1 (Cloud) - Multilingual code', type: 'cloud', quality: 'excellent' },
-                { id: 'mistral-large-3:675b-cloud', name: '✅ Mistral Large 3 675B (Cloud) - Enterprise', type: 'cloud', quality: 'excellent' },
-                { id: 'gemma4:31b-cloud', name: '✅ Gemma 4 31B (Cloud) - Multimodal', type: 'cloud', quality: 'excellent' },
-                { id: 'deepseek-v3.1:671b-cloud', name: '✅ DeepSeek V3.1 671B (Cloud) - Advanced reasoning', type: 'cloud', quality: 'excellent' },
-                { id: 'qwen3-coder:480b-cloud', name: '✅ Qwen 3 Coder 480B (Cloud) - Expert coding', type: 'cloud', quality: 'excellent' },
-                { id: 'qwen3.5:cloud', name: '✅ Qwen 3.5 (Cloud) - Best balance', type: 'cloud', quality: 'excellent' },
-                { id: 'glm-5.1:cloud', name: '✅ GLM 5.1 (Cloud) - Agentic tasks', type: 'cloud', quality: 'excellent' },
-                { id: 'glm-4.7:cloud', name: '✅ GLM 4.7 (Cloud) - Engineering', type: 'cloud', quality: 'excellent' },
-                { id: 'glm-4.6:cloud', name: '✅ GLM 4.6 (Cloud) - Engineering', type: 'cloud', quality: 'excellent' },
-                { id: 'kimi-k2.6:cloud', name: '✅ Kimi K2.6 (Cloud) - Long context', type: 'cloud', quality: 'excellent' },
-                { id: 'nemotron-3-super:cloud', name: '✅ Nemotron 3 Super (Cloud) - Multi-agent', type: 'cloud', quality: 'excellent' },
-                { id: 'gpt-oss:20b-cloud', name: '✅ GPT-OSS 20B (Cloud) - Open alternative', type: 'cloud', quality: 'good' }
+                { id: 'llama3.2:3b', name: 'Llama 3.2 3B (Local)', type: 'local', quality: 'good' },
+                { id: 'llama3.2:7b', name: 'Llama 3.2 7B (Local)', type: 'local', quality: 'good' },
+                { id: 'codellama:7b', name: 'CodeLlama 7B (Local)', type: 'local', quality: 'good' },
+                { id: 'qwen3.5:cloud', name: 'Qwen 3.5 (Cloud)', type: 'cloud', quality: 'excellent' },
+                { id: 'deepseek-v3.1:671b-cloud', name: 'DeepSeek V3.1 (Cloud)', type: 'cloud', quality: 'excellent' }
             ],
             'deepseek': [
-                { id: 'deepseek-chat', name: '✅ DeepSeek Chat (V3) - General purpose', type: 'cloud', quality: 'excellent' },
-                { id: 'deepseek-coder', name: '✅ DeepSeek Coder - Code specialist', type: 'cloud', quality: 'excellent' },
-                { id: 'deepseek-reasoner', name: '✅ DeepSeek Reasoner (R1) - Complex reasoning', type: 'cloud', quality: 'excellent' }
+                { id: 'deepseek-chat', name: 'DeepSeek Chat (V3)', type: 'cloud', quality: 'excellent' },
+                { id: 'deepseek-coder', name: 'DeepSeek Coder', type: 'cloud', quality: 'excellent' },
+                { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner (R1)', type: 'cloud', quality: 'excellent' }
             ]
         };
 
-        // Initialize model dropdown based on current provider
         function initializeModelDropdown() {
             const currentProvider = providerSelect.value;
             const models = MODELS_BY_PROVIDER[currentProvider] || [];
-            
             modelSelect.innerHTML = '';
             
-            // Group models by type (local/cloud) and quality
             const localModels = models.filter(m => m.type === 'local');
             const cloudModels = models.filter(m => m.type === 'cloud');
             
-            // Add local models
             if (localModels.length > 0) {
                 const localOptgroup = document.createElement('optgroup');
-                localOptgroup.label = 'Local Models (Run on your machine)';
+                localOptgroup.label = 'Local Models';
                 localModels.forEach(model => {
                     const option = document.createElement('option');
                     option.value = model.id;
                     option.textContent = model.name;
-                    // Color-code by quality
-                    if (model.quality === 'poor') {
-                        option.style.color = '#e74c3c'; // Red warning
-                    } else if (model.quality === 'fair') {
-                        option.style.color = '#f39c12'; // Orange caution
-                    } else if (model.quality === 'excellent') {
-                        option.style.color = '#27ae60'; // Green recommended
-                    }
-                    if (model.id === '${modelId}') {
-                        option.selected = true;
-                    }
+                    if (model.id === '${modelId}') option.selected = true;
                     localOptgroup.appendChild(option);
                 });
                 modelSelect.appendChild(localOptgroup);
             }
             
-            // Add cloud models
             if (cloudModels.length > 0) {
                 const cloudOptgroup = document.createElement('optgroup');
-                cloudOptgroup.label = 'Cloud Models (Via Ollama Cloud API)';
+                cloudOptgroup.label = 'Cloud Models';
                 cloudModels.forEach(model => {
                     const option = document.createElement('option');
                     option.value = model.id;
                     option.textContent = model.name;
-                    // Color-code by quality
-                    if (model.quality === 'excellent') {
-                        option.style.color = '#27ae60'; // Green recommended
-                    }
-                    if (model.id === '${modelId}') {
-                        option.selected = true;
-                    }
+                    if (model.id === '${modelId}') option.selected = true;
                     cloudOptgroup.appendChild(option);
                 });
                 modelSelect.appendChild(cloudOptgroup);
             }
         }
 
-        // Handle provider change
         function onProviderChange() {
-            const newProvider = providerSelect.value;
-            vscode.postMessage({ 
-                command: 'changeProvider', 
-                provider: newProvider 
-            });
-            
-            // Update model dropdown
+            vscode.postMessage({ command: 'changeProvider', provider: providerSelect.value });
             initializeModelDropdown();
         }
 
-        // Handle model change
         function onModelChange() {
-            const newModel = modelSelect.value;
-            
-            // Warn if selecting a poor quality model
-            const allModels = MODELS_BY_PROVIDER['ollama'].concat(MODELS_BY_PROVIDER['deepseek']);
-            const selectedModel = allModels.find(m => m.id === newModel);
-            if (selectedModel && selectedModel.quality === 'poor') {
-                if (!confirm('⚠️ Warning: This model is too small for natural conversation. It may output raw JSON instead of friendly responses. Continue anyway?')) {
-                    // Revert to a good model
-                    const goodModel = allModels.find(m => m.quality === 'good' || m.quality === 'excellent');
-                    if (goodModel) {
-                        modelSelect.value = goodModel.id;
-                    }
-                    return;
-                }
-            }
-            
-            vscode.postMessage({ 
-                command: 'changeModel', 
-                model: newModel 
-            });
+            vscode.postMessage({ command: 'changeModel', model: modelSelect.value });
         }
 
-        // Initialize on load
         initializeModelDropdown();
 
-        // ===== ERROR HANDLING =====
         window.addEventListener('error', (event) => {
-            console.error('WebView JavaScript error:', event.error);
-            // Ensure input is re-enabled even if there's an error
+            console.error('WebView error:', event.error);
             isProcessing = false;
             userInput.disabled = false;
             updateActionButton();
-            userInput.focus();
-            addMessage('agent', '<strong style="color: var(--vscode-errorForeground)">⚠️ A JavaScript error occurred. Input has been re-enabled.</strong>', true);
         });
 
         function handleKeyPress(event) {
             if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
-                if (!isProcessing) {
-                    sendMessage();
-                }
+                if (!isProcessing) sendMessage();
             }
         }
 
         function toggleAction() {
-            if (isProcessing) {
-                stopAgent();
-            } else {
-                sendMessage();
-            }
+            if (isProcessing) stopAgent();
+            else sendMessage();
         }
 
         function sendMessage() {
-            try {
-                const text = userInput.value.trim();
-                if (!text) return;
+            const text = userInput.value.trim();
+            if (!text) return;
 
-                isProcessing = true;
-                userInput.disabled = true;
-                updateActionButton();
+            isProcessing = true;
+            userInput.disabled = true;
+            updateActionButton();
+            addMessage('user', text);
 
-                addMessage('user', text);
-
-                if (currentProgressDiv) {
-                    currentProgressDiv.remove();
-                    currentProgressDiv = null;
-                }
-
-                vscode.postMessage({ command: 'sendMessage', text });
-                userInput.value = '';
-            } catch (error) {
-                console.error('Error in sendMessage:', error);
-                isProcessing = false;
-                userInput.disabled = false;
-                updateActionButton();
+            if (currentProgressDiv) {
+                currentProgressDiv.remove();
+                currentProgressDiv = null;
             }
+
+            vscode.postMessage({ command: 'sendMessage', text });
+            userInput.value = '';
         }
 
         function stopAgent() {
@@ -1241,116 +821,10 @@ export class AgentTabManager {
         function addMessage(type, content, isHtml = false) {
             const div = document.createElement('div');
             div.className = 'message ' + (type === 'user' ? 'user-message' : 'agent-message');
-
-            if (isHtml) {
-                div.innerHTML = content;
-            } else {
-                div.textContent = content;
-            }
-
+            if (isHtml) div.innerHTML = content;
+            else div.textContent = content;
             messagesDiv.appendChild(div);
             div.scrollIntoView({ behavior: 'smooth' });
-        }
-
-        // ===== FORMATTED TOOL CARD FUNCTIONS =====
-
-        function createToolCard(toolCard) {
-            try {
-                const card = document.createElement('div');
-                card.className = 'tool-card';
-                card.id = 'tool-card-' + toolCard.toolName + '-' + Date.now();
-
-                const headerState = toolCard.foldState === 'collapsed' ? 'collapsed' : '';
-                const bodyState = toolCard.foldState === 'collapsed' ? 'collapsed' : '';
-                const successState = toolCard.success ? 'success' : 'error';
-
-                let headerHtml = '<div class="tool-card-header ' + successState + '" onclick="toggleToolCard(this)">';
-                headerHtml += '<span class="tool-card-toggle ' + headerState + '">&#9662;</span>';
-                headerHtml += '<span class="tool-card-icon">&#9881;</span>';
-                headerHtml += '<span class="tool-card-name">' + escapeHtml(toolCard.toolName) + '</span>';
-
-                headerHtml += '<span class="tool-card-meta">';
-                if (toolCard.durationMs !== undefined) {
-                    headerHtml += '<span class="tool-card-duration">' + toolCard.durationMs + 'ms</span>';
-                }
-                if (toolCard.isTruncated) {
-                    headerHtml += '<span class="tool-card-truncated">&#9888; truncated</span>';
-                }
-                headerHtml += '</span></div>';
-
-                let bodyHtml = '<div class="tool-card-body ' + bodyState + '">';
-
-                // Args
-                if (toolCard.args && Object.keys(toolCard.args).length > 0) {
-                    bodyHtml += '<div class="tool-card-args">';
-                    bodyHtml += '<span class="tool-card-args-label">Args:</span> ';
-                    const argPairs = [];
-                    for (const [key, value] of Object.entries(toolCard.args)) {
-                        argPairs.push(key + '=' + JSON.stringify(value));
-                    }
-                    bodyHtml += escapeHtml(argPairs.join(', '));
-                    bodyHtml += '</div>';
-                }
-
-                // Result
-                let resultClass = 'tool-card-result';
-                if (toolCard.format === 'tree') resultClass += ' tree-format';
-                if (toolCard.format === 'table') resultClass += ' table-format';
-                if (toolCard.format === 'markdown') resultClass += ' markdown-format';
-
-                bodyHtml += '<div class="' + resultClass + '">';
-
-                if (toolCard.showLineNumbers) {
-                    const lines = (toolCard.result || '').split('\\n');
-                    const numberedLines = lines.map((line, i) => {
-                        return '<span class="line-number">' + (i + 1) + '</span>' + escapeHtml(line);
-                    });
-                    bodyHtml += numberedLines.join('\\n');
-                } else {
-                    bodyHtml += escapeHtml(toolCard.result || '');
-                }
-
-                bodyHtml += '</div>';
-                bodyHtml += '</div>';
-
-                card.innerHTML = headerHtml + bodyHtml;
-                return card;
-            } catch (error) {
-                console.error('Error creating tool card:', error, toolCard);
-                // Return a simple error card instead of breaking
-                const errorCard = document.createElement('div');
-                errorCard.className = 'tool-card';
-                errorCard.innerHTML = '<div class="tool-card-header error"><span class="tool-card-name">⚠️ Error rendering tool card</span></div><div class="tool-card-body"><div class="tool-card-result">' + escapeHtml(error.message) + '</div></div>';
-                return errorCard;
-            }
-        }
-
-        function toggleToolCard(header) {
-            try {
-                const toggle = header.querySelector('.tool-card-toggle');
-                const body = header.nextElementSibling;
-
-                if (body.classList.contains('collapsed')) {
-                    body.classList.remove('collapsed');
-                    toggle.classList.remove('collapsed');
-                } else {
-                    body.classList.add('collapsed');
-                    toggle.classList.add('collapsed');
-                }
-            } catch (error) {
-                console.error('Error toggling tool card:', error);
-            }
-        }
-
-        function addToolCardToChat(toolCard) {
-            try {
-                const card = createToolCard(toolCard);
-                messagesDiv.appendChild(card);
-                card.scrollIntoView({ behavior: 'smooth' });
-            } catch (error) {
-                console.error('Error adding tool card to chat:', error);
-                addMessage('agent', '<span style="color: var(--vscode-errorForeground)">⚠️ Error displaying tool card: ' + escapeHtml(error.message) + '</span>', true);
-            }
         }
 
         function escapeHtml(text) {
@@ -1360,82 +834,176 @@ export class AgentTabManager {
             return div.innerHTML;
         }
 
-        // ===== LEGACY TOOL CALL FUNCTIONS (for backward compatibility) =====
-
-        function addToolCallMessage(toolCall, type) {
-            try {
-                const div = document.createElement('div');
-                div.className = 'tool-call-message ' + (type === 'complete' ? 'tool-call-complete' : (toolCall.error ? 'tool-call-error' : ''));
-
-                let content = '<strong>' + toolCall.toolName + '</strong>(';
-                for (const [key, value] of Object.entries(toolCall.args || {})) {
-                    content += key + ': ' + JSON.stringify(value) + ', ';
-                }
-                content = content.replace(/, $/, '') + ')';
-
-                if (type === 'complete') {
-                    content += ' ✅ <em>Completed</em>';
-                }
-                if (toolCall.error) {
-                    content += ' ❌ <strong style="color: var(--vscode-errorForeground)">Error: ' + toolCall.error + '</strong>';
-                }
-
-                div.innerHTML = content;
-                messagesDiv.appendChild(div);
-                div.scrollIntoView({ behavior: 'smooth' });
-            } catch (error) {
-                console.error('Error adding tool call message:', error);
-            }
-        }
-
-        function addToolResult(toolName, result) {
-            try {
-                if (!result || result.trim() === '') return;
-
-                const div = document.createElement('div');
-                div.className = 'tool-result';
-
-                let displayResult = result;
-                if (result.length > 500) {
-                    displayResult = result.substring(0, 500) + '... (truncated)';
-                }
-
-                div.textContent = '📃 ' + toolName + ' result: ' + displayResult;
-                messagesDiv.appendChild(div);
-                div.scrollIntoView({ behavior: 'smooth' });
-            } catch (error) {
-                console.error('Error adding tool result:', error);
-            }
-        }
-
         function showProgress(message) {
-            try {
-                if (currentProgressDiv) {
-                    currentProgressDiv.remove();
-                }
-
-                currentProgressDiv = document.createElement('div');
-                currentProgressDiv.className = 'progress-indicator';
-                currentProgressDiv.innerHTML = '<div class="spinner"></div><span>' + message + '</span>';
-                messagesDiv.appendChild(currentProgressDiv);
-                currentProgressDiv.scrollIntoView({ behavior: 'smooth' });
-            } catch (error) {
-                console.error('Error showing progress:', error);
-            }
+            if (currentProgressDiv) currentProgressDiv.remove();
+            currentProgressDiv = document.createElement('div');
+            currentProgressDiv.className = 'progress-indicator';
+            currentProgressDiv.innerHTML = '<div class="spinner"></div><span>' + message + '</span>';
+            messagesDiv.appendChild(currentProgressDiv);
+            currentProgressDiv.scrollIntoView({ behavior: 'smooth' });
         }
 
         function hideProgress() {
-            try {
-                if (currentProgressDiv) {
-                    currentProgressDiv.remove();
-                    currentProgressDiv = null;
-                }
-            } catch (error) {
-                console.error('Error hiding progress:', error);
+            if (currentProgressDiv) {
+                currentProgressDiv.remove();
+                currentProgressDiv = null;
             }
         }
 
-        // Handle messages from extension
+        function formatDuration(ms) {
+            if (ms < 1000) return ms + 'ms';
+            return (ms / 1000).toFixed(1) + 's';
+        }
+
+        function getPreviewText(text, maxLines) {
+            const lines = text.split('\\n');
+            if (lines.length <= maxLines) return text;
+            return lines.slice(0, maxLines).join('\\n') + '\\n\\n... (expand to show more)';
+        }
+
+        function formatResponseText(text) {
+            if (!text) return '<em class="text-muted">No response generated.</em>';
+            let formatted = escapeHtml(text);
+            formatted = formatted.replace(/\\n/g, '<br>');
+            formatted = formatted.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
+            return formatted;
+        }
+
+        window.createOutputCard = function(card) {
+            const cardDiv = document.createElement('div');
+            cardDiv.className = 'agent-output-card';
+            
+            const providerColor = card.header.provider === 'ollama' ? '#27ae60' : '#3498db';
+            const statusIcon = card.header.status === 'success' ? '✅' : '❌';
+            
+            let html = '<div class="output-card-header">';
+            html += '<div class="header-left">';
+            html += '<span class="provider-badge" style="background-color: ' + providerColor + '">' + card.header.providerName + '</span>';
+            html += '<span class="model-name">' + escapeHtml(card.header.model) + '</span>';
+            html += '</div>';
+            html += '<div class="header-right">';
+            html += '<span class="status-icon">' + statusIcon + '</span>';
+            html += '<span class="duration-badge">' + formatDuration(card.header.durationMs) + '</span>';
+            html += '<span class="iterations-badge">' + card.header.iterations + ' iter</span>';
+            html += '</div></div>';
+            
+            html += '<div class="output-card-content">';
+            
+            if (card.content.error) {
+                html += '<div class="error-section"><span class="error-icon">❌</span><span class="error-text">' + escapeHtml(card.content.error) + '</span></div>';
+            }
+            
+            const shouldCollapse = card.content.text.length > card.display.autoCollapseAfter;
+            const previewText = shouldCollapse && card.display.collapsed 
+                ? getPreviewText(card.content.text, card.display.maxPreviewLines)
+                : card.content.text;
+            
+            html += '<div class="response-text-section' + (shouldCollapse && card.display.collapsed ? ' collapsed' : '') + '">';
+            html += '<div class="response-text">' + formatResponseText(previewText) + '</div>';
+            if (shouldCollapse) {
+                const expandText = card.display.collapsed ? 'Show more' : 'Show less';
+                const expandIcon = card.display.collapsed ? '▼' : '▲';
+                html += '<button class="expand-button" onclick="toggleOutputCard(this)">';
+                html += '<span class="expand-icon">' + expandIcon + '</span>';
+                html += '<span class="expand-text">' + expandText + '</span></button>';
+            }
+            html += '</div>';
+            
+            if (card.display.showToolDetails && card.content.toolCalls.length > 0) {
+                html += '<div class="section-title"><span class="section-icon">🛠️</span><span class="section-label">Tool Calls (' + card.content.toolCalls.length + ')</span></div>';
+                html += '<div class="tool-calls-list">';
+                card.content.toolCalls.forEach(function(tc) {
+                    const successClass = tc.success !== false ? 'success' : 'error';
+                    const icon = tc.success !== false ? '✅' : '❌';
+                    html += '<div class="tool-call-card ' + successClass + '">';
+                    html += '<div class="tool-call-header" onclick="toggleToolCallCard(this)">';
+                    html += '<span class="tool-call-toggle">▼</span>';
+                    html += '<span class="tool-call-icon">' + icon + '</span>';
+                    html += '<span class="tool-call-name">' + escapeHtml(tc.toolName) + '</span>';
+                    if (tc.durationMs) {
+                        html += '<span class="tool-call-meta"><span class="tool-call-duration">' + formatDuration(tc.durationMs) + '</span></span>';
+                    }
+                    html += '</div>';
+                    html += '<div class="tool-call-body">';
+                    if (Object.keys(tc.args).length > 0) {
+                        html += '<div class="tool-call-args"><span class="args-label">Args:</span><code>' + escapeHtml(JSON.stringify(tc.args, null, 2)) + '</code></div>';
+                    }
+                    if (tc.result) {
+                        html += '<div class="tool-call-result"><span class="result-label">Result:</span><pre>' + escapeHtml(tc.result) + '</pre></div>';
+                    }
+                    if (tc.error) {
+                        html += '<div class="tool-call-error"><span class="error-label">Error:</span><span>' + escapeHtml(tc.error) + '</span></div>';
+                    }
+                    html += '</div></div>';
+                });
+                html += '</div>';
+            }
+            
+            html += '</div>';
+            
+            html += '<div class="output-card-footer">';
+            const metaItems = [];
+            if (card.footer.tokensUsed) metaItems.push('📊 ' + card.footer.tokensUsed + ' tokens');
+            if (card.footer.confidence) metaItems.push('🎯 ' + Math.round(card.footer.confidence * 100) + '% confidence');
+            if (metaItems.length > 0) {
+                html += '<div class="footer-meta">' + metaItems.join('') + '</div>';
+            }
+            html += '<div class="footer-actions">';
+            card.footer.actions.filter(function(a) { return a.enabled; }).forEach(function(action) {
+                html += '<button class="footer-action-btn" onclick="handleFooterAction(\\'' + action.id + '\\')">';
+                html += '<span class="action-icon">' + action.icon + '</span>';
+                html += '<span class="action-label">' + action.label + '</span></button>';
+            });
+            html += '</div></div>';
+            
+            cardDiv.innerHTML = html;
+            return cardDiv;
+        };
+        
+        window.toggleOutputCard = function(button) {
+            const section = button.parentElement;
+            const icon = button.querySelector('.expand-icon');
+            const text = button.querySelector('.expand-text');
+            
+            if (section.classList.contains('collapsed')) {
+                section.classList.remove('collapsed');
+                icon.textContent = '▲';
+                text.textContent = 'Show less';
+            } else {
+                section.classList.add('collapsed');
+                icon.textContent = '▼';
+                text.textContent = 'Show more';
+            }
+        };
+        
+        window.toggleToolCallCard = function(header) {
+            const body = header.nextElementSibling;
+            const toggle = header.querySelector('.tool-call-toggle');
+            if (body.style.display === 'none') {
+                body.style.display = 'block';
+                toggle.textContent = '▼';
+            } else {
+                body.style.display = 'none';
+                toggle.textContent = '▶';
+            }
+        };
+        
+        window.handleFooterAction = function(actionId) {
+            console.log('Footer action:', actionId);
+            if (actionId === 'copy') {
+                const lastCard = messagesDiv.querySelector('.agent-output-card:last-child .response-text');
+                if (lastCard) {
+                    navigator.clipboard.writeText(lastCard.textContent);
+                }
+            } else if (actionId === 'retry') {
+                const lastUserMsg = messagesDiv.querySelector('.user-message:last-child');
+                if (lastUserMsg) {
+                    userInput.value = lastUserMsg.textContent;
+                    sendMessage();
+                }
+            }
+        };
+
         window.addEventListener('message', event => {
             const message = event.data;
 
@@ -1446,102 +1014,91 @@ export class AgentTabManager {
                         break;
 
                     case 'streamingText':
-                        // Real-time streaming - show text as it arrives
                         hideProgress();
-                        
-                        // If we have an existing agent message, update it
                         const lastMessage = messagesDiv.lastElementChild;
                         if (lastMessage && lastMessage.classList.contains('agent-message')) {
-                            // Update existing message
                             lastMessage.innerHTML = message.accumulated.replace(/\\n/g, '<br>');
                         } else {
-                            // Create new message
                             addMessage('agent', message.accumulated.replace(/\\n/g, '<br>'), true);
                         }
                         break;
 
                     case 'progress':
                         const evt = message.event;
-                        if (evt.type === 'thinking') {
-                            showProgress(evt.message);
-                        } else if (evt.type === 'tool_start') {
-                            if (evt.toolCall) {
-                                addToolCallMessage(evt.toolCall, 'start');
-                            }
-                        } else if (evt.type === 'tool_complete') {
-                            if (evt.toolCard) {
-                                // New formatted tool card
-                                addToolCardToChat(evt.toolCard);
-                            } else if (evt.toolCall) {
-                                // Legacy fallback
-                                addToolCallMessage(evt.toolCall, 'complete');
-                                if (evt.toolCall.result) {
-                                    addToolResult(evt.toolCall.toolName, evt.toolCall.result);
-                                }
-                            }
-                        } else if (evt.type === 'iteration_complete') {
-                            // Optional: show iteration complete message
-                        }
+                        if (evt.type === 'thinking') showProgress(evt.message);
                         break;
 
                     case 'configUpdated':
-                        // Configuration updated successfully - update dropdowns
-                        if (message.provider) {
-                            providerSelect.value = message.provider;
-                        }
+                        if (message.provider) providerSelect.value = message.provider;
                         if (message.model) {
-                            // Re-initialize model dropdown to get correct options
                             initializeModelDropdown();
-                            // Set the selected model
                             modelSelect.value = message.model;
                         }
-                        showProgress('Configuration updated: ' + (message.provider || '') + ' / ' + (message.model || ''));
+                        showProgress('Configuration updated');
                         setTimeout(hideProgress, 2000);
                         break;
 
                     case 'response':
                         hideProgress();
 
-                        // If streaming already showed text, just update with final stats
-                        const lastMsg = messagesDiv.lastElementChild;
-                        if (lastMsg && lastMsg.classList.contains('agent-message')) {
-                            // Add iteration info to existing message
-                            let statsHtml = '<div class="iteration-info">Iterations: ' + message.response.iterations + ' | Duration: ' + message.response.durationMs + 'ms</div>';
+                        if (window.createOutputCard && message.response.text) {
+                            const settings = window.outputSettings || {};
+                            const cardData = {
+                                header: {
+                                    provider: '${providerId}',
+                                    providerName: '${providerId}' === 'ollama' ? 'Ollama' : 'DeepSeek',
+                                    model: '${modelId}',
+                                    timestamp: Date.now(),
+                                    durationMs: message.response.durationMs,
+                                    iterations: message.response.iterations,
+                                    status: message.response.success !== false ? 'success' : 'error'
+                                },
+                                content: {
+                                    text: message.response.text,
+                                    toolCalls: (message.response.toolCards || []).map(tc => ({
+                                        toolName: tc.toolName,
+                                        args: tc.args || {},
+                                        result: tc.result,
+                                        durationMs: tc.durationMs,
+                                        success: !tc.error,
+                                        error: tc.error
+                                    })),
+                                    buildOutput: message.response.buildOutput,
+                                    error: message.response.success === false ? 'Request failed' : undefined
+                                },
+                                footer: {
+                                    tokensUsed: settings.showTokenCount ? message.response.tokensUsed : undefined,
+                                    confidence: settings.showConfidence ? message.response.confidence : undefined,
+                                    actions: [
+                                        { id: 'copy', label: 'Copy', icon: '📋', enabled: true },
+                                        { id: 'retry', label: 'Retry', icon: '🔄', enabled: true }
+                                    ]
+                                },
+                                display: {
+                                    collapsed: message.response.text.length > (settings.autoCollapse || 500),
+                                    showReasoning: settings.showReasoning || false,
+                                    showToolDetails: settings.showToolDetails !== false,
+                                    showTokenCount: settings.showTokenCount || false,
+                                    showConfidence: settings.showConfidence || false,
+                                    theme: settings.theme || 'system',
+                                    fontSize: settings.fontSize || 'medium',
+                                    autoCollapseAfter: settings.autoCollapse || 500,
+                                    maxPreviewLines: settings.maxPreviewLines || 10,
+                                    codeHighlight: settings.codeHighlight !== false
+                                }
+                            };
                             
-                            if (message.response.toolCards && message.response.toolCards.length > 0) {
-                                statsHtml += '<div class="iteration-info">Tools Used: ' + message.response.toolCards.map(tc => tc.toolName).join(', ') + '</div>';
-                            }
-                            
-                            if (message.response.success !== undefined) {
-                                statsHtml += '<div class="iteration-info">Status: ' + (message.response.success ? '✅ Success' : '❌ Failed') + '</div>';
-                            }
-                            
-                            lastMsg.innerHTML += statsHtml;
+                            const cardDiv = window.createOutputCard(cardData);
+                            messagesDiv.appendChild(cardDiv);
+                            cardDiv.scrollIntoView({ behavior: 'smooth' });
                         } else {
-                            // No streaming happened, show full response
-                            let responseHtml = '';
-
-                            // Show final text if available
-                            if (message.response.text && message.response.text.trim() !== '') {
-                                responseHtml = '<div>' + message.response.text.replace(/\\n/g, '<br>') + '</div>';
-                            } else if (message.response.toolCards && message.response.toolCards.length > 0) {
-                                responseHtml = '<div><em>Completed tool operations:</em></div>';
+                            const lastMsg = messagesDiv.lastElementChild;
+                            if (lastMsg && lastMsg.classList.contains('agent-message')) {
+                                let statsHtml = '<div class="iteration-info">Iterations: ' + message.response.iterations + ' | Duration: ' + message.response.durationMs + 'ms</div>';
+                                lastMsg.innerHTML += statsHtml;
                             } else {
-                                responseHtml = '<div><em>No response generated.</em></div>';
+                                addMessage('agent', 'Response received', false);
                             }
-
-                            // Show tool cards summary
-                            if (message.response.toolCards && message.response.toolCards.length > 0) {
-                                responseHtml += '<div class="iteration-info">Tools Used: ' + message.response.toolCards.map(tc => tc.toolName).join(', ') + '</div>';
-                            }
-
-                            responseHtml += '<div class="iteration-info">Iterations: ' + message.response.iterations + ' | Duration: ' + message.response.durationMs + 'ms</div>';
-
-                            if (message.response.success !== undefined) {
-                                responseHtml += '<div class="iteration-info">Status: ' + (message.response.success ? '✅ Success' : '❌ Failed') + '</div>';
-                            }
-
-                            addMessage('agent', responseHtml, true);
                         }
 
                         isProcessing = false;
@@ -1566,15 +1123,9 @@ export class AgentTabManager {
                         updateActionButton();
                         userInput.disabled = false;
                         break;
-
-                    case 'configReloaded':
-                        // No longer needed - configUpdated handles UI updates without reload
-                        // This is kept for backward compatibility but does nothing
-                        break;
                 }
             } catch (error) {
-                console.error('Error handling webview message:', error, message);
-                // Ensure input is re-enabled even if there's an error
+                console.error('Error handling message:', error, message);
                 isProcessing = false;
                 userInput.disabled = false;
                 updateActionButton();
@@ -1587,35 +1138,21 @@ export class AgentTabManager {
 </html>`;
   }
 
-  /**
-   * Capitalize first letter
-   */
   private capitalize(str: string): string {
     return str.charAt(0).toUpperCase() + str.slice(1);
   }
 
-  /**
-   * Log message to output channel
-   */
   private log(message: string): void {
     this.outputChannel.appendLine(`[AgentTabManager] ${message}`);
   }
 
-  /**
-   * Dispose all tabs and resources
-   */
   async dispose(): Promise<void> {
     this.log('Disposing AgentTabManager...');
-
-    // Close all tabs
     for (const tab of this.tabs.values()) {
       await this.closeTab(tab.id);
     }
-
-    // Dispose provider and tool card manager
     await this.provider.dispose();
     this.toolCardManager.dispose();
-
     this.log('AgentTabManager disposed');
   }
 }

@@ -229,6 +229,15 @@ interface ToolCallHistory {
 }
 
 /**
+ * Options for agent loop execution
+ */
+interface AgentLoopOptions {
+  streaming: boolean;
+  onProgress?: ProgressCallback;
+  toolCallArgs?: Map<string, Record<string, any>>; // Track tool args for non-streaming compatibility
+}
+
+/**
  * AgentBridge - Manages agent lifecycle and communication
  */
 export class AgentBridge {
@@ -348,7 +357,8 @@ export class AgentBridge {
   }
 
   /**
-   * Process user input through the agent with real-time progress updates
+   * Process user input through the agent with real-time progress updates (NON-STREAMING)
+   * @deprecated Use processStreaming() and collect chunks instead
    */
   async process(
     userInput: string,
@@ -375,8 +385,16 @@ export class AgentBridge {
       
       this.log(`System prompt built (${systemPrompt.length} chars)`);
 
-      // Execute agent loop using CLI
-      const response = await this.executeAgentLoop(userInput, systemPrompt, context, onProgress);
+      // Execute agent loop and collect chunks
+      const chunks: AgentChunk[] = [];
+      const toolCallArgs = new Map<string, Record<string, any>>();
+      
+      for await (const chunk of this.executeAgentLoop(userInput, systemPrompt, context, { streaming: true, onProgress, toolCallArgs })) {
+        chunks.push(chunk);
+      }
+      
+      // Convert chunks to AgentResponse
+      const response = this.chunksToResponse(chunks, toolCallArgs, startTime);
       
       const durationMs = Date.now() - startTime;
       this.log(`Agent completed in ${durationMs}ms with ${response.iterations} iterations`);
@@ -401,6 +419,50 @@ export class AgentBridge {
         error: error.message
       };
     }
+  }
+
+  /**
+   * Convert streaming chunks to AgentResponse (for backward compatibility)
+   */
+  private chunksToResponse(
+    chunks: AgentChunk[], 
+    toolCallArgs: Map<string, Record<string, any>>,
+    startTime: number
+  ): AgentResponse {
+    const toolCalls: ToolCall[] = [];
+    let finalText = '';
+    let iterations = 0;
+    let error: string | undefined;
+
+    for (const chunk of chunks) {
+      if (chunk.type === 'text') {
+        finalText += chunk.text;
+      } else if (chunk.type === 'tool_call_started') {
+        // Capture args when tool starts
+        toolCallArgs.set(chunk.toolName, chunk.args);
+      } else if (chunk.type === 'tool_call_completed') {
+        toolCalls.push({
+          toolName: chunk.toolName,
+          args: toolCallArgs.get(chunk.toolName) || {},
+          result: chunk.result
+        });
+      } else if (chunk.type === 'iteration_complete') {
+        iterations = chunk.iteration;
+      } else if (chunk.type === 'error') {
+        error = chunk.error;
+      } else if (chunk.type === 'done' && chunk.iterations) {
+        iterations = chunk.iterations;
+      }
+    }
+
+    return {
+      finalText,
+      toolCalls,
+      iterations,
+      durationMs: Date.now() - startTime,
+      success: !error,
+      error
+    };
   }
 
   /**
@@ -430,8 +492,8 @@ export class AgentBridge {
       
       this.log(`System prompt built (${systemPrompt.length} chars)`);
 
-      // Execute streaming agent loop
-      for await (const chunk of this.executeStreamingAgentLoop(userInput, systemPrompt, context)) {
+      // Execute unified agent loop with streaming enabled
+      for await (const chunk of this.executeAgentLoop(userInput, systemPrompt, context, { streaming: true })) {
         yield chunk;
       }
     } catch (error: any) {
@@ -445,13 +507,14 @@ export class AgentBridge {
   }
 
   /**
-   * Execute streaming agent loop
-   * Yields AgentChunk events as they occur
+   * UNIFIED: Execute agent loop with optional streaming
+   * Single source of truth for all agent logic (loop detection, tool execution, etc.)
    */
-  private async *executeStreamingAgentLoop(
+  async *executeAgentLoop(
     userInput: string,
     systemPrompt: string,
-    context?: ProcessContext
+    context?: ProcessContext,
+    options: AgentLoopOptions = { streaming: false }
   ): AsyncGenerator<AgentChunk> {
     const messages: LLMMessage[] = [
       { role: 'system', content: systemPrompt },
@@ -463,74 +526,95 @@ export class AgentBridge {
     const toolCalls: ToolCall[] = [];
     const history: ToolCallHistory[] = [];
 
-    this.log(`Starting streaming loop with max ${maxIterations} iterations`);
+    this.log(`Starting agent loop (streaming=${options.streaming}) with max ${maxIterations} iterations`);
 
     for (let iteration = 1; iteration <= maxIterations; iteration++) {
+      this.currentIteration = iteration;
       this.log(`[Iter ${iteration}/${maxIterations}] Calling LLM...`);
 
-      // Emit thinking event
-      yield {
-        type: 'thinking',
-        message: `Iteration ${iteration}: Processing...`,
-        timestamp: Date.now()
-      };
+      // Emit thinking event (streaming only)
+      if (options.streaming) {
+        yield {
+          type: 'thinking',
+          message: `Iteration ${iteration}: Processing...`,
+          timestamp: Date.now()
+        };
+      } else if (options.onProgress) {
+        options.onProgress({
+          type: 'thinking',
+          message: `Iteration ${iteration}: Processing...`,
+          iteration
+        });
+      }
 
-      // Call LLM with streaming
-      const streamResponse = await this.cli.callLLM(
-        this.config.model.id,
-        messages,
-        {
-          temperature: this.config.model.temperature,
-          top_p: this.config.model.topP,
-          max_tokens: this.config.model.maxOutputTokens
-        },
-        tools,
-        true // Enable streaming
-      ) as AsyncGenerator<LLMChunk>;
-
-      // Collect streaming response - BUFFER all text until we know response type
+      // Call LLM (streaming or non-streaming)
       let responseText = '';
       let streamingToolCalls: LLMToolCall[] = [];
       let textBuffer: string[] = [];
 
-      for await (const chunk of streamResponse) {
-        if (chunk.text) {
-          responseText += chunk.text;
-          textBuffer.push(chunk.text);
-        }
-        if (chunk.toolCalls) {
-          streamingToolCalls = chunk.toolCalls;
-        }
-        if (chunk.done) {
-          break;
-        }
-      }
+      if (options.streaming) {
+        // Streaming: collect chunks
+        const streamResponse = await this.cli.callLLM(
+          this.config.model.id,
+          messages,
+          {
+            temperature: this.config.model.temperature,
+            top_p: this.config.model.topP,
+            max_tokens: this.config.model.maxOutputTokens
+          },
+          tools,
+          true // Enable streaming
+        ) as AsyncGenerator<LLMChunk>;
 
-      // FALLBACK: Parse tool calls from text if structured tool calls not provided
-      if (streamingToolCalls.length === 0 && responseText.includes('tool_call:')) {
-        this.log(`No structured tool calls - parsing from text`);
-        const toolCallPattern = /tool_call:\s*({"tool":\s*"[^"]+",\s*"args":\s*{[^}]+}})/g;
-        let match;
-        while ((match = toolCallPattern.exec(responseText)) !== null) {
-          try {
-            const toolCallObj = JSON.parse(match[1]);
-            streamingToolCalls.push({
-              id: `call_${Date.now()}_${streamingToolCalls.length}`,
-              name: toolCallObj.tool,
-              arguments: toolCallObj.args
-            });
-            this.log(`Parsed tool call: ${toolCallObj.tool}`);
-          } catch (e: any) {
-            this.log(`Warning: Could not parse tool call: ${match[1]}`);
+        for await (const chunk of streamResponse) {
+          if (chunk.text) {
+            responseText += chunk.text;
+            textBuffer.push(chunk.text);
+          }
+          if (chunk.toolCalls) {
+            streamingToolCalls = chunk.toolCalls;
+          }
+          if (chunk.done) {
+            break;
           }
         }
-        // Remove tool_call: lines from text
-        responseText = responseText.replace(/tool_call:\s*{"tool":\s*"[^"]+",\s*"args":\s*{[^}]+}}/g, '').trim();
-      }
 
-      // Clean text: remove reasoning:, EOS, tool_calls: markers
-      responseText = this.cleanResponseMarkers(responseText);
-      textBuffer = textBuffer.map(chunk => this.cleanResponseMarkers(chunk));
+        // FALLBACK: Parse tool calls from text if structured tool calls not provided
+        if (streamingToolCalls.length === 0 && responseText.includes('tool_call:')) {
+          this.log(`No structured tool calls - parsing from text`);
+          const toolCallPattern = /tool_call:\s*({"tool":\s*"[^"]+",\s*"args":\s*{[^}]+\}\})/g;
+          let match;
+          while ((match = toolCallPattern.exec(responseText)) !== null) {
+            try {
+              const toolCallObj = JSON.parse(match[1]);
+              streamingToolCalls.push({
+                id: `call_${Date.now()}_${streamingToolCalls.length}`,
+                name: toolCallObj.tool,
+                arguments: toolCallObj.args
+              });
+              this.log(`Parsed tool call: ${toolCallObj.tool}`);
+            } catch (e: any) {
+              this.log(`Warning: Could not parse tool call: ${match[1]}`);
+            }
+          }
+          // Remove tool_call: lines from text
+          responseText = responseText.replace(/tool_call:\s*{"tool":\s*"[^"]+",\s*"args":\s*{[^}]+\}\}/g, '').trim();
+        }
+
+        // Clean text: remove reasoning:, EOS, tool_calls: markers
+        responseText = this.cleanResponseMarkers(responseText);
+        textBuffer = textBuffer.map(chunk => this.cleanResponseMarkers(chunk));
+
+      } else {
+        // Non-streaming: direct response
+        const response = await this.callLLM(messages, tools);
+        responseText = response.content;
+        streamingToolCalls = response.toolCalls.map(tc => ({
+          id: tc.id,
+          name: tc.name,
+          arguments: tc.arguments
+        }));
+      }
 
       this.log(`[Iter ${iteration}] LLM: ${responseText.length} chars, ${streamingToolCalls.length} tool(s)`);
 
@@ -555,8 +639,36 @@ export class AgentBridge {
           continue;
         }
 
-        // Final answer - yield cleaned text
-        this.log(`[Iter ${iteration}] Final answer - yielding ${textBuffer.length} chunks`);
+        // Final answer - yield/send text
+        this.log(`[Iter ${iteration}] Final answer received`);
+        
+        if (options.streaming) {
+          for (const textChunk of textBuffer) {
+            yield {
+              type: 'text',
+              text: textChunk,
+              timestamp: Date.now()
+            };
+          }
+          yield {
+            type: 'done',
+            outcome: 'success',
+            timestamp: Date.now(),
+            iterations: iteration
+          };
+        } else if (options.onProgress) {
+          options.onProgress({
+            type: 'tool_complete',
+            toolCall: { toolName: 'final_answer', args: {}, result: responseText },
+            iteration
+          });
+        }
+        
+        return;
+      }
+
+      // Has tool calls - yield/send text first (streaming only)
+      if (options.streaming) {
         for (const textChunk of textBuffer) {
           yield {
             type: 'text',
@@ -564,29 +676,11 @@ export class AgentBridge {
             timestamp: Date.now()
           };
         }
-        
-        yield {
-          type: 'done',
-          outcome: 'success',
-          timestamp: Date.now()
-        };
-        
-        return;
       }
 
-      // Has tool calls - yield cleaned text, then execute tools
-      for (const textChunk of textBuffer) {
-        yield {
-          type: 'text',
-          text: textChunk,
-          timestamp: Date.now()
-        };
-      }
-
-      // ===== LOOP DETECTION (same as non-streaming path) =====
+      // ===== LOOP DETECTION (SHARED LOGIC) =====
       const repeatCountMap = new Map<string, number>();
       const shouldNudge: string[] = [];
-      const shouldForceStop: { toolName: string; count: number } | null = null;
 
       for (const toolCall of streamingToolCalls) {
         const argsSignature = JSON.stringify(toolCall.arguments);
@@ -606,24 +700,35 @@ export class AgentBridge {
         repeatCountMap.set(repeatKey, totalRepeatCount);
 
         if (recentCalls.length > 0) {
-          this.log(`LOOP DETECTED [Stream]: ${toolCall.name} called with same args at iterations ${recentCalls.map(h => h.iteration).join(', ')} (repeat count: ${totalRepeatCount})`);
+          this.log(`LOOP DETECTED: ${toolCall.name} called with same args at iterations ${recentCalls.map(h => h.iteration).join(', ')} (repeat count: ${totalRepeatCount})`);
           
           if (totalRepeatCount === 2) {
             shouldNudge.push(toolCall.name);
           } else if (totalRepeatCount >= 4) {
-            this.log(`FORCE STOP [Stream]: ${toolCall.name} repeated ${totalRepeatCount} times`);
-            // Force stop - yield final message
-            yield {
-              type: 'text',
-              text: `⚠️ Agent stopped after ${totalRepeatCount} repeated attempts with ${toolCall.name}. The tool returned the same result each time. Try a different approach.`,
-              timestamp: Date.now()
-            };
-            yield {
-              type: 'done',
-              outcome: 'error',
-              timestamp: Date.now(),
-              iterations: iteration
-            };
+            this.log(`FORCE STOP: ${toolCall.name} repeated ${totalRepeatCount} times`);
+            
+            // Force stop - yield/send final message
+            const errorMsg = `⚠️ Agent stopped after ${totalRepeatCount} repeated attempts with ${toolCall.name}. The tool returned the same result each time. Try a different approach.`;
+            
+            if (options.streaming) {
+              yield {
+                type: 'text',
+                text: errorMsg,
+                timestamp: Date.now()
+              };
+              yield {
+                type: 'done',
+                outcome: 'error',
+                timestamp: Date.now(),
+                iterations: iteration
+              };
+            } else if (options.onProgress) {
+              options.onProgress({
+                type: 'tool_complete',
+                toolCall: { toolName: 'force_stop', args: {}, error: errorMsg },
+                iteration
+              });
+            }
             return;
           }
         }
@@ -657,12 +762,24 @@ Please try a DIFFERENT approach:
       const currentIterationToolCalls: ToolCall[] = [];
 
       for (const toolCall of streamingToolCalls) {
-        yield {
-          type: 'tool_call_started',
-          toolName: toolCall.name,
-          args: toolCall.arguments,
-          timestamp: Date.now()
-        };
+        // Emit tool start event
+        if (options.streaming) {
+          yield {
+            type: 'tool_call_started',
+            toolName: toolCall.name,
+            args: toolCall.arguments,
+            timestamp: Date.now()
+          };
+        } else if (options.onProgress) {
+          options.onProgress({
+            type: 'tool_start',
+            toolCall: {
+              toolName: toolCall.name,
+              args: toolCall.arguments
+            },
+            iteration
+          });
+        }
 
         const toolCallObj: ToolCall = {
           toolName: toolCall.name,
@@ -685,22 +802,39 @@ Please try a DIFFERENT approach:
           const resultSummary = result.result.substring(0, 100).replace(/\n/g, ' ');
           this.log(`[Iter ${iteration}] ✅ ${toolCall.name}: ${resultSummary}${result.result.length > 100 ? '...' : ''}`);
           
-          yield {
-            type: 'tool_call_completed',
-            toolName: toolCall.name,
-            result: result.result,
-            timestamp: Date.now()
-          };
+          // Emit tool complete event
+          if (options.streaming) {
+            yield {
+              type: 'tool_call_completed',
+              toolName: toolCall.name,
+              result: result.result,
+              timestamp: Date.now()
+            };
+          } else if (options.onProgress) {
+            options.onProgress({
+              type: 'tool_complete',
+              toolCall: toolCallObj,
+              iteration
+            });
+          }
         } catch (error: any) {
           toolCallObj.error = error.message;
           this.log(`[Iter ${iteration}] ❌ ${toolCall.name}: ${error.message}`);
           
-          yield {
-            type: 'tool_call_completed',
-            toolName: toolCall.name,
-            result: `Error: ${error.message}`,
-            timestamp: Date.now()
-          };
+          if (options.streaming) {
+            yield {
+              type: 'tool_call_completed',
+              toolName: toolCall.name,
+              result: `Error: ${error.message}`,
+              timestamp: Date.now()
+            };
+          } else if (options.onProgress) {
+            options.onProgress({
+              type: 'tool_complete',
+              toolCall: toolCallObj,
+              iteration
+            });
+          }
         }
 
         currentIterationToolCalls.push(toolCallObj);
@@ -708,7 +842,6 @@ Please try a DIFFERENT approach:
       }
 
       // Add assistant message with tool calls to history
-      // Note: This is for LLM conversation history only, not displayed to user
       let assistantContent = responseText;
       if (!assistantContent || assistantContent.trim() === '') {
         const toolDescriptions = currentIterationToolCalls.map(tc => {
@@ -740,272 +873,15 @@ Please try a DIFFERENT approach:
         content: `Tool results received. You have ${maxIterations - iteration} of ${maxIterations} iterations remaining. If you have enough information to answer the user's question, provide your answer now. Only call another tool if you're missing critical information.`
       });
 
-      // Emit iteration complete chunk
-      yield {
-        type: 'iteration_complete',
-        iteration,
-        timestamp: Date.now()
-      };
-    }
-
-    this.log(`Max iterations (${maxIterations}) reached without final answer - giving LLM one more chance`);
-    // Give LLM one final chance to provide a final answer
-    const finalResponse = await this.callLLM(messages, tools);
-    if (finalResponse.toolCalls.length === 0) {
-      this.log(`Final answer from LLM: ${finalResponse.content.length} chars`);
-      yield {
-        type: 'done',
-        outcome: 'success',
-        timestamp: Date.now(),
-        iterations: maxIterations + 1
-      };
-      return;
-    }
-    
-    yield {
-      type: 'done',
-      outcome: 'success',
-      timestamp: Date.now(),
-      iterations: maxIterations
-    };
-  }
-
-  /**
-   * Execute non-streaming agent loop (for backward compatibility)
-   */
-  private async executeAgentLoop(
-    userInput: string,
-    systemPrompt: string,
-    context?: ProcessContext,
-    onProgress?: ProgressCallback
-  ): Promise<{ finalText: string; toolCalls: ToolCall[]; iterations: number; success?: boolean; error?: string }> {
-    // Set progress callback for this execution
-    this.progressCallback = onProgress;
-    
-    const messages: LLMMessage[] = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userInput }
-    ];
-
-    const tools = this.getTools();
-    const maxIterations = this.config.iterationSettings.maxIterations;
-    const toolCalls: ToolCall[] = [];
-    const history: ToolCallHistory[] = [];
-
-    this.log(`Starting agent loop with max ${maxIterations} iterations`);
-
-    for (let iteration = 1; iteration <= maxIterations; iteration++) {
-      this.currentIteration = iteration;
-      this.log(`=== Iteration ${iteration}/${maxIterations} ===`);
-
-      // Emit thinking event
-      if (onProgress) {
-        onProgress({
-          type: 'thinking',
-          message: `Iteration ${iteration}: Processing...`,
-          iteration
-        });
-      }
-
-      // Call LLM
-      const response = await this.callLLM(messages, tools);
-
-      this.log(`LLM response: ${response.content.length} chars, ${response.toolCalls.length} tool calls`);
-
-      // If no tool calls, check if this is just a plan (not actual execution)
-      if (response.toolCalls.length === 0) {
-        // PLAN DETECTION: Check if response is just a plan without execution
-        const trimmedResponse = response.content.trim();
-
-        // Expanded plan patterns
-        const isPlanOnly =
-          trimmedResponse.startsWith('I will:') ||
-          trimmedResponse.startsWith('I\'ll') ||
-          trimmedResponse.toLowerCase().startsWith('calling ') ||
-          /^[Ii] will (call|use|read|search|run|execute)/.test(trimmedResponse) ||
-          /^[Ii]\'ll (call|use|read|search|run|execute)/.test(trimmedResponse) ||
-          /^(First|I\'ll first|Let me first|I will first)/i.test(trimmedResponse) ||
-          // Short responses that are likely just plans
-          (trimmedResponse.length < 100 && /^(Sure|Okay|Let me|I will|I\'ll)/i.test(trimmedResponse));
-
-        if (isPlanOnly && trimmedResponse.length < 300) {
-          // This is just a plan, not actual work - don't accept it as final answer
-          this.log(`PLAN DETECTED: "${trimmedResponse.substring(0, 50)}..." - forcing tool execution`);
-
-          // Add nudge to continue iterating
-          messages.push({
-            role: 'user',
-            content: 'That is just a plan. You MUST call tools to complete the task. Do NOT respond with another plan - actually call the tools now.'
-          });
-
-          continue;
-        }
-
-        // Otherwise, we have actual content - we're done
-        this.log(`No tool calls - iteration complete`);
-        return {
-          finalText: response.content,
-          toolCalls,
-          iterations: iteration
-        };
-      }
-
-      // Check for repeated tool calls (loop detection with nudge strategy)
-      // Track how many times each tool call has been repeated
-      const repeatCountMap = new Map<string, number>();
-
-      for (const toolCall of response.toolCalls) {
-        const argsSignature = JSON.stringify(toolCall.arguments);
-        const normalizedToolName = toolCall.name.toLowerCase().replace(/[_-]/g, '');
-        
-        // Check if this exact tool call was made in the last 2 iterations
-        const recentCalls = history.filter(h => 
-          h.iteration >= iteration - 2 && 
-          h.toolName.toLowerCase().replace(/[_-]/g, '') === normalizedToolName &&
-          h.argsSignature === argsSignature
-        );
-        
-        // Calculate repeat count for this tool call signature
-        const repeatKey = `${normalizedToolName}:${argsSignature}`;
-        const previousRepeatCount = repeatCountMap.get(repeatKey) || 0;
-        const totalRepeatCount = previousRepeatCount + recentCalls.length;
-        repeatCountMap.set(repeatKey, totalRepeatCount);
-
-        if (recentCalls.length > 0) {
-          this.log(`LOOP DETECTED: ${toolCall.name} called with same args at iterations ${recentCalls.map(h => h.iteration).join(', ')} (repeat count: ${totalRepeatCount})`);
-          
-          // STRATEGY: Nudge instead of hard stop - let LLM try a different approach
-          if (totalRepeatCount === 2) {
-            // 2nd repeat: Inject a nudge message and continue execution
-            this.log(`Injecting nudge message for ${toolCall.name} - attempt ${totalRepeatCount + 1}`);
-
-            // Add a nudge message to the conversation
-            const nudgeMessage = `NOTICE: You just called ${toolCall.name} with the same arguments as before. This repeated call hasn't made progress. 
-            
-Please try a DIFFERENT approach:
-1. Use a different tool that might give you new information
-2. If you already have enough information, answer the user's question directly
-3. Don't repeat the same tool call again - it won't give you different results`;
-
-            messages.push({
-              role: 'user',
-              content: nudgeMessage
-            });
-          } else if (totalRepeatCount >= 4) {
-            // 4th repeat: Force completion - LLM has had multiple chances
-            this.log(`FORCE STOP: ${toolCall.name} repeated ${totalRepeatCount} times - forcing completion`);
-            return {
-              finalText: `Agent stopped after ${totalRepeatCount} repeated attempts with ${toolCall.name}. The tool returned the same result each time. You may need to try a different approach or tool.`,
-              toolCalls,
-              iterations: iteration,
-              success: false,
-              error: 'Infinite loop detected and prevented'
-            };
-          }
-        }
-        
-        // Record BEFORE execution
-        history.push({
-          toolName: toolCall.name,
-          argsSignature,
-          iteration
-        });
-      }
-
-      // Execute tool calls - collect results for THIS iteration only
-      const currentIterationToolCalls: ToolCall[] = [];
-
-      for (const toolCall of response.toolCalls) {
-        this.log(`Executing tool: ${toolCall.name}`);
-        
-        // Emit tool start event
-        if (onProgress) {
-          onProgress({
-            type: 'tool_start',
-            toolCall: {
-              toolName: toolCall.name,
-              args: toolCall.arguments
-            },
-            iteration
-          });
-        }
-
-        const toolCallObj: ToolCall = {
-          toolName: toolCall.name,
-          args: toolCall.arguments,
-          toolCallId: toolCall.id // Store the tool call ID for linking results
-        };
-
-        try {
-          const result = await this.executeTool({
-            toolName: toolCall.name,
-            args: toolCall.arguments
-          });
-          
-          toolCallObj.result = result.result;
-          if (result.error) {
-            toolCallObj.error = result.error;
-          }
-          
-          // Emit tool complete event
-          if (onProgress) {
-            onProgress({
-              type: 'tool_complete',
-              toolCall: toolCallObj,
-              iteration
-            });
-          }
-        } catch (error: any) {
-          toolCallObj.error = error.message;
-          
-          if (onProgress) {
-            onProgress({
-              type: 'tool_complete',
-              toolCall: toolCallObj,
-              iteration
-            });
-          }
-        }
-
-        currentIterationToolCalls.push(toolCallObj);
-        toolCalls.push(toolCallObj);
-      }
-
-      // Add assistant message with tool calls to history
-      let assistantContent = response.content;
-      if (!assistantContent || assistantContent.trim() === '') {
-        const toolDescriptions = currentIterationToolCalls.map(tc => {
-          const argsStr = JSON.stringify(tc.args);
-          return `Calling ${tc.toolName}(${argsStr})`;
-        }).join('; ');
-        assistantContent = `I will: ${toolDescriptions}`;
-        this.log(`Assistant content was empty - added synthetic message: "${assistantContent}"`);
-      }
-      
-      messages.push({
-        role: 'assistant',
-        content: assistantContent || ''
-      });
-
-      // Add tool results with tool_call_id for linking
-      for (let i = 0; i < currentIterationToolCalls.length; i++) {
-        const tc = currentIterationToolCalls[i];
-        const matchingToolCall = response.toolCalls[i];
-        messages.push({
-          role: 'tool',
-          content: tc.error || tc.result || 'No result',
-          tool_call_id: matchingToolCall?.id
-        });
-      }
-
-      messages.push({
-        role: 'user',
-        content: `Tool results received. You have ${maxIterations - iteration} of ${maxIterations} iterations remaining. If you have enough information to answer the user's question, provide your answer now. Only call another tool if you're missing critical information.`
-      });
-
       // Emit iteration complete event
-      if (onProgress) {
-        onProgress({
+      if (options.streaming) {
+        yield {
+          type: 'iteration_complete',
+          iteration,
+          timestamp: Date.now()
+        };
+      } else if (options.onProgress) {
+        options.onProgress({
           type: 'iteration_complete',
           iteration
         });
@@ -1013,26 +889,47 @@ Please try a DIFFERENT approach:
     }
 
     this.log(`Max iterations (${maxIterations}) reached without final answer - giving LLM one more chance`);
+    
     // Give LLM one final chance to provide a final answer
     const finalResponse = await this.callLLM(messages, tools);
     if (finalResponse.toolCalls.length === 0) {
       this.log(`Final answer from LLM: ${finalResponse.content.length} chars`);
-      return {
-        finalText: finalResponse.content,
-        toolCalls,
-        iterations: maxIterations + 1,
-        success: true
+      
+      if (options.streaming) {
+        yield {
+          type: 'text',
+          text: finalResponse.content,
+          timestamp: Date.now()
+        };
+        yield {
+          type: 'done',
+          outcome: 'success',
+          timestamp: Date.now(),
+          iterations: maxIterations + 1
+        };
+      } else if (options.onProgress) {
+        options.onProgress({
+          type: 'tool_complete',
+          toolCall: { toolName: 'final_answer', args: {}, result: finalResponse.content },
+          iteration: maxIterations + 1
+        });
+      }
+      return;
+    }
+    
+    // Max iterations reached
+    if (options.streaming) {
+      yield {
+        type: 'done',
+        outcome: 'success',
+        timestamp: Date.now(),
+        iterations: maxIterations
       };
     }
-    return {
-      finalText: 'Max iterations reached without final answer',
-      toolCalls,
-      iterations: maxIterations
-    };
   }
 
   /**
-   * Call LLM through CLI
+   * Call LLM through CLI (non-streaming)
    */
   private async callLLM(messages: LLMMessage[], tools: LLMTool[]): Promise<LLMResponse> {
     const result = await this.cli.callLLM(
@@ -1074,7 +971,6 @@ Please try a DIFFERENT approach:
 
             if (files.length === 0) {
               // Check if directory exists or if it's a real "not found" error
-              const fs = require('fs');
               try {
                 fs.accessSync(dirPath);
                 // Directory exists but is empty

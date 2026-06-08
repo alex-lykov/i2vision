@@ -25,6 +25,7 @@ export class AgentTabManager {
   private provider: LocalAgentProvider;
   private outputChannel: vscode.OutputChannel;
   private toolCardManager: ToolCardManager;
+  private panel?: vscode.WebviewPanel;
 
   constructor(
     private context: vscode.ExtensionContext,
@@ -127,11 +128,30 @@ export class AgentTabManager {
   }
 
   private cleanResponseText(text: string): string {
-    // AgentBridge already cleans text chunks during streaming
-    // This is a safety net for any remaining markers
     if (!text) return '';
+    // Remove reasoning: markers ANYWHERE in text
+    text = text.replace(/\s*reasoning:\s*/gi, ' ');
+    // Remove EOS markers
     text = text.replace(/\bEOS\b/g, '');
+    // Remove tool_calls: prefix
     text = text.replace(/^tool_calls:\s*/gmi, '');
+    // Remove tool_call: lines with JSON
+    text = text.replace(/^\s*tool_call:\s*\{[\s\S]*?\}\s*$/gmi, '');
+    text = text.replace(/\s*tool_call:\s*\{[\s\S]*?\}/gi, '');
+    // Fix run-together words: lowercase→uppercase (Ihave → I have)
+    text = text.replace(/([a-z])([A-Z])/g, '$1 $2');
+    // Fix common concatenated words
+    text = text.replace(/\b(Ihave|Iwill|Ineed|Letme|Let's|Thisis|Thatis|Whatis|Whatare)\b/gi, (match) => {
+      return match.replace(/([a-z])([A-Z])/g, '$1 $2');
+    });
+    // Fix missing space after periods
+    text = text.replace(/([.!?])([A-Za-z])/g, '$1 $2');
+    // Fix missing space after commas
+    text = text.replace(/(,)([A-Za-z])/g, '$1 $2');
+    // Fix "Electri City" → "ElectriCity" (over-correction)
+    text = text.replace(/Electri\s+City/g, 'ElectriCity');
+    // Collapse multiple spaces
+    text = text.replace(/\s+/g, ' ');
     return text.trim();
   }
 
@@ -172,111 +192,136 @@ export class AgentTabManager {
         }, IDLE_TIMEOUT_MS);
       };
       
+      // Accumulate data for final response
       let accumulatedText = '';
       let toolCalls: any[] = [];
       let iterationCount = 0;
+      let chunkCount = 0;
 
-      const agentPromise = (async () => {
-        resetIdleTimer();
+      // FIXED: Process chunks in real-time instead of waiting for promise
+      this.log('Starting real-time chunk processing...');
+      
+      resetIdleTimer();
+      
+      try {
+        // Iterate through chunks as they arrive (TRUE STREAMING)
+        const streamIterator = tab.agent.processStreaming({
+          id: requestId,
+          task: userInput,
+          context: context
+        });
         
-        try {
-          for await (const chunk of tab.agent.processStreaming({
-            id: requestId,
-            task: userInput,
-            context: context
-          })) {
-            resetIdleTimer();
+        this.log('Got stream iterator, starting iteration...');
+        
+        for await (const chunk of streamIterator) {
+          resetIdleTimer();
+          chunkCount++;
+          
+          this.log(`[Chunk ${chunkCount}] Type: ${chunk.type}, Timestamp: ${chunk.timestamp}`);
+          
+          // Process each chunk immediately as it arrives
+          if (chunk.type === 'text') {
+            accumulatedText += chunk.text;
+            this.log(`[Chunk ${chunkCount}] Text: ${chunk.text.length} chars (total: ${accumulatedText.length})`);
             
-            if (chunk.type === 'text') {
-              accumulatedText += chunk.text;
-              tab.panel.webview.postMessage({
-                command: 'streamingText',
-                text: chunk.text,
-                accumulated: accumulatedText
-              });
-            } else if (chunk.type === 'tool_call_started') {
-              tab.panel.webview.postMessage({
-                command: 'progress',
-                event: { type: 'tool_start', toolCall: { toolName: chunk.toolName, args: chunk.args } }
-              });
-            } else if (chunk.type === 'tool_call_completed') {
-              const completedChunk = chunk as any;
-              toolCalls.push({
-                toolName: completedChunk.toolName,
-                args: completedChunk.args || {},
-                result: completedChunk.result,
-                toolCallId: completedChunk.toolCallId
-              });
-              tab.panel.webview.postMessage({
-                command: 'progress',
-                event: { 
-                  type: 'tool_complete', 
-                  toolCall: { 
-                    toolName: completedChunk.toolName, 
-                    args: completedChunk.args, 
-                    result: completedChunk.result,
-                    toolCallId: completedChunk.toolCallId
-                  } 
-                }
-              });
-            } else if (chunk.type === 'iteration_complete') {
-              iterationCount++;
-            } else if (chunk.type === 'done') {
-              const doneChunk = chunk as { type: 'done'; iterations?: number };
-              // Use explicit iterations if provided, otherwise use counted iterations
-              iterationCount = doneChunk.iterations || (iterationCount > 0 ? iterationCount : 1);
-            }
-          }
-        } finally {
-          if (idleTimer) {
-            clearTimeout(idleTimer);
-            idleTimer = null;
+            // Clean the accumulated text for streaming display (remove markers)
+            const cleanedForDisplay = this.cleanResponseText(accumulatedText);
+            
+            // Send streaming text to webview for real-time display
+            const sent = tab.panel.webview.postMessage({
+              command: 'streamingText',
+              text: chunk.text,
+              accumulated: cleanedForDisplay
+            });
+            this.log(`[Chunk ${chunkCount}] Posted streamingText to webview: ${sent}`);
+            
+          } else if (chunk.type === 'tool_call_started') {
+            this.log(`[Chunk ${chunkCount}] Tool started: ${chunk.toolName}`);
+            tab.panel.webview.postMessage({
+              command: 'progress',
+              event: { type: 'tool_start', toolCall: { toolName: chunk.toolName, args: chunk.args } }
+            });
+            
+          } else if (chunk.type === 'tool_call_completed') {
+            const completedChunk = chunk as any;
+            toolCalls.push({
+              toolName: completedChunk.toolName,
+              args: completedChunk.args || {},
+              result: completedChunk.result,
+              toolCallId: completedChunk.toolCallId
+            });
+            this.log(`[Chunk ${chunkCount}] Tool completed: ${completedChunk.toolName}`);
+            tab.panel.webview.postMessage({
+              command: 'progress',
+              event: { 
+                type: 'tool_complete', 
+                toolCall: { 
+                  toolName: completedChunk.toolName, 
+                  args: completedChunk.args, 
+                  result: completedChunk.result,
+                  toolCallId: completedChunk.toolCallId
+                } 
+              }
+            });
+            
+          } else if (chunk.type === 'iteration_complete') {
+            iterationCount++;
+            this.log(`[Chunk ${chunkCount}] Iteration complete: ${iterationCount}`);
+            
+          } else if (chunk.type === 'done') {
+            const doneChunk = chunk as { type: 'done'; iterations?: number };
+            iterationCount = doneChunk.iterations || (iterationCount > 0 ? iterationCount : 1);
+            this.log(`[Chunk ${chunkCount}] Done: ${iterationCount} iterations`);
           }
         }
-        
-        return {
-          finalText: accumulatedText,
-          toolCalls: toolCalls,
-          iterations: iterationCount,
-          durationMs: Date.now() - startTime,
-          success: true
-        };
-      })();
+      } finally {
+        if (idleTimer) {
+          clearTimeout(idleTimer);
+          idleTimer = null;
+        }
+      }
 
-      const response = await agentPromise;
+      this.log(`Streaming complete: ${chunkCount} chunks, ${accumulatedText.length} chars, ${toolCalls.length} tools`);
 
       // Log concise summary
-      const toolSummary = response.toolCalls?.map(tc => 
+      const toolSummary = toolCalls?.map(tc => 
         `${tc.toolName}${tc.error ? '❌' : '✅'}`
       ).join(', ') || 'none';
-      this.log(`✅ Complete: ${response.iterations} iter, ${response.toolCalls?.length || 0} tools (${toolSummary}), ${response.durationMs}ms`);
+      this.log(`✅ Complete: ${iterationCount} iter, ${toolCalls?.length || 0} tools (${toolSummary}), ${Date.now() - startTime}ms`);
 
-      // Clean the final accumulated text (remove reasoning:, EOS, tool_calls: markers)
-      const cleanedText = this.cleanResponseText(response.finalText || '');
+      // Clean the final accumulated text
+      const cleanedText = this.cleanResponseText(accumulatedText);
       const formattedResponse = this.toolCardManager.formatAgentResponse(
         cleanedText,
-        response.toolCalls || [],
-        response.iterations,
-        response.durationMs,
-        response.success
+        toolCalls || [],
+        iterationCount,
+        Date.now() - startTime,
+        true
       );
 
       const record: InteractionRecord = {
         timestamp: Date.now(),
         userInput,
         agentResponse: cleanedText,
-        toolCalls: response.toolCalls?.map(tc => ({ toolName: tc.toolName, args: tc.args || {} })) || [],
-        iterations: response.iterations,
+        toolCalls: toolCalls?.map(tc => ({ toolName: tc.toolName, args: tc.args || {} })) || [],
+        iterations: iterationCount,
         durationMs: Date.now() - startTime
       };
 
       tab.history.push(record);
       this.log(`Interaction recorded: ${record.iterations} iterations, ${record.durationMs}ms`);
+      this.log(`Sending final response to webview: text=${cleanedText.length} chars, toolCards=${formattedResponse.toolCards?.length || 0}`);
 
-      tab.panel.webview.postMessage({
-        command: 'response',
-        response: formattedResponse
-      });
+      try {
+        const sent = await tab.panel.webview.postMessage({
+          command: 'response',
+          response: formattedResponse
+        });
+        this.log(`Webview response message sent: ${sent ? '✅' : '❌'}`);
+      } catch (error: any) {
+        this.log(`ERROR sending response to webview: ${error.message}`);
+        throw error;
+      }
     } catch (error: any) {
       this.log(`Error processing input: ${error.message}`);
 
@@ -446,14 +491,14 @@ export class AgentTabManager {
     const modelId = agentConfig.model.id;
     const providerId = agentConfig.model.provider;
     const maxIterations = agentConfig.iterationSettings.maxIterations;
-    tab.panel.webview.html = this.getWebviewContent(modelId, providerId, maxIterations);
+    tab.panel.webview.html = this.getWebviewContent(modelId, providerId, maxIterations, tab.panel);
   }
 
   private getNonce(): string {
     return crypto.randomBytes(16).toString('base64');
   }
 
-  private getWebviewContent(modelId: string, providerId: string, maxIterations: number): string {
+  private getWebviewContent(modelId: string, providerId: string, maxIterations: number, panel: vscode.WebviewPanel): string {
     const config = vscode.workspace.getConfiguration('i2vision.output');
     const outputSettings = {
       showReasoning: config.get<boolean>('showReasoning', false),
@@ -469,15 +514,16 @@ export class AgentTabManager {
 
     const settingsJson = JSON.stringify(outputSettings).replace(/"/g, '&quot;');
     
-    // Note: AgentOutputCard is plain TypeScript (not React) - generates HTML via template strings
-    // No bundler required - works directly in VSCode webviews
+    // Load external JavaScript file
+    const jsPath = vscode.Uri.file(path.join(this.context.extensionPath, 'resources', 'webview.js'));
+    const scriptUri = panel.webview.asWebviewUri(jsPath);
     
     return `<!DOCTYPE html>
-<html lang="en" data-output-settings="${settingsJson}">
+<html lang="en" data-output-settings="${settingsJson}" data-provider-id="${providerId}" data-model-id="${modelId}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline' ${scriptUri.scheme}://*;">
     <title>i2-Vision Agent</title>
     <style>
         :root { --container-padding: 20px; }
@@ -703,457 +749,11 @@ export class AgentTabManager {
     </div>
 
     <script>
-        const vscode = acquireVsCodeApi();
-        const messagesDiv = document.getElementById('messages');
-        const actionButton = document.getElementById('actionButton');
-        const userInput = document.getElementById('userInput');
-        const providerSelect = document.getElementById('providerSelect');
-        const modelSelect = document.getElementById('modelSelect');
-
-        let currentProgressDiv = null;
-        let isProcessing = false;
-
-        const htmlEl = document.documentElement;
-        const outputSettings = htmlEl.dataset.outputSettings ? JSON.parse(htmlEl.dataset.outputSettings) : {};
-        
-        if (outputSettings.theme && outputSettings.theme !== 'system') {
-            document.body.classList.add('theme-' + outputSettings.theme);
-        }
-        if (outputSettings.fontSize) {
-            document.body.classList.add('font-' + outputSettings.fontSize);
-        }
-        window.outputSettings = outputSettings;
-
-        const MODELS_BY_PROVIDER = {
-            'ollama': [
-                { id: 'llama3.2:3b', name: 'Llama 3.2 3B (Local)', type: 'local', quality: 'good' },
-                { id: 'llama3.2:7b', name: 'Llama 3.2 7B (Local)', type: 'local', quality: 'good' },
-                { id: 'codellama:7b', name: 'CodeLlama 7B (Local)', type: 'local', quality: 'good' },
-                { id: 'qwen3.5:cloud', name: 'Qwen 3.5 (Cloud)', type: 'cloud', quality: 'excellent' },
-                { id: 'deepseek-v3.1:671b-cloud', name: 'DeepSeek V3.1 (Cloud)', type: 'cloud', quality: 'excellent' }
-            ],
-            'deepseek': [
-                { id: 'deepseek-chat', name: 'DeepSeek Chat (V3)', type: 'cloud', quality: 'excellent' },
-                { id: 'deepseek-coder', name: 'DeepSeek Coder', type: 'cloud', quality: 'excellent' },
-                { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner (R1)', type: 'cloud', quality: 'excellent' }
-            ]
-        };
-
-        function initializeModelDropdown() {
-            const currentProvider = providerSelect.value;
-            const models = MODELS_BY_PROVIDER[currentProvider] || [];
-            modelSelect.innerHTML = '';
-            
-            const localModels = models.filter(m => m.type === 'local');
-            const cloudModels = models.filter(m => m.type === 'cloud');
-            
-            if (localModels.length > 0) {
-                const localOptgroup = document.createElement('optgroup');
-                localOptgroup.label = 'Local Models';
-                localModels.forEach(model => {
-                    const option = document.createElement('option');
-                    option.value = model.id;
-                    option.textContent = model.name;
-                    if (model.id === '${modelId}') option.selected = true;
-                    localOptgroup.appendChild(option);
-                });
-                modelSelect.appendChild(localOptgroup);
-            }
-            
-            if (cloudModels.length > 0) {
-                const cloudOptgroup = document.createElement('optgroup');
-                cloudOptgroup.label = 'Cloud Models';
-                cloudModels.forEach(model => {
-                    const option = document.createElement('option');
-                    option.value = model.id;
-                    option.textContent = model.name;
-                    if (model.id === '${modelId}') option.selected = true;
-                    cloudOptgroup.appendChild(option);
-                });
-                modelSelect.appendChild(cloudOptgroup);
-            }
-        }
-
-        function onProviderChange() {
-            vscode.postMessage({ command: 'changeProvider', provider: providerSelect.value });
-            initializeModelDropdown();
-        }
-
-        function onModelChange() {
-            vscode.postMessage({ command: 'changeModel', model: modelSelect.value });
-        }
-
-        initializeModelDropdown();
-
-        window.addEventListener('error', (event) => {
-            console.error('WebView error:', event.error);
-            isProcessing = false;
-            userInput.disabled = false;
-            updateActionButton();
-        });
-
-        function handleKeyPress(event) {
-            if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-                if (!isProcessing) sendMessage();
-            }
-        }
-
-        function toggleAction() {
-            if (isProcessing) stopAgent();
-            else sendMessage();
-        }
-
-        function sendMessage() {
-            const text = userInput.value.trim();
-            if (!text) return;
-
-            isProcessing = true;
-            userInput.disabled = true;
-            updateActionButton();
-            addMessage('user', text);
-
-            if (currentProgressDiv) {
-                currentProgressDiv.remove();
-                currentProgressDiv = null;
-            }
-
-            vscode.postMessage({ command: 'sendMessage', text });
-            userInput.value = '';
-        }
-
-        function stopAgent() {
-            vscode.postMessage({ command: 'stopAgent' });
-        }
-
-        function updateActionButton() {
-            if (isProcessing) {
-                actionButton.textContent = 'Stop';
-                actionButton.className = 'stop-button';
-            } else {
-                actionButton.textContent = 'Send';
-                actionButton.className = '';
-            }
-        }
-
-        function addMessage(type, content, isHtml = false) {
-            const div = document.createElement('div');
-            div.className = 'message ' + (type === 'user' ? 'user-message' : 'agent-message');
-            if (isHtml) div.innerHTML = content;
-            else div.textContent = content;
-            messagesDiv.appendChild(div);
-            div.scrollIntoView({ behavior: 'smooth' });
-        }
-
-        function escapeHtml(text) {
-            if (!text) return '';
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
-        }
-
-        function showProgress(message) {
-            if (currentProgressDiv) currentProgressDiv.remove();
-            currentProgressDiv = document.createElement('div');
-            currentProgressDiv.className = 'progress-indicator';
-            currentProgressDiv.innerHTML = '<div class="spinner"></div><span>' + message + '</span>';
-            messagesDiv.appendChild(currentProgressDiv);
-            currentProgressDiv.scrollIntoView({ behavior: 'smooth' });
-        }
-
-        function hideProgress() {
-            if (currentProgressDiv) {
-                currentProgressDiv.remove();
-                currentProgressDiv = null;
-            }
-        }
-
-        function formatDuration(ms) {
-            if (ms < 1000) return ms + 'ms';
-            return (ms / 1000).toFixed(1) + 's';
-        }
-
-        function getPreviewText(text, maxLines) {
-            const lines = text.split('\\n');
-            if (lines.length <= maxLines) return text;
-            return lines.slice(0, maxLines).join('\\n') + '\\n\\n... (expand to show more)';
-        }
-
-        function formatResponseText(text) {
-            if (!text) return '<em class="text-muted">No response generated.</em>';
-            let formatted = escapeHtml(text);
-            formatted = formatted.replace(/\\n/g, '<br>');
-            formatted = formatted.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
-            return formatted;
-        }
-
-        window.createOutputCard = function(card) {
-            const cardDiv = document.createElement('div');
-            cardDiv.className = 'agent-output-card';
-            
-            const providerColor = card.header.provider === 'ollama' ? '#27ae60' : '#3498db';
-            const statusIcon = card.header.status === 'success' ? '✅' : '❌';
-            
-            let html = '<div class="output-card-header">';
-            html += '<div class="header-left">';
-            html += '<span class="provider-badge" style="background-color: ' + providerColor + '">' + card.header.providerName + '</span>';
-            html += '<span class="model-name">' + escapeHtml(card.header.model) + '</span>';
-            html += '</div>';
-            html += '<div class="header-right">';
-            html += '<span class="status-icon">' + statusIcon + '</span>';
-            html += '<span class="duration-badge">' + formatDuration(card.header.durationMs) + '</span>';
-            html += '<span class="iterations-badge">' + card.header.iterations + ' iter</span>';
-            html += '</div></div>';
-            
-            html += '<div class="output-card-content">';
-            
-            if (card.content.error) {
-                html += '<div class="error-section"><span class="error-icon">❌</span><span class="error-text">' + escapeHtml(card.content.error) + '</span></div>';
-            }
-            
-            const shouldCollapse = card.content.text.length > card.display.autoCollapseAfter;
-            const previewText = shouldCollapse && card.display.collapsed 
-                ? getPreviewText(card.content.text, card.display.maxPreviewLines)
-                : card.content.text;
-            
-            html += '<div class="response-text-section' + (shouldCollapse && card.display.collapsed ? ' collapsed' : '') + '">';
-            html += '<div class="response-text">' + formatResponseText(previewText) + '</div>';
-            if (shouldCollapse) {
-                const expandText = card.display.collapsed ? 'Show more' : 'Show less';
-                const expandIcon = card.display.collapsed ? '▼' : '▲';
-                html += '<button class="expand-button" onclick="toggleOutputCard(this)">';
-                html += '<span class="expand-icon">' + expandIcon + '</span>';
-                html += '<span class="expand-text">' + expandText + '</span></button>';
-            }
-            html += '</div>';
-            
-            if (card.display.showToolDetails && card.content.toolCalls.length > 0) {
-                html += '<div class="section-title"><span class="section-icon">🛠️</span><span class="section-label">Tool Calls (' + card.content.toolCalls.length + ')</span></div>';
-                html += '<div class="tool-calls-list">';
-                card.content.toolCalls.forEach(function(tc) {
-                    const successClass = tc.success !== false ? 'success' : 'error';
-                    const icon = tc.success !== false ? '✅' : '❌';
-                    html += '<div class="tool-call-card ' + successClass + '">';
-                    html += '<div class="tool-call-header" onclick="toggleToolCallCard(this)">';
-                    html += '<span class="tool-call-toggle">▼</span>';
-                    html += '<span class="tool-call-icon">' + icon + '</span>';
-                    html += '<span class="tool-call-name">' + escapeHtml(tc.toolName) + '</span>';
-                    if (tc.durationMs) {
-                        html += '<span class="tool-call-meta"><span class="tool-call-duration">' + formatDuration(tc.durationMs) + '</span></span>';
-                    }
-                    html += '</div>';
-                    html += '<div class="tool-call-body">';
-                    if (Object.keys(tc.args).length > 0) {
-                        html += '<div class="tool-call-args"><span class="args-label">Args:</span><code>' + escapeHtml(JSON.stringify(tc.args, null, 2)) + '</code></div>';
-                    }
-                    if (tc.result) {
-                        html += '<div class="tool-call-result"><span class="result-label">Result:</span><pre>' + escapeHtml(tc.result) + '</pre></div>';
-                    }
-                    if (tc.error) {
-                        html += '<div class="tool-call-error"><span class="error-label">Error:</span><span>' + escapeHtml(tc.error) + '</span></div>';
-                    }
-                    html += '</div></div>';
-                });
-                html += '</div>';
-            }
-            
-            html += '</div>';
-            
-            html += '<div class="output-card-footer">';
-            const metaItems = [];
-            if (card.footer.tokensUsed) metaItems.push('📊 ' + card.footer.tokensUsed + ' tokens');
-            if (card.footer.confidence) metaItems.push('🎯 ' + Math.round(card.footer.confidence * 100) + '% confidence');
-            if (metaItems.length > 0) {
-                html += '<div class="footer-meta">' + metaItems.join('') + '</div>';
-            }
-            html += '<div class="footer-actions">';
-            card.footer.actions.filter(function(a) { return a.enabled; }).forEach(function(action) {
-                html += '<button class="footer-action-btn" onclick="handleFooterAction(\\'' + action.id + '\\')">';
-                html += '<span class="action-icon">' + action.icon + '</span>';
-                html += '<span class="action-label">' + action.label + '</span></button>';
-            });
-            html += '</div></div>';
-            
-            cardDiv.innerHTML = html;
-            return cardDiv;
-        };
-        
-        window.toggleOutputCard = function(button) {
-            const section = button.parentElement;
-            const icon = button.querySelector('.expand-icon');
-            const text = button.querySelector('.expand-text');
-            
-            if (section.classList.contains('collapsed')) {
-                section.classList.remove('collapsed');
-                icon.textContent = '▲';
-                text.textContent = 'Show less';
-            } else {
-                section.classList.add('collapsed');
-                icon.textContent = '▼';
-                text.textContent = 'Show more';
-            }
-        };
-        
-        window.toggleToolCallCard = function(header) {
-            const body = header.nextElementSibling;
-            const toggle = header.querySelector('.tool-call-toggle');
-            if (body.style.display === 'none') {
-                body.style.display = 'block';
-                toggle.textContent = '▼';
-            } else {
-                body.style.display = 'none';
-                toggle.textContent = '▶';
-            }
-        };
-        
-        window.handleFooterAction = function(actionId) {
-            console.log('Footer action:', actionId);
-            if (actionId === 'copy') {
-                const lastCard = messagesDiv.querySelector('.agent-output-card:last-child .response-text');
-                if (lastCard) {
-                    navigator.clipboard.writeText(lastCard.textContent);
-                }
-            } else if (actionId === 'retry') {
-                const lastUserMsg = messagesDiv.querySelector('.user-message:last-child');
-                if (lastUserMsg) {
-                    userInput.value = lastUserMsg.textContent;
-                    sendMessage();
-                }
-            }
-        };
-
-        window.addEventListener('message', event => {
-            const message = event.data;
-
-            try {
-                switch (message.command) {
-                    case 'processing':
-                        showProgress('Processing: ' + message.userInput.substring(0, 50) + '...');
-                        break;
-
-                    case 'streamingText':
-                        hideProgress();
-                        // Text already cleaned by AgentBridge - just display
-                        const cleanAccumulated = message.accumulated;
-                        const lastMessage = messagesDiv.lastElementChild;
-                        if (lastMessage && lastMessage.classList.contains('agent-message')) {
-                            lastMessage.innerHTML = cleanAccumulated.replace(/\\n/g, '<br>');
-                        } else {
-                            addMessage('agent', cleanAccumulated.replace(/\\n/g, '<br>'), true);
-                        }
-                        break;
-
-                    case 'progress':
-                        const evt = message.event;
-                        if (evt.type === 'thinking') showProgress(evt.message);
-                        break;
-
-                    case 'configUpdated':
-                        if (message.provider) providerSelect.value = message.provider;
-                        if (message.model) {
-                            initializeModelDropdown();
-                            modelSelect.value = message.model;
-                        }
-                        showProgress('Configuration updated');
-                        setTimeout(hideProgress, 2000);
-                        break;
-
-                    case 'response':
-                        hideProgress();
-
-                        if (window.createOutputCard && message.response.text) {
-                            const settings = window.outputSettings || {};
-                            const cardData = {
-                                header: {
-                                    provider: '${providerId}',
-                                    providerName: '${providerId}' === 'ollama' ? 'Ollama' : 'DeepSeek',
-                                    model: '${modelId}',
-                                    timestamp: Date.now(),
-                                    durationMs: message.response.durationMs,
-                                    iterations: message.response.iterations,
-                                    status: message.response.success !== false ? 'success' : 'error'
-                                },
-                                content: {
-                                    text: message.response.text,
-                                    toolCalls: (message.response.toolCards || []).map(tc => ({
-                                        toolName: tc.toolName,
-                                        args: tc.args || {},
-                                        result: tc.result,
-                                        durationMs: tc.durationMs,
-                                        success: !tc.error,
-                                        error: tc.error
-                                    })),
-                                    buildOutput: message.response.buildOutput,
-                                    error: message.response.success === false ? 'Request failed' : undefined
-                                },
-                                footer: {
-                                    tokensUsed: settings.showTokenCount ? message.response.tokensUsed : undefined,
-                                    confidence: settings.showConfidence ? message.response.confidence : undefined,
-                                    actions: [
-                                        { id: 'copy', label: 'Copy', icon: '📋', enabled: true },
-                                        { id: 'retry', label: 'Retry', icon: '🔄', enabled: true }
-                                    ]
-                                },
-                                display: {
-                                    collapsed: message.response.text.length > (settings.autoCollapse || 500),
-                                    showReasoning: settings.showReasoning || false,
-                                    showToolDetails: settings.showToolDetails !== false,
-                                    showTokenCount: settings.showTokenCount || false,
-                                    showConfidence: settings.showConfidence || false,
-                                    theme: settings.theme || 'system',
-                                    fontSize: settings.fontSize || 'medium',
-                                    autoCollapseAfter: settings.autoCollapse || 500,
-                                    maxPreviewLines: settings.maxPreviewLines || 10,
-                                    codeHighlight: settings.codeHighlight !== false
-                                }
-                            };
-                            
-                            const cardDiv = window.createOutputCard(cardData);
-                            messagesDiv.appendChild(cardDiv);
-                            cardDiv.scrollIntoView({ behavior: 'smooth' });
-                        } else {
-                            const lastMsg = messagesDiv.lastElementChild;
-                            if (lastMsg && lastMsg.classList.contains('agent-message')) {
-                                let statsHtml = '<div class="iteration-info">Iterations: ' + message.response.iterations + ' | Duration: ' + message.response.durationMs + 'ms</div>';
-                                lastMsg.innerHTML += statsHtml;
-                            } else {
-                                addMessage('agent', 'Response received', false);
-                            }
-                        }
-
-                        isProcessing = false;
-                        updateActionButton();
-                        userInput.disabled = false;
-                        userInput.focus();
-                        break;
-
-                    case 'stopped':
-                        hideProgress();
-                        addMessage('agent', '<strong>⏹️ Stopped by user</strong>', true);
-                        isProcessing = false;
-                        updateActionButton();
-                        userInput.disabled = false;
-                        userInput.focus();
-                        break;
-
-                    case 'error':
-                        hideProgress();
-                        addMessage('agent', 'Error: ' + message.error, false);
-                        isProcessing = false;
-                        updateActionButton();
-                        userInput.disabled = false;
-                        break;
-                }
-            } catch (error) {
-                console.error('Error handling message:', error, message);
-                isProcessing = false;
-                userInput.disabled = false;
-                updateActionButton();
-            }
-        });
-
-        updateActionButton();
+        // Pass configuration to external script via window object
+        window.PROVIDER_ID = '${providerId}';
+        window.MODEL_ID = '${modelId}';
     </script>
+    <script src="${scriptUri}"></script>
 </body>
 </html>`;
   }

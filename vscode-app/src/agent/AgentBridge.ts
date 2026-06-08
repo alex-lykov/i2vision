@@ -582,23 +582,33 @@ export class AgentBridge {
         // FALLBACK: Parse tool calls from text if structured tool calls not provided
         if (streamingToolCalls.length === 0 && responseText.includes('tool_call:')) {
           this.log(`No structured tool calls - parsing from text`);
-          const toolCallPattern = /tool_call:\s*({"tool":\s*"[^"]+",\s*"args":\s*{[^}]+\}\})/g;
+          // More robust pattern that handles malformed JSON
+          const toolCallPattern = /tool_call:\s*({[\s\S]*?})(?=\n|$|tool_call:)/g;
           let match;
           while ((match = toolCallPattern.exec(responseText)) !== null) {
             try {
-              const toolCallObj = JSON.parse(match[1]);
-              streamingToolCalls.push({
-                id: `call_${Date.now()}_${streamingToolCalls.length}`,
-                name: toolCallObj.tool,
-                arguments: toolCallObj.args
-              });
-              this.log(`Parsed tool call: ${toolCallObj.tool}`);
+              // Clean up common JSON issues from LLM output
+              let jsonStr = match[1]
+                .replace(/""/g, ',"')  // Fix double quotes
+                .replace(/\\}/g, '}')   // Fix escaped braces
+                .replace(/\\{/g, '{')
+                .replace(/'/g, '"');    // Fix single quotes
+              
+              const toolCallObj = JSON.parse(jsonStr);
+              if (toolCallObj.tool) {
+                streamingToolCalls.push({
+                  id: `call_${Date.now()}_${streamingToolCalls.length}`,
+                  name: toolCallObj.tool,
+                  arguments: toolCallObj.args || {}
+                });
+                this.log(`Parsed tool call: ${toolCallObj.tool}`);
+              }
             } catch (e: any) {
-              this.log(`Warning: Could not parse tool call: ${match[1]}`);
+              this.log(`Warning: Could not parse tool call JSON: ${match[1].substring(0, 100)}... Error: ${e.message}`);
             }
           }
           // Remove tool_call: lines from text
-          responseText = responseText.replace(/tool_call:\s*{"tool":\s*"[^"]+",\s*"args":\s*{[^}]+\}\}/g, '').trim();
+          responseText = responseText.replace(/tool_call:\s*{[\s\S]*?}(?=\n|$|tool_call:)/g, '').trim();
         }
 
         // Clean text: remove reasoning:, EOS, tool_calls: markers

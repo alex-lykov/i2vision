@@ -833,6 +833,18 @@ export class AgentTabManager {
             font-size: var(--font-size-sm);
         }
         .response-text p { margin: var(--spacing-sm) 0; }
+        .response-text h1, .response-text h2, .response-text h3 {
+            margin: var(--spacing-md) 0 var(--spacing-sm) 0;
+            font-weight: 600;
+            color: var(--vscode-foreground);
+        }
+        .response-text h1 { font-size: var(--font-size-lg); border-bottom: 1px solid var(--card-border); padding-bottom: var(--spacing-xs); }
+        .response-text h2 { font-size: var(--font-size-md); }
+        .response-text h3 { font-size: var(--font-size-sm); }
+        .response-text ul { margin: var(--spacing-sm) 0; padding-left: var(--spacing-md); }
+        .response-text li { margin: var(--spacing-xs) 0; }
+        .response-link { color: var(--vscode-textLink-foreground); text-decoration: none; }
+        .response-link:hover { text-decoration: underline; }
         
         .expand-button {
             display: inline-flex;

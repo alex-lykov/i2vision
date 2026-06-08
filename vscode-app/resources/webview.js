@@ -206,14 +206,54 @@
         function formatResponseText(text) {
             if (!text) return '<em class="text-muted">No response generated.</em>';
             let formatted = escapeHtml(text);
-            formatted = formatted.replace(/\n/g, '<br>');
-            formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-            // Code blocks: ```lang ... ```
+            
+            // Code blocks first (before other processing): ```lang ... ```
             formatted = formatted.replace(/```(\w*)\n([\s\S]*?)```/g, function(match, lang, code) {
                 return '<pre class="code-block"><code class="language-' + lang + '">' + escapeHtml(code.trim()) + '</code></pre>';
             });
+            
+            // Headers: # H1, ## H2, ### H3
+            formatted = formatted.replace(/^### (.+)$/gm, '<h3 class="response-heading">$1</h3>');
+            formatted = formatted.replace(/^## (.+)$/gm, '<h2 class="response-heading">$1</h2>');
+            formatted = formatted.replace(/^# (.+)$/gm, '<h1 class="response-heading">$1</h1>');
+            
+            // Bold: **text** or __text__
+            formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            formatted = formatted.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+            
+            // Italic: *text* or _text_
+            formatted = formatted.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+            formatted = formatted.replace(/_([^_]+)_/g, '<em>$1</em>');
+            
             // Inline code: `code`
             formatted = formatted.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+            
+            // Links: [text](url)
+            formatted = formatted.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" class="response-link">$1</a>');
+            
+            // Lists: - item or * item or 1. item
+            formatted = formatted.replace(/^[-*] (.+)$/gm, '<li class="response-list-item">$1</li>');
+            formatted = formatted.replace(/^\d+\. (.+)$/gm, '<li class="response-list-item">$1</li>');
+            
+            // Wrap consecutive list items in <ul>
+            formatted = formatted.replace(/(<li class="response-list-item">.+<\/li>\n?)+/g, function(match) {
+                return '<ul class="response-list">' + match + '</ul>';
+            });
+            
+            // Paragraphs: Double newlines
+            formatted = formatted.replace(/\n\n/g, '</p><p>');
+            formatted = '<p>' + formatted + '</p>';
+            
+            // Single newlines to <br> (but not inside pre tags)
+            formatted = formatted.replace(/(?<!<\/pre>)\n(?!<pre>)/g, '<br>');
+            
+            // Clean up empty paragraphs
+            formatted = formatted.replace(/<p><\/p>/g, '');
+            formatted = formatted.replace(/<p>(<h[1-3]>)/g, '$1');
+            formatted = formatted.replace(/(<\/h[1-3]>)<\/p>/g, '$1');
+            formatted = formatted.replace(/<p>(<ul>)/g, '$1');
+            formatted = formatted.replace(/(<\/ul>)<\/p>/g, '$1');
+            
             return formatted;
         }
 
@@ -259,7 +299,6 @@
             if (card.content.reasoning && card.display.showReasoning) {
                 html += '<div class="reasoning-section">';
                 html += '  <div class="section-header" onclick="toggleReasoning(this)">';
-                html += '    <span class="section-icon">💭</span>';
                 html += '    <span class="section-label">Reasoning</span>';
                 html += '    <span class="section-toggle">▼</span>';
                 html += '  </div>';
@@ -289,7 +328,6 @@
             if (card.display.showToolDetails && card.content.toolCalls && card.content.toolCalls.length > 0) {
                 html += '<div class="tool-section">';
                 html += '  <div class="section-header">';
-                html += '    <span class="section-icon">⚡</span>';
                 html += '    <span class="section-label">Tool Calls (' + card.content.toolCalls.length + ')</span>';
                 html += '  </div>';
                 html += '  <div class="tool-calls-list">';
@@ -623,7 +661,7 @@
                                     error: message.response.success === false ? 'Request failed' : undefined
                                 },
                                 footer: {
-                                    tokensUsed: settings.showTokenCount ? message.response.tokensUsed : undefined,
+                                    tokensUsed: message.response.tokensUsed || 'N/A', // Always show token count
                                     confidence: settings.showConfidence ? message.response.confidence : undefined,
                                     actions: [
                                         { id: 'copy', label: 'Copy', enabled: true },

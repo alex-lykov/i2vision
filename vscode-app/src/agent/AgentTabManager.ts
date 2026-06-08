@@ -146,10 +146,12 @@ export class AgentTabManager {
     text = text.replace(/\s*tool_call:\s*\{[\s\S]*?\}/gi, '');
     // Fix run-together words: lowercase→uppercase (Ihave → I have)
     text = text.replace(/([a-z])([A-Z])/g, '$1 $2');
-    // Fix common concatenated words
-    text = text.replace(/\b(Ihave|Iwill|Ineed|Letme|Let's|Thisis|Thatis|Whatis|Whatare)\b/gi, (match) => {
+    // Fix common concatenated words (more comprehensive list)
+    text = text.replace(/\b(Ihave|Iwill|Ineed|Letme|Let's|Thisis|Thatis|Whatis|Whatare|Iam|Youare|Weare|Theyare|Itis|Thereis|Thereare|Whatis|Whatare|Howto|Howdoes|Canyou|Cani|Letus|Dont|Cant|Wont|Isnt|Arent|Wasnt|Werent)\b/gi, (match) => {
       return match.replace(/([a-z])([A-Z])/g, '$1 $2');
     });
+    // Fix lowercase word boundaries: "tothe" → "to the", "inthe" → "in the"
+    text = text.replace(/\b(to|in|on|at|for|with|about|from|into|through|during|before|after|above|below|between|under|again|further|then|once|here|there|when|where|why|how|what|which|who|whom|whose|this|that|these|those|am|is|are|was|were|be|been|being|have|has|had|do|does|did|will|would|could|should|may|might|must)([a-z])/gi, '$1 $2');
     // Fix missing space after periods
     text = text.replace(/([.!?])([A-Za-z])/g, '$1 $2');
     // Fix missing space after commas

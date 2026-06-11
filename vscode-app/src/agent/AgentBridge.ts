@@ -333,17 +333,29 @@ export class AgentBridge {
   }
 
   /**
-   * Clean response markers from text (reasoning:, EOS, tool_call:, tool_calls:)
-   * Only removes markers at line boundaries to preserve normal text
+   * Extract the actual response by removing reasoning section and tool calls
+   * This is the PRIMARY place where reasoning is stripped - NOT in AgentTabManager
    */
-  private cleanResponseMarkers(text: string): string {
+  private extractFinalResponse(text: string): string {
     if (!text) return '';
-    // Only remove markers at start of lines or as standalone words
-    text = text.replace(/^\s*reasoning:\s*/gmi, '');
-    text = text.replace(/\n\s*reasoning:\s*/gmi, '\n');
+    
+    // STEP 1: Find reasoning: marker and extract everything after it
+    const reasoningMatch = text.match(/reasoning:\s*(.+?)(?=tool_call:|EOS|$)/gis);
+    if (reasoningMatch) {
+      // Get text after reasoning section
+      const afterReasoning = text.substring(text.indexOf(reasoningMatch[0]) + reasoningMatch[0].length);
+      text = afterReasoning;
+    }
+    
+    // STEP 2: Remove tool_call: JSON blocks
+    text = text.replace(/tool_call:\s*\{[\s\S]*?\}(?=\n|$|tool_call:)/g, '');
+    
+    // STEP 3: Remove EOS marker
     text = text.replace(/\bEOS\b/g, '');
-    text = text.replace(/^\s*tool_call:\s*/gmi, '');
-    text = text.replace(/^\s*tool_calls:\s*/gmi, '');
+    
+    // STEP 4: Remove tool_calls: prefix
+    text = text.replace(/^tool_calls:\s*/gmi, '');
+    
     return text.trim();
   }
 
@@ -607,13 +619,14 @@ export class AgentBridge {
               this.log(`Warning: Could not parse tool call JSON: ${match[1].substring(0, 100)}... Error: ${e.message}`);
             }
           }
-          // Remove tool_call: lines from text
-          responseText = responseText.replace(/tool_call:\s*{[\s\S]*?}(?=\n|$|tool_call:)/g, '').trim();
         }
 
-        // Clean text: remove reasoning:, EOS, tool_calls: markers
-        responseText = this.cleanResponseMarkers(responseText);
-        textBuffer = textBuffer.map(chunk => this.cleanResponseMarkers(chunk));
+        // Extract final response (remove reasoning, tool calls, EOS)
+        // Only clean the accumulated responseText, NOT individual chunks
+        // Individual chunks are too small for meaningful cleaning
+        responseText = this.extractFinalResponse(responseText);
+        // Don't clean textBuffer chunks - yield them raw for streaming
+        // The webview accumulates them, and final cleaning happens on responseText
 
       } else {
         // Non-streaming: direct response

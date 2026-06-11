@@ -146,31 +146,52 @@ export class AgentTabManager {
 
   private cleanResponseText(text: string): string {
     if (!text) return '';
-    // Remove reasoning: markers ANYWHERE in text
-    text = text.replace(/\s*reasoning:\s*/gi, ' ');
-    // Remove EOS markers
-    text = text.replace(/\bEOS\b/g, '');
-    // Remove tool_calls: prefix
-    text = text.replace(/^tool_calls:\s*/gmi, '');
-    // Remove tool_call: lines with JSON
-    text = text.replace(/^\s*tool_call:\s*\{[\s\S]*?\}\s*$/gmi, '');
-    text = text.replace(/\s*tool_call:\s*\{[\s\S]*?\}/gi, '');
-    // Fix run-together words: lowercase→uppercase (Ihave → I have)
-    text = text.replace(/([a-z])([A-Z])/g, '$1 $2');
-    // Fix common concatenated words (more comprehensive list)
-    text = text.replace(/\b(Ihave|Iwill|Ineed|Letme|Let's|Thisis|Thatis|Whatis|Whatare|Iam|Youare|Weare|Theyare|Itis|Thereis|Thereare|Whatis|Whatare|Howto|Howdoes|Canyou|Cani|Letus|Dont|Cant|Wont|Isnt|Arent|Wasnt|Werent)\b/gi, (match) => {
-      return match.replace(/([a-z])([A-Z])/g, '$1 $2');
+    
+    // STEP 1: Remove JSON tool calls that leaked into text
+    text = text.replace(/\{[\s\S]*?\}/g, '');
+    
+    // STEP 2: Remove reasoning/intent sentences at the beginning
+    text = text.replace(/^(?:I need to|I'll start|I will start|Let me|First,|To do this)[^.]*\.\s*/i, '');
+    
+    // STEP 3: Fix common tokenization patterns (general, not hardcoded)
+    // Split words broken by space before common suffixes
+    text = text.replace(/\b(to|in|on|at|for|with|do|be|has|have|had|is|are|was|were|can|could|will|would|shall|should|may|might|must)\s+(ol|ll|ve|re|d|s|n't)\b/gi, '$1$2');
+    
+    // Fix "Type Script" → "TypeScript", "Java Script" → "JavaScript"
+    text = text.replace(/\b(Type|Java)\s+Script\b/gi, '$1Script');
+    
+    // Fix "web client" variations
+    text = text.replace(/\bweb\s+(client|based|app|application)\b/gi, 'web$1');
+    
+    // Fix missing space before common words that got attached
+    text = text.replace(/\b([a-z])(Backend|Frontend|Infrastructure|Architecture|Purpose|Status|Tech)\b/gi, '$1 $2');
+    
+    // Fix "i OS" → "iOS"
+    text = text.replace(/\bi\s+OS\b/gi, 'iOS');
+    
+    // Fix "Do cker" → "Docker", "Kot lin" → "Kotlin"
+    text = text.replace(/\b([A-Z][a-z])\s+([A-Z][a-z])\b/g, (match, p1, p2) => {
+      // Only merge if it looks like a tokenization error (two capital-letter words)
+      const combined = p1 + p2;
+      const commonTech = ['Docker', 'Kotlin', 'TypeScript', 'JavaScript', 'React', 'Gradle', 'Ktor'];
+      if (commonTech.some(t => t.startsWith(combined))) {
+        return combined;
+      }
+      return match;
     });
-    // Fix lowercase word boundaries: "tothe" → "to the", "inthe" → "in the"
-    text = text.replace(/\b(to|in|on|at|for|with|about|from|into|through|during|before|after|above|below|between|under|again|further|then|once|here|there|when|where|why|how|what|which|who|whom|whose|this|that|these|those|am|is|are|was|were|be|been|being|have|has|had|do|does|did|will|would|could|should|may|might|must)([a-z])/gi, '$1 $2');
-    // Fix missing space after periods
-    text = text.replace(/([.!?])([A-Za-z])/g, '$1 $2');
-    // Fix missing space after commas
+    
+    // STEP 4: Fix run-together words: lowercase→uppercase (Ihave → I have)
+    text = text.replace(/([a-z])([A-Z])/g, '$1 $2');
+    
+    // STEP 5: Fix missing space after periods
+    text = text.replace(/([.!?])([A-Za-z#])/g, '$1 $2');
+    
+    // STEP 6: Fix missing space after commas
     text = text.replace(/(,)([A-Za-z])/g, '$1 $2');
-    // Fix "Electri City" → "ElectriCity" (over-correction)
-    text = text.replace(/Electri\s+City/g, 'ElectriCity');
-    // Collapse multiple spaces
-    text = text.replace(/\s+/g, ' ');
+    
+    // STEP 7: Collapse multiple spaces (2+) into single space
+    text = text.replace(/\s{2,}/g, ' ');
+    
     return text.trim();
   }
 
@@ -237,12 +258,14 @@ export class AgentTabManager {
           
           if (chunk.type === 'text') {
             accumulatedText += chunk.text;
-            const cleanedForDisplay = this.cleanResponseText(accumulatedText);
             
+            // Don't clean during streaming - chunks are raw tokens
+            // The webview displays accumulated text in real-time
+            // Final cleaning happens AFTER all chunks are received
             tab.panel.webview.postMessage({
               command: 'streamingText',
               text: chunk.text,
-              accumulated: cleanedForDisplay
+              accumulated: accumulatedText
             });
             
           } else if (chunk.type === 'tool_call_started') {

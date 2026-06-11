@@ -75,6 +75,7 @@ export class AgentTabManager {
         isProcessing: false
       };
 
+      // Register message handler BEFORE creating webview content
       panel.webview.onDidReceiveMessage(async (message) => {
         await this.handleWebviewMessage(tab, message);
       });
@@ -84,6 +85,13 @@ export class AgentTabManager {
       });
 
       this.tabs.set(tab.id, tab);
+      
+      // Fetch models proactively
+      this.getOllamaModels(tab).catch(err => {
+        this.log(`Failed to fetch Ollama models: ${err.message}`);
+      });
+      
+      // Create webview content
       this.updateWebview(tab);
 
       this.log(`Created ${layer} agent tab: ${tab.id}`);
@@ -114,6 +122,9 @@ export class AgentTabManager {
         break;
       case 'openSettings':
         await this.openSettings();
+        break;
+      case 'getOllamaModels':
+        await this.getOllamaModels(tab);
         break;
     }
   }
@@ -189,7 +200,7 @@ export class AgentTabManager {
       };
 
       const requestId = `request-${Date.now()}`;
-      const IDLE_TIMEOUT_MS = 30000;
+      const IDLE_TIMEOUT_MS = 120000; // 2 minutes (cloud models can be slow)
       let idleTimer: NodeJS.Timeout | null = null;
       
       const resetIdleTimer = () => {
@@ -206,45 +217,35 @@ export class AgentTabManager {
       let iterationCount = 0;
       let chunkCount = 0;
 
-      // FIXED: Process chunks in real-time instead of waiting for promise
-      this.log('Starting real-time chunk processing...');
-      
-      resetIdleTimer();
-      
       try {
-        // Iterate through chunks as they arrive (TRUE STREAMING)
         const streamIterator = tab.agent.processStreaming({
           id: requestId,
           task: userInput,
           context: context
         });
         
-        this.log('Got stream iterator, starting iteration...');
+        let firstChunkReceived = false;
         
         for await (const chunk of streamIterator) {
+          if (!firstChunkReceived) {
+            firstChunkReceived = true;
+            resetIdleTimer();
+          }
+          
           resetIdleTimer();
           chunkCount++;
           
-          this.log(`[Chunk ${chunkCount}] Type: ${chunk.type}, Timestamp: ${chunk.timestamp}`);
-          
-          // Process each chunk immediately as it arrives
           if (chunk.type === 'text') {
             accumulatedText += chunk.text;
-            this.log(`[Chunk ${chunkCount}] Text: ${chunk.text.length} chars (total: ${accumulatedText.length})`);
-            
-            // Clean the accumulated text for streaming display (remove markers)
             const cleanedForDisplay = this.cleanResponseText(accumulatedText);
             
-            // Send streaming text to webview for real-time display
-            const sent = tab.panel.webview.postMessage({
+            tab.panel.webview.postMessage({
               command: 'streamingText',
               text: chunk.text,
               accumulated: cleanedForDisplay
             });
-            this.log(`[Chunk ${chunkCount}] Posted streamingText to webview: ${sent}`);
             
           } else if (chunk.type === 'tool_call_started') {
-            this.log(`[Chunk ${chunkCount}] Tool started: ${chunk.toolName}`);
             tab.panel.webview.postMessage({
               command: 'progress',
               event: { type: 'tool_start', toolCall: { toolName: chunk.toolName, args: chunk.args } }
@@ -258,7 +259,6 @@ export class AgentTabManager {
               result: completedChunk.result,
               toolCallId: completedChunk.toolCallId
             });
-            this.log(`[Chunk ${chunkCount}] Tool completed: ${completedChunk.toolName}`);
             tab.panel.webview.postMessage({
               command: 'progress',
               event: { 
@@ -274,12 +274,10 @@ export class AgentTabManager {
             
           } else if (chunk.type === 'iteration_complete') {
             iterationCount++;
-            this.log(`[Chunk ${chunkCount}] Iteration complete: ${iterationCount}`);
             
           } else if (chunk.type === 'done') {
             const doneChunk = chunk as { type: 'done'; iterations?: number };
             iterationCount = doneChunk.iterations || (iterationCount > 0 ? iterationCount : 1);
-            this.log(`[Chunk ${chunkCount}] Done: ${iterationCount} iterations`);
           }
         }
       } finally {
@@ -289,15 +287,11 @@ export class AgentTabManager {
         }
       }
 
-      this.log(`Streaming complete: ${chunkCount} chunks, ${accumulatedText.length} chars, ${toolCalls.length} tools`);
-
-      // Log concise summary
       const toolSummary = toolCalls?.map(tc => 
         `${tc.toolName}${tc.error ? '❌' : '✅'}`
       ).join(', ') || 'none';
-      this.log(`✅ Complete: ${iterationCount} iter, ${toolCalls?.length || 0} tools (${toolSummary}), ${Date.now() - startTime}ms`);
+      this.log(`Complete: ${iterationCount} iter, ${toolCalls?.length || 0} tools (${toolSummary}), ${Date.now() - startTime}ms`);
 
-      // Clean the final accumulated text
       const cleanedText = this.cleanResponseText(accumulatedText);
       const formattedResponse = this.toolCardManager.formatAgentResponse(
         cleanedText,
@@ -317,21 +311,13 @@ export class AgentTabManager {
       };
 
       tab.history.push(record);
-      this.log(`Interaction recorded: ${record.iterations} iterations, ${record.durationMs}ms`);
-      this.log(`Sending final response to webview: text=${cleanedText.length} chars, toolCards=${formattedResponse.toolCards?.length || 0}`);
 
-      try {
-        const sent = await tab.panel.webview.postMessage({
-          command: 'response',
-          response: formattedResponse
-        });
-        this.log(`Webview response message sent: ${sent ? '✅' : '❌'}`);
-      } catch (error: any) {
-        this.log(`ERROR sending response to webview: ${error.message}`);
-        throw error;
-      }
+      tab.panel.webview.postMessage({
+        command: 'response',
+        response: formattedResponse
+      });
     } catch (error: any) {
-      this.log(`Error processing input: ${error.message}`);
+      this.log(`Error: ${error.message}`);
 
       if (error.message === 'cancelled' || (tab.cancelToken && tab.cancelToken.token.isCancellationRequested)) {
         tab.panel.webview.postMessage({ command: 'stopped' });
@@ -626,6 +612,51 @@ export class AgentTabManager {
     } catch (error: any) {
       this.log(`Error opening settings: ${error.message}`);
       vscode.window.showErrorMessage(`Failed to open settings: ${error.message}`);
+    }
+  }
+
+  private async getOllamaModels(tab: AgentTab): Promise<void> {
+    try {
+      const http = require('http');
+      
+      const models = await new Promise<any[]>((resolve, reject) => {
+        http.get('http://localhost:11434/api/tags', (res: any) => {
+          if (res.statusCode !== 200) {
+            reject(new Error(`HTTP ${res.statusCode}`));
+            return;
+          }
+          
+          let data = '';
+          
+          res.on('data', (chunk: any) => {
+            data += chunk;
+          });
+          
+          res.on('end', () => {
+            try {
+              const parsed = JSON.parse(data);
+              resolve(parsed.models || []);
+            } catch (e: any) {
+              reject(new Error(`Failed to parse: ${e.message}`));
+            }
+          });
+        }).on('error', (err: any) => {
+          reject(new Error(`Connection failed: ${err.message}`));
+        });
+      });
+      
+      tab.panel.webview.postMessage({
+        command: 'ollamaModels',
+        models: models
+      });
+      
+    } catch (error: any) {
+      this.log(`Failed to fetch Ollama models: ${error.message}`);
+      tab.panel.webview.postMessage({
+        command: 'ollamaModels',
+        models: [],
+        error: error.message
+      });
     }
   }
 

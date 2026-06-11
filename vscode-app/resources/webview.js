@@ -1,19 +1,11 @@
 /*
- * Copyright (c) 2026. Oleksii Lykov.
- *
- * Licensed under the MIT License.
- * SPDX-License-Identifier: MIT
- */
-
-/**
  * WebView JavaScript for i2-Vision Agent Tab
- * Modern UI/UX with clean design, collapsible cards, and enhanced actions
+ * Model list comes 100% from Ollama API - NO hardcoded models
  */
 
 (function() {
     'use strict';
 
-    // Initialize when DOM is ready
     document.addEventListener('DOMContentLoaded', function() {
         initializeWebView();
     });
@@ -26,63 +18,56 @@
         const providerSelect = document.getElementById('providerSelect');
         const modelSelect = document.getElementById('modelSelect');
 
-        let currentProgressDiv = null;
         let isProcessing = false;
         let streamingMessageDiv = null;
+        let ollamaModelsCache = [];
 
-        // Load configuration from HTML data attributes
+        // Load config from HTML
         const htmlEl = document.documentElement;
-        const outputSettings = htmlEl.dataset.outputSettings ? JSON.parse(htmlEl.dataset.outputSettings) : {};
         const providerId = htmlEl.dataset.providerId || 'ollama';
         const modelId = htmlEl.dataset.modelId || '';
         
-        if (outputSettings.theme && outputSettings.theme !== 'system') {
-            document.body.classList.add('theme-' + outputSettings.theme);
-        }
-        if (outputSettings.fontSize) {
-            document.body.classList.add('font-' + outputSettings.fontSize);
-        }
-        window.outputSettings = outputSettings;
-        window.PROVIDER_ID = providerId;
-        window.MODEL_ID = modelId;
+        console.log('[WebView] === INITIALIZING ===');
+        console.log('[WebView] Provider:', providerId);
+        console.log('[WebView] Model:', modelId);
+
+        // =====================================================================
+        // MESSAGE HANDLER - REGISTER FIRST
+        // =====================================================================
         
-        console.log('[WebView] Config loaded:', { providerId, modelId });
+        window.addEventListener('message', function(event) {
+            const message = event.data;
+            console.log('[WebView] ← Received message:', message.command);
+            
+            if (message.command === 'ollamaModels') {
+                console.log('[WebView] ← Ollama models response:', message.models?.length || 0, 'models');
+                if (message.models && message.models.length > 0) {
+                    ollamaModelsCache = message.models;
+                    console.log('[WebView] Cached models:', ollamaModelsCache.map(m => m.name));
+                    populateModelDropdown(ollamaModelsCache, modelId);
+                } else {
+                    console.warn('[WebView] ⚠️ No models received from Ollama');
+                    console.warn('[WebView] Error:', message.error || 'unknown');
+                    populateModelDropdown([], modelId);
+                }
+            }
+            
+            handleMessage(message);
+        });
 
-        // Model definitions
-        const MODELS_BY_PROVIDER = {
-            'ollama': [
-                { id: 'llama3.2:3b', name: 'Llama 3.2 3B (Local)', type: 'local', quality: 'good' },
-                { id: 'llama3.2:7b', name: 'Llama 3.2 7B (Local)', type: 'local', quality: 'good' },
-                { id: 'codellama:7b', name: 'CodeLlama 7B (Local)', type: 'local', quality: 'good' },
-                { id: 'qwen3.5:cloud', name: 'Qwen 3.5 (Cloud)', type: 'cloud', quality: 'excellent' },
-                { id: 'deepseek-v3.1:671b-cloud', name: 'DeepSeek V3.1 (Cloud)', type: 'cloud', quality: 'excellent' }
-            ],
-            'deepseek': [
-                { id: 'deepseek-chat', name: 'DeepSeek Chat (V3)', type: 'cloud', quality: 'excellent' },
-                { id: 'deepseek-coder', name: 'DeepSeek Coder', type: 'cloud', quality: 'excellent' },
-                { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner (R1)', type: 'cloud', quality: 'excellent' }
-            ]
-        };
+        // =====================================================================
+        // EVENT HANDLERS
+        // =====================================================================
 
-        // Initialize model dropdown
-        initializeModelDropdown();
-
-        // Event handlers
         window.onProviderChange = function() {
+            console.log('[WebView] Provider changed to:', providerSelect.value);
             vscode.postMessage({ command: 'changeProvider', provider: providerSelect.value });
-            initializeModelDropdown();
         };
 
         window.onModelChange = function() {
+            console.log('[WebView] Model changed to:', modelSelect.value);
             vscode.postMessage({ command: 'changeModel', model: modelSelect.value });
         };
-
-        window.addEventListener('error', function(event) {
-            console.error('WebView error:', event.error);
-            isProcessing = false;
-            userInput.disabled = false;
-            updateActionButton();
-        });
 
         window.handleKeyPress = function(event) {
             if (event.key === 'Enter' && !event.shiftKey) {
@@ -96,31 +81,15 @@
             else sendMessage();
         };
 
-        window.stopAgent = function() {
-            vscode.postMessage({ command: 'stopAgent' });
-        };
+        // =====================================================================
+        // REQUEST MODELS FROM EXTENSION
+        // =====================================================================
 
-        // Expose functions globally
-        window.updateActionButton = updateActionButton;
-        window.addMessage = addMessage;
-        window.escapeHtml = escapeHtml;
-        window.showProgress = showProgress;
-        window.hideProgress = hideProgress;
-        window.formatDuration = formatDuration;
-        window.getPreviewText = getPreviewText;
-        window.formatResponseText = formatResponseText;
-        window.createOutputCard = createOutputCard;
-        window.toggleOutputCard = toggleOutputCard;
-        window.toggleToolCallCard = toggleToolCallCard;
-        window.handleFooterAction = handleFooterAction;
-        window.openSettings = openSettings;
+        console.log('[WebView] → Requesting Ollama models...');
+        vscode.postMessage({ command: 'getOllamaModels' });
 
-        // Message handler
-        window.addEventListener('message', function(event) {
-            handleMessage(event.data);
-        });
-
-        updateActionButton();
+        // Initialize dropdown (will be populated when models arrive)
+        populateModelDropdown([], modelId);
 
         // =====================================================================
         // CORE FUNCTIONS
@@ -135,11 +104,6 @@
             updateActionButton();
             addMessage('user', text);
 
-            if (currentProgressDiv) {
-                currentProgressDiv.remove();
-                currentProgressDiv = null;
-            }
-
             streamingMessageDiv = document.createElement('div');
             streamingMessageDiv.className = 'message agent-message';
             streamingMessageDiv.innerHTML = '<em class="text-muted">Thinking...</em>';
@@ -151,584 +115,282 @@
         }
 
         function updateActionButton() {
-            if (isProcessing) {
-                actionButton.textContent = 'Stop';
-                actionButton.className = 'stop-button';
-            } else {
-                actionButton.textContent = 'Send';
-                actionButton.className = '';
-            }
+            actionButton.textContent = isProcessing ? 'Stop' : 'Send';
+            actionButton.className = isProcessing ? 'stop-button' : '';
         }
 
-        function addMessage(type, content, isHtml) {
+        function addMessage(type, content) {
             const div = document.createElement('div');
             div.className = 'message ' + (type === 'user' ? 'user-message' : 'agent-message');
-            if (isHtml) div.innerHTML = content;
-            else div.textContent = content;
+            div.textContent = content;
             messagesDiv.appendChild(div);
             messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
 
-        function escapeHtml(text) {
-            if (!text) return '';
-            const div = document.createElement('div');
-            div.textContent = text;
-            return div.innerHTML;
+        function stopAgent() {
+            vscode.postMessage({ command: 'stopAgent' });
         }
 
-        function showProgress(message) {
-            if (currentProgressDiv) currentProgressDiv.remove();
-            currentProgressDiv = document.createElement('div');
-            currentProgressDiv.className = 'progress-indicator';
-            currentProgressDiv.innerHTML = '<div class="spinner"></div><span>' + message + '</span>';
-            messagesDiv.appendChild(currentProgressDiv);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        }
+        // =====================================================================
+        // DROPDOWN POPULATION
+        // =====================================================================
 
-        function hideProgress() {
-            if (currentProgressDiv) {
-                currentProgressDiv.remove();
-                currentProgressDiv = null;
+        function populateModelDropdown(models, selectedModelId) {
+            console.log('[WebView] Populating dropdown with', models.length, 'models');
+            modelSelect.innerHTML = '';
+            
+            if (!models || models.length === 0) {
+                console.warn('[WebView] No models to display');
+                const option = document.createElement('option');
+                option.value = '';
+                option.textContent = 'No models available (is Ollama running?)';
+                option.disabled = true;
+                modelSelect.appendChild(option);
+                return;
             }
+            
+            models.forEach(function(model) {
+                const option = document.createElement('option');
+                const modelName = model.name || model.id || 'unknown';
+                option.value = modelName;
+                option.textContent = modelName.replace(':latest', '');
+                
+                if (modelName === selectedModelId) {
+                    option.selected = true;
+                    console.log('[WebView] Selected model:', modelName);
+                }
+                
+                modelSelect.appendChild(option);
+            });
+            
+            if (!selectedModelId && modelSelect.options.length > 0) {
+                modelSelect.options[0].selected = true;
+            }
+            
+            console.log('[WebView] Dropdown ready -', modelSelect.options.length, 'options');
         }
 
-        function formatDuration(ms) {
-            if (ms < 1000) return ms + 'ms';
-            return (ms / 1000).toFixed(1) + 's';
-        }
+        // =====================================================================
+        // RENDER RESPONSE CARD
+        // =====================================================================
 
-        function getPreviewText(text, maxLines) {
-            const lines = text.split('\n');
-            if (lines.length <= maxLines) return text;
-            return lines.slice(0, maxLines).join('\n') + '\n\n... (expand to show more)';
+        function renderResponseCard(response) {
+            console.log('[WebView] Rendering response card:', response);
+            
+            const card = document.createElement('div');
+            card.className = 'agent-output-card';
+            
+            const provider = response.provider || 'ollama';
+            const model = response.model || modelId;
+            const status = response.error ? 'error' : 'success';
+            const statusIcon = response.error ? '❌' : '✓';
+            
+            // Build tool cards HTML
+            let toolCardsHtml = '';
+            if (response.toolCards && response.toolCards.length > 0) {
+                toolCardsHtml = '<div class="tool-section"><div class="section-header"><span class="section-icon">🛠️</span><span class="section-label">Tools Used</span></div><div class="tool-calls-list">';
+                
+                response.toolCards.forEach(function(tool) {
+                    const toolStatus = tool.error ? 'error' : 'success';
+                    const toolStatusIcon = tool.error ? '✗' : '✓';
+                    const argsJson = tool.args ? JSON.stringify(tool.args, null, 2) : '{}';
+                    const resultPreview = tool.result ? String(tool.result).substring(0, 200) + (tool.result.length > 200 ? '...' : '') : 'No result';
+                    
+                    toolCardsHtml += `
+                        <div class="tool-call-card ${toolStatus}">
+                            <div class="tool-call-header" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
+                                <span class="tool-call-toggle">▶</span>
+                                <span class="tool-call-status">${toolStatusIcon}</span>
+                                <span class="tool-call-name">${tool.toolName}</span>
+                                <div class="tool-call-meta">
+                                    <span class="tool-call-duration">${tool.durationMs || 0}ms</span>
+                                </div>
+                            </div>
+                            <div class="tool-call-body">
+                                <div class="tool-call-args">
+                                    <span class="args-label">Arguments:</span>
+                                    <pre>${escapeHtml(argsJson)}</pre>
+                                </div>
+                                <div class="tool-call-result">
+                                    <span class="result-label">Result:</span>
+                                    <pre>${escapeHtml(resultPreview)}</pre>
+                                </div>
+                                ${tool.error ? `<div class="tool-call-error"><span class="error-label">Error:</span>${escapeHtml(tool.error)}</div>` : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                toolCardsHtml += '</div></div>';
+            }
+            
+            // Format response text with markdown-like formatting
+            const formattedText = formatResponseText(response.text || '');
+            
+            card.innerHTML = `
+                <div class="output-card-header">
+                    <div class="header-left">
+                        <span class="provider-badge" style="background: ${provider === 'ollama' ? '#007acc' : '#4caf50'}">${provider}</span>
+                        <span class="model-name">${model}</span>
+                    </div>
+                    <div class="header-right">
+                        <span class="status-badge status-${status}">${statusIcon}</span>
+                    </div>
+                </div>
+                <div class="output-card-content">
+                    ${response.reasoning ? `
+                        <div class="reasoning-section">
+                            <div class="section-header" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
+                                <span class="section-icon">🤔</span>
+                                <span class="section-label">Reasoning</span>
+                                <span class="section-toggle">▼</span>
+                            </div>
+                            <div class="reasoning-content">
+                                <div class="reasoning-text">${formatResponseText(response.reasoning)}</div>
+                            </div>
+                        </div>
+                    ` : ''}
+                    <div class="response-text-section">
+                        <div class="response-text">${formattedText}</div>
+                    </div>
+                    ${toolCardsHtml}
+                </div>
+                <div class="output-card-footer">
+                    <div class="footer-meta">
+                        <span class="meta-item">⏱ ${response.durationMs || 0}ms</span>
+                        <span class="meta-item">🔄 ${response.iterations || 1} iterations</span>
+                        ${response.tokenCount ? `<span class="meta-item">📝 ${response.tokenCount} tokens</span>` : ''}
+                    </div>
+                    <div class="footer-actions">
+                        <button class="footer-action-btn" onclick="copyResponse()">
+                            <span class="action-icon">📋</span>
+                            <span>Copy</span>
+                        </button>
+                        <button class="footer-action-btn" onclick="applyToFile()">
+                            <span class="action-icon">📝</span>
+                            <span>Apply</span>
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            messagesDiv.appendChild(card);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            
+            console.log('[WebView] ✅ Response card rendered');
         }
 
         function formatResponseText(text) {
-            if (!text) return '<em class="text-muted">No response generated.</em>';
-            let formatted = escapeHtml(text);
+            if (!text) return '';
             
-            // Code blocks first (before other processing): ```lang ... ```
-            formatted = formatted.replace(/```(\w*)\n([\s\S]*?)```/g, function(match, lang, code) {
-                return '<pre class="code-block"><code class="language-' + lang + '">' + escapeHtml(code.trim()) + '</code></pre>';
+            // Convert markdown code blocks
+            text = text.replace(/```(\w*)\n([\s\S]*?)```/g, function(match, lang, code) {
+                return `<div class="code-block"><code>${escapeHtml(code.trim())}</code></div>`;
             });
             
-            // Headers: # H1, ## H2, ### H3
-            formatted = formatted.replace(/^### (.+)$/gm, '<h3 class="response-heading">$1</h3>');
-            formatted = formatted.replace(/^## (.+)$/gm, '<h2 class="response-heading">$1</h2>');
-            formatted = formatted.replace(/^# (.+)$/gm, '<h1 class="response-heading">$1</h1>');
+            // Convert inline code
+            text = text.replace(/`([^`]+)`/g, '<span class="inline-code">$1</span>');
             
-            // Bold: **text** or __text__
-            formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-            formatted = formatted.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+            // Convert bold
+            text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
             
-            // Italic: *text* or _text_
-            formatted = formatted.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-            formatted = formatted.replace(/_([^_]+)_/g, '<em>$1</em>');
+            // Convert italic
+            text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
             
-            // Inline code: `code`
-            formatted = formatted.replace(/`([^`]+)`/g, '<code class="inline-code">$1</code>');
+            // Convert line breaks to <br>
+            text = text.replace(/\n/g, '<br>');
             
-            // Links: [text](url)
-            formatted = formatted.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" class="response-link">$1</a>');
-            
-            // Lists: - item or * item or 1. item
-            formatted = formatted.replace(/^[-*] (.+)$/gm, '<li class="response-list-item">$1</li>');
-            formatted = formatted.replace(/^\d+\. (.+)$/gm, '<li class="response-list-item">$1</li>');
-            
-            // Wrap consecutive list items in <ul>
-            formatted = formatted.replace(/(<li class="response-list-item">.+<\/li>\n?)+/g, function(match) {
-                return '<ul class="response-list">' + match + '</ul>';
-            });
-            
-            // Paragraphs: Double newlines
-            formatted = formatted.replace(/\n\n/g, '</p><p>');
-            formatted = '<p>' + formatted + '</p>';
-            
-            // Single newlines to <br> (but not inside pre tags)
-            formatted = formatted.replace(/(?<!<\/pre>)\n(?!<pre>)/g, '<br>');
-            
-            // Clean up empty paragraphs
-            formatted = formatted.replace(/<p><\/p>/g, '');
-            formatted = formatted.replace(/<p>(<h[1-3]>)/g, '$1');
-            formatted = formatted.replace(/(<\/h[1-3]>)<\/p>/g, '$1');
-            formatted = formatted.replace(/<p>(<ul>)/g, '$1');
-            formatted = formatted.replace(/(<\/ul>)<\/p>/g, '$1');
-            
-            return formatted;
+            return text;
         }
 
-        // =====================================================================
-        // OUTPUT CARD CREATION (Main Card: Header + Content + Footer)
-        // =====================================================================
+        function escapeHtml(text) {
+            if (!text) return '';
+            return text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
 
-        function createOutputCard(card) {
-            const cardDiv = document.createElement('div');
-            cardDiv.className = 'agent-output-card';
-            cardDiv.dataset.cardId = 'card-' + Date.now();
-            
-            const providerColor = card.header.provider === 'ollama' ? 'var(--vscode-terminal-ansiGreen)' : 'var(--vscode-terminal-ansiBlue)';
-            const statusIcon = card.header.status === 'success' ? '✓' : '✗';
-            
-            let html = '';
-            
-            // --- HEADER ---
-            html += '<div class="output-card-header">';
-            html += '  <div class="header-left">';
-            html += '    <span class="provider-badge" style="background-color: ' + providerColor + '">' + escapeHtml(card.header.providerName) + '</span>';
-            html += '    <span class="model-name">' + escapeHtml(card.header.model) + '</span>';
-            html += '  </div>';
-            html += '  <div class="header-right">';
-            html += '    <span class="status-badge status-' + card.header.status + '">' + statusIcon + '</span>';
-            html += '    <span class="metric-badge">' + formatDuration(card.header.durationMs) + '</span>';
-            html += '    <span class="metric-badge">' + card.header.iterations + ' iter</span>';
-            html += '  </div>';
-            html += '</div>';
-            
-            // --- CONTENT ---
-            html += '<div class="output-card-content">';
-            
-            // Error section (if failed)
-            if (card.content.error) {
-                html += '<div class="error-section">';
-                html += '  <span class="error-icon">✗</span>';
-                html += '  <span class="error-text">' + escapeHtml(card.content.error) + '</span>';
-                html += '</div>';
-            }
-            
-            // Reasoning section (if available and enabled)
-            if (card.content.reasoning && card.display.showReasoning) {
-                html += '<div class="reasoning-section">';
-                html += '  <div class="section-header" onclick="toggleReasoning(this)">';
-                html += '    <span class="section-label">Reasoning</span>';
-                html += '    <span class="section-toggle">▼</span>';
-                html += '  </div>';
-                html += '  <div class="reasoning-content">';
-                html += '    <div class="reasoning-text">' + formatResponseText(card.content.reasoning) + '</div>';
-                html += '  </div>';
-                html += '</div>';
-            }
-            
-            // Response text section (collapsible by default)
-            const shouldCollapse = card.content.text.length > card.display.autoCollapseAfter;
-            const previewText = shouldCollapse && card.display.collapsed 
-                ? getPreviewText(card.content.text, card.display.maxPreviewLines)
-                : card.content.text;
-            
-            html += '<div class="response-text-section' + (shouldCollapse && card.display.collapsed ? ' collapsed' : '') + '">';
-            html += '  <div class="response-text">' + formatResponseText(previewText) + '</div>';
-            if (shouldCollapse) {
-                const expandText = card.display.collapsed ? 'Show full response' : 'Show less';
-                html += '  <button class="expand-button" onclick="toggleOutputCard(this)">';
-                html += '    <span class="expand-text">' + expandText + '</span>';
-                html += '  </button>';
-            }
-            html += '</div>';
-            
-            // Tool calls section (if available and enabled)
-            if (card.display.showToolDetails && card.content.toolCalls && card.content.toolCalls.length > 0) {
-                html += '<div class="tool-section">';
-                html += '  <div class="section-header">';
-                html += '    <span class="section-label">Tool Calls (' + card.content.toolCalls.length + ')</span>';
-                html += '  </div>';
-                html += '  <div class="tool-calls-list">';
-                card.content.toolCalls.forEach(function(tc) {
-                    const successClass = tc.success !== false ? 'success' : 'error';
-                    const icon = tc.success !== false ? '✓' : '✗';
-                    html += '    <div class="tool-call-card ' + successClass + '">';
-                    html += '      <div class="tool-call-header" onclick="toggleToolCallCard(this)">';
-                    html += '        <span class="tool-call-toggle">▶</span>';
-                    html += '        <span class="tool-call-status">' + icon + '</span>';
-                    html += '        <span class="tool-call-name">' + escapeHtml(tc.toolName) + '</span>';
-                    html += '        <span class="tool-call-meta">';
-                    if (tc.durationMs) {
-                        html += '      <span class="tool-call-duration">' + formatDuration(tc.durationMs) + '</span>';
-                    }
-                    html += '        </span>';
-                    html += '      </div>';
-                    html += '      <div class="tool-call-body" style="display: none;">';
-                    if (tc.args && Object.keys(tc.args).length > 0) {
-                        html += '        <div class="tool-call-args">';
-                        html += '          <span class="args-label">Arguments</span>';
-                        html += '          <pre><code>' + syntaxHighlight(JSON.stringify(tc.args, null, 2)) + '</code></pre>';
-                        html += '        </div>';
-                    }
-                    if (tc.result) {
-                        html += '        <div class="tool-call-result">';
-                        html += '          <span class="result-label">Result</span>';
-                        html += '          <pre><code>' + syntaxHighlight(tc.result) + '</code></pre>';
-                        html += '        </div>';
-                    }
-                    if (tc.error) {
-                        html += '        <div class="tool-call-error">';
-                        html += '          <span class="error-label">Error</span>';
-                        html += '          <span>' + escapeHtml(tc.error) + '</span>';
-                        html += '        </div>';
-                    }
-                    html += '      </div>';
-                    html += '    </div>';
-                });
-                html += '  </div>';
-                html += '</div>';
-            }
-            
-            html += '</div>'; // End content
-            
-            // --- FOOTER ---
-            html += '<div class="output-card-footer">';
-            
-            // Meta information (tokens, confidence)
-            const metaItems = [];
-            if (card.footer.tokensUsed) {
-                metaItems.push('<span class="meta-item">📊 ' + card.footer.tokensUsed + ' tokens</span>');
-            }
-            if (card.footer.confidence) {
-                metaItems.push('<span class="meta-item">🎯 ' + Math.round(card.footer.confidence * 100) + '% confidence</span>');
-            }
-            if (metaItems.length > 0) {
-                html += '<div class="footer-meta">' + metaItems.join('') + '</div>';
-            }
-            
-            // Action buttons
-            html += '<div class="footer-actions">';
-            html += '  <button class="footer-action-btn" onclick="handleFooterAction(\'copy\')" title="Copy response">';
-            html += '    <span class="action-label">Copy</span>';
-            html += '  </button>';
-            html += '  <button class="footer-action-btn" onclick="handleFooterAction(\'apply\')" title="Apply to file">';
-            html += '    <span class="action-label">Apply</span>';
-            html += '  </button>';
-            html += '  <button class="footer-action-btn" onclick="handleFooterAction(\'explain\')" title="Explain this">';
-            html += '    <span class="action-label">Explain</span>';
-            html += '  </button>';
-            html += '  <button class="footer-action-btn" onclick="handleFooterAction(\'retry\')" title="Retry">';
-            html += '    <span class="action-label">Retry</span>';
-            html += '  </button>';
-            html += '  <button class="footer-action-btn settings-btn" onclick="openSettings()" title="Settings">';
-            html += '    <span class="action-icon">⚙</span>';
-            html += '  </button>';
-            html += '</div>';
-            
-            html += '</div>'; // End footer
-            
-            cardDiv.innerHTML = html;
-            return cardDiv;
-        }
-        
-        // =====================================================================
-        // INTERACTION HANDLERS
-        // =====================================================================
-        
-        function toggleOutputCard(button) {
-            const section = button.closest('.response-text-section');
-            const text = button.querySelector('.expand-text');
-            
-            if (section.classList.contains('collapsed')) {
-                section.classList.remove('collapsed');
-                text.textContent = 'Show less';
-            } else {
-                section.classList.add('collapsed');
-                text.textContent = 'Show full response';
-            }
-        }
-        
-        function toggleReasoning(header) {
-            const content = header.nextElementSibling;
-            const toggle = header.querySelector('.section-toggle');
-            if (content.style.display === 'none') {
-                content.style.display = 'block';
-                toggle.textContent = '▼';
-            } else {
-                content.style.display = 'none';
-                toggle.textContent = '▶';
-            }
-        }
-        
-        function toggleToolCallCard(header) {
-            const body = header.nextElementSibling;
-            const toggle = header.querySelector('.tool-call-toggle');
-            if (body.style.display === 'none') {
-                body.style.display = 'block';
-                toggle.textContent = '▼';
-            } else {
-                body.style.display = 'none';
-                toggle.textContent = '▶';
-            }
-        }
-        
-        function handleFooterAction(actionId) {
-            console.log('Footer action:', actionId);
-            
-            if (actionId === 'copy') {
-                const lastCard = messagesDiv.querySelector('.agent-output-card:last-child .response-text');
-                if (lastCard) {
-                    navigator.clipboard.writeText(lastCard.textContent);
-                    showTemporaryFeedback('Copied to clipboard');
-                }
-            } else if (actionId === 'apply') {
-                vscode.postMessage({ command: 'applyToFile' });
-                showTemporaryFeedback('Apply to file...');
-            } else if (actionId === 'explain') {
-                const lastCard = messagesDiv.querySelector('.agent-output-card:last-child .response-text');
-                if (lastCard) {
-                    const text = lastCard.textContent;
-                    userInput.value = 'Explain this: ' + text.substring(0, 200) + (text.length > 200 ? '...' : '');
-                    sendMessage();
-                }
-            } else if (actionId === 'retry') {
-                const lastUserMsg = messagesDiv.querySelector('.user-message:last-child');
-                if (lastUserMsg) {
-                    userInput.value = lastUserMsg.textContent;
-                    sendMessage();
-                }
-            }
-        }
-        
-        function openSettings() {
-            vscode.postMessage({ command: 'openSettings' });
-        }
-        
+        window.copyResponse = function() {
+            vscode.postMessage({ command: 'copyResponse' });
+            showTemporaryFeedback('Response copied to clipboard');
+        };
+
+        window.applyToFile = function() {
+            vscode.postMessage({ command: 'applyToFile' });
+        };
+
         function showTemporaryFeedback(message) {
             const feedback = document.createElement('div');
             feedback.className = 'temporary-feedback';
             feedback.textContent = message;
             document.body.appendChild(feedback);
+            
             setTimeout(function() {
                 feedback.classList.add('fade-out');
-                setTimeout(function() { feedback.remove(); }, 300);
+                setTimeout(function() {
+                    feedback.remove();
+                }, 300);
             }, 2000);
         }
-        
-        // =====================================================================
-        // SYNTAX HIGHLIGHTING FOR CODE
-        // =====================================================================
-        
-        function syntaxHighlight(code) {
-            if (!code) return '';
-            // Simple syntax highlighting for JSON and code
-            let highlighted = escapeHtml(code);
-            // Strings
-            highlighted = highlighted.replace(/"([^"]*)"/g, '<span class="code-string">"$1"</span>');
-            // Numbers
-            highlighted = highlighted.replace(/\b(\d+)\b/g, '<span class="code-number">$1</span>');
-            // Keywords
-            highlighted = highlighted.replace(/\b(function|return|if|else|for|while|const|let|var|class|import|export|from|async|await)\b/g, '<span class="code-keyword">$1</span>');
-            // Booleans
-            highlighted = highlighted.replace(/\b(true|false|null|undefined)\b/g, '<span class="code-boolean">$1</span>');
-            return highlighted;
-        }
-        
-        // =====================================================================
-        // MODEL DROPDOWN INITIALIZATION
-        // =====================================================================
-
-        function initializeModelDropdown() {
-            const currentProvider = providerSelect.value;
-            const models = MODELS_BY_PROVIDER[currentProvider] || [];
-            const expectedModelId = window.MODEL_ID || '';
-            
-            console.log('[WebView] Initializing dropdown - provider:', currentProvider);
-            console.log('[WebView] Expected model ID:', expectedModelId);
-            console.log('[WebView] Available models:', models);
-            
-            modelSelect.innerHTML = '';
-            
-            if (!models || models.length === 0) {
-                console.error('[WebView] No models found for provider:', currentProvider);
-                const errorOption = document.createElement('option');
-                errorOption.textContent = 'No models available';
-                errorOption.disabled = true;
-                modelSelect.appendChild(errorOption);
-                return;
-            }
-            
-            const localModels = models.filter(m => m.type === 'local');
-            const cloudModels = models.filter(m => m.type === 'cloud');
-            
-            let hasSelected = false;
-            
-            if (localModels.length > 0) {
-                const localOptgroup = document.createElement('optgroup');
-                localOptgroup.label = 'Local Models';
-                localModels.forEach(function(model) {
-                    const option = document.createElement('option');
-                    option.value = model.id;
-                    option.textContent = model.name;
-                    if (!hasSelected && model.id === expectedModelId) {
-                        option.selected = true;
-                        hasSelected = true;
-                    }
-                    localOptgroup.appendChild(option);
-                });
-                modelSelect.appendChild(localOptgroup);
-            }
-            
-            if (cloudModels.length > 0) {
-                const cloudOptgroup = document.createElement('optgroup');
-                cloudOptgroup.label = 'Cloud Models';
-                cloudModels.forEach(function(model) {
-                    const option = document.createElement('option');
-                    option.value = model.id;
-                    option.textContent = model.name;
-                    if (!hasSelected && model.id === expectedModelId) {
-                        option.selected = true;
-                        hasSelected = true;
-                    }
-                    cloudOptgroup.appendChild(option);
-                });
-                modelSelect.appendChild(cloudOptgroup);
-            }
-            
-            if (!hasSelected && modelSelect.options.length > 0) {
-                modelSelect.options[0].selected = true;
-            }
-            
-            console.log('[WebView] Dropdown initialized - total options:', modelSelect.options.length);
-            console.log('[WebView] Selected value:', modelSelect.value);
-        }
 
         // =====================================================================
-        // MESSAGE HANDLER
+        // MESSAGE HANDLER (other commands)
         // =====================================================================
 
         function handleMessage(message) {
-            try {
-                switch (message.command) {
-                    case 'processing':
-                        showProgress('Processing: ' + message.userInput.substring(0, 50) + '...');
-                        break;
+            switch (message.command) {
+                case 'processing':
+                    console.log('[WebView] Processing:', message.userInput?.substring(0, 50));
+                    break;
 
-                    case 'streamingText':
-                        if (streamingMessageDiv) {
-                            const cleanText = message.accumulated
-                                .replace(/\n/g, '<br>')
-                                .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-                            streamingMessageDiv.innerHTML = cleanText;
-                            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-                            console.log('[WebView] Streaming text updated:', message.accumulated.length, 'chars');
-                        }
-                        break;
+                case 'streamingText':
+                    if (streamingMessageDiv && message.accumulated) {
+                        streamingMessageDiv.innerHTML = message.accumulated.replace(/\n/g, '<br>');
+                        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                    }
+                    break;
 
-                    case 'progress':
-                        const evt = message.event;
-                        if (evt.type === 'thinking') showProgress(evt.message);
-                        break;
+                case 'response':
+                    // Remove streaming placeholder
+                    if (streamingMessageDiv) {
+                        streamingMessageDiv.remove();
+                        streamingMessageDiv = null;
+                    }
+                    
+                    console.log('[WebView] Response received:', message.response?.text?.length, 'chars, toolCards:', message.response?.toolCards?.length || 0);
+                    
+                    // Render the full response card
+                    if (message.response) {
+                        renderResponseCard(message.response);
+                    } else {
+                        console.error('[WebView] No response data in message!');
+                    }
+                    break;
 
-                    case 'configUpdated':
-                        if (message.provider) providerSelect.value = message.provider;
-                        if (message.model) {
-                            initializeModelDropdown();
-                            modelSelect.value = message.model;
-                        }
-                        showProgress('Configuration updated');
-                        setTimeout(hideProgress, 2000);
-                        break;
+                case 'stopped':
+                    if (streamingMessageDiv) streamingMessageDiv.remove();
+                    addMessage('agent', '⏹ Stopped by user');
+                    isProcessing = false;
+                    userInput.disabled = false;
+                    updateActionButton();
+                    break;
 
-                    case 'response':
-                        hideProgress();
+                case 'error':
+                    if (streamingMessageDiv) streamingMessageDiv.remove();
+                    addMessage('agent', 'Error: ' + message.error);
+                    isProcessing = false;
+                    userInput.disabled = false;
+                    updateActionButton();
+                    break;
 
-                        if (streamingMessageDiv) {
-                            streamingMessageDiv.remove();
-                            streamingMessageDiv = null;
-                        }
-
-                        console.log('[WebView] Received final response:', message.response?.text?.length, 'chars');
-
-                        if (window.createOutputCard && message.response && message.response.text) {
-                            const settings = window.outputSettings || {};
-                            const cardData = {
-                                header: {
-                                    provider: window.PROVIDER_ID || 'ollama',
-                                    providerName: (window.PROVIDER_ID || 'ollama') === 'ollama' ? 'Ollama' : 'DeepSeek',
-                                    model: window.MODEL_ID || '',
-                                    timestamp: Date.now(),
-                                    durationMs: message.response.durationMs,
-                                    iterations: message.response.iterations,
-                                    status: message.response.success !== false ? 'success' : 'error'
-                                },
-                                content: {
-                                    text: message.response.text,
-                                    reasoning: message.response.reasoning, // New: AI reasoning
-                                    toolCalls: (message.response.toolCards || []).map(function(tc) {
-                                        return {
-                                            toolName: tc.toolName,
-                                            args: tc.args || {},
-                                            result: tc.result,
-                                            durationMs: tc.durationMs,
-                                            success: !tc.error,
-                                            error: tc.error
-                                        };
-                                    }),
-                                    buildOutput: message.response.buildOutput,
-                                    error: message.response.success === false ? 'Request failed' : undefined
-                                },
-                                footer: {
-                                    tokensUsed: message.response.tokensUsed || 'N/A', // Always show token count
-                                    confidence: settings.showConfidence ? message.response.confidence : undefined,
-                                    actions: [
-                                        { id: 'copy', label: 'Copy', enabled: true },
-                                        { id: 'apply', label: 'Apply', enabled: true },
-                                        { id: 'explain', label: 'Explain', enabled: true },
-                                        { id: 'retry', label: 'Retry', enabled: true }
-                                    ]
-                                },
-                                display: {
-                                    collapsed: true, // Always collapse by default
-                                    showReasoning: settings.showReasoning || false,
-                                    showToolDetails: settings.showToolDetails !== false,
-                                    showTokenCount: settings.showTokenCount || false,
-                                    showConfidence: settings.showConfidence || false,
-                                    theme: settings.theme || 'system',
-                                    fontSize: settings.fontSize || 'medium',
-                                    autoCollapseAfter: settings.autoCollapse || 300, // More aggressive collapsing
-                                    maxPreviewLines: settings.maxPreviewLines || 5, // Show fewer lines
-                                    codeHighlight: settings.codeHighlight !== false
-                                }
-                            };
-                            
-                            const cardDiv = window.createOutputCard(cardData);
-                            messagesDiv.appendChild(cardDiv);
-                            messagesDiv.scrollTop = messagesDiv.scrollHeight;
-                            console.log('[WebView] Final card displayed');
-                            
-                            setTimeout(function() {
-                                messagesDiv.scrollTop = messagesDiv.scrollHeight;
-                            }, 50);
-                        }
-
-                        isProcessing = false;
-                        updateActionButton();
-                        userInput.disabled = false;
-                        userInput.focus();
-                        break;
-
-                    case 'stopped':
-                        hideProgress();
-                        if (streamingMessageDiv) {
-                            streamingMessageDiv.remove();
-                            streamingMessageDiv = null;
-                        }
-                        addMessage('agent', '<strong>⏹ Stopped by user</strong>', true);
-                        isProcessing = false;
-                        updateActionButton();
-                        userInput.disabled = false;
-                        userInput.focus();
-                        break;
-
-                    case 'error':
-                        hideProgress();
-                        if (streamingMessageDiv) {
-                            streamingMessageDiv.remove();
-                            streamingMessageDiv = null;
-                        }
-                        addMessage('agent', 'Error: ' + message.error, false);
-                        isProcessing = false;
-                        userInput.disabled = false;
-                        break;
-                }
-            } catch (error) {
-                console.error('Error handling message:', error, message);
-                isProcessing = false;
-                userInput.disabled = false;
-                updateActionButton();
+                case 'configUpdated':
+                    console.log('[WebView] Config updated:', message.provider, message.model);
+                    if (message.provider) providerSelect.value = message.provider;
+                    if (message.model) modelSelect.value = message.model;
+                    break;
             }
         }
     }

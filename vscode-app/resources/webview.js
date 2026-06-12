@@ -495,6 +495,11 @@
                         streamingMessageDiv = null;
                     }
                     
+                    // Reset processing state
+                    isProcessing = false;
+                    userInput.disabled = false;
+                    updateActionButton();
+                    
                     // DON'T remove progress container — keep the real-time tool cards
                     // Just update the header from "Tools in Progress" to "Tools Used"
                     const progressContainer = document.getElementById('progress-container');

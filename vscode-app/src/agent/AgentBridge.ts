@@ -339,12 +339,12 @@ export class AgentBridge {
   private extractFinalResponse(text: string): string {
     if (!text) return '';
     
-    // STEP 1: Find reasoning: marker and extract everything after it
-    const reasoningMatch = text.match(/reasoning:\s*(.+?)(?=tool_call:|EOS|$)/gis);
-    if (reasoningMatch) {
-      // Get text after reasoning section
-      const afterReasoning = text.substring(text.indexOf(reasoningMatch[0]) + reasoningMatch[0].length);
-      text = afterReasoning;
+    // STEP 1: Split on ALL "reasoning:" occurrences and take the LAST segment
+    // The actual response always comes after the final reasoning block
+    const parts = text.split(/reasoning:\s*/gi);
+    if (parts.length > 1) {
+      // Take everything after the last "reasoning:" marker
+      text = parts[parts.length - 1];
     }
     
     // STEP 2: Remove tool_call: JSON blocks

@@ -509,7 +509,7 @@ export class CLI {
         throw new Error('Response body is null');
       }
 
-      const decoder = new TextDecoder();
+      const decoder = new TextDecoder('utf-8');
       let buffer = '';
       const toolCalls: LLMToolCall[] = [];
 
@@ -522,7 +522,9 @@ export class CLI {
           break;
         }
 
-        buffer += decoder.decode(value, { stream: true });
+        // Decode with proper UTF-8 handling
+        const decoded = decoder.decode(value, { stream: true });
+        buffer += decoded;
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
 
@@ -534,6 +536,8 @@ export class CLI {
             const delta = chunk.message?.content || '';
             
             if (delta) {
+              // Log raw chunk for debugging
+              this.log(`[Chunk] "${delta.substring(0, 50)}${delta.length > 50 ? '...' : ''}"`);
               yield { text: delta, done: false };
             }
 
@@ -551,8 +555,8 @@ export class CLI {
               });
               toolCalls.push(...newToolCalls);
             }
-          } catch (e) {
-            this.log(`Warning: Could not parse chunk: ${line}`);
+          } catch (e: any) {
+            this.log(`Warning: Could not parse chunk: ${line.substring(0, 100)}`);
           }
         }
       }
@@ -575,7 +579,7 @@ export class CLI {
         throw new Error('Response body is null');
       }
 
-      const decoder = new TextDecoder();
+      const decoder = new TextDecoder('utf-8');
       let buffer = '';
       const toolCalls: LLMToolCall[] = [];
 
@@ -588,7 +592,9 @@ export class CLI {
           break;
         }
 
-        buffer += decoder.decode(value, { stream: true });
+        // Decode with proper UTF-8 handling
+        const decoded = decoder.decode(value, { stream: true });
+        buffer += decoded;
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
 
@@ -603,6 +609,8 @@ export class CLI {
             const delta = choice?.delta?.content || '';
             
             if (delta) {
+              // Log raw chunk for debugging
+              this.log(`[Chunk] "${delta.substring(0, 50)}${delta.length > 50 ? '...' : ''}"`);
               yield { text: delta, done: false };
             }
 
@@ -620,8 +628,8 @@ export class CLI {
               });
               toolCalls.push(...newToolCalls);
             }
-          } catch (e) {
-            this.log(`Warning: Could not parse chunk: ${line}`);
+          } catch (e: any) {
+            this.log(`Warning: Could not parse chunk: ${line.substring(0, 100)}`);
           }
         }
       }

@@ -537,7 +537,7 @@ export class CLI {
             
             if (delta) {
               // Log raw chunk for debugging
-              this.log(`[Chunk] "${delta.substring(0, 50)}${delta.length > 50 ? '...' : ''}"`);
+              // this.log(`[Chunk] "${delta.substring(0, 50)}${delta.length > 50 ? '...' : ''}"`);
               yield { text: delta, done: false };
             }
 

@@ -337,6 +337,135 @@
         }
 
         // =====================================================================
+        // PROGRESS EVENT HANDLER - REAL-TIME TOOL CARDS
+        // =====================================================================
+
+        function handleProgressEvent(event) {
+            console.log('[WebView] Progress event:', event.type, event.toolCall?.toolName);
+            
+            if (event.type === 'tool_start' && event.toolCall) {
+                // Create a new tool card when tool starts
+                const toolCard = createToolCard(event.toolCall, false);
+                
+                // Ensure we have a progress container
+                let progressContainer = document.getElementById('progress-container');
+                if (!progressContainer) {
+                    progressContainer = document.createElement('div');
+                    progressContainer.id = 'progress-container';
+                    progressContainer.className = 'tool-section';
+                    progressContainer.innerHTML = '<div class="section-header"><span class="section-icon">🛠️</span><span class="section-label">Tools in Progress</span></div><div class="tool-calls-list"></div>';
+                    
+                    // Insert before streaming message or at end of messages
+                    if (streamingMessageDiv) {
+                        messagesDiv.insertBefore(progressContainer, streamingMessageDiv);
+                    } else {
+                        messagesDiv.appendChild(progressContainer);
+                    }
+                }
+                
+                const toolList = progressContainer.querySelector('.tool-calls-list');
+                if (toolList) {
+                    toolList.appendChild(toolCard);
+                }
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                
+            } else if (event.type === 'tool_complete' && event.toolCall) {
+                // Update the tool card with result
+                const toolCards = document.querySelectorAll('.tool-call-card[data-tool-name="' + event.toolCall.toolName + '"]');
+                
+                if (toolCards.length > 0) {
+                    // Update the last matching card
+                    const card = toolCards[toolCards.length - 1];
+                    updateToolCard(card, event.toolCall, true);
+                } else {
+                    // Card not found, create new one (fallback)
+                    const toolCard = createToolCard(event.toolCall, true);
+                    let progressContainer = document.getElementById('progress-container');
+                    if (!progressContainer) {
+                        progressContainer = document.createElement('div');
+                        progressContainer.id = 'progress-container';
+                        progressContainer.className = 'tool-section';
+                        progressContainer.innerHTML = '<div class="section-header"><span class="section-icon">🛠️</span><span class="section-label">Tools Used</span></div><div class="tool-calls-list"></div>';
+                        messagesDiv.appendChild(progressContainer);
+                    }
+                    const toolList = progressContainer.querySelector('.tool-calls-list');
+                    if (toolList) {
+                        toolList.appendChild(toolCard);
+                    }
+                }
+                messagesDiv.scrollTop = messagesDiv.scrollHeight;
+            }
+        }
+
+        function createToolCard(toolCall, isComplete) {
+            const card = document.createElement('div');
+            card.className = 'tool-call-card ' + (isComplete && !toolCall.error ? 'success' : 'processing');
+            card.setAttribute('data-tool-name', toolCall.toolName);
+            
+            const statusIcon = isComplete ? (toolCall.error ? '✗' : '✓') : '⏳';
+            const statusClass = isComplete ? (toolCall.error ? 'status-error' : 'status-success') : 'status-pending';
+            const argsJson = toolCall.args ? JSON.stringify(toolCall.args, null, 2) : '{}';
+            
+            card.innerHTML = `
+                <div class="tool-call-header" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
+                    <span class="tool-call-toggle">▶</span>
+                    <span class="tool-call-status" style="background: ${toolCall.error ? 'var(--vscode-errorForeground)' : 'var(--vscode-terminal-ansiGreen)'}">${statusIcon}</span>
+                    <span class="tool-call-name">${toolCall.toolName}</span>
+                    <div class="tool-call-meta">
+                        <span class="tool-call-duration">${isComplete ? 'completed' : 'running...'}</span>
+                    </div>
+                </div>
+                <div class="tool-call-body">
+                    <div class="tool-call-args">
+                        <span class="args-label">Arguments:</span>
+                        <pre>${escapeHtml(argsJson)}</pre>
+                    </div>
+                    ${isComplete ? `
+                        <div class="tool-call-result">
+                            <span class="result-label">Result:</span>
+                            <pre>${escapeHtml(String(toolCall.result || 'No result').substring(0, 200))}</pre>
+                        </div>
+                        ${toolCall.error ? `<div class="tool-call-error"><span class="error-label">Error:</span>${escapeHtml(toolCall.error)}</div>` : ''}
+                    ` : `
+                        <div class="tool-call-result">
+                            <span class="result-label">Result:</span>
+                            <em class="text-muted">Waiting for result...</em>
+                        </div>
+                    `}
+                </div>
+            `;
+            
+            return card;
+        }
+
+        function updateToolCard(card, toolCall, isComplete) {
+            const statusIcon = isComplete ? (toolCall.error ? '✗' : '✓') : '⏳';
+            const resultPreview = toolCall.result ? String(toolCall.result).substring(0, 200) + (String(toolCall.result).length > 200 ? '...' : '') : 'No result';
+            
+            card.className = 'tool-call-card ' + (isComplete && !toolCall.error ? 'success' : 'processing');
+            
+            const statusSpan = card.querySelector('.tool-call-status');
+            if (statusSpan) {
+                statusSpan.textContent = statusIcon;
+                statusSpan.style.background = toolCall.error ? 'var(--vscode-errorForeground)' : 'var(--vscode-terminal-ansiGreen)';
+            }
+            
+            const durationSpan = card.querySelector('.tool-call-duration');
+            if (durationSpan) {
+                durationSpan.textContent = isComplete ? 'completed' : 'running...';
+            }
+            
+            const resultDiv = card.querySelector('.tool-call-result');
+            if (resultDiv && isComplete) {
+                resultDiv.innerHTML = `
+                    <span class="result-label">Result:</span>
+                    <pre>${escapeHtml(resultPreview)}</pre>
+                    ${toolCall.error ? `<div class="tool-call-error"><span class="error-label">Error:</span>${escapeHtml(toolCall.error)}</div>` : ''}
+                `;
+            }
+        }
+
+        // =====================================================================
         // MESSAGE HANDLER (other commands)
         // =====================================================================
 
@@ -344,6 +473,12 @@
             switch (message.command) {
                 case 'processing':
                     console.log('[WebView] Processing:', message.userInput?.substring(0, 50));
+                    break;
+
+                case 'progress':
+                    if (message.event) {
+                        handleProgressEvent(message.event);
+                    }
                     break;
 
                 case 'streamingText':
@@ -360,14 +495,58 @@
                         streamingMessageDiv = null;
                     }
                     
+                    // DON'T remove progress container — keep the real-time tool cards
+                    // Just update the header from "Tools in Progress" to "Tools Used"
+                    const progressContainer = document.getElementById('progress-container');
+                    if (progressContainer) {
+                        const header = progressContainer.querySelector('.section-label');
+                        if (header) {
+                            header.textContent = 'Tools Used';
+                        }
+                    }
+                    
                     console.log('[WebView] Response received:', message.response?.text?.length, 'chars, toolCards:', message.response?.toolCards?.length || 0);
                     
-                    // Render the full response card
-                    if (message.response) {
-                        renderResponseCard(message.response);
-                    } else {
-                        console.error('[WebView] No response data in message!');
+                    // Add final response text after the tools (don't rebuild tool cards)
+                    if (message.response && message.response.text) {
+                        const responseDiv = document.createElement('div');
+                        responseDiv.className = 'agent-output-card';
+                        responseDiv.innerHTML = `
+                            <div class="output-card-header">
+                                <div class="header-left">
+                                    <span class="provider-badge" style="background: ${message.response.provider || 'ollama' === 'ollama' ? '#007acc' : '#4caf50'}">${message.response.provider || 'ollama'}</span>
+                                    <span class="model-name">${message.response.model || modelId}</span>
+                                </div>
+                                <div class="header-right">
+                                    <span class="status-badge status-${message.response.error ? 'error' : 'success'}">${message.response.error ? '❌' : '✓'}</span>
+                                </div>
+                            </div>
+                            <div class="output-card-content">
+                                <div class="response-text-section">
+                                    <div class="response-text">${formatResponseText(message.response.text)}</div>
+                                </div>
+                            </div>
+                            <div class="output-card-footer">
+                                <div class="footer-meta">
+                                    <span class="meta-item">⏱ ${message.response.durationMs || 0}ms</span>
+                                    <span class="meta-item">🔄 ${message.response.iterations || 1} iterations</span>
+                                </div>
+                                <div class="footer-actions">
+                                    <button class="footer-action-btn" onclick="copyResponse()">
+                                        <span class="action-icon">📋</span>
+                                        <span>Copy</span>
+                                    </button>
+                                    <button class="footer-action-btn" onclick="applyToFile()">
+                                        <span class="action-icon">📝</span>
+                                        <span>Apply</span>
+                                    </button>
+                                </div>
+                            </div>
+                        `;
+                        messagesDiv.appendChild(responseDiv);
                     }
+                    
+                    messagesDiv.scrollTop = messagesDiv.scrollHeight;
                     break;
 
                 case 'stopped':

@@ -235,6 +235,7 @@ export class AgentTabManager {
       // Accumulate data for final response
       let accumulatedText = '';
       let toolCalls: any[] = [];
+      let pendingToolArgs: Map<string, Record<string, any>> = new Map();
       let iterationCount = 0;
       let chunkCount = 0;
 
@@ -269,6 +270,7 @@ export class AgentTabManager {
             });
             
           } else if (chunk.type === 'tool_call_started') {
+            pendingToolArgs.set(chunk.toolName, chunk.args);
             tab.panel.webview.postMessage({
               command: 'progress',
               event: { type: 'tool_start', toolCall: { toolName: chunk.toolName, args: chunk.args } }
@@ -278,7 +280,7 @@ export class AgentTabManager {
             const completedChunk = chunk as any;
             toolCalls.push({
               toolName: completedChunk.toolName,
-              args: completedChunk.args || {},
+              args: pendingToolArgs.get(completedChunk.toolName) || {},
               result: completedChunk.result,
               toolCallId: completedChunk.toolCallId
             });
@@ -288,7 +290,7 @@ export class AgentTabManager {
                 type: 'tool_complete', 
                 toolCall: { 
                   toolName: completedChunk.toolName, 
-                  args: completedChunk.args, 
+                  args: pendingToolArgs.get(completedChunk.toolName) || {}, 
                   result: completedChunk.result,
                   toolCallId: completedChunk.toolCallId
                 } 

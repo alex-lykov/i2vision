@@ -339,22 +339,27 @@ export class AgentBridge {
   private extractFinalResponse(text: string): string {
     if (!text) return '';
     
-    // STEP 1: Split on ALL "reasoning:" occurrences and take the LAST segment
-    // The actual response always comes after the final reasoning block
-    const parts = text.split(/reasoning:\s*/gi);
-    if (parts.length > 1) {
-      // Take everything after the last "reasoning:" marker
-      text = parts[parts.length - 1];
-    }
+    // STEP 1: Remove reasoning: headers
+    text = text.replace(/reasoning:\s*/gi, '');
     
-    // STEP 2: Remove tool_call: JSON blocks
+    // STEP 2: Remove EOS markers
+    text = text.replace(/\bEOS\b/gi, '');
+    
+    // STEP 3: Remove tool_call: JSON blocks
     text = text.replace(/tool_call:\s*\{[\s\S]*?\}(?=\n|$|tool_call:)/g, '');
-    
-    // STEP 3: Remove EOS marker
-    text = text.replace(/\bEOS\b/g, '');
     
     // STEP 4: Remove tool_calls: prefix
     text = text.replace(/^tool_calls:\s*/gmi, '');
+    
+    // STEP 5: Split on double newlines — take the LONGEST block as the real answer
+    // The last block might be a short footnote; the longest block has the substantial content
+    // Lower threshold to 20 chars to avoid filtering out short valid responses
+    const blocks = text.split(/\n\n+/).filter(b => b.trim().length > 20);
+    
+    if (blocks.length > 1) {
+      // Return the longest block — the real answer, not a trailing footnote
+      return blocks.reduce((a, b) => a.length > b.length ? a : b).trim();
+    }
     
     return text.trim();
   }
@@ -592,6 +597,7 @@ export class AgentBridge {
         }
 
         // FALLBACK: Parse tool calls from text if structured tool calls not provided
+        // CRITICAL: This must happen BEFORE extractFinalResponse strips the tool_call: headers
         if (streamingToolCalls.length === 0 && responseText.includes('tool_call:')) {
           this.log(`No structured tool calls - parsing from text`);
           // More robust pattern that handles malformed JSON
@@ -624,7 +630,9 @@ export class AgentBridge {
         // Extract final response (remove reasoning, tool calls, EOS)
         // Only clean the accumulated responseText, NOT individual chunks
         // Individual chunks are too small for meaningful cleaning
+        // IMPORTANT: This happens AFTER tool call parsing to avoid stripping headers prematurely
         responseText = this.extractFinalResponse(responseText);
+        textBuffer = [responseText];  // Use cleaned text for display
         // Don't clean textBuffer chunks - yield them raw for streaming
         // The webview accumulates them, and final cleaning happens on responseText
 
@@ -663,7 +671,7 @@ export class AgentBridge {
         }
 
         // Final answer - yield/send text
-        this.log(`[Iter ${iteration}] Final answer received`);
+        this.log(`[Iter ${iteration}] Final answer received (${trimmedResponse.length} chars)`);
         
         if (options.streaming) {
           for (const textChunk of textBuffer) {
@@ -690,23 +698,26 @@ export class AgentBridge {
         return;
       }
 
-      // Has tool calls - yield/send text first (streaming only)
-      if (options.streaming) {
-        for (const textChunk of textBuffer) {
-          yield {
-            type: 'text',
-            text: textChunk,
-            timestamp: Date.now()
-          };
-        }
-      }
+      // Has tool calls - DO NOT yield text yet (it's just reasoning, not the final answer)
+      // The final answer will come in a later iteration after tools complete
+      // Just log that we're executing tools
+      this.log(`[Iter ${iteration}] Executing ${streamingToolCalls.length} tool(s)...`);
 
       // ===== LOOP DETECTION (SHARED LOGIC) =====
       const repeatCountMap = new Map<string, number>();
       const shouldNudge: string[] = [];
 
       for (const toolCall of streamingToolCalls) {
-        const argsSignature = JSON.stringify(toolCall.arguments);
+        // Normalize arguments to ensure consistent comparison
+        // This prevents false negatives when optional params are missing vs explicitly set to default
+        const normalizedArgs = { ...toolCall.arguments };
+        
+        // Set defaults for missing optional params
+        if (toolCall.name === 'list_directory' && !('recursive' in normalizedArgs)) {
+          normalizedArgs.recursive = false;
+        }
+        
+        const argsSignature = JSON.stringify(normalizedArgs);
         const normalizedToolName = toolCall.name.toLowerCase().replace(/[_-]/g, '');
         
         // Check if this exact tool call was made in the last 2 iterations
@@ -756,7 +767,7 @@ export class AgentBridge {
           }
         }
         
-        // Record BEFORE execution
+        // Record BEFORE execution with normalized args
         history.push({
           toolName: toolCall.name,
           argsSignature,
@@ -1699,6 +1710,20 @@ Please try a DIFFERENT approach:
     prompt += '\nreasoning: I have all the information needed to answer.';
     prompt += '\nThe main entry point is in extension.ts line 45.';
     prompt += '\nEOS';
+    prompt += '\n\n--- AVAILABLE TOOLS (KNOW YOUR CAPABILITIES) ---';
+    prompt += '\nYou have access to these tools. When asked "what tools do you have?" or "what can you do?", list them:';
+    prompt += '\n• list_directory — List files in a directory';
+    prompt += '\n• read_file — Read contents of a file';
+    prompt += '\n• write_file — Write content to a file';
+    prompt += '\n• search_files — Search for files matching a pattern';
+    prompt += '\n• get_file_context — Get context for a file (classes, functions, imports)';
+    prompt += '\n• git_status — Show working tree status (modified, staged, untracked)';
+    prompt += '\n• git_diff — Show changes between commits or working tree';
+    prompt += '\n• git_log — Show commit history';
+    prompt += '\n• git_branch — List branches or show current branch';
+    prompt += '\n• git_commit — Stage and commit changes';
+    prompt += '\n• run_build — Run build commands (Gradle, npm, Maven)';
+    prompt += '\n• run_terminal — Run short-lived shell commands (max 30 seconds)';
     prompt += '\n\n--- TOOL RESULT INTERPRETATION (CRITICAL) ---';
     prompt += '\nWhen you receive a tool result:';
     prompt += '\n1. "This directory is empty. No files found." → Tell the user the directory exists but is empty, then STOP';

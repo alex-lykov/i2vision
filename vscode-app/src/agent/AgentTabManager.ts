@@ -147,13 +147,28 @@ export class AgentTabManager {
   private cleanResponseText(text: string): string {
     if (!text) return '';
     
-    // STEP 1: Remove JSON tool calls that leaked into text
+    // STEP 0: Remove reasoning: headers
+    text = text.replace(/reasoning:\s*/gi, '');
+    
+    // STEP 1: Remove EOS markers
+    text = text.replace(/\bEOS\b/gi, '');
+    
+    // STEP 2: Remove tool_call: JSON blocks
+    text = text.replace(/tool_call:\s*\{[\s\S]*?\}(?=\n|$|tool_call:)/g, '');
+    
+    // STEP 3: Remove JSON tool calls that leaked into text
     text = text.replace(/\{[\s\S]*?\}/g, '');
     
-    // STEP 2: Remove reasoning/intent sentences at the beginning
-    text = text.replace(/^(?:I need to|I'll start|I will start|Let me|First,|To do this)[^.]*\.\s*/i, '');
+    // STEP 4: Split on double newlines — take the LONGEST block as the real answer
+    // The last block might be a short footnote; the longest block has the substantial content
+    const blocks = text.split(/\n\n+/).filter(b => b.trim().length > 20);
     
-    // STEP 3: Fix common tokenization patterns (general, not hardcoded)
+    if (blocks.length > 1) {
+      // Return the longest block — the real answer, not a trailing footnote
+      text = blocks.reduce((a, b) => a.length > b.length ? a : b).trim();
+    }
+    
+    // STEP 5: Fix common tokenization patterns (general, not hardcoded)
     // Split words broken by space before common suffixes
     text = text.replace(/\b(to|in|on|at|for|with|do|be|has|have|had|is|are|was|were|can|could|will|would|shall|should|may|might|must)\s+(ol|ll|ve|re|d|s|n't)\b/gi, '$1$2');
     
@@ -180,16 +195,16 @@ export class AgentTabManager {
       return match;
     });
     
-    // STEP 4: Fix run-together words: lowercase→uppercase (Ihave → I have)
+    // STEP 6: Fix run-together words: lowercase→uppercase (Ihave → I have)
     text = text.replace(/([a-z])([A-Z])/g, '$1 $2');
     
-    // STEP 5: Fix missing space after periods
+    // STEP 7: Fix missing space after periods
     text = text.replace(/([.!?])([A-Za-z#])/g, '$1 $2');
     
-    // STEP 6: Fix missing space after commas
+    // STEP 8: Fix missing space after commas
     text = text.replace(/(,)([A-Za-z])/g, '$1 $2');
     
-    // STEP 7: Collapse multiple spaces (2+) into single space
+    // STEP 9: Collapse multiple spaces (2+) into single space
     text = text.replace(/\s{2,}/g, ' ');
     
     return text.trim();

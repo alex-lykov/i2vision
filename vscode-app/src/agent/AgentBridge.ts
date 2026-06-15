@@ -2323,6 +2323,15 @@ Please try a DIFFERENT approach:
     prompt += '\n- yarn dev, yarn start';
     prompt += '\nThe system automatically detects long-running servers and runs them in persistent terminals with auto-restart on file changes.';
     prompt += '\nYou do NOT need to report the command to the user - just call run_terminal and the system handles it.';
+    prompt += '\n\n--- STARTING SERVERS (ACTION, NOT PLANS) ---';
+    prompt += '\nWhen asked to "run", "start", or "launch" a server:';
+    prompt += '\n1. Find the server module (look for app/server, server, or similar)';
+    prompt += '\n2. IMMEDIATELY call run_terminal with the gradle command';
+    prompt += '\n3. DO NOT say "I will" or "Let me" - just CALL THE TOOL';
+    prompt += '\n4. For Gradle projects: use "./gradlew :module:run" or "gradlew.bat :module:run"';
+    prompt += '\n5. Example: run_terminal({ command: "gradlew.bat :app:server:run" })';
+    prompt += '\n\nCRITICAL: After finding the server location, call run_terminal in the NEXT iteration.';
+    prompt += '\nDo NOT output text describing your plan - that wastes an iteration.';
     prompt += '\n\n--- BUILD COMMANDS ---';
     prompt += '\nBuild commands (gradlew, mvn, npm run build) are monitored for failures.';
     prompt += '\nIf a build fails, you will receive the error output.';

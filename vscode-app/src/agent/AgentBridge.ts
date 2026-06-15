@@ -1249,6 +1249,8 @@ export class AgentBridge {
       // No tool calls - check if plan or final answer
       if (streamingToolCalls.length === 0) {
         const trimmedResponse = responseText.trim();
+        
+        // Enhanced plan detection - catch ALL variations of "I will call tools"
         const isPlanOnly =
           trimmedResponse.startsWith('I will:') ||
           trimmedResponse.startsWith('I\'ll') ||
@@ -1256,10 +1258,14 @@ export class AgentBridge {
           /^[Ii] will (call|use|read|search|run|execute)/.test(trimmedResponse) ||
           /^[Ii]\'ll (call|use|read|search|run|execute)/.test(trimmedResponse) ||
           /^(First|I\'ll first|Let me first|I will first)/i.test(trimmedResponse) ||
-          (trimmedResponse.length < 100 && /^(Sure|Okay|Let me|I will|I\'ll)/i.test(trimmedResponse));
+          (trimmedResponse.length < 100 && /^(Sure|Okay|Let me|I will|I\'ll)/i.test(trimmedResponse)) ||
+          // NEW: Catch "I will: Calling tool(...)" format
+          /I will: Calling \w+\(/.test(trimmedResponse) ||
+          // NEW: Catch responses that are ONLY tool descriptions
+          trimmedResponse.length < 150 && /Calling \w+\(\{/.test(trimmedResponse);
 
-        if (isPlanOnly && trimmedResponse.length < 300) {
-          this.log(`[Iter ${iteration}] Plan detected - discarding text`);
+        if (isPlanOnly) {
+          this.log(`[Iter ${iteration}] Plan detected - discarding: "${trimmedResponse.substring(0, 80)}..."`);
           messages.push({
             role: 'user',
             content: 'That is just a plan. You MUST call tools to complete the task. Do NOT respond with another plan - actually call the tools now.'

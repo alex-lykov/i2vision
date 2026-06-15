@@ -77,6 +77,20 @@ export class TerminalManager {
             this.killTerminal(name);
         }
         
+        // Normalize Windows commands that need .\ prefix for local executables
+        // PowerShell requires .\ for executables in current directory
+        let normalizedCommand = command;
+        if (process.platform === 'win32') {
+            normalizedCommand = command.replace(
+                /^(gradlew|mvnw|gradlew\.bat|mvnw\.cmd|\.\/gradlew|\.\/mvnw)\b/i,
+                '.\\$1'
+            );
+            // Also handle commands starting with ./ on Windows
+            normalizedCommand = normalizedCommand.replace(/^\.\//, '.\\');
+        }
+        
+        this.log(`Normalized command: ${normalizedCommand}`);
+        
         // Create new terminal
         const terminal = vscode.window.createTerminal({
             name: `i2-Vision: ${name}`,
@@ -85,7 +99,7 @@ export class TerminalManager {
         });
         
         terminal.show(false); // Don't steal focus
-        terminal.sendText(command);
+        terminal.sendText(normalizedCommand);
         
         const managed: ManagedTerminal = {
             terminal,

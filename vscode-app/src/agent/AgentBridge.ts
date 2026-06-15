@@ -1897,8 +1897,9 @@ Please try a DIFFERENT approach:
           
           // Add summary
           if (hasError) {
-            resultMessage += `\n❌ Build FAILED\n`;
-            resultMessage += `\n--- Errors ---\n${this.extractBuildErrors(result.stderr || result.stdout)}`;
+            resultMessage += `\n❌ Build FAILED\n\n`;
+            const errors = this.extractCompilationErrors(result.stderr || result.stdout);
+            resultMessage += `${errors}\n\n⚠️ DO NOT re-run the build. READ the files listed above, FIX the compilation errors, then re-run.`;
           } else {
             resultMessage += `\n✅ Build successful\n`;
           }
@@ -1955,9 +1956,9 @@ Please try a DIFFERENT approach:
             
             // Check for build failures
             if (result.exitCode !== 0 || output.includes('BUILD FAILED') || output.includes('FAILED')) {
-              const errors = this.extractBuildErrors(output);
+              const errors = this.extractCompilationErrors(output);
               return {
-                result: `❌ BUILD FAILED\n\nExit code: ${result.exitCode}\n\n📁 READ THESE FILES TO FIX THE ERRORS:\n${errors}\n\n⚠️ DO NOT re-run build commands. READ the files above, understand the errors, and FIX the code using write_file or edit_file.`,
+                result: `❌ BUILD FAILED\n\nExit code: ${result.exitCode}\n\n${errors}\n\n⚠️ DO NOT re-run the build. READ the files listed above, FIX the compilation errors, then re-run.`,
                 error: 'Build failed'
               };
             }
@@ -2131,47 +2132,74 @@ Please try a DIFFERENT approach:
 
   /**
    * Extract build errors from output
-   * Enhanced to highlight file paths and line numbers for agent to fix
+   * Parses Kotlin/Java compiler errors with file paths and line numbers
    */
-  private extractBuildErrors(output: string): string {
-    if (!output) return 'Unknown error';
+  private extractCompilationErrors(output: string): string {
+    if (!output) return 'No error output';
     
-    // Extract file references from errors (Kotlin/Java compiler format)
-    // Pattern: path/to/File.kt or path/to/File.kt:line:column
-    const filePattern = /([a-zA-Z0-9_/.\\-]+\.(kt|java|kts))(:\d+:\d+)?/g;
+    const errors: string[] = [];
+    const lines = output.split('\n');
     const mentionedFiles = new Set<string>();
-    let match;
-    while ((match = filePattern.exec(output)) !== null) {
-      // Only add relative paths (not absolute Windows paths)
-      if (!match[1].startsWith('C:') && !match[1].startsWith('D:')) {
-        mentionedFiles.add(match[1]);
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
+      // Kotlin compiler errors: "e: file:///path/to/File.kt:line:col message"
+      const kotlinErrorMatch = line.match(/e: file:\/\/\/?(.+?):(\d+):(\d+)\s+(.+)/);
+      if (kotlinErrorMatch) {
+        const [, filePath, lineNum, col, message] = kotlinErrorMatch;
+        // Convert to relative path
+        const relativePath = filePath.replace(/^[a-zA-Z]:/, '').replace(/\\/g, '/');
+        mentionedFiles.add(relativePath);
+        errors.push(`${relativePath}:${lineNum}:${col} ${message}`);
+        continue;
+      }
+      
+      // Java compiler errors: "path/to/File.kt:line: error: message"
+      const javaErrorMatch = line.match(/([a-zA-Z0-9_/.\\-]+\.(kt|java|kts)):(\d+):\s*(error:\s*)?(.+)/);
+      if (javaErrorMatch && !line.includes('file:///')) {
+        const [, filePath, , lineNum, , message] = javaErrorMatch;
+        mentionedFiles.add(filePath.replace(/\\/g, '/'));
+        errors.push(`${filePath}:${lineNum} ${message}`);
+        continue;
+      }
+      
+      // Gradle task failures with context
+      if (line.includes('FAILED') || line.includes('> Task')) {
+        const nextLine = lines[i + 1]?.trim();
+        if (nextLine && !nextLine.startsWith('>')) {
+          errors.push(`${line.trim()} → ${nextLine}`);
+        } else {
+          errors.push(line.trim());
+        }
+      }
+      
+      // Common error keywords (capture full line)
+      if (line.includes('Unresolved reference') ||
+          line.includes('Type mismatch') ||
+          line.includes('not abstract') ||
+          line.includes('Override') ||
+          line.includes('Expecting')) {
+        errors.push(line.trim());
       }
     }
     
-    // Look for common error patterns including task failures
-    const errorLines = output.split('\n')
-      .filter(line => 
-        line.toLowerCase().includes('error') ||
-        line.toLowerCase().includes('failed') ||
-        line.includes('❌') ||
-        line.includes('^') || // Compiler error marker
-        line.includes('Unresolved reference') ||
-        line.includes('Type mismatch') ||
-        line.includes('Expecting') ||
-        line.includes('Override') ||
-        line.includes('> Task') // Gradle task failures
-      )
-      .slice(0, 20); // More context
+    // Build result string
+    let result = '';
     
-    let result = errorLines.join('\n');
-    
-    // Add file list at the top if files were mentioned - make it VERY prominent
     if (mentionedFiles.size > 0) {
       const fileList = Array.from(mentionedFiles).slice(0, 5).join('\n  - ');
-      result = `FILES TO READ AND FIX:\n  - ${fileList}\n\nCOMPILER ERRORS:\n${result}`;
+      result += `FILES WITH COMPILATION ERRORS:\n  - ${fileList}\n\n`;
     }
     
-    return result || output.slice(-1000);
+    if (errors.length > 0) {
+      result += `ERRORS:\n${errors.slice(0, 15).join('\n')}`;
+    } else {
+      result += 'No specific compilation errors found in output.';
+      result += '\n\nTry running with --info for more details.';
+    }
+    
+    return result;
   }
 
   /**

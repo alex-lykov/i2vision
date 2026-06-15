@@ -688,6 +688,33 @@ export class LocalAgentProvider {
   }
 
   /**
+   * Update configuration for a layer (provider/model changes)
+   */
+  async updateConfig(layer: string, updates: { provider?: string; model?: string }): Promise<void> {
+    const layerName = layer.toLowerCase();
+    const cacheKey = `agent-${layerName}`;
+    
+    // Get current config
+    const config = this.getConfig(layer);
+    
+    // Apply updates
+    if (updates.provider) {
+      config.model.provider = updates.provider;
+    }
+    if (updates.model) {
+      config.model.id = updates.model;
+    }
+    
+    // Update cache
+    this.configCache.set(cacheKey, config);
+    
+    // Save to YAML file
+    await this.saveConfig(layerName, config);
+    
+    this.log(`Updated config for ${layerName}: provider=${config.model.provider}, model=${config.model.id}`);
+  }
+
+  /**
    * Dispose resources
    */
   async dispose(): Promise<void> {

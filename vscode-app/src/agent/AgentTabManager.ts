@@ -468,6 +468,18 @@ export class AgentTabManager {
         case 'stop_agent':
           await this.stopAgent();
           break;
+          
+        case 'change_provider':
+          await this.changeProvider(message.provider);
+          break;
+          
+        case 'change_model':
+          await this.changeModel(message.model);
+          break;
+          
+        case 'fetch_models':
+          await this.fetchAndSendModels();
+          break;
       }
     }, null, this.context.subscriptions);
     
@@ -475,6 +487,171 @@ export class AgentTabManager {
       this.webviewPanel = null;
       this.log('Webview panel disposed');
     }, null, this.context.subscriptions);
+  }
+
+  /**
+   * Change the provider for the active agent
+   */
+  private async changeProvider(provider: string): Promise<void> {
+    if (!this.activeTabId) {
+      vscode.window.showErrorMessage('No active agent tab');
+      return;
+    }
+    
+    const tabState = this.tabs.get(this.activeTabId);
+    if (!tabState) {
+      vscode.window.showErrorMessage('Active tab not found');
+      return;
+    }
+    
+    this.log(`Changing provider to ${provider} for ${tabState.layer} agent...`);
+    
+    try {
+      this.agentProvider.clearConfigCache();
+      const agentConfig = this.agentProvider.getConfig(tabState.layer);
+      agentConfig.model.provider = provider;
+      
+      // Set default model for provider
+      const defaultModel = provider === 'deepseek' ? 'deepseek-chat' : 'llama3.2:3b';
+      agentConfig.model.id = defaultModel;
+      
+      // Update agent config
+      await this.agentProvider.updateConfig(tabState.layer, {
+        provider: provider,
+        model: defaultModel
+      });
+      
+      this.log(`Provider changed to ${provider}`);
+      vscode.window.showInformationMessage(`Provider changed to ${provider}`);
+      
+      // Update webview with new provider
+      this.sendToWebview({
+        type: 'provider_changed',
+        provider: provider,
+        model: defaultModel
+      });
+    } catch (error: any) {
+      this.log(`Error changing provider: ${error.message}`);
+      vscode.window.showErrorMessage(`Failed to change provider: ${error.message}`);
+    }
+  }
+
+  /**
+   * Change the model for the active agent
+   */
+  private async changeModel(model: string): Promise<void> {
+    if (!this.activeTabId) {
+      vscode.window.showErrorMessage('No active agent tab');
+      return;
+    }
+    
+    const tabState = this.tabs.get(this.activeTabId);
+    if (!tabState) {
+      vscode.window.showErrorMessage('Active tab not found');
+      return;
+    }
+    
+    this.log(`Changing model to ${model} for ${tabState.layer} agent...`);
+    
+    try {
+      const agentConfig = this.agentProvider.getConfig(tabState.layer);
+      agentConfig.model.id = model;
+      
+      // Update agent config
+      await this.agentProvider.updateConfig(tabState.layer, {
+        provider: agentConfig.model.provider,
+        model: model
+      });
+      
+      this.log(`Model changed to ${model}`);
+      vscode.window.showInformationMessage(`Model changed to ${model}`);
+      
+      // Update webview with new model
+      this.sendToWebview({
+        type: 'model_changed',
+        model: model
+      });
+    } catch (error: any) {
+      this.log(`Error changing model: ${error.message}`);
+      vscode.window.showErrorMessage(`Failed to change model: ${error.message}`);
+    }
+  }
+
+  /**
+   * Fetch available models and send to webview
+   */
+  private async fetchAndSendModels(): Promise<void> {
+    if (!this.activeTabId) {
+      return;
+    }
+    
+    const tabState = this.tabs.get(this.activeTabId);
+    if (!tabState) {
+      return;
+    }
+    
+    try {
+      const agentConfig = this.agentProvider.getConfig(tabState.layer);
+      const providerId = agentConfig.model.provider;
+      
+      // Fetch models from Ollama if using Ollama provider
+      let models: string[] = [];
+      
+      if (providerId === 'ollama') {
+        models = await this.fetchOllamaModels();
+      } else if (providerId === 'deepseek') {
+        models = ['deepseek-chat', 'deepseek-coder'];
+      }
+      
+      this.sendToWebview({
+        type: 'models_list',
+        models: models,
+        currentModel: agentConfig.model.id,
+        currentProvider: providerId
+      });
+    } catch (error: any) {
+      this.log(`Error fetching models: ${error.message}`);
+      this.sendToWebview({
+        type: 'models_list',
+        models: [],
+        currentModel: '',
+        currentProvider: '',
+        error: error.message
+      });
+    }
+  }
+
+  /**
+   * Fetch available models from Ollama
+   */
+  private async fetchOllamaModels(): Promise<string[]> {
+    return new Promise<string[]>((resolve, reject) => {
+      const https = require('https');
+      const http = require('http');
+      
+      const url = 'http://localhost:11434/api/tags';
+      const lib = http;
+      
+      const req = lib.get(url, (res: any) => {
+        let data = '';
+        res.on('data', (chunk: string) => data += chunk);
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(data);
+            const modelNames = (parsed.models || []).map((m: any) => m.name);
+            resolve(modelNames);
+          } catch (e) {
+            reject(new Error('Failed to parse Ollama response'));
+          }
+        });
+      });
+      
+      req.on('error', (e: any) => reject(e));
+      req.setTimeout(5000, () => {
+        req.destroy();
+        reject(new Error('Ollama timeout'));
+      });
+    });
   }
 
   /**
@@ -487,11 +664,24 @@ export class AgentTabManager {
   }
 
   /**
-   * Get webview HTML content - Unified Timeline UX with context meter
+   * Get webview HTML content - Unified Timeline UX with context meter and provider/model selectors
    */
   private getWebviewContent(): string {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || 'No workspace';
     const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name || 'Unknown';
+    
+    // Get current agent config for initial provider/model
+    let currentProvider = 'ollama';
+    let currentModel = 'llama3.2:3b';
+    
+    if (this.activeTabId) {
+      const tabState = this.tabs.get(this.activeTabId);
+      if (tabState) {
+        const config = this.agentProvider.getConfig(tabState.layer);
+        currentProvider = config.model.provider;
+        currentModel = config.model.id;
+      }
+    }
     
     // Escape workspace name for HTML (Node.js safe - no document)
     const escapeHtmlStr = (text: string) => {
@@ -531,12 +721,15 @@ export class AgentTabManager {
       border-radius: 6px;
       margin-bottom: 15px;
       font-size: 0.85em;
+      flex-wrap: wrap;
+      gap: 10px;
     }
     
     .context-left {
       display: flex;
       gap: 20px;
       align-items: center;
+      flex-wrap: wrap;
     }
     
     .context-item {
@@ -544,6 +737,47 @@ export class AgentTabManager {
       align-items: center;
       gap: 6px;
       color: var(--vscode-descriptionForeground);
+    }
+    
+    /* Provider and Model selectors */
+    .provider-model-group {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    
+    .selector-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    
+    .selector-group label {
+      font-weight: 600;
+      color: var(--vscode-foreground);
+      font-size: 0.9em;
+    }
+    
+    .selector-group select {
+      padding: 4px 8px;
+      border: 1px solid var(--vscode-input-border);
+      border-radius: 4px;
+      background: var(--vscode-input-background);
+      color: var(--vscode-input-foreground);
+      font-family: var(--vscode-font-family);
+      font-size: 0.85em;
+      cursor: pointer;
+      min-width: 120px;
+    }
+    
+    .selector-group select:hover {
+      border-color: var(--vscode-focusBorder);
+    }
+    
+    .selector-group select:focus {
+      outline: 2px solid var(--vscode-focusBorder);
+      outline-offset: -2px;
     }
     
     /* Token usage meter */
@@ -897,7 +1131,7 @@ export class AgentTabManager {
   </style>
 </head>
 <body>
-  <!-- Context bar with workspace and token usage -->
+  <!-- Context bar with workspace, provider/model selectors, and token usage -->
   <div class="context-bar">
     <div class="context-left">
       <div class="context-item">
@@ -909,6 +1143,24 @@ export class AgentTabManager {
         <span id="currentFile">None</span>
       </div>
     </div>
+    
+    <!-- Provider and Model Selectors -->
+    <div class="provider-model-group">
+      <div class="selector-group">
+        <label for="providerSelect">Provider:</label>
+        <select id="providerSelect" onchange="onProviderChange()">
+          <option value="ollama" ${currentProvider === 'ollama' ? 'selected' : ''}>Ollama (Local + Cloud)</option>
+          <option value="deepseek" ${currentProvider === 'deepseek' ? 'selected' : ''}>DeepSeek Direct (Cloud)</option>
+        </select>
+      </div>
+      <div class="selector-group">
+        <label for="modelSelect">Model:</label>
+        <select id="modelSelect" onchange="onModelChange()" style="min-width: 200px;">
+          <option value="${currentModel}" selected>${currentModel}</option>
+        </select>
+      </div>
+    </div>
+    
     <div class="token-meter">
       <span style="color: var(--vscode-descriptionForeground); font-size: 0.8em;">Context:</span>
       <div class="token-bar">
@@ -960,11 +1212,18 @@ export class AgentTabManager {
     const tokenFill = document.getElementById('tokenFill');
     const tokenText = document.getElementById('tokenText');
     const currentFileEl = document.getElementById('currentFile');
+    const providerSelect = document.getElementById('providerSelect');
+    const modelSelect = document.getElementById('modelSelect');
     
     // Track current streaming element
     let streamingElement = null;
     let thinkingEl = null;
     let isProcessing = false;
+    
+    // Fetch models on load
+    window.addEventListener('load', () => {
+      vscode.postMessage({ type: 'fetch_models' });
+    });
     
     // Send message on button click
     actionBtn.addEventListener('click', () => {
@@ -996,6 +1255,18 @@ export class AgentTabManager {
       thinkingEl = null;
       setProcessingState(false);
     });
+    
+    // Provider change handler
+    function onProviderChange() {
+      const provider = providerSelect.value;
+      vscode.postMessage({ type: 'change_provider', provider: provider });
+    }
+    
+    // Model change handler
+    function onModelChange() {
+      const model = modelSelect.value;
+      vscode.postMessage({ type: 'change_model', model: model });
+    }
     
     // Handle messages from extension - all events append to timeline in order
     window.addEventListener('message', (event) => {
@@ -1051,10 +1322,50 @@ export class AgentTabManager {
           setProcessingState(false);
           appendStoppedMessage();
           break;
+          
+        case 'provider_changed':
+          // Update provider dropdown
+          providerSelect.value = message.provider;
+          // Fetch models for new provider
+          vscode.postMessage({ type: 'fetch_models' });
+          break;
+          
+        case 'model_changed':
+          // Update model dropdown
+          modelSelect.value = message.model;
+          break;
+          
+        case 'models_list':
+          // Populate model dropdown
+          populateModelDropdown(message.models, message.currentModel, message.currentProvider);
+          break;
       }
       
       scrollToBottom();
     });
+    
+    function populateModelDropdown(models, currentModel, currentProvider) {
+      modelSelect.innerHTML = '';
+      
+      if (models && models.length > 0) {
+        models.forEach(model => {
+          const option = document.createElement('option');
+          option.value = model;
+          option.textContent = model;
+          if (model === currentModel) {
+            option.selected = true;
+          }
+          modelSelect.appendChild(option);
+        });
+      } else {
+        // Show current model even if fetch failed
+        const option = document.createElement('option');
+        option.value = currentModel;
+        option.textContent = currentModel;
+        option.selected = true;
+        modelSelect.appendChild(option);
+      }
+    }
     
     function appendUserMessage(content) {
       const div = document.createElement('div');

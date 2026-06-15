@@ -16,6 +16,8 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { exec } from 'child_process';
+import * as fs from 'fs';
 
 /**
  * Managed terminal instance
@@ -145,30 +147,143 @@ export class TerminalManager {
     }
 
     /**
-     * Capture terminal output for a specified duration
-     * Note: This is a simplified implementation - VS Code doesn't provide direct terminal output access
-     * For proper implementation, would need to use child_process with output capture
+     * Capture terminal output for a specified duration by executing the command via child_process
+     * This allows us to capture stdout/stderr for build commands
      */
     private async captureTerminalOutput(terminal: vscode.Terminal, timeoutMs: number): Promise<string> {
-        // VS Code terminal API doesn't provide direct output capture
-        // This is a placeholder - in practice, build commands should use run_build tool
-        // or we'd need to implement a different approach (e.g., redirect to file)
-        await new Promise(resolve => setTimeout(resolve, timeoutMs));
-        return 'Output capture not available - use run_build for build verification';
+        // Get the command from the terminal's managed config
+        let managedTerminal: ManagedTerminal | undefined;
+        for (const [name, mt] of this.terminals.entries()) {
+            if (mt.terminal === terminal) {
+                managedTerminal = mt;
+                break;
+            }
+        }
+        
+        if (!managedTerminal) {
+            await new Promise(resolve => setTimeout(resolve, timeoutMs));
+            return 'Terminal output capture not available';
+        }
+        
+        const { command, workingDir } = managedTerminal;
+        
+        return new Promise<string>((resolve) => {
+            this.log(`Executing command via child_process for output capture: ${command}`);
+            
+            // Execute command and capture output
+            const child = exec(command, {
+                cwd: workingDir,
+                maxBuffer: 1024 * 1024, // 1MB buffer
+                shell: process.platform === 'win32' ? 'powershell.exe' : '/bin/bash'
+            });
+            
+            let stdout = '';
+            let stderr = '';
+            let timedOut = false;
+            
+            // Set timeout
+            const timeout = setTimeout(() => {
+                timedOut = true;
+                child.kill('SIGTERM');
+                this.log(`Command timed out after ${timeoutMs}ms`);
+            }, timeoutMs);
+            
+            child.stdout?.on('data', (data: Buffer) => {
+                stdout += data.toString();
+            });
+            
+            child.stderr?.on('data', (data: Buffer) => {
+                stderr += data.toString();
+            });
+            
+            child.on('close', (code) => {
+                clearTimeout(timeout);
+                if (!timedOut) {
+                    this.log(`Command completed with exit code: ${code}`);
+                    resolve(stdout + stderr);
+                }
+            });
+            
+            child.on('error', (err) => {
+                clearTimeout(timeout);
+                this.log(`Command execution error: ${err.message}`);
+                resolve(`Error executing command: ${err.message}`);
+            });
+        });
     }
 
     /**
-     * Extract build errors from output
+     * Extract build errors from output with specific file paths and error messages
+     * This helps the LLM understand exactly which files need to be fixed
      */
     private extractBuildErrors(output: string): string {
-        const errorLines = output.split('\n')
-            .filter(line => 
-                line.toLowerCase().includes('error') ||
-                line.toLowerCase().includes('failed') ||
-                line.includes('^')
-            )
-            .slice(0, 10);
-        return errorLines.join('\n') || output.slice(-500);
+        const lines = output.split('\n');
+        const errors: string[] = [];
+        const seenErrors = new Set<string>(); // Deduplicate errors
+        
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            let errorText: string | null = null;
+            
+            // Kotlin compilation errors: "e: file:///path:line:col error message"
+            if (line.startsWith('e: file:///') || line.startsWith('e: /')) {
+                const cleanError = line.replace(/^e: file:\/\//, '').replace(/^e: /, '');
+                if (!seenErrors.has(cleanError)) {
+                    errors.push(cleanError);
+                    seenErrors.add(cleanError);
+                }
+            }
+            // Java compilation errors: "path/to/File.java:line: error: message"
+            else if (/^[^:]+:\d+:\s*error:/i.test(line)) {
+                const cleanError = line.trim();
+                if (!seenErrors.has(cleanError)) {
+                    errors.push(cleanError);
+                    seenErrors.add(cleanError);
+                }
+            }
+            // Gradle task failures with file info
+            else if (line.includes('FAILED') && (line.includes('.kt') || line.includes('.java'))) {
+                const cleanError = line.trim();
+                if (!seenErrors.has(cleanError)) {
+                    errors.push(cleanError);
+                    seenErrors.add(cleanError);
+                }
+            }
+            // Common error patterns
+            else if (
+                line.includes('Unresolved reference') ||
+                line.includes('is not abstract') ||
+                line.includes('must implement') ||
+                line.includes('cannot find symbol') ||
+                line.includes('package does not exist') ||
+                line.includes('incompatible types') ||
+                line.includes('cannot resolve')
+            ) {
+                const cleanError = line.trim();
+                if (!seenErrors.has(cleanError)) {
+                    errors.push(cleanError);
+                    seenErrors.add(cleanError);
+                }
+            }
+            // Look at next line after "FAILED" for error details
+            else if (line.includes('FAILED') && i + 1 < lines.length) {
+                const nextLine = lines[i + 1].trim();
+                if (nextLine && !nextLine.startsWith('>') && nextLine.length > 10) {
+                    if (!seenErrors.has(nextLine)) {
+                        errors.push(nextLine);
+                        seenErrors.add(nextLine);
+                    }
+                }
+            }
+        }
+        
+        // If no structured errors found, return last 500 chars of output
+        if (errors.length === 0) {
+            return output.slice(-500);
+        }
+        
+        // Return first 15 unique errors, deduplicated
+        return errors.slice(0, 15).join('\n');
     }
 
     /**

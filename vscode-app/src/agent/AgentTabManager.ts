@@ -385,11 +385,14 @@ export class AgentTabManager {
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || 'No workspace';
     const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name || 'Unknown';
     
-    // Escape workspace name for HTML
+    // Escape workspace name for HTML (Node.js safe - no document)
     const escapeHtmlStr = (text: string) => {
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
+      return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
     };
     
     return `<!DOCTYPE html>

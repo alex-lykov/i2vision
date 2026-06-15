@@ -1259,10 +1259,27 @@ export class AgentBridge {
         );
 
         if (isPlanOnly) {
-          this.log(`[Iter ${iteration}] Plan detected - discarding: "${trimmedResponse.substring(0, 80)}..."`);
+          this.log(`[Iter ${iteration}] Plan detected - pushing explicit tool call`);
+          // Find the last build error result to extract file names
+          const lastBuildError = messages
+            .filter(m => m.role === 'tool' && typeof m.content === 'string' && m.content.includes('BUILD FAILED'))
+            .pop();
+          
+          let nudgeMessage = `STOP describing plans. Use the tool calling API NOW.`;
+          
+          if (lastBuildError) {
+            const content = lastBuildError.content as string;
+            const fileMatch = content.match(/FILES TO READ AND FIX:[\s\S]*?(?:COMPILER ERRORS|$)/);
+            if (fileMatch) {
+              nudgeMessage += `\n\nThe build failed. Read these files:\n${fileMatch[0]}\n\nCall read_file on each path shown above. Then propose fixes.`;
+            } else {
+              nudgeMessage += `\n\nThe build failed with compilation errors. Read the failing source files and fix them.`;
+            }
+          }
+          
           messages.push({
             role: 'user',
-            content: 'That is just a plan. You MUST call tools to complete the task. Do NOT respond with another plan - actually call the tools now.'
+            content: nudgeMessage
           });
           continue;
         }
@@ -2277,105 +2294,12 @@ Please try a DIFFERENT approach:
       prompt = prompt.replace(new RegExp(`\\$\\{${key}\\}`, 'g'), value);
     }
     
-    // Append strong formatting instructions with examples
-    prompt += '\n\n--- OUTPUT FORMAT (STRICT) ---';
-    prompt += '\nYou MUST use this exact format:';
-    prompt += '\n\nExample 1 (with tool):';
-    prompt += '\nreasoning: I need to read the file to understand its contents.';
-    prompt += '\ntool_call: {"tool":"read_file","args":{"path":"vscode-app/src/extension.ts"\}\}';
-    prompt += '\nEOS';
-    prompt += '\n\nExample 2 (final answer, no tools):';
-    prompt += '\nreasoning: I have all the information needed to answer.';
-    prompt += '\nThe main entry point is in extension.ts line 45.';
-    prompt += '\nEOS';
-    prompt += '\n\n--- CRITICAL RULE ---';
-    prompt += '\nNever describe what you will do. Either call a tool immediately or provide the final answer.';
-    prompt += '\nNever output "I will call..." or "Let me..." — just act.';
-    prompt += '\n\n--- AVAILABLE TOOLS (KNOW YOUR CAPABILITIES) ---';
-    prompt += '\nYou have access to these tools. When asked "what tools do you have?" or "what can you do?", list them:';
-    prompt += '\n• list_directory — List files in a directory';
-    prompt += '\n• read_file — Read contents of a file';
-    prompt += '\n• write_file — Write content to a file';
-    prompt += '\n• search_files — Search for files matching a pattern';
-    prompt += '\n• get_file_context — Get context for a file (classes, functions, imports)';
-    prompt += '\n• git_status — Show working tree status (modified, staged, untracked)';
-    prompt += '\n• git_diff — Show changes between commits or working tree';
-    prompt += '\n• git_log — Show commit history';
-    prompt += '\n• git_branch — List branches or show current branch';
-    prompt += '\n• git_commit — Stage and commit changes';
-    prompt += '\n• run_build — Run build commands (Gradle, npm, Maven)';
-    prompt += '\n• run_terminal — Run shell commands (short commands return output, servers run in persistent terminals)';
-    prompt += '\n• kill_terminal — Stop a running terminal by name';
-    prompt += '\n• list_terminals — List all managed terminals';
-    prompt += '\n\n--- TOOL RESULT INTERPRETATION (CRITICAL) ---';
-    prompt += '\nWhen you receive a tool result:';
-    prompt += '\n1. "This directory is empty. No files found." → Tell the user the directory exists but is empty, then STOP';
-    prompt += '\n2. "No files found matching pattern" → Tell the user no matches exist, then STOP';
-    prompt += '\n3. "DIRECTORY_NOT_FOUND" → DO NOT RETRY. Tell user folder doesn\'t exist, offer alternatives, then STOP';
-    prompt += '\n4. List of file paths → Report the files found to the user';
-    prompt += '\n\n--- DIRECTORY_NOT_FOUND HANDLING (CRITICAL) ---';
-    prompt += '\nWhen list_directory returns DIRECTORY_NOT_FOUND:';
-    prompt += '\n1. DO NOT call list_directory again with the same or different path';
-    prompt += '\n2. DO NOT try root "/", ".", or workspace root';
-    prompt += '\n3. Tell the user: "The folder [path] doesn\'t exist. Available folders: [list]. Would you like me to check one of those?"';
-    prompt += '\n4. Then STOP and wait for user response';
-    prompt += '\n\nExample response:';
-    prompt += '\n"❌ The folder \'core/ui/src\' doesn\'t exist in this project.';
-    prompt += '\nAvailable top-level folders: conf-agent-core, discovery-api, vscode-app, vslfc-core.';
-    prompt += '\nWould you like me to check one of these instead?"';
-    prompt += '\n\n--- ERROR HANDLING ---';
-    prompt += '\nFor other errors:';
-    prompt += '\n- DO NOT retry the same tool call more than once';
-    prompt += '\n- NEVER try more than 2 different approaches for the same task';
-    prompt += '\n- If stuck, report to user and ask for clarification';
-    prompt += '\n\n--- TERMINAL MANAGEMENT ---';
-    prompt += '\nThe run_terminal tool handles both short commands and long-running servers:';
-    prompt += '\n• Short commands (git, ls, npm test): Run immediately, return output in 30s';
-    prompt += '\n• Long-running servers (npm run dev, gradlew run): Start in persistent terminal with auto-restart on file changes';
-    prompt += '\n• Use kill_terminal to stop a running server';
-    prompt += '\n• Use list_terminals to see all running terminals';
-    prompt += '\n\n--- BLOCKED COMMANDS ---';
-    prompt += '\nThese dangerous commands are BLOCKED and will be rejected:';
-    prompt += '\n- rm -rf /, del /F /S /Q C:\\*, format, mkfs, dd if=/dev/zero';
-    prompt += '\nAll other commands are allowed, including server start commands.';
-    prompt += '\n\n--- SERVER COMMANDS ---';
-    prompt += '\nTo start development servers, use run_terminal with the full command:';
-    prompt += '\n- ./gradlew :app:server:run';
-    prompt += '\n- ./gradlew run';
-    prompt += '\n- npm run dev, npm start';
-    prompt += '\n- yarn dev, yarn start';
-    prompt += '\nThe system automatically detects long-running servers and runs them in persistent terminals with auto-restart on file changes.';
-    prompt += '\nYou do NOT need to report the command to the user - just call run_terminal and the system handles it.';
-    prompt += '\n\n--- STARTING SERVERS (ACTION, NOT PLANS) ---';
-    prompt += '\nWhen asked to "run", "start", or "launch" a server:';
-    prompt += '\n1. Find the server module (look for app/server, server, or similar)';
-    prompt += '\n2. IMMEDIATELY call run_terminal with the gradle command';
-    prompt += '\n3. DO NOT say "I will" or "Let me" - just CALL THE TOOL';
-    prompt += '\n4. For Gradle projects: use "./gradlew :module:run" or "gradlew.bat :module:run"';
-    prompt += '\n5. Example: run_terminal({ command: "gradlew.bat :app:server:run" })';
-    prompt += '\n\nCRITICAL: After finding the server location, call run_terminal in the NEXT iteration.';
-    prompt += '\nDo NOT output text describing your plan - that wastes an iteration.';
-    prompt += '\n\n--- BUILD COMMANDS ---';
-    prompt += '\nBuild commands (gradlew, mvn, npm run build) are monitored for failures.';
-    prompt += '\nIf a build fails, you will receive the error output.';
-    prompt += '\n\n--- WHEN BUILD FAILS (CRITICAL) ---';
-    prompt += '\nWhen you see "❌ BUILD FAILED":';
-    prompt += '\n1. STOP - do NOT re-run the same build command';
-    prompt += '\n2. READ the error output carefully - it tells you which files have errors';
-    prompt += '\n3. CALL read_file on each failing file mentioned in the error';
-    prompt += '\n4. UNDERSTAND the error (missing import? typo? wrong API?)';
-    prompt += '\n5. PROPOSE a fix using write_file or edit_file';
-    prompt += '\n6. ONLY THEN re-run the build to verify';
-    prompt += '\n\n⚠️ NEVER: Run the same build command multiple times without fixing code first.';
-    prompt += '\n⚠️ NEVER: Try different flags (--stacktrace, --info) - they won\'t fix compilation errors.';
-    prompt += '\n\nExample error flow:';
-    prompt += '\n- Error: "Unresolved reference: clear_" in InMemoryConductorRepository.kt';
-    prompt += '\n- Action: read_file("core/.../InMemoryConductorRepository.kt")';
-    prompt += '\n- Fix: Add the missing clear_() method or import';
-    prompt += '\n- Verify: Re-run build';
-    prompt += '\n\n--- PATH HANDLING ---';
-    prompt += '\n- Always use forward slashes (/) for paths';
-    prompt += '\n- Paths are relative to workspace root';
+    // Append concise tool-calling instructions
+    prompt += '\n\n--- RULES ---';
+    prompt += '\n• ALWAYS use tool calls to take action. Never describe plans.';
+    prompt += '\n• When build fails: READ the failing files, FIX the code, THEN re-run build.';
+    prompt += '\n• NEVER re-run build without fixing code first.';
+    prompt += '\n• Paths: relative to workspace root, use forward slashes (/).';
     
     return prompt;
   }

@@ -581,6 +581,10 @@ export class AgentBridge {
           if (chunk.toolCalls) {
             streamingToolCalls = chunk.toolCalls;
           }
+          if (chunk.tokenUsage) {
+            // Store token usage for final 'done' chunk
+            (this as any)._lastTokenUsage = chunk.tokenUsage;
+          }
           if (chunk.done) {
             break;
           }
@@ -680,7 +684,8 @@ export class AgentBridge {
             outcome: 'success',
             timestamp: Date.now(),
             iterations: iteration,
-            durationMs: Date.now() - (messages[0] as any)._startTime || 0
+            durationMs: Date.now() - (messages[0] as any)._startTime || 0,
+            tokenUsage: (this as any)._lastTokenUsage
           };
         } else if (options.onProgress) {
           options.onProgress({

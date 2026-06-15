@@ -83,6 +83,11 @@ export interface LLMChunk {
   text: string;
   done: boolean;
   toolCalls?: LLMToolCall[];
+  tokenUsage?: {
+    prompt: number;
+    completion: number;
+    total: number;
+  };
 }
 
 /**
@@ -512,13 +517,24 @@ export class CLI {
       const decoder = new TextDecoder('utf-8');
       let buffer = '';
       const toolCalls: LLMToolCall[] = [];
+      let promptTokens = 0;
+      let completionTokens = 0;
 
       while (true) {
         const { done, value } = await reader.read();
         
         if (done) {
           this.log(`Stream complete (${Date.now() - startTime}ms)`);
-          yield { text: '', done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
+          const finalChunk: LLMChunk = { text: '', done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
+          // Include token usage if available
+          if (promptTokens > 0 || completionTokens > 0) {
+            (finalChunk as any).tokenUsage = {
+              prompt: promptTokens,
+              completion: completionTokens,
+              total: promptTokens + completionTokens
+            };
+          }
+          yield finalChunk;
           break;
         }
 
@@ -536,9 +552,15 @@ export class CLI {
             const delta = chunk.message?.content || '';
             
             if (delta) {
-              // Log raw chunk for debugging
-              // this.log(`[Chunk] "${delta.substring(0, 50)}${delta.length > 50 ? '...' : ''}"`);
               yield { text: delta, done: false };
+            }
+
+            // Track token usage from final chunk (Ollama includes this in the last chunk)
+            if (chunk.prompt_eval_count) {
+              promptTokens = chunk.prompt_eval_count;
+            }
+            if (chunk.eval_count) {
+              completionTokens = chunk.eval_count;
             }
 
             if (chunk.message?.tool_calls) {
@@ -582,13 +604,24 @@ export class CLI {
       const decoder = new TextDecoder('utf-8');
       let buffer = '';
       const toolCalls: LLMToolCall[] = [];
+      let promptTokens = 0;
+      let completionTokens = 0;
 
       while (true) {
         const { done, value } = await reader.read();
         
         if (done) {
           this.log(`Stream complete (${Date.now() - startTime}ms)`);
-          yield { text: '', done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
+          const finalChunk: LLMChunk = { text: '', done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
+          // Include token usage from usage data if available
+          if (promptTokens > 0 || completionTokens > 0) {
+            (finalChunk as any).tokenUsage = {
+              prompt: promptTokens,
+              completion: completionTokens,
+              total: promptTokens + completionTokens
+            };
+          }
+          yield finalChunk;
           break;
         }
 
@@ -609,9 +642,15 @@ export class CLI {
             const delta = choice?.delta?.content || '';
             
             if (delta) {
-              // Log raw chunk for debugging
-              this.log(`[Chunk] "${delta.substring(0, 50)}${delta.length > 50 ? '...' : ''}"`);
               yield { text: delta, done: false };
+            }
+
+            // Track token usage from final chunk (DeepSeek includes this in the last chunk)
+            if (chunk.usage?.prompt_tokens) {
+              promptTokens = chunk.usage.prompt_tokens;
+            }
+            if (chunk.usage?.completion_tokens) {
+              completionTokens = chunk.usage.completion_tokens;
             }
 
             if (choice?.delta?.tool_calls) {

@@ -11,6 +11,7 @@ import * as fs from 'fs';
 import { AgentBridge, AgentChunk, ToolCall, AgentConfig } from './AgentBridge';
 import { LocalAgentProvider } from './LocalAgentProvider';
 import { LocalI2VisionAgent, VslfcLayer, getLayerName } from './LocalI2VisionAgent';
+import { ConversationHistoryManager, ChatMessage } from './ConversationHistoryManager';
 
 /**
  * Tab state for tracking agent session
@@ -27,22 +28,13 @@ interface AgentTabState {
 }
 
 /**
- * Chat message in tab history
- */
-interface ChatMessage {
-  role: 'user' | 'assistant';
-  content: string;
-  toolCalls?: ToolCall[];
-  timestamp: number;
-}
-
-/**
  * Manages agent tabs and their UI state
  */
 export class AgentTabManager {
   private context: vscode.ExtensionContext;
   private outputChannel: vscode.OutputChannel;
   private agentProvider: LocalAgentProvider;
+  private historyManager: ConversationHistoryManager | null = null;
   private tabs: Map<string, AgentTabState> = new Map();
   private activeTabId: string | null = null;
   private webviewPanel: vscode.WebviewPanel | null = null;
@@ -58,6 +50,11 @@ export class AgentTabManager {
     this.context = context;
     this.outputChannel = outputChannel;
     this.agentProvider = agentProvider;
+    
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+    if (workspaceRoot) {
+      this.historyManager = new ConversationHistoryManager(workspaceRoot);
+    }
     
     this.log('AgentTabManager initialized');
   }
@@ -83,12 +80,12 @@ export class AgentTabManager {
   /**
    * Create a new agent tab for a specific layer
    */
-  async createTab(layer: string): Promise<string> {
+  async createTab(layer: string, conversationId?: string): Promise<string> {
     this.log(`Creating ${layer} agent tab...`);
     
     const layerEnum = layer.toUpperCase() as VslfcLayer;
     const agent = await this.agentProvider.createAgent(layerEnum);
-    const tabId = `tab-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
+    const tabId = conversationId || `tab-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
     
     const tabState: AgentTabState = {
       tabId,
@@ -120,7 +117,51 @@ export class AgentTabManager {
     this.log(`   Provider: ${config.model.provider}, Model: ${config.model.id}`);
     
     this.showWebview();
+    
+    // Load existing conversation if resuming
+    if (conversationId && this.historyManager) {
+      await this.loadConversation(tabId);
+    }
+    
     return tabId;
+  }
+
+  /**
+   * Load a saved conversation into the current tab
+   */
+  private async loadConversation(tabId: string): Promise<void> {
+    if (!this.historyManager) {
+      this.log('History manager not available');
+      return;
+    }
+    
+    const saved = await this.historyManager.load(tabId);
+    if (!saved) {
+      this.log(`No saved conversation found for ${tabId}`);
+      return;
+    }
+    
+    const tabState = this.tabs.get(tabId);
+    if (!tabState) {
+      this.log(`Tab ${tabId} not found for loading conversation`);
+      return;
+    }
+    
+    // Restore history
+    tabState.history = saved.messages;
+    tabState.lastActivityAt = saved.updatedAt;
+    
+    this.log(`Loaded conversation with ${saved.messages.length} messages`);
+    
+    // Send messages to webview for display
+    for (const msg of saved.messages) {
+      this.sendToWebview({
+        type: msg.role === 'user' ? 'user_message' : 'restored_message',
+        content: msg.content,
+        toolCalls: msg.toolCalls,
+        timestamp: msg.timestamp
+      });
+    }
   }
 
   /**
@@ -199,11 +240,12 @@ export class AgentTabManager {
     tabState.lastActivityAt = Date.now();
     
     // Add user message to history
-    tabState.history.push({
+    const userMessage: ChatMessage = {
       role: 'user',
       content: userInput,
       timestamp: Date.now()
-    });
+    };
+    tabState.history.push(userMessage);
     
     // Show user message in timeline
     this.sendToWebview({
@@ -312,12 +354,17 @@ export class AgentTabManager {
         const cleanedResponse = this.cleanResponseText(responseText);
         
         // Add assistant response to history
-        tabState.history.push({
+        const assistantMessage: ChatMessage = {
           role: 'assistant',
           content: cleanedResponse,
-          toolCalls: tabState.accumulatedToolCalls,
+          toolCalls: tabState.accumulatedToolCalls.map(tc => ({
+            toolName: tc.toolName,
+            args: tc.args,
+            result: tc.result
+          })),
           timestamp: Date.now()
-        });
+        };
+        tabState.history.push(assistantMessage);
         
         // Finalize streaming text in timeline
         const durationMs = Date.now() - startTime;
@@ -557,6 +604,16 @@ export class AgentTabManager {
       padding: 12px 15px;
       border-radius: 6px;
       white-space: pre-wrap;
+    }
+    
+    /* Restored message (from history) */
+    .message.restored {
+      background-color: var(--vscode-editorWidget-background);
+      border-left: 3px solid var(--vscode-descriptionForeground);
+      padding: 12px 15px;
+      border-radius: 6px;
+      white-space: pre-wrap;
+      opacity: 0.8;
     }
     
     /* Stopped message */
@@ -949,6 +1006,10 @@ export class AgentTabManager {
           appendUserMessage(message.content);
           break;
           
+        case 'restored_message':
+          appendRestoredMessage(message.content, message.toolCalls, message.timestamp);
+          break;
+          
         case 'thinking':
           showThinkingIndicator(message.message);
           break;
@@ -1000,6 +1061,38 @@ export class AgentTabManager {
       div.className = 'message user';
       div.textContent = content;
       timeline.appendChild(div);
+    }
+    
+    function appendRestoredMessage(content, toolCalls, timestamp) {
+      const div = document.createElement('div');
+      div.className = 'message restored';
+      div.textContent = content;
+      
+      // Add timestamp
+      const date = new Date(timestamp);
+      const timeStr = date.toLocaleTimeString();
+      div.title = 'Restored from history • ' + timeStr;
+      
+      timeline.appendChild(div);
+      
+      // Restore tool cards if present
+      if (toolCalls && toolCalls.length > 0) {
+        toolCalls.forEach(tc => {
+          const card = document.createElement('div');
+          card.className = 'tool-card done collapsed';
+          card.innerHTML = \`
+            <div class="tool-card-header" onclick="toggleToolCard('\${card.id}')">
+              <span class="tool-card-status">🔧</span>
+              <span>\${escapeHtml(tc.toolName)}</span>
+              <span class="toggle-icon">▶</span>
+            </div>
+            <div class="tool-card-content">
+              \${tc.result ? \`<div class="tool-card-label">Result</div><div class="tool-card-result">\${escapeHtml(tc.result.substring(0, 500))}\${tc.result.length > 500 ? '...' : ''}</div>\` : ''}
+            </div>
+          \`;
+          timeline.appendChild(card);
+        });
+      }
     }
     
     function showThinkingIndicator(message) {
@@ -1248,6 +1341,52 @@ export class AgentTabManager {
   }
 
   /**
+   * Close a tab and save its conversation history
+   */
+  async closeTab(tabId: string): Promise<void> {
+    const tab = this.tabs.get(tabId);
+    if (tab) {
+      // Save conversation history before closing
+      if (this.historyManager && tab.history.length > 0) {
+        await this.historyManager.save(tabId, tab.history, tab.layer);
+        this.log(`Saved conversation history for ${tabId} (${tab.history.length} messages)`);
+      }
+      
+      // Clean up agent
+      tab.agent.dispose();
+      this.tabs.delete(tabId);
+      
+      if (this.activeTabId === tabId) {
+        this.activeTabId = null;
+      }
+      
+      this.log(`Closed tab ${tabId}`);
+    }
+  }
+
+  /**
+   * Resume a saved conversation
+   */
+  async resumeConversation(conversationId: string): Promise<string> {
+    this.log(`Resuming conversation: ${conversationId}`);
+    
+    // Create new tab with the conversation ID
+    const tabId = await this.createTab('vision', conversationId);
+    
+    return tabId;
+  }
+
+  /**
+   * List all saved conversations
+   */
+  async listConversations(): Promise<string[]> {
+    if (!this.historyManager) {
+      return [];
+    }
+    return this.historyManager.list();
+  }
+
+  /**
    * Get all tabs
    */
   getAllTabs(): AgentTabState[] {
@@ -1257,7 +1396,7 @@ export class AgentTabManager {
   /**
    * Dispose of the manager
    */
-  dispose(): void {
+  async dispose(): Promise<void> {
     if (this.webviewPanel) {
       this.webviewPanel.dispose();
     }
@@ -1268,12 +1407,17 @@ export class AgentTabManager {
       this.currentAgentBridge = null;
     }
     
-    // Dispose all agents
-    for (const [tabId, tabState] of this.tabs.entries()) {
+    // Save and dispose all tabs
+    const savePromises = Array.from(this.tabs.entries()).map(async ([tabId, tabState]) => {
+      if (this.historyManager && tabState.history.length > 0) {
+        await this.historyManager.save(tabId, tabState.history, tabState.layer);
+      }
       tabState.agent.dispose();
-    }
+    });
     
     this.tabs.clear();
     this.log('AgentTabManager disposed');
+    
+    await Promise.all(savePromises);
   }
 }

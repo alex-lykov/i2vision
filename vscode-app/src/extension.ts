@@ -233,6 +233,34 @@ function registerCommands(context: vscode.ExtensionContext, workspaceRoot: strin
     });
     context.subscriptions.push(flowAgentCmd);
 
+    // Resume Conversation command
+    const resumeCmd = vscode.commands.registerCommand('i2vision.resumeConversation', async () => {
+        try {
+            const conversations = await agentManager.listConversations();
+            
+            if (conversations.length === 0) {
+                vscode.window.showInformationMessage('No saved conversations found.');
+                return;
+            }
+            
+            const selected = await vscode.window.showQuickPick(conversations, {
+                placeHolder: 'Select conversation to resume'
+            });
+            
+            if (!selected) {
+                return;
+            }
+            
+            const tabId = await agentManager.resumeConversation(selected);
+            vscode.window.showInformationMessage(`Resumed conversation: ${selected}`);
+            outputChannel.appendLine(`Resumed conversation: ${tabId}`);
+        } catch (error: any) {
+            vscode.window.showErrorMessage(`Failed to resume conversation: ${error.message}`);
+            outputChannel.appendLine(`Error resuming conversation: ${error.message}`);
+        }
+    });
+    context.subscriptions.push(resumeCmd);
+
     // === DEBUGGING COMMANDS ===
     
     // Register tool call debugging commands

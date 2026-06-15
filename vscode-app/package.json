@@ -172,6 +172,11 @@
                 "title": "Reload Agent Config",
                 "command": "i2vision.reloadAgentConfig",
                 "category": "i2-Vision Debug"
+            },
+            {
+                "command": "i2vision.resumeConversation",
+                "title": "Resume Conversation",
+                "category": "i2-Vision Agents"
             }
         ],
         "menus": {

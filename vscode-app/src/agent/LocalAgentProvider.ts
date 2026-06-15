@@ -23,6 +23,8 @@
  * - Merges configs (layer overrides defaults)
  * - Manages config caching and reloading
  * - Provides fallback if no config exists
+ * 
+ * CONTEXT MANAGEMENT: Supports context profiles defined in YAML config
  */
 
 import * as vscode from 'vscode';
@@ -30,7 +32,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as yaml from 'js-yaml';
 import { LocalI2VisionAgent, VslfcLayer } from './LocalI2VisionAgent';
-import { AgentConfig } from './AgentBridge';
+import { AgentConfig, ContextProfile, TaskContextProfile } from './AgentBridge';
 
 /**
  * LocalAgentProvider - Creates and manages LocalI2VisionAgent instances
@@ -235,6 +237,7 @@ export class LocalAgentProvider {
 
   /**
    * Merge two configs, with overrides taking precedence
+   * Updated to handle context management fields
    */
   private mergeConfigs(defaults: AgentConfig, overrides: AgentConfig): AgentConfig {
     const merged: any = { ...defaults };
@@ -266,6 +269,20 @@ export class LocalAgentProvider {
     if (overrides.streaming) merged.streaming = { ...defaults.streaming, ...overrides.streaming };
     if (overrides.mcp) merged.mcp = { ...defaults.mcp, ...overrides.mcp };
     
+    // ===== CONTEXT MANAGEMENT MERGE =====
+    if (overrides.context) {
+      merged.context = {
+        default: {
+          eager: { ...defaults.context?.default.eager, ...overrides.context.default.eager },
+          lazy: { ...defaults.context?.default.lazy, ...overrides.context.default.lazy }
+        },
+        tasks: { ...defaults.context?.tasks, ...overrides.context.tasks }
+      };
+    } else if (defaults.context) {
+      merged.context = defaults.context;
+    }
+    // ====================================
+    
     // Shallow merge for top-level fields
     return { ...merged, ...overrides };
   }
@@ -294,6 +311,7 @@ export class LocalAgentProvider {
 
   /**
    * Convert YAML config to AgentConfig
+   * Updated to handle context management fields
    */
   private convertYamlToAgentConfig(yamlConfig: any): AgentConfig {
     const config: AgentConfig = {
@@ -424,10 +442,68 @@ export class LocalAgentProvider {
         directCliEnabled: yamlConfig.mcp?.directCliEnabled ?? false,
         allowedToolPrefixes: yamlConfig.mcp?.allowedToolPrefixes || [],
         strictToolNamePolicy: yamlConfig.mcp?.strictToolNamePolicy ?? true
-      }
+      },
+
+      // ===== CONTEXT MANAGEMENT (NEW) =====
+      context: yamlConfig.context ? this.parseContextConfig(yamlConfig.context) : undefined
     };
     
     return config;
+  }
+
+  /**
+   * Parse context configuration from YAML
+   */
+  private parseContextConfig(yamlContext: any): { default: ContextProfile; tasks?: Record<string, TaskContextProfile> } {
+    const context: { default: ContextProfile; tasks?: Record<string, TaskContextProfile> } = {
+      default: {
+        eager: {
+          currentFile: yamlContext.default?.eager?.currentFile ?? false,
+          projectMetadata: yamlContext.default?.eager?.projectMetadata ?? false,
+          gitStatus: yamlContext.default?.eager?.gitStatus ?? false,
+          gitDiff: yamlContext.default?.eager?.gitDiff ?? false,
+          relatedFiles: yamlContext.default?.eager?.relatedFiles ?? false,
+          directoryStructure: yamlContext.default?.eager?.directoryStructure ?? false
+        },
+        lazy: {
+          discovery: yamlContext.default?.lazy?.discovery ?? true,
+          fullContext: yamlContext.default?.lazy?.fullContext ?? true,
+          contractValidation: yamlContext.default?.lazy?.contractValidation ?? true
+        }
+      }
+    };
+
+    // Parse task-specific overrides
+    if (yamlContext.tasks) {
+      context.tasks = {};
+      for (const [taskName, taskConfig] of Object.entries(yamlContext.tasks)) {
+        const task: TaskContextProfile = {};
+        const taskData = taskConfig as any;
+        
+        if (taskData.eager) {
+          task.eager = {
+            currentFile: taskData.eager.currentFile,
+            projectMetadata: taskData.eager.projectMetadata,
+            gitStatus: taskData.eager.gitStatus,
+            gitDiff: taskData.eager.gitDiff,
+            relatedFiles: taskData.eager.relatedFiles,
+            directoryStructure: taskData.eager.directoryStructure
+          };
+        }
+        
+        if (taskData.lazy) {
+          task.lazy = {
+            discovery: taskData.lazy.discovery,
+            fullContext: taskData.lazy.fullContext,
+            contractValidation: taskData.lazy.contractValidation
+          };
+        }
+        
+        context.tasks[taskName] = task;
+      }
+    }
+
+    return context;
   }
 
   /**
@@ -532,13 +608,16 @@ export class LocalAgentProvider {
         directCliEnabled: false,
         allowedToolPrefixes: [],
         strictToolNamePolicy: true
-      }
+      },
+      // Context management disabled by default - enable in YAML config
+      context: undefined
     };
   }
 
   /**
    * Save configuration to YAML file
    * Used for auto-creation and manual updates
+   * Updated to include context management fields
    */
   private async saveConfig(layerName: string, config: AgentConfig): Promise<void> {
     const configPath = path.join(this.visionAiDir, `${layerName}-agent.yaml`);
@@ -567,6 +646,17 @@ export class LocalAgentProvider {
       streaming: { ...config.streaming },
       mcp: { ...config.mcp }
     };
+
+    // Add context management if configured
+    if (config.context) {
+      yamlConfig.context = {
+        default: {
+          eager: config.context.default.eager,
+          lazy: config.context.default.lazy
+        },
+        tasks: config.context.tasks
+      };
+    }
     
     const yamlContent = yaml.dump(yamlConfig, {
       indent: 2,

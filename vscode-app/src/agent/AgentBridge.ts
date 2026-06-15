@@ -4,6 +4,9 @@
  * Wraps agent core functionality and provides a clean API for AgentTabManager
  * to interact with configured agents. Implements modern agentic loop with
  * reflection - LLM sees tool results and decides if more tools are needed.
+ * 
+ * CONTEXT MANAGEMENT: Supports configurable context profiles (eager/lazy loading)
+ * defined in YAML config. Task-aware context loading optimizes performance.
  */
 
 import * as vscode from 'vscode';
@@ -12,7 +15,58 @@ import * as path from 'path';
 import { CLI, LLMResponse, LLMTool, LLMMessage, LLMToolCall, LLMChunk } from '../cliIntegration';
 
 /**
+ * Context profile - defines what context to load eagerly vs lazily
+ */
+export interface ContextProfile {
+  // What to load eagerly (before agent starts)
+  eager: {
+    currentFile?: boolean;
+    projectMetadata?: boolean;
+    gitStatus?: boolean;
+    gitDiff?: boolean;
+    relatedFiles?: boolean;
+    directoryStructure?: boolean;
+  };
+  // What the agent can request via tools (lazy)
+  lazy: {
+    discovery?: boolean;
+    fullContext?: boolean;
+    contractValidation?: boolean;
+  };
+}
+
+/**
+ * Task-specific context overrides
+ */
+export interface TaskContextProfile {
+  eager?: Partial<ContextProfile['eager']>;
+  lazy?: Partial<ContextProfile['lazy']>;
+}
+
+/**
+ * Loaded context data passed to agent
+ */
+export interface VslfcContext {
+  layer: string;
+  currentFile?: {
+    path: string;
+    symbols: string;
+    relatedFiles?: string[];
+  };
+  project?: {
+    moduleCount: number;
+    architecturePattern?: string;
+    directoryStructure?: string;
+  };
+  git?: {
+    status?: string;
+    diff?: string;
+  };
+}
+
+/**
  * Agent configuration interface (matches YAML structure)
+ * Extended with context management settings
  */
 export interface AgentConfig {
   key: string;
@@ -142,6 +196,12 @@ export interface AgentConfig {
     directCliEnabled: boolean;
     allowedToolPrefixes: string[];
     strictToolNamePolicy: boolean;
+  };
+
+  // ===== CONTEXT MANAGEMENT (NEW) =====
+  context?: {
+    default: ContextProfile;
+    tasks?: Record<string, TaskContextProfile>;
   };
 }
 
@@ -327,6 +387,440 @@ export class AgentBridge {
       this.outputChannel.appendLine(formatted);
     }
     console.log(formatted);
+  }
+
+  /**
+   * Detect task type from user input for context profile selection
+   */
+  private detectTaskType(userInput: string): string {
+    const input = userInput.toLowerCase();
+    
+    // Refactor tasks
+    if (/\b(refactor|rename|extract|move|restructure|reorganize)\b/i.test(input)) {
+      return 'refactor';
+    }
+    
+    // Debug tasks
+    if (/\b(debug|fix|bug|error|crash|fail|exception|issue|problem|broken)\b/i.test(input)) {
+      return 'debug';
+    }
+    
+    // Explore/explain tasks
+    if (/\b(explain|what|how|explore|find|show|describe|understand|overview)\b/i.test(input)) {
+      return 'explore';
+    }
+    
+    // Write/create tasks
+    if (/\b(write|create|add|implement|build|generate|new)\b/i.test(input)) {
+      return 'create';
+    }
+    
+    // Test tasks
+    if (/\b(test|spec|unit|integration|coverage)\b/i.test(input)) {
+      return 'test';
+    }
+    
+    return 'default';
+  }
+
+  /**
+   * Load eager context based on profile
+   */
+  private async loadEagerContext(
+    profile: ContextProfile,
+    currentFile?: string
+  ): Promise<VslfcContext> {
+    const context: VslfcContext = {
+      layer: this.config.agentType
+    };
+
+    // Load current file context
+    if (profile.eager.currentFile && currentFile) {
+      try {
+        const fileContext = await this.cli.getContext(currentFile);
+        if (fileContext) {
+          context.currentFile = {
+            path: currentFile,
+            symbols: JSON.stringify({
+              name: fileContext.name,
+              language: fileContext.language,
+              classes: fileContext.classes,
+              functions: fileContext.functions,
+              imports: fileContext.imports,
+              component: fileContext.component,
+              layer: fileContext.layer
+            }, null, 2),
+            relatedFiles: []
+          };
+
+          // Load related files if requested (using imports as related files)
+          if (profile.eager.relatedFiles && fileContext.imports && fileContext.imports.length > 0) {
+            const relatedContext: string[] = [];
+            // Limit to first 5 imports to avoid excessive loading
+            for (const importPath of fileContext.imports.slice(0, 5)) {
+              try {
+                // Try to resolve import path to actual file
+                const resolvedPath = this.resolveImportPath(importPath, currentFile);
+                if (resolvedPath) {
+                  const relatedSymbols = await this.cli.getContext(resolvedPath);
+                  if (relatedSymbols) {
+                    relatedContext.push(`${resolvedPath}:\n${JSON.stringify({
+                      name: relatedSymbols.name,
+                      classes: relatedSymbols.classes,
+                      functions: relatedSymbols.functions
+                    }, null, 2)}`);
+                  }
+                }
+              } catch (e: any) {
+                this.log(`Warning: Could not load related file from import ${importPath}: ${e.message}`);
+              }
+            }
+            context.currentFile.relatedFiles = relatedContext;
+          }
+        }
+      } catch (e: any) {
+        this.log(`Warning: Could not load file context for ${currentFile}: ${e.message}`);
+      }
+    }
+
+    // Load project metadata
+    if (profile.eager.projectMetadata) {
+      try {
+        const modules = await this.cli.listDirectories(this.workspaceRoot);
+        context.project = {
+          moduleCount: modules.length,
+          architecturePattern: modules.length > 1 ? 'multi-module' : 'single-module',
+          directoryStructure: modules.slice(0, 20).join('\n') // Limit to 20 modules
+        };
+      } catch (e: any) {
+        this.log(`Warning: Could not load project metadata: ${e.message}`);
+      }
+    }
+
+    // Load directory structure
+    if (profile.eager.directoryStructure) {
+      try {
+        const files = await this.cli.listFiles(this.workspaceRoot, false);
+        if (context.project) {
+          context.project.directoryStructure = files.slice(0, 50).join('\n'); // Limit to 50 items
+        } else {
+          context.project = {
+            moduleCount: 0,
+            directoryStructure: files.slice(0, 50).join('\n')
+          };
+        }
+      } catch (e: any) {
+        this.log(`Warning: Could not load directory structure: ${e.message}`);
+      }
+    }
+
+    // Load git status
+    if (profile.eager.gitStatus) {
+      try {
+        const gitResult = await this.cli.runCommand('git status --porcelain');
+        if (gitResult.stdout.trim()) {
+          context.git = {
+            status: this.formatGitStatus(gitResult.stdout)
+          };
+        }
+      } catch (e: any) {
+        this.log(`Warning: Could not load git status: ${e.message}`);
+      }
+    }
+
+    // Load git diff
+    if (profile.eager.gitDiff) {
+      try {
+        const diffResult = await this.cli.runCommand('git diff HEAD');
+        if (diffResult.stdout.trim()) {
+          if (!context.git) context.git = {};
+          context.git.diff = diffResult.stdout.slice(0, 5000); // Limit diff size
+        }
+      } catch (e: any) {
+        this.log(`Warning: Could not load git diff: ${e.message}`);
+      }
+    }
+
+    return context;
+  }
+
+  /**
+   * Merge context profiles (default + task-specific)
+   */
+  private mergeContextProfiles(
+    defaultProfile: ContextProfile,
+    taskProfile?: TaskContextProfile
+  ): ContextProfile {
+    const merged: ContextProfile = {
+      eager: { ...defaultProfile.eager },
+      lazy: { ...defaultProfile.lazy }
+    };
+
+    if (taskProfile) {
+      if (taskProfile.eager) {
+        Object.assign(merged.eager, taskProfile.eager);
+      }
+      if (taskProfile.lazy) {
+        Object.assign(merged.lazy, taskProfile.lazy);
+      }
+    }
+
+    return merged;
+  }
+
+  /**
+   * Get available tools (filtered by lazy context profile)
+   */
+  private getTools(lazyProfile?: ContextProfile['lazy']): LLMTool[] {
+    const allTools: LLMTool[] = [
+      // ===== FILE OPERATIONS =====
+      {
+        type: 'function',
+        function: {
+          name: 'list_directory',
+          description: 'List files in a directory',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: 'Directory path (relative to workspace root)' },
+              recursive: { type: 'boolean', description: 'Whether to search recursively' }
+            },
+            required: ['path']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'read_file',
+          description: 'Read contents of a file',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: 'File path (relative to workspace root)' }
+            },
+            required: ['path']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'write_file',
+          description: 'Write content to a file. ALWAYS show the user what will be written first.',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: 'File path (relative to workspace root)' },
+              content: { type: 'string', description: 'Content to write' }
+            },
+            required: ['path', 'content']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'search_files',
+          description: 'Search for files matching a pattern',
+          parameters: {
+            type: 'object',
+            properties: {
+              pattern: { type: 'string', description: 'Regex pattern to search for' },
+              path: { type: 'string', description: 'Directory to search in (optional)' }
+            },
+            required: ['pattern']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'get_file_context',
+          description: 'Get context for a specific file (classes, functions, imports)',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: 'File path (relative to workspace root)' }
+            },
+            required: ['path']
+          }
+        }
+      },
+      
+      // ===== GIT OPERATIONS (Read-only by default) =====
+      {
+        type: 'function',
+        function: {
+          name: 'git_status',
+          description: 'Show working tree status — modified, staged, untracked files. Read-only.',
+          parameters: {
+            type: 'object',
+            properties: {},
+            required: []
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'git_diff',
+          description: 'Show changes between commits, staged, or working tree. Read-only.',
+          parameters: {
+            type: 'object',
+            properties: {
+              target: { 
+                type: 'string', 
+                enum: ['staged', 'unstaged', 'all'], 
+                description: 'What to diff' 
+              },
+              path: { 
+                type: 'string', 
+                description: 'Specific file or directory (optional)' 
+              }
+            },
+            required: ['target']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'git_log',
+          description: 'Show commit history. Read-only.',
+          parameters: {
+            type: 'object',
+            properties: {
+              count: { 
+                type: 'number', 
+                description: 'Number of commits (default 10, max 50)' 
+              }
+            },
+            required: []
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'git_branch',
+          description: 'List branches or show current branch. Read-only.',
+          parameters: {
+            type: 'object',
+            properties: {
+              action: { 
+                type: 'string', 
+                enum: ['list', 'current'], 
+                description: 'What to show' 
+              }
+            },
+            required: []
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'git_commit',
+          description: 'Stage and commit changes. ALWAYS show the user what will be committed first and get confirmation.',
+          parameters: {
+            type: 'object',
+            properties: {
+              message: { 
+                type: 'string', 
+                description: 'Commit message' 
+              },
+              files: { 
+                type: 'array', 
+                items: { type: 'string' }, 
+                description: 'Files to stage (empty = all modified)' 
+              }
+            },
+            required: ['message']
+          }
+        }
+      },
+      
+      // ===== BUILD & TERMINAL OPERATIONS (With timeouts and safety) =====
+      {
+        type: 'function',
+        function: {
+          name: 'run_build',
+          description: 'Run a build command and return results. Commands time out after 120 seconds. Use predefined commands only.',
+          parameters: {
+            type: 'object',
+            properties: {
+              command: { 
+                type: 'string', 
+                enum: [
+                  './gradlew build',
+                  './gradlew compileKotlin',
+                  './gradlew test',
+                  './gradlew :app:test',
+                  'gradlew.bat build',
+                  'gradlew.bat compileKotlin',
+                  'gradlew.bat test',
+                  'npm run build',
+                  'npm test',
+                  'npm run lint',
+                  'npm run compile',
+                  'tsc',
+                  'mvn clean install',
+                  'mvn test'
+                ],
+                description: 'Build command to run'
+              }
+            },
+            required: ['command']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'run_terminal',
+          description: 'Run a short-lived terminal command and return stdout/stderr. Max 30 seconds. BLOCKED: servers, watchers, interactive commands.',
+          parameters: {
+            type: 'object',
+            properties: {
+              command: { 
+                type: 'string', 
+                description: 'Shell command to execute' 
+              },
+              workingDir: { 
+                type: 'string', 
+                description: 'Working directory relative to project root (optional)' 
+              }
+            },
+            required: ['command']
+          }
+        }
+      }
+    ];
+
+    // Filter tools based on lazy profile (if provided)
+    // Note: Currently all core tools are always enabled
+    // i2vision_* tools would be filtered here if they existed in the tool list
+    if (lazyProfile) {
+      const disabledTools: string[] = [];
+      
+      // Track which optional tools are disabled for logging
+      if (!lazyProfile.discovery) {
+        disabledTools.push('discovery');
+      }
+      if (!lazyProfile.fullContext) {
+        disabledTools.push('fullContext');
+      }
+      if (!lazyProfile.contractValidation) {
+        disabledTools.push('contractValidation');
+      }
+      
+      if (disabledTools.length > 0) {
+        this.log(`Lazy profile: ${disabledTools.length} optional tool categories disabled`);
+      }
+    }
+
+    return allTools;
   }
 
   /**
@@ -523,23 +1017,50 @@ export class AgentBridge {
   /**
    * UNIFIED: Execute agent loop with optional streaming
    * Single source of truth for all agent logic (loop detection, tool execution, etc.)
+   * 
+   * CONTEXT MANAGEMENT: Loads eager context and filters tools based on YAML profile
    */
   async *executeAgentLoop(
     userInput: string,
     systemPrompt: string,
     options: AgentLoopOptions = { streaming: false }
   ): AsyncGenerator<AgentChunk> {
+    // ===== CONTEXT MANAGEMENT =====
+    const taskType = this.detectTaskType(userInput);
+    this.log(`Task type detected: "${taskType}"`);
+
+    // Get context profile (default + task-specific merge)
+    let contextProfile: ContextProfile | undefined;
+    if (this.config.context) {
+      const defaultProfile = this.config.context.default;
+      const taskProfile = this.config.context.tasks?.[taskType];
+      contextProfile = this.mergeContextProfiles(defaultProfile, taskProfile);
+      this.log(`Context profile loaded: eager=${Object.keys(contextProfile.eager).length}, lazy=${Object.keys(contextProfile.lazy).length}`);
+    }
+
+    // Load eager context
+    let loadedContext: VslfcContext | undefined;
+    if (contextProfile) {
+      loadedContext = await this.loadEagerContext(contextProfile, this.config.templateVariables.currentFile);
+      this.log(`Eager context loaded: currentFile=${!!loadedContext.currentFile}, project=${!!loadedContext.project}, git=${!!loadedContext.git}`);
+    }
+    // ===== END CONTEXT MANAGEMENT =====
+
+    // Inject context into system prompt
+    const contextEnhancedPrompt = this.injectContextIntoPrompt(systemPrompt, loadedContext);
+
     const messages: LLMMessage[] = [
-      { role: 'system', content: systemPrompt },
+      { role: 'system', content: contextEnhancedPrompt },
       { role: 'user', content: userInput }
     ];
 
-    const tools = this.getTools();
+    // Get tools (filtered by lazy profile)
+    const tools = this.getTools(contextProfile?.lazy);
     const maxIterations = this.config.iterationSettings.maxIterations;
     const toolCalls: ToolCall[] = [];
     const history: ToolCallHistory[] = [];
 
-    this.log(`Starting agent loop (streaming=${options.streaming}) with max ${maxIterations} iterations`);
+    this.log(`Starting agent loop (streaming=${options.streaming}) with max ${maxIterations} iterations, ${tools.length} tools`);
 
     for (let iteration = 1; iteration <= maxIterations; iteration++) {
       this.currentIteration = iteration;
@@ -967,6 +1488,44 @@ Please try a DIFFERENT approach:
         iterations: maxIterations
       };
     }
+  }
+
+  /**
+   * Inject loaded context into system prompt
+   */
+  private injectContextIntoPrompt(prompt: string, context?: VslfcContext): string {
+    if (!context) return prompt;
+
+    let contextSection = '\n\n--- LOADED CONTEXT (EAGER) ---\n';
+    
+    if (context.currentFile) {
+      contextSection += `\n[CURRENT FILE: ${context.currentFile.path}]\n`;
+      contextSection += `Symbols:\n${context.currentFile.symbols}\n`;
+      if (context.currentFile.relatedFiles?.length) {
+        contextSection += `\nRelated files:\n${context.currentFile.relatedFiles.join('\n\n')}\n`;
+      }
+    }
+    
+    if (context.project) {
+      contextSection += `\n[PROJECT METADATA]\n`;
+      contextSection += `Architecture: ${context.project.architecturePattern || 'unknown'}\n`;
+      contextSection += `Modules: ${context.project.moduleCount}\n`;
+      if (context.project.directoryStructure) {
+        contextSection += `\nDirectory structure:\n${context.project.directoryStructure}\n`;
+      }
+    }
+    
+    if (context.git?.status) {
+      contextSection += `\n[GIT STATUS]\n${context.git.status}\n`;
+    }
+    
+    if (context.git?.diff) {
+      contextSection += `\n[GIT DIFF]\n${context.git.diff}\n`;
+    }
+    
+    contextSection += '\n--- END LOADED CONTEXT ---\n';
+    
+    return prompt + contextSection;
   }
 
   /**
@@ -1465,235 +2024,49 @@ Please try a DIFFERENT approach:
   }
 
   /**
-   * Get available tools
-   * Modern tool design: idempotent reads, guarded writes, structured output, timeouts
+   * Resolve import path to actual file path
+   * Handles relative imports and module resolution
    */
-  private getTools(): LLMTool[] {
-    return [
-      // ===== FILE OPERATIONS =====
-      {
-        type: 'function',
-        function: {
-          name: 'list_directory',
-          description: 'List files in a directory',
-          parameters: {
-            type: 'object',
-            properties: {
-              path: { type: 'string', description: 'Directory path (relative to workspace root)' },
-              recursive: { type: 'boolean', description: 'Whether to search recursively' }
-            },
-            required: ['path']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'read_file',
-          description: 'Read contents of a file',
-          parameters: {
-            type: 'object',
-            properties: {
-              path: { type: 'string', description: 'File path (relative to workspace root)' }
-            },
-            required: ['path']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'write_file',
-          description: 'Write content to a file. ALWAYS show the user what will be written first.',
-          parameters: {
-            type: 'object',
-            properties: {
-              path: { type: 'string', description: 'File path (relative to workspace root)' },
-              content: { type: 'string', description: 'Content to write' }
-            },
-            required: ['path', 'content']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'search_files',
-          description: 'Search for files matching a pattern',
-          parameters: {
-            type: 'object',
-            properties: {
-              pattern: { type: 'string', description: 'Regex pattern to search for' },
-              path: { type: 'string', description: 'Directory to search in (optional)' }
-            },
-            required: ['pattern']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'get_file_context',
-          description: 'Get context for a specific file (classes, functions, imports)',
-          parameters: {
-            type: 'object',
-            properties: {
-              path: { type: 'string', description: 'File path (relative to workspace root)' }
-            },
-            required: ['path']
-          }
-        }
-      },
-      
-      // ===== GIT OPERATIONS (Read-only by default) =====
-      {
-        type: 'function',
-        function: {
-          name: 'git_status',
-          description: 'Show working tree status — modified, staged, untracked files. Read-only.',
-          parameters: {
-            type: 'object',
-            properties: {},
-            required: []
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'git_diff',
-          description: 'Show changes between commits, staged, or working tree. Read-only.',
-          parameters: {
-            type: 'object',
-            properties: {
-              target: { 
-                type: 'string', 
-                enum: ['staged', 'unstaged', 'all'], 
-                description: 'What to diff' 
-              },
-              path: { 
-                type: 'string', 
-                description: 'Specific file or directory (optional)' 
-              }
-            },
-            required: ['target']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'git_log',
-          description: 'Show commit history. Read-only.',
-          parameters: {
-            type: 'object',
-            properties: {
-              count: { 
-                type: 'number', 
-                description: 'Number of commits (default 10, max 50)' 
-              }
-            },
-            required: []
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'git_branch',
-          description: 'List branches or show current branch. Read-only.',
-          parameters: {
-            type: 'object',
-            properties: {
-              action: { 
-                type: 'string', 
-                enum: ['list', 'current'], 
-                description: 'What to show' 
-              }
-            },
-            required: []
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'git_commit',
-          description: 'Stage and commit changes. ALWAYS show the user what will be committed first and get confirmation.',
-          parameters: {
-            type: 'object',
-            properties: {
-              message: { 
-                type: 'string', 
-                description: 'Commit message' 
-              },
-              files: { 
-                type: 'array', 
-                items: { type: 'string' }, 
-                description: 'Files to stage (empty = all modified)' 
-              }
-            },
-            required: ['message']
-          }
-        }
-      },
-      
-      // ===== BUILD & TERMINAL OPERATIONS (With timeouts and safety) =====
-      {
-        type: 'function',
-        function: {
-          name: 'run_build',
-          description: 'Run a build command and return results. Commands time out after 120 seconds. Use predefined commands only.',
-          parameters: {
-            type: 'object',
-            properties: {
-              command: { 
-                type: 'string', 
-                enum: [
-                  './gradlew build',
-                  './gradlew compileKotlin',
-                  './gradlew test',
-                  './gradlew :app:test',
-                  'gradlew.bat build',
-                  'gradlew.bat compileKotlin',
-                  'gradlew.bat test',
-                  'npm run build',
-                  'npm test',
-                  'npm run lint',
-                  'npm run compile',
-                  'tsc',
-                  'mvn clean install',
-                  'mvn test'
-                ],
-                description: 'Build command to run'
-              }
-            },
-            required: ['command']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'run_terminal',
-          description: 'Run a short-lived terminal command and return stdout/stderr. Max 30 seconds. BLOCKED: servers, watchers, interactive commands.',
-          parameters: {
-            type: 'object',
-            properties: {
-              command: { 
-                type: 'string', 
-                description: 'Shell command to execute' 
-              },
-              workingDir: { 
-                type: 'string', 
-                description: 'Working directory relative to project root (optional)' 
-              }
-            },
-            required: ['command']
-          }
-        }
+  private resolveImportPath(importPath: string, currentFile: string): string | null {
+    // Remove quotes and extract path from import statement
+    const match = importPath.match(/['"](.+?)['"]/);
+    if (!match) return null;
+    
+    const importSpecifier = match[1];
+    
+    // Skip external modules (no relative path)
+    if (!importSpecifier.startsWith('.') && !importSpecifier.startsWith('/')) {
+      return null; // External module, not a local file
+    }
+    
+    // Resolve relative to current file's directory
+    const currentDir = path.dirname(currentFile);
+    const resolvedPath = path.resolve(currentDir, importSpecifier);
+    
+    // Try common extensions
+    const extensions = ['', '.ts', '.tsx', '.js', '.jsx', '.kt', '.java'];
+    for (const ext of extensions) {
+      const candidate = resolvedPath + ext;
+      try {
+        fs.accessSync(candidate);
+        return candidate;
+      } catch {
+        continue;
       }
-    ];
+    }
+    
+    // Try index files
+    for (const ext of extensions) {
+      const candidate = path.join(resolvedPath, 'index' + ext);
+      try {
+        fs.accessSync(candidate);
+        return candidate;
+      } catch {
+        continue;
+      }
+    }
+    
+    return null; // Could not resolve
   }
 
   /**

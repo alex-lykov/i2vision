@@ -140,7 +140,7 @@ export const DEFAULT_TOOL_CARD_CONFIG: ToolCardConfig = {
             showDuration: true,
             collapseOnSuccess: true
         },
-        'i2vision_discover': {
+        'get_file_context': {
             maxLines: 30,
             maxChars: 8000,
             foldThreshold: 10,

@@ -29,6 +29,7 @@ Step-by-step guides for specific tasks:
 
 - [Deployment](guides/deployment.md) - Deployment guide
 - [Presets](guides/presets.md) - Discovery preset configuration
+- [Context Management](guides/context-management.md) - YAML context profile configuration
 - [Agent Implementation](guides/agent-implementation.md) - Agent framework guide
 
 ## Reference

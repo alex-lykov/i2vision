@@ -126,7 +126,20 @@ toolSelection:
   
 formatting:
   maxObservationChars: 8000
+
+# Context Management (NEW)
+context:
+  default:
+    eager:
+      currentFile: true
+      projectMetadata: false
+      gitStatus: false
+    lazy:
+      discovery: true
+      fullContext: true
 ```
+
+See [Context Management Guide](./context-management.md) for detailed configuration options.
 
 ## Usage Example
 
@@ -179,5 +192,6 @@ See [DeepSeek Integration Guide](./deepseek-integration.md) for configuration de
 
 - [Agent Configuration](../reference/agent-config.md)
 - [Tool API Reference](../reference/tools.md)
+- [Context Management Guide](./context-management.md) - YAML context profile configuration
 - [DeepSeek Integration](./deepseek-integration.md)
 - [Architecture Decision Records](../adr/)

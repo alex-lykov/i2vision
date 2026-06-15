@@ -91,13 +91,21 @@ EOS`,
     this.outputChannel.appendLine('\n=== Tool Definitions Verification ===\n');
 
     const expectedTools = [
-      'i2vision_discover',
-      'i2vision_get_context',
+      // File operations
       'read_file',
-      'list_directory',
-      'regex_search',
       'write_file',
-      'edit_file'
+      'list_directory',
+      'search_files',
+      'get_file_context',
+      // Git operations
+      'git_status',
+      'git_diff',
+      'git_log',
+      'git_branch',
+      'git_commit',
+      // Build & terminal
+      'run_build',
+      'run_terminal'
     ];
 
     this.outputChannel.appendLine('Expected tools available to LLM:');
@@ -106,13 +114,18 @@ EOS`,
     }
 
     this.outputChannel.appendLine('\nTool descriptions:');
-    this.outputChannel.appendLine('  - i2vision_discover: Full project discovery');
-    this.outputChannel.appendLine('  - i2vision_get_context: Get architectural context');
     this.outputChannel.appendLine('  - read_file: Read file contents');
-    this.outputChannel.appendLine('  - list_directory: List directory contents');
-    this.outputChannel.appendLine('  - regex_search: Search files with regex');
     this.outputChannel.appendLine('  - write_file: Create/overwrite file');
-    this.outputChannel.appendLine('  - edit_file: Edit file with string replacement');
+    this.outputChannel.appendLine('  - list_directory: List directory contents');
+    this.outputChannel.appendLine('  - search_files: Search files with regex pattern');
+    this.outputChannel.appendLine('  - get_file_context: Get file symbols and structure');
+    this.outputChannel.appendLine('  - git_status: Show working tree status');
+    this.outputChannel.appendLine('  - git_diff: Show changes between commits');
+    this.outputChannel.appendLine('  - git_log: Show commit history');
+    this.outputChannel.appendLine('  - git_branch: List or show current branch');
+    this.outputChannel.appendLine('  - git_commit: Stage and commit changes');
+    this.outputChannel.appendLine('  - run_build: Run build commands (Gradle, npm, Maven)');
+    this.outputChannel.appendLine('  - run_terminal: Run short-lived shell commands');
   }
 
   /**

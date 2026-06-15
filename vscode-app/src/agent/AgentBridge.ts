@@ -1250,19 +1250,12 @@ export class AgentBridge {
       if (streamingToolCalls.length === 0) {
         const trimmedResponse = responseText.trim();
         
-        // Enhanced plan detection - catch ALL variations of "I will call tools"
-        const isPlanOnly =
-          trimmedResponse.startsWith('I will:') ||
-          trimmedResponse.startsWith('I\'ll') ||
-          trimmedResponse.toLowerCase().startsWith('calling ') ||
-          /^[Ii] will (call|use|read|search|run|execute)/.test(trimmedResponse) ||
-          /^[Ii]\'ll (call|use|read|search|run|execute)/.test(trimmedResponse) ||
-          /^(First|I\'ll first|Let me first|I will first)/i.test(trimmedResponse) ||
-          (trimmedResponse.length < 100 && /^(Sure|Okay|Let me|I will|I\'ll)/i.test(trimmedResponse)) ||
-          // NEW: Catch "I will: Calling tool(...)" format
-          /I will: Calling \w+\(/.test(trimmedResponse) ||
-          // NEW: Catch responses that are ONLY tool descriptions
-          trimmedResponse.length < 150 && /Calling \w+\(\{/.test(trimmedResponse);
+        // Simple plan detection - catches most common patterns
+        // System prompt instructs LLM to avoid these, this is just a safety net
+        const isPlanOnly = trimmedResponse.length < 200 && (
+          /^(I will|I'll|Let me|First,? I)/i.test(trimmedResponse) ||
+          trimmedResponse.toLowerCase().includes('calling ')
+        );
 
         if (isPlanOnly) {
           this.log(`[Iter ${iteration}] Plan detected - discarding: "${trimmedResponse.substring(0, 80)}..."`);
@@ -2243,6 +2236,9 @@ Please try a DIFFERENT approach:
     prompt += '\nreasoning: I have all the information needed to answer.';
     prompt += '\nThe main entry point is in extension.ts line 45.';
     prompt += '\nEOS';
+    prompt += '\n\n--- CRITICAL RULE ---';
+    prompt += '\nNever describe what you will do. Either call a tool immediately or provide the final answer.';
+    prompt += '\nNever output "I will call..." or "Let me..." — just act.';
     prompt += '\n\n--- AVAILABLE TOOLS (KNOW YOUR CAPABILITIES) ---';
     prompt += '\nYou have access to these tools. When asked "what tools do you have?" or "what can you do?", list them:';
     prompt += '\n• list_directory — List files in a directory';

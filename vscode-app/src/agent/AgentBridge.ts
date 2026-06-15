@@ -1227,6 +1227,7 @@ export class AgentBridge {
       // ===== LOOP DETECTION (SHARED LOGIC) =====
       const repeatCountMap = new Map<string, number>();
       const shouldNudge: string[] = [];
+      const thisIterationCalls = new Map<string, string>(); // Track tool calls within this iteration
 
       for (const toolCall of streamingToolCalls) {
         // Normalize arguments to ensure consistent comparison
@@ -1240,6 +1241,15 @@ export class AgentBridge {
         
         const argsSignature = JSON.stringify(normalizedArgs);
         const normalizedToolName = toolCall.name.toLowerCase().replace(/[_-]/g, '');
+        const callKey = `${normalizedToolName}:${argsSignature}`;
+        
+        // ===== DUPLICATE DETECTION: Same tool called multiple times in one response =====
+        if (thisIterationCalls.has(callKey)) {
+          this.log(`DUPLICATE: Skipping ${toolCall.name} with same args in same iteration (already called)`);
+          continue; // Skip this duplicate tool call
+        }
+        thisIterationCalls.set(callKey, argsSignature);
+        // ===== END DUPLICATE DETECTION =====
         
         // Check if this exact tool call was made in the last 2 iterations
         const recentCalls = history.filter(h => 
@@ -1249,10 +1259,9 @@ export class AgentBridge {
         );
         
         // Calculate repeat count
-        const repeatKey = `${normalizedToolName}:${argsSignature}`;
-        const previousRepeatCount = repeatCountMap.get(repeatKey) || 0;
+        const previousRepeatCount = repeatCountMap.get(callKey) || 0;
         const totalRepeatCount = previousRepeatCount + recentCalls.length;
-        repeatCountMap.set(repeatKey, totalRepeatCount);
+        repeatCountMap.set(callKey, totalRepeatCount);
 
         if (recentCalls.length > 0) {
           this.log(`LOOP DETECTED: ${toolCall.name} called with same args at iterations ${recentCalls.map(h => h.iteration).join(', ')} (repeat count: ${totalRepeatCount})`);

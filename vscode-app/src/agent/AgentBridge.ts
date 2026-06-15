@@ -1927,8 +1927,9 @@ Please try a DIFFERENT approach:
           
           // BUILD COMMAND SPECIAL HANDLING: Capture output to detect failures
           // This enables the agent to see build errors and fix them
+          // MUST come BEFORE classifyCommand() to avoid misrouting gradlew run commands
           if (this.isBuildCommand(command)) {
-            this.log(`  Build command detected - running with output capture`);
+            this.log(`  ✅ Build command detected - running with output capture (NOT as long-running server)`);
             const timeout = 120000; // 2 minutes for builds
             const result = await this.runCommandWithTimeout(command, timeout, workingDir);
             

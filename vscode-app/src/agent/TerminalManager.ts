@@ -117,7 +117,7 @@ export class TerminalManager {
         this.terminals.set(name, managed);
         
         const restartInfo = restartOnChanges ? ' (auto-restart on file changes)' : '';
-        return `Terminal "i2-Vision: ${name}" started: ${command}${restartInfo}`;
+        return `Terminal "i2-Vision: ${name}" started: ${normalizedCommand}${restartInfo}`;
     }
 
     /**

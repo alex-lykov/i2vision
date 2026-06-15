@@ -2114,9 +2114,21 @@ Please try a DIFFERENT approach:
 
   /**
    * Extract build errors from output
+   * Enhanced to highlight file paths and line numbers for agent to fix
    */
   private extractBuildErrors(output: string): string {
     if (!output) return 'Unknown error';
+    
+    // Extract file references from errors (Kotlin/Java compiler format)
+    const filePattern = /([a-zA-Z0-9_/.\\-]+\.(kt|java|kts))(:\d+:\d+)?/g;
+    const mentionedFiles = new Set<string>();
+    let match;
+    while ((match = filePattern.exec(output)) !== null) {
+      // Only add relative paths (not absolute Windows paths)
+      if (!match[1].startsWith('C:') && !match[1].startsWith('D:')) {
+        mentionedFiles.add(match[1]);
+      }
+    }
     
     // Look for common error patterns
     const errorLines = output.split('\n')
@@ -2124,16 +2136,22 @@ Please try a DIFFERENT approach:
         line.toLowerCase().includes('error') ||
         line.toLowerCase().includes('failed') ||
         line.includes('❌') ||
-        line.includes('^') // Compiler error marker
+        line.includes('^') || // Compiler error marker
+        line.includes('Unresolved reference') ||
+        line.includes('Type mismatch') ||
+        line.includes('Expecting') ||
+        line.includes('Override')
       )
-      .slice(0, 10); // Limit to first 10 error lines
+      .slice(0, 15); // Increased limit for more context
     
-    if (errorLines.length > 0) {
-      return errorLines.join('\n');
+    let result = errorLines.join('\n');
+    
+    // Add file list at the top if files were mentioned
+    if (mentionedFiles.size > 0) {
+      result = `📁 FILES WITH ERRORS: ${Array.from(mentionedFiles).slice(0, 5).join(', ')}\n\n${result}`;
     }
     
-    // Fallback: return last 500 chars of output
-    return output.slice(-500);
+    return result || output.slice(-500);
   }
 
   /**
@@ -2337,11 +2355,21 @@ Please try a DIFFERENT approach:
     prompt += '\n\n--- BUILD COMMANDS ---';
     prompt += '\nBuild commands (gradlew, mvn, npm run build) are monitored for failures.';
     prompt += '\nIf a build fails, you will receive the error output.';
-    prompt += '\nWhen you see BUILD FAILED:';
-    prompt += '\n1. Read the failing files mentioned in the error';
-    prompt += '\n2. Understand what\'s broken (missing imports, typos, API changes)';
-    prompt += '\n3. Propose or apply fixes using write_file or edit_file';
-    prompt += '\n4. Re-run the build to verify the fix';
+    prompt += '\n\n--- WHEN BUILD FAILS (CRITICAL) ---';
+    prompt += '\nWhen you see "❌ BUILD FAILED":';
+    prompt += '\n1. STOP - do NOT re-run the same build command';
+    prompt += '\n2. READ the error output carefully - it tells you which files have errors';
+    prompt += '\n3. CALL read_file on each failing file mentioned in the error';
+    prompt += '\n4. UNDERSTAND the error (missing import? typo? wrong API?)';
+    prompt += '\n5. PROPOSE a fix using write_file or edit_file';
+    prompt += '\n6. ONLY THEN re-run the build to verify';
+    prompt += '\n\n⚠️ NEVER: Run the same build command multiple times without fixing code first.';
+    prompt += '\n⚠️ NEVER: Try different flags (--stacktrace, --info) - they won\'t fix compilation errors.';
+    prompt += '\n\nExample error flow:';
+    prompt += '\n- Error: "Unresolved reference: clear_" in InMemoryConductorRepository.kt';
+    prompt += '\n- Action: read_file("core/.../InMemoryConductorRepository.kt")';
+    prompt += '\n- Fix: Add the missing clear_() method or import';
+    prompt += '\n- Verify: Re-run build';
     prompt += '\n\n--- PATH HANDLING ---';
     prompt += '\n- Always use forward slashes (/) for paths';
     prompt += '\n- Paths are relative to workspace root';

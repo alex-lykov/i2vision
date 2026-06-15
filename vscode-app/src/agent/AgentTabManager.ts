@@ -48,6 +48,7 @@ export class AgentTabManager {
   private webviewPanel: vscode.WebviewPanel | null = null;
   private currentAgentBridge: AgentBridge | null = null;
   private isProcessing: boolean = false;
+  private cancelTokenSource: vscode.CancellationTokenSource | null = null;
 
   constructor(
     context: vscode.ExtensionContext,
@@ -145,6 +146,31 @@ export class AgentTabManager {
   }
 
   /**
+   * Stop the current agent processing
+   */
+  async stopAgent(): Promise<void> {
+    if (!this.isProcessing) {
+      this.log('No active processing to stop');
+      return;
+    }
+    
+    this.log('Stopping agent processing...');
+    
+    if (this.cancelTokenSource) {
+      this.cancelTokenSource.cancel();
+    }
+    
+    // Send stop signal to webview
+    this.sendToWebview({
+      type: 'stopped',
+      timestamp: Date.now()
+    });
+    
+    this.isProcessing = false;
+    this.log('Agent stopped');
+  }
+  
+  /**
    * Process user input through the active agent with streaming
    */
   async processUserInput(userInput: string, currentFile?: string): Promise<void> {
@@ -190,6 +216,9 @@ export class AgentTabManager {
       // Clear accumulated tool calls for new request
       tabState.accumulatedToolCalls = [];
       
+      // Create cancel token for this request
+      this.cancelTokenSource = new vscode.CancellationTokenSource();
+      
       // Process with streaming - events will appear inline in timeline
       let responseText = '';
       let startTime = Date.now();
@@ -202,6 +231,16 @@ export class AgentTabManager {
       });
       
       for await (const chunk of this.currentAgentBridge.processStreaming(userInput, currentFile)) {
+        // Check if cancelled
+        if (this.cancelTokenSource.token.isCancellationRequested) {
+          this.log('Processing cancelled by user');
+          this.sendToWebview({
+            type: 'stopped',
+            timestamp: Date.now()
+          });
+          break;
+        }
+        
         switch (chunk.type) {
           case 'tool_call_started':
             // Show tool card inline as it starts
@@ -256,42 +295,60 @@ export class AgentTabManager {
           case 'error':
             vscode.window.showErrorMessage(`Agent error: ${chunk.error}`);
             break;
+            
+          case 'thinking':
+            // Move thinking indicator to the end (latest position)
+            this.sendToWebview({
+              type: 'thinking_update',
+              message: chunk.message,
+              timestamp: chunk.timestamp
+            });
+            break;
         }
       }
       
-      // Clean response text
-      const cleanedResponse = this.cleanResponseText(responseText);
-      
-      // Add assistant response to history
-      tabState.history.push({
-        role: 'assistant',
-        content: cleanedResponse,
-        toolCalls: tabState.accumulatedToolCalls,
-        timestamp: Date.now()
-      });
-      
-      // Finalize streaming text in timeline
-      const durationMs = Date.now() - startTime;
-      this.sendToWebview({
-        type: 'assistant_response',
-        content: cleanedResponse,
-        durationMs,
-        timestamp: Date.now()
-      });
-      
-      this.log(`Complete: ${tabState.accumulatedToolCalls.length} tools, ${Date.now() - tabState.lastActivityAt}ms`);
+      // Clean response text (only if not cancelled)
+      if (!this.cancelTokenSource?.token.isCancellationRequested) {
+        const cleanedResponse = this.cleanResponseText(responseText);
+        
+        // Add assistant response to history
+        tabState.history.push({
+          role: 'assistant',
+          content: cleanedResponse,
+          toolCalls: tabState.accumulatedToolCalls,
+          timestamp: Date.now()
+        });
+        
+        // Finalize streaming text in timeline
+        const durationMs = Date.now() - startTime;
+        this.sendToWebview({
+          type: 'assistant_response',
+          content: cleanedResponse,
+          durationMs,
+          timestamp: Date.now()
+        });
+        
+        this.log(`Complete: ${tabState.accumulatedToolCalls.length} tools, ${Date.now() - tabState.lastActivityAt}ms`);
+      }
       
     } catch (error: any) {
-      this.log(`Error processing input: ${error.message}`);
-      vscode.window.showErrorMessage(`Agent error: ${error.message}`);
-      
-      this.sendToWebview({
-        type: 'error',
-        error: error.message,
-        timestamp: Date.now()
-      });
+      // Only show error if not cancelled
+      if (error.name !== 'CancellationError' && !this.cancelTokenSource?.token.isCancellationRequested) {
+        this.log(`Error processing input: ${error.message}`);
+        vscode.window.showErrorMessage(`Agent error: ${error.message}`);
+        
+        this.sendToWebview({
+          type: 'error',
+          error: error.message,
+          timestamp: Date.now()
+        });
+      }
     } finally {
       this.isProcessing = false;
+      if (this.cancelTokenSource) {
+        this.cancelTokenSource.dispose();
+        this.cancelTokenSource = null;
+      }
     }
   }
 
@@ -359,6 +416,10 @@ export class AgentTabManager {
         case 'copy_response':
           vscode.env.clipboard.writeText(message.content);
           vscode.window.showInformationMessage('Response copied to clipboard');
+          break;
+          
+        case 'stop_agent':
+          await this.stopAgent();
           break;
       }
     }, null, this.context.subscriptions);
@@ -498,6 +559,16 @@ export class AgentTabManager {
       white-space: pre-wrap;
     }
     
+    /* Stopped message */
+    .message.stopped {
+      background-color: var(--vscode-editorWidget-background);
+      border-left: 3px solid var(--vscode-descriptionForeground);
+      padding: 10px 15px;
+      border-radius: 6px;
+      font-style: italic;
+      color: var(--vscode-descriptionForeground);
+    }
+    
     /* Tool card - inline in timeline */
     .tool-card {
       background-color: var(--vscode-editorWidget-background);
@@ -524,8 +595,8 @@ export class AgentTabManager {
     }
     
     .thinking-indicator .spinner {
-      width: 16px;
-      height: 16px;
+      width: 14px;
+      height: 14px;
       border: 2px solid var(--vscode-progressBarBackground);
       border-top-color: transparent;
       border-radius: 50%;
@@ -660,30 +731,74 @@ export class AgentTabManager {
     .button-row {
       margin-top: 10px;
       display: flex;
-      gap: 10px;
+      gap: 8px;
+      align-items: center;
     }
     
-    .btn {
-      padding: 10px 20px;
+    /* Combined Send/Stop button */
+    .btn-action {
+      padding: 6px 16px;
       border: none;
-      border-radius: 6px;
+      border-radius: 4px;
       cursor: pointer;
       font-family: var(--vscode-font-family);
-      font-size: var(--vscode-font-size);
+      font-size: 0.9em;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 500;
+      min-width: 100px;
+      justify-content: center;
+      transition: all 0.2s ease;
     }
     
-    .btn-primary {
+    /* Send state (default) */
+    .btn-action.send {
       background-color: var(--vscode-button-background);
       color: var(--vscode-button-foreground);
     }
     
-    .btn-primary:hover {
+    .btn-action.send:hover {
       background-color: var(--vscode-button-hoverBackground);
     }
     
+    /* Stop state (during processing) */
+    .btn-action.stop {
+      background-color: var(--vscode-errorForeground);
+      color: white;
+      animation: pulse-stop 2s ease-in-out infinite;
+    }
+    
+    .btn-action.stop:hover {
+      opacity: 0.9;
+    }
+    
+    @keyframes pulse-stop {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.4); }
+      50% { box-shadow: 0 0 0 8px rgba(255, 0, 0, 0); }
+    }
+    
+    /* Base button class */
+    .btn {
+      padding: 6px 12px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-family: var(--vscode-font-family);
+      font-size: 0.85em;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    
+    /* Secondary button (Clear) */
     .btn-secondary {
       background-color: var(--vscode-button-secondaryBackground);
       color: var(--vscode-button-secondaryForeground);
+    }
+    
+    .btn-secondary:hover {
+      opacity: 0.9;
     }
     
     /* Error message */
@@ -712,6 +827,15 @@ export class AgentTabManager {
     
     .tool-card.expanded .toggle-icon {
       transform: rotate(90deg);
+    }
+    
+    /* Collapsed tool card */
+    .tool-card.collapsed .tool-card-content {
+      display: none;
+    }
+    
+    .tool-card.collapsed .toggle-icon {
+      transform: rotate(0deg);
     }
   </style>
 </head>
@@ -760,7 +884,10 @@ export class AgentTabManager {
       rows="3"
     ></textarea>
     <div class="button-row">
-      <button class="btn btn-primary" id="sendBtn">Send</button>
+      <button class="btn-action send" id="actionBtn">
+        <span id="actionIcon">⏵</span>
+        <span id="actionText">Send</span>
+      </button>
       <button class="btn btn-secondary" id="clearBtn">Clear</button>
     </div>
   </div>
@@ -769,7 +896,9 @@ export class AgentTabManager {
     const vscode = acquireVsCodeApi();
     const timeline = document.getElementById('timeline');
     const userInput = document.getElementById('userInput');
-    const sendBtn = document.getElementById('sendBtn');
+    const actionBtn = document.getElementById('actionBtn');
+    const actionIcon = document.getElementById('actionIcon');
+    const actionText = document.getElementById('actionText');
     const clearBtn = document.getElementById('clearBtn');
     const tokenFill = document.getElementById('tokenFill');
     const tokenText = document.getElementById('tokenText');
@@ -778,13 +907,20 @@ export class AgentTabManager {
     // Track current streaming element
     let streamingElement = null;
     let thinkingEl = null;
+    let isProcessing = false;
     
     // Send message on button click
-    sendBtn.addEventListener('click', () => {
-      const content = userInput.value.trim();
-      if (content) {
-        vscode.postMessage({ type: 'user_input', content });
-        userInput.value = '';
+    actionBtn.addEventListener('click', () => {
+      if (isProcessing) {
+        // Stop agent
+        vscode.postMessage({ type: 'stop_agent' });
+      } else {
+        // Send message
+        const content = userInput.value.trim();
+        if (content) {
+          vscode.postMessage({ type: 'user_input', content });
+          userInput.value = '';
+        }
       }
     });
     
@@ -792,7 +928,7 @@ export class AgentTabManager {
     userInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        sendBtn.click();
+        actionBtn.click();
       }
     });
     
@@ -801,6 +937,7 @@ export class AgentTabManager {
       timeline.innerHTML = '';
       streamingElement = null;
       thinkingEl = null;
+      setProcessingState(false);
     });
     
     // Handle messages from extension - all events append to timeline in order
@@ -816,12 +953,18 @@ export class AgentTabManager {
           showThinkingIndicator(message.message);
           break;
           
+        case 'thinking_update':
+          updateThinkingIndicator(message.message);
+          break;
+          
         case 'tool_start':
           appendToolCard(message.toolName, message.args);
+          collapseAllToolCardsExceptLast();
           break;
           
         case 'tool_complete':
           updateToolCard(message.toolName, message.result);
+          collapseAllToolCardsExceptLast();
           break;
           
         case 'streaming_text':
@@ -830,6 +973,7 @@ export class AgentTabManager {
           
         case 'assistant_response':
           finalizeStreamingText(message.durationMs);
+          setProcessingState(false);
           break;
           
         case 'token_usage':
@@ -838,6 +982,13 @@ export class AgentTabManager {
           
         case 'error':
           appendErrorMessage(message.error);
+          setProcessingState(false);
+          break;
+          
+        case 'stopped':
+          hideThinkingIndicator();
+          setProcessingState(false);
+          appendStoppedMessage();
           break;
       }
       
@@ -853,6 +1004,22 @@ export class AgentTabManager {
     
     function showThinkingIndicator(message) {
       // Remove any existing thinking indicator
+      if (thinkingEl) {
+        thinkingEl.remove();
+      }
+      
+      thinkingEl = document.createElement('div');
+      thinkingEl.className = 'thinking-indicator';
+      thinkingEl.innerHTML = \`
+        <div class="spinner"></div>
+        <span>\${message}</span>
+      \`;
+      timeline.appendChild(thinkingEl);
+      setProcessingState(true);
+    }
+    
+    function updateThinkingIndicator(message) {
+      // Move thinking indicator to the end (latest position)
       if (thinkingEl) {
         thinkingEl.remove();
       }
@@ -961,8 +1128,8 @@ export class AgentTabManager {
             <span>⏱️ \${durationMs ? (durationMs / 1000).toFixed(1) : '?'}s</span>
           </div>
           <div class="footer-right">
-            <button class="btn btn-secondary" onclick="copyResponse()" style="padding: 6px 12px; font-size: 0.9em;">📋 Copy</button>
-            <button class="btn btn-secondary" onclick="applyChanges()" style="padding: 6px 12px; font-size: 0.9em;">📝 Apply</button>
+            <button class="btn btn-secondary" onclick="copyResponse()" style="padding: 4px 8px; font-size: 0.85em;">📋 Copy</button>
+            <button class="btn btn-secondary" onclick="applyChanges()" style="padding: 4px 8px; font-size: 0.85em;">📝 Apply</button>
           </div>
         \`;
         streamingElement.appendChild(footer);
@@ -995,11 +1162,33 @@ export class AgentTabManager {
       timeline.appendChild(div);
     }
     
+    function appendStoppedMessage() {
+      const div = document.createElement('div');
+      div.className = 'message stopped';
+      div.textContent = '⏹️ Processing stopped by user.';
+      timeline.appendChild(div);
+    }
+    
     function toggleToolCard(cardId) {
       const card = document.getElementById(cardId);
       if (card) {
         card.classList.toggle('expanded');
+        card.classList.toggle('collapsed');
       }
+    }
+    
+    function collapseAllToolCardsExceptLast() {
+      // Collapse all completed tool cards except the most recent one
+      const cards = timeline.querySelectorAll('.tool-card.done');
+      cards.forEach((card, index) => {
+        if (index < cards.length - 1) {
+          card.classList.add('collapsed');
+          card.classList.remove('expanded');
+        } else {
+          card.classList.remove('collapsed');
+          card.classList.add('expanded');
+        }
+      });
     }
     
     function scrollToBottom() {
@@ -1023,6 +1212,28 @@ export class AgentTabManager {
     
     function applyChanges() {
       vscode.postMessage({ type: 'apply_changes' });
+    }
+    
+    function setProcessingState(processing) {
+      isProcessing = processing;
+      
+      if (processing) {
+        // Change to Stop state
+        actionBtn.classList.remove('send');
+        actionBtn.classList.add('stop');
+        actionIcon.textContent = '⏹';
+        actionText.textContent = 'Stop';
+        userInput.disabled = true;
+        userInput.style.opacity = '0.5';
+      } else {
+        // Change to Send state
+        actionBtn.classList.remove('stop');
+        actionBtn.classList.add('send');
+        actionIcon.textContent = '⏵';
+        actionText.textContent = 'Send';
+        userInput.disabled = false;
+        userInput.style.opacity = '1';
+      }
     }
   </script>
 </body>

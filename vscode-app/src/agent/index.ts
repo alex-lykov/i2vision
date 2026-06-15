@@ -15,8 +15,7 @@ export {
   AgentConfig,
   ToolCall,
   InteractionRecord,
-  AgentResponse,
-  ProcessContext
+  AgentResponse
 } from './AgentBridge';
 
 export {

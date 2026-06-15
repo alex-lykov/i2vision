@@ -74,8 +74,6 @@ export interface AgentContext {
   [key: string]: any;
 }
 
-
-
 /**
  * Agent configuration overrides (matches Kotlin AgentConfigOverrides)
  */
@@ -183,11 +181,11 @@ export class LocalI2VisionAgent implements vscode.Disposable {
       }
 
       // Process through the bridge with progress callback
-      const response = await this.bridge.process(request.task, {
-        currentFile: request.context.currentFile,
-        projectName: vscode.workspace.workspaceFolders?.[0]?.name,
-        task: request.task
-      }, onProgress);
+      const response = await this.bridge.process(
+        request.task,
+        request.context.currentFile,
+        onProgress
+      );
 
       this.log(`Request completed [${request.id}]: ${response.iterations} iterations, ${response.durationMs}ms`);
       return response;
@@ -214,11 +212,10 @@ export class LocalI2VisionAgent implements vscode.Disposable {
       const startTime = Date.now();
 
       // Use the bridge's streaming method directly
-      for await (const chunk of this.bridge.processStreaming(request.task, {
-        currentFile: request.context.currentFile,
-        projectName: vscode.workspace.workspaceFolders?.[0]?.name,
-        task: request.task
-      })) {
+      for await (const chunk of this.bridge.processStreaming(
+        request.task,
+        request.context.currentFile
+      )) {
         yield chunk;
       }
 

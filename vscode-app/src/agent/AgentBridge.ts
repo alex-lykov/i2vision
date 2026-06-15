@@ -198,16 +198,6 @@ export interface AgentResponse {
 }
 
 /**
- * Context for agent processing
- */
-export interface ProcessContext {
-  currentFile?: string;
-  projectName?: string;
-  workspaceRoot?: string; // Target project root (the project user is working on)
-  task?: string;
-}
-
-/**
  * Agent chunk types for streaming responses
  */
 export type AgentChunk = 
@@ -379,7 +369,7 @@ export class AgentBridge {
    */
   async process(
     userInput: string,
-    context?: ProcessContext,
+    currentFile?: string,
     onProgress?: ProgressCallback
   ): Promise<AgentResponse> {
     if (!this.isInitialized) {
@@ -393,7 +383,7 @@ export class AgentBridge {
       // Prepare template variables
       const templateVars = {
         ...this.config.templateVariables,
-        currentFile: context?.currentFile || this.config.templateVariables.currentFile,
+        currentFile: currentFile || this.config.templateVariables.currentFile || '',
         task: userInput
       };
 
@@ -406,7 +396,7 @@ export class AgentBridge {
       const chunks: AgentChunk[] = [];
       const toolCallArgs = new Map<string, Record<string, any>>();
       
-      for await (const chunk of this.executeAgentLoop(userInput, systemPrompt, context, { streaming: true, onProgress, toolCallArgs })) {
+      for await (const chunk of this.executeAgentLoop(userInput, systemPrompt, { streaming: true, onProgress, toolCallArgs })) {
         chunks.push(chunk);
       }
       
@@ -488,7 +478,7 @@ export class AgentBridge {
    */
   async *processStreaming(
     userInput: string,
-    context?: ProcessContext
+    currentFile?: string
   ): AsyncGenerator<AgentChunk> {
     if (!this.isInitialized) {
       await this.initialize();
@@ -500,7 +490,7 @@ export class AgentBridge {
       // Prepare template variables
       const templateVars = {
         ...this.config.templateVariables,
-        currentFile: context?.currentFile || this.config.templateVariables.currentFile,
+        currentFile: currentFile || this.config.templateVariables.currentFile || '',
         task: userInput
       };
 
@@ -510,7 +500,7 @@ export class AgentBridge {
       this.log(`System prompt built (${systemPrompt.length} chars)`);
 
       // Execute unified agent loop with streaming enabled
-      for await (const chunk of this.executeAgentLoop(userInput, systemPrompt, context, { streaming: true })) {
+      for await (const chunk of this.executeAgentLoop(userInput, systemPrompt, { streaming: true })) {
         yield chunk;
       }
     } catch (error: any) {
@@ -530,7 +520,6 @@ export class AgentBridge {
   async *executeAgentLoop(
     userInput: string,
     systemPrompt: string,
-    context?: ProcessContext,
     options: AgentLoopOptions = { streaming: false }
   ): AsyncGenerator<AgentChunk> {
     const messages: LLMMessage[] = [

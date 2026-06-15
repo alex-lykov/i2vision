@@ -1940,7 +1940,7 @@ Please try a DIFFERENT approach:
             if (result.exitCode !== 0 || output.includes('BUILD FAILED') || output.includes('FAILED')) {
               const errors = this.extractBuildErrors(output);
               return {
-                result: `❌ BUILD FAILED\n\nExit code: ${result.exitCode}\n\nErrors:\n${errors}\n\nThe agent should read the failing files and propose fixes.`,
+                result: `❌ BUILD FAILED\n\nExit code: ${result.exitCode}\n\n📁 READ THESE FILES TO FIX THE ERRORS:\n${errors}\n\n⚠️ DO NOT re-run build commands. READ the files above, understand the errors, and FIX the code using write_file or edit_file.`,
                 error: 'Build failed'
               };
             }
@@ -2120,6 +2120,7 @@ Please try a DIFFERENT approach:
     if (!output) return 'Unknown error';
     
     // Extract file references from errors (Kotlin/Java compiler format)
+    // Pattern: path/to/File.kt or path/to/File.kt:line:column
     const filePattern = /([a-zA-Z0-9_/.\\-]+\.(kt|java|kts))(:\d+:\d+)?/g;
     const mentionedFiles = new Set<string>();
     let match;
@@ -2130,7 +2131,7 @@ Please try a DIFFERENT approach:
       }
     }
     
-    // Look for common error patterns
+    // Look for common error patterns including task failures
     const errorLines = output.split('\n')
       .filter(line => 
         line.toLowerCase().includes('error') ||
@@ -2140,18 +2141,20 @@ Please try a DIFFERENT approach:
         line.includes('Unresolved reference') ||
         line.includes('Type mismatch') ||
         line.includes('Expecting') ||
-        line.includes('Override')
+        line.includes('Override') ||
+        line.includes('> Task') // Gradle task failures
       )
-      .slice(0, 15); // Increased limit for more context
+      .slice(0, 20); // More context
     
     let result = errorLines.join('\n');
     
-    // Add file list at the top if files were mentioned
+    // Add file list at the top if files were mentioned - make it VERY prominent
     if (mentionedFiles.size > 0) {
-      result = `📁 FILES WITH ERRORS: ${Array.from(mentionedFiles).slice(0, 5).join(', ')}\n\n${result}`;
+      const fileList = Array.from(mentionedFiles).slice(0, 5).join('\n  - ');
+      result = `FILES TO READ AND FIX:\n  - ${fileList}\n\nCOMPILER ERRORS:\n${result}`;
     }
     
-    return result || output.slice(-500);
+    return result || output.slice(-1000);
   }
 
   /**

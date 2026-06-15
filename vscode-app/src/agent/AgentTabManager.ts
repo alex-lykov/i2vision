@@ -536,22 +536,33 @@ export class AgentTabManager {
       to { transform: rotate(360deg); }
     }
     
-    /* Meta info bar */
-    .meta-bar {
+    /* Unified footer bar */
+    .message-footer {
       display: flex;
-      gap: 15px;
-      font-size: 0.85em;
-      color: var(--vscode-descriptionForeground);
+      justify-content: space-between;
+      align-items: center;
       padding: 8px 12px;
       background-color: var(--vscode-editorWidget-background);
       border-radius: 4px;
       margin-top: 10px;
+      font-size: 0.85em;
     }
     
-    .meta-bar span {
+    .footer-left {
+      display: flex;
+      gap: 15px;
+      color: var(--vscode-descriptionForeground);
+    }
+    
+    .footer-left span {
       display: flex;
       align-items: center;
       gap: 5px;
+    }
+    
+    .footer-right {
+      display: flex;
+      gap: 8px;
     }
     
     .tool-card.running {
@@ -942,23 +953,19 @@ export class AgentTabManager {
       
       // Streaming element already has the text from chunks - just finalize it
       if (streamingElement) {
-        // Add meta info bar with timing only (no iterations)
-        const metaBar = document.createElement('div');
-        metaBar.className = 'meta-bar';
-        metaBar.innerHTML = \`
-          <span>⏱️ \${durationMs ? (durationMs / 1000).toFixed(1) : '?'}s</span>
+        // Add unified footer bar with timing + actions
+        const footer = document.createElement('div');
+        footer.className = 'message-footer';
+        footer.innerHTML = \`
+          <div class="footer-left">
+            <span>⏱️ \${durationMs ? (durationMs / 1000).toFixed(1) : '?'}s</span>
+          </div>
+          <div class="footer-right">
+            <button class="btn btn-secondary" onclick="copyResponse()" style="padding: 6px 12px; font-size: 0.9em;">📋 Copy</button>
+            <button class="btn btn-secondary" onclick="applyChanges()" style="padding: 6px 12px; font-size: 0.9em;">📝 Apply</button>
+          </div>
         \`;
-        streamingElement.appendChild(metaBar);
-        
-        // Add action buttons
-        const buttonRow = document.createElement('div');
-        buttonRow.className = 'button-row';
-        buttonRow.style.marginTop = '15px';
-        buttonRow.innerHTML = \`
-          <button class="btn btn-secondary" onclick="copyResponse()">📋 Copy</button>
-          <button class="btn btn-secondary" onclick="applyChanges()">📝 Apply</button>
-        \`;
-        streamingElement.appendChild(buttonRow);
+        streamingElement.appendChild(footer);
         
         streamingElement = null;
       }

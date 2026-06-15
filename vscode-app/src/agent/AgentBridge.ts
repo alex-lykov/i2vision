@@ -1917,14 +1917,11 @@ Please try a DIFFERENT approach:
           
           this.log(`  Running terminal: ${command}`);
           
-          // Block dangerous commands
-          const blocked = AgentBridge.BLOCKED_COMMAND_PATTERNS;
-          const isBlocked = blocked.some(b => command.includes(b));
-          
-          if (isBlocked) {
+          // SAFETY CHECK: Block only truly destructive commands
+          if (this.isDestructiveCommand(command)) {
             return { 
               result: '', 
-              error: `BLOCKED: This command is dangerous ('${blocked.find(b => command.includes(b))}').`
+              error: `BLOCKED: This command is dangerous and cannot be executed.`
             };
           }
           
@@ -1932,7 +1929,7 @@ Please try a DIFFERENT approach:
           const classification = this.classifyCommand(command);
           
           if (classification === 'long') {
-            // Long-running: Use persistent terminal with auto-restart
+            // Long-running server: Use persistent terminal with auto-restart
             const terminalName = this.generateTerminalName(command);
             const result = this.terminalManager.runInTerminal(
               terminalName,
@@ -1940,9 +1937,10 @@ Please try a DIFFERENT approach:
               workingDir,
               true // Enable auto-restart on file changes
             );
+            this.log(`  Started long-running server in terminal "${terminalName}"`);
             return { result };
           } else {
-            // Short-lived: Run with timeout and return output
+            // Short-lived command: Run with timeout and return output
             const timeout = 30000; // 30 seconds
             const result = await this.runCommandWithTimeout(command, timeout, workingDir);
             
@@ -2116,6 +2114,15 @@ Please try a DIFFERENT approach:
   }
 
   /**
+   * Check if command is destructive/dangerous (should be blocked)
+   * Only blocks truly dangerous commands, not server/start commands
+   */
+  private isDestructiveCommand(command: string): boolean {
+    const blocked = AgentBridge.BLOCKED_COMMAND_PATTERNS;
+    return blocked.some(b => command.includes(b));
+  }
+
+  /**
    * Classify command as short-lived or long-running
    * Long-running commands use persistent terminals with auto-restart
    */
@@ -2274,9 +2281,17 @@ Please try a DIFFERENT approach:
     prompt += '\n• Use kill_terminal to stop a running server';
     prompt += '\n• Use list_terminals to see all running terminals';
     prompt += '\n\n--- BLOCKED COMMANDS ---';
-    prompt += '\nThese dangerous commands are BLOCKED:';
-    prompt += '\n- rm -rf /, del /F /S /Q C:\\*, format, mkfs';
-    prompt += '\nIf blocked, tell the user the command is dangerous and cannot be executed.';
+    prompt += '\nThese dangerous commands are BLOCKED and will be rejected:';
+    prompt += '\n- rm -rf /, del /F /S /Q C:\\*, format, mkfs, dd if=/dev/zero';
+    prompt += '\nAll other commands are allowed, including server start commands.';
+    prompt += '\n\n--- SERVER COMMANDS ---';
+    prompt += '\nTo start development servers, use run_terminal with the full command:';
+    prompt += '\n- ./gradlew :app:server:run';
+    prompt += '\n- ./gradlew run';
+    prompt += '\n- npm run dev, npm start';
+    prompt += '\n- yarn dev, yarn start';
+    prompt += '\nThe system automatically detects long-running servers and runs them in persistent terminals with auto-restart on file changes.';
+    prompt += '\nYou do NOT need to report the command to the user - just call run_terminal and the system handles it.';
     prompt += '\n\n--- PATH HANDLING ---';
     prompt += '\n- Always use forward slashes (/) for paths';
     prompt += '\n- Paths are relative to workspace root';

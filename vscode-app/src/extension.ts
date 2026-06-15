@@ -10,6 +10,7 @@ import { I2VisionTreeProvider, I2VisionTreeItem } from './treeViewProvider';
 import { CLI as I2VisionCLI } from './cliIntegration';
 import { FileSystemIntegration, FSUtils } from './fileSystemIntegration';
 import { AgentTabManager } from './agent/AgentTabManager';
+import { LocalAgentProvider } from './agent/LocalAgentProvider';
 import { registerDebugCommands } from './agent/ToolCallDebugger';
 
 /**
@@ -24,7 +25,7 @@ let agentManager: AgentTabManager;
 /**
  * Activate the extension
  */
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
     extensionContext = context;
     
     // Create output channel for logging
@@ -47,10 +48,14 @@ export function activate(context: vscode.ExtensionContext) {
     // Initialize tree provider with CLI and file system integration
     treeProvider = new I2VisionTreeProvider(workspaceRoot, outputChannel);
     
-    // Initialize agent tab manager
-    agentManager = new AgentTabManager(context, outputChannel);
+    // Initialize agent provider first, then agent tab manager
+    const agentProvider = new LocalAgentProvider(context, outputChannel);
+    await agentProvider.initialize();
     
-    // Initialize the agent manager (and provider) - non-blocking
+    // Initialize agent tab manager with provider
+    agentManager = new AgentTabManager(context, outputChannel, agentProvider);
+    
+    // Initialize the agent manager - non-blocking
     agentManager.initialize().catch(err => {
         outputChannel.appendLine(`Warning: Agent manager initialization failed: ${err.message}`);
     });

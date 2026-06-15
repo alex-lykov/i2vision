@@ -191,6 +191,7 @@ export class LocalAgentProvider {
   /**
    * Load configuration for a specific layer
    * Merges default config with layer-specific overrides
+   * Auto-creates config file if it doesn't exist
    */
   private async loadConfigForLayer(layer: VslfcLayer): Promise<AgentConfig> {
     const layerName = layer.toLowerCase();
@@ -215,7 +216,12 @@ export class LocalAgentProvider {
       layerConfig = await this.loadYamlConfig(configPath);
       this.log(`Loaded layer config from ${configPath}`);
     } catch (error: any) {
-      this.log(`Layer config not found at ${configPath}, using defaults only`);
+      // Config doesn't exist - auto-create it from defaults
+      this.log(`Config not found, auto-creating: ${configPath}`);
+      const defaultConfig = this.createDefaultConfig(layer);
+      await this.saveConfig(layerName, defaultConfig);
+      this.log(`Auto-created config from defaults`);
+      layerConfig = defaultConfig;
     }
     
     // Merge configs: layer overrides take precedence
@@ -530,6 +536,47 @@ export class LocalAgentProvider {
     };
   }
 
+  /**
+   * Save configuration to YAML file
+   * Used for auto-creation and manual updates
+   */
+  private async saveConfig(layerName: string, config: AgentConfig): Promise<void> {
+    const configPath = path.join(this.visionAiDir, `${layerName}-agent.yaml`);
+    
+    // Ensure .vision-ai directory exists
+    await fs.promises.mkdir(this.visionAiDir, { recursive: true });
+    
+    // Convert AgentConfig to YAML-friendly format
+    const yamlConfig: any = {
+      key: config.key,
+      agentType: config.agentType,
+      version: config.version,
+      isActive: config.isActive,
+      systemPromptTemplate: config.systemPromptTemplate,
+      templateVariables: config.templateVariables,
+      model: { ...config.model },
+      llm: { ...config.llm },
+      formattingRules: { ...config.formattingRules },
+      iterationSettings: { ...config.iterationSettings },
+      toolSelection: { ...config.toolSelection },
+      safety: { ...config.safety },
+      parsing: { ...config.parsing },
+      discovery: { ...config.discovery },
+      execution: { ...config.execution },
+      formatting: { ...config.formatting },
+      streaming: { ...config.streaming },
+      mcp: { ...config.mcp }
+    };
+    
+    const yamlContent = yaml.dump(yamlConfig, {
+      indent: 2,
+      lineWidth: -1, // Don't wrap lines
+      noRefs: true   // Don't use YAML anchors
+    });
+    
+    await fs.promises.writeFile(configPath, yamlContent, 'utf8');
+    this.log(`Saved config to ${configPath}`);
+  }
 
   /**
    * Get configuration for a layer (for UI display)

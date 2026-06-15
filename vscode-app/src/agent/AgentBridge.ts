@@ -215,7 +215,7 @@ export type AgentChunk =
   | { type: 'tool_call_started'; toolName: string; args: Record<string, any>; timestamp: number }
   | { type: 'tool_call_completed'; toolName: string; result: string; timestamp: number }
   | { type: 'text'; text: string; timestamp: number }
-  | { type: 'done'; outcome: 'success' | 'error'; timestamp: number; iterations?: number }
+  | { type: 'done'; outcome: 'success' | 'error'; timestamp: number; iterations?: number; durationMs?: number; tokenUsage?: { prompt: number; completion: number; total: number } }
   | { type: 'iteration_complete'; iteration: number; timestamp: number }
   | { type: 'error'; error: string; timestamp: number };
 
@@ -553,15 +553,9 @@ export class AgentBridge {
       if (options.streaming) {
         yield {
           type: 'thinking',
-          message: `Iteration ${iteration}: Processing...`,
+          message: `Iteration ${iteration}: Calling LLM...`,
           timestamp: Date.now()
         };
-      } else if (options.onProgress) {
-        options.onProgress({
-          type: 'thinking',
-          message: `Iteration ${iteration}: Processing...`,
-          iteration
-        });
       }
 
       // Call LLM (streaming or non-streaming)
@@ -603,6 +597,7 @@ export class AgentBridge {
           // More robust pattern that handles malformed JSON
           const toolCallPattern = /tool_call:\s*({[\s\S]*?})(?=\n|$|tool_call:)/g;
           let match;
+          let parseIndex = 0;
           while ((match = toolCallPattern.exec(responseText)) !== null) {
             try {
               // Clean up common JSON issues from LLM output
@@ -614,12 +609,15 @@ export class AgentBridge {
               
               const toolCallObj = JSON.parse(jsonStr);
               if (toolCallObj.tool) {
+                // Generate consistent tool_call_id for linking results
+                const toolCallId = `call_${iteration}_${parseIndex}`;
                 streamingToolCalls.push({
-                  id: `call_${Date.now()}_${streamingToolCalls.length}`,
+                  id: toolCallId,
                   name: toolCallObj.tool,
                   arguments: toolCallObj.args || {}
                 });
-                this.log(`Parsed tool call: ${toolCallObj.tool}`);
+                this.log(`Parsed tool call: ${toolCallObj.tool} (id: ${toolCallId})`);
+                parseIndex++;
               }
             } catch (e: any) {
               this.log(`Warning: Could not parse tool call JSON: ${match[1].substring(0, 100)}... Error: ${e.message}`);
@@ -685,7 +683,8 @@ export class AgentBridge {
             type: 'done',
             outcome: 'success',
             timestamp: Date.now(),
-            iterations: iteration
+            iterations: iteration,
+            durationMs: Date.now() - (messages[0] as any)._startTime || 0
           };
         } else if (options.onProgress) {
           options.onProgress({
@@ -892,14 +891,21 @@ Please try a DIFFERENT approach:
       });
 
       // Add tool results with tool_call_id for linking
+      // This helps the LLM associate results with their original calls
       for (let i = 0; i < currentIterationToolCalls.length; i++) {
         const tc = currentIterationToolCalls[i];
         const matchingToolCall = streamingToolCalls[i];
+        
+        // Ensure tool_call_id is set for proper linking
+        const toolCallId = matchingToolCall?.id || tc.toolCallId || `call_${iteration}_${i}`;
+        
         messages.push({
           role: 'tool',
           content: tc.error || tc.result || 'No result',
-          tool_call_id: matchingToolCall?.id
+          tool_call_id: toolCallId
         });
+        
+        this.log(`[Iter ${iteration}] Linked tool result to ${toolCallId}`);
       }
 
       messages.push({

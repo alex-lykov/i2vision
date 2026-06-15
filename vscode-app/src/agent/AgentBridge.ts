@@ -311,6 +311,13 @@ export class AgentBridge {
   }
 
   /**
+   * Get the agent configuration
+   */
+  getConfig(): AgentConfig {
+    return { ...this.config };
+  }
+
+  /**
    * Log a message
    */
   private log(message: string): void {

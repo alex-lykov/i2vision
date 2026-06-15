@@ -147,7 +147,7 @@ export class AgentTabManager {
   /**
    * Process user input through the active agent with streaming
    */
-  async processUserInput(userInput: string): Promise<void> {
+  async processUserInput(userInput: string, currentFile?: string): Promise<void> {
     if (!this.activeTabId) {
       vscode.window.showErrorMessage('No active agent tab. Create one first.');
       return;
@@ -201,7 +201,7 @@ export class AgentTabManager {
         timestamp: Date.now()
       });
       
-      for await (const chunk of this.currentAgentBridge.processStreaming(userInput)) {
+      for await (const chunk of this.currentAgentBridge.processStreaming(userInput, currentFile)) {
         switch (chunk.type) {
           case 'tool_call_started':
             // Show tool card inline as it starts
@@ -242,6 +242,15 @@ export class AgentTabManager {
             break;
             
           case 'done':
+            // Send token usage if available
+            if (chunk.tokenUsage) {
+              this.sendToWebview({
+                type: 'token_usage',
+                tokenUsage: chunk.tokenUsage,
+                contextLength: this.currentAgentBridge.getConfig().model.contextLength,
+                timestamp: chunk.timestamp
+              });
+            }
             break;
             
           case 'error':
@@ -333,7 +342,14 @@ export class AgentTabManager {
     this.webviewPanel.webview.onDidReceiveMessage(async (message) => {
       switch (message.type) {
         case 'user_input':
-          await this.processUserInput(message.content);
+          // Get current file from VSCode
+          const currentFile = vscode.window.activeTextEditor?.document.uri.fsPath;
+          const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+          const relativePath = currentFile && workspaceRoot 
+            ? path.relative(workspaceRoot, currentFile)
+            : undefined;
+          
+          await this.processUserInput(message.content, relativePath);
           break;
           
         case 'apply_changes':
@@ -363,9 +379,19 @@ export class AgentTabManager {
   }
 
   /**
-   * Get webview HTML content - Unified Timeline UX
+   * Get webview HTML content - Unified Timeline UX with context meter
    */
   private getWebviewContent(): string {
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || 'No workspace';
+    const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name || 'Unknown';
+    
+    // Escape workspace name for HTML
+    const escapeHtmlStr = (text: string) => {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    };
+    
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -381,6 +407,65 @@ export class AgentTabManager {
       background-color: var(--vscode-editor-background);
       padding: 20px;
       line-height: 1.6;
+    }
+    
+    /* Context bar at top */
+    .context-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 15px;
+      background-color: var(--vscode-editorWidget-background);
+      border: 1px solid var(--vscode-editorWidget-border);
+      border-radius: 6px;
+      margin-bottom: 15px;
+      font-size: 0.85em;
+    }
+    
+    .context-left {
+      display: flex;
+      gap: 20px;
+      align-items: center;
+    }
+    
+    .context-item {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--vscode-descriptionForeground);
+    }
+    
+    /* Token usage meter */
+    .token-meter {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    
+    .token-bar {
+      width: 150px;
+      height: 8px;
+      background-color: var(--vscode-editorWidget-border);
+      border-radius: 4px;
+      overflow: hidden;
+      position: relative;
+    }
+    
+    .token-fill {
+      height: 100%;
+      background: linear-gradient(90deg, 
+        var(--vscode-terminal-successBackground) 0%, 
+        var(--vscode-terminal-successBackground) 50%,
+        var(--vscode-terminal-ansiYellow) 75%,
+        var(--vscode-errorForeground) 100%);
+      transition: width 0.3s ease;
+    }
+    
+    .token-text {
+      min-width: 80px;
+      text-align: right;
+      color: var(--vscode-descriptionForeground);
+      font-size: 0.8em;
     }
     
     /* Single timeline container */
@@ -617,6 +702,27 @@ export class AgentTabManager {
   </style>
 </head>
 <body>
+  <!-- Context bar with workspace and token usage -->
+  <div class="context-bar">
+    <div class="context-left">
+      <div class="context-item">
+        <span>📁</span>
+        <span id="workspaceName">${escapeHtmlStr(workspaceName)}</span>
+      </div>
+      <div class="context-item">
+        <span>📄</span>
+        <span id="currentFile">None</span>
+      </div>
+    </div>
+    <div class="token-meter">
+      <span style="color: var(--vscode-descriptionForeground); font-size: 0.8em;">Context:</span>
+      <div class="token-bar">
+        <div class="token-fill" id="tokenFill" style="width: 0%"></div>
+      </div>
+      <span class="token-text" id="tokenText">0 / 0 tokens</span>
+    </div>
+  </div>
+  
   <!-- Single timeline container - everything appends here in order -->
   <div class="timeline" id="timeline">
     <div class="message agent">
@@ -651,6 +757,9 @@ export class AgentTabManager {
     const userInput = document.getElementById('userInput');
     const sendBtn = document.getElementById('sendBtn');
     const clearBtn = document.getElementById('clearBtn');
+    const tokenFill = document.getElementById('tokenFill');
+    const tokenText = document.getElementById('tokenText');
+    const currentFileEl = document.getElementById('currentFile');
     
     // Track current streaming element
     let streamingElement = null;
@@ -709,6 +818,10 @@ export class AgentTabManager {
           finalizeStreamingText(message.durationMs);
           break;
           
+        case 'token_usage':
+          updateTokenMeter(message.tokenUsage, message.contextLength);
+          break;
+          
         case 'error':
           appendErrorMessage(message.error);
           break;
@@ -734,7 +847,7 @@ export class AgentTabManager {
       thinkingEl.className = 'thinking-indicator';
       thinkingEl.innerHTML = \`
         <div class="spinner"></div>
-        <span>\${escapeHtml(message)}</span>
+        <span>\${message}</span>
       \`;
       timeline.appendChild(thinkingEl);
     }
@@ -845,6 +958,23 @@ export class AgentTabManager {
         streamingElement.appendChild(buttonRow);
         
         streamingElement = null;
+      }
+    }
+    
+    function updateTokenMeter(tokenUsage, contextLength) {
+      const total = tokenUsage.prompt + tokenUsage.completion;
+      const percentage = Math.min((total / contextLength) * 100, 100);
+      
+      tokenFill.style.width = percentage + '%';
+      tokenText.textContent = \`\${total.toLocaleString()} / \${contextLength.toLocaleString()} tokens (\${percentage.toFixed(1)}%)\`;
+      
+      // Change color based on usage
+      if (percentage > 80) {
+        tokenFill.style.background = 'var(--vscode-errorForeground)';
+      } else if (percentage > 60) {
+        tokenFill.style.background = 'var(--vscode-terminal-ansiYellow)';
+      } else {
+        tokenFill.style.background = 'var(--vscode-terminal-successBackground)';
       }
     }
     

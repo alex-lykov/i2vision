@@ -1924,13 +1924,35 @@ Please try a DIFFERENT approach:
             };
           }
           
+          // BUILD COMMAND SPECIAL HANDLING: Capture output to detect failures
+          // This enables the agent to see build errors and fix them
+          if (this.isBuildCommand(command)) {
+            this.log(`  Build command detected - running with output capture`);
+            const timeout = 120000; // 2 minutes for builds
+            const result = await this.runCommandWithTimeout(command, timeout, workingDir);
+            
+            const output = result.stdout || result.stderr || 'Command completed with no output.';
+            const exitCodeInfo = result.exitCode !== null ? ` (exit: ${result.exitCode})` : '';
+            
+            // Check for build failures
+            if (result.exitCode !== 0 || output.includes('BUILD FAILED') || output.includes('FAILED')) {
+              const errors = this.extractBuildErrors(output);
+              return {
+                result: `❌ BUILD FAILED\n\nExit code: ${result.exitCode}\n\nErrors:\n${errors}\n\nThe agent should read the failing files and propose fixes.`,
+                error: 'Build failed'
+              };
+            }
+            
+            return { result: `✅ Build successful${exitCodeInfo}\n\n${output.slice(-1000)}` };
+          }
+          
           // UNIFIED APPROACH: Classify command and route appropriately
           const classification = this.classifyCommand(command);
           
           if (classification === 'long') {
             // Long-running server: Use persistent terminal with auto-restart
             const terminalName = this.generateTerminalName(command);
-            const result = this.terminalManager.runInTerminal(
+            const result = await this.terminalManager.runInTerminal(
               terminalName,
               command,
               workingDir,
@@ -2122,6 +2144,13 @@ Please try a DIFFERENT approach:
   }
 
   /**
+   * Check if command is a build command that should capture output
+   */
+  private isBuildCommand(command: string): boolean {
+    return /gradlew|gradle|mvn|mvnw|npm run build|make|tsc|yarn build/i.test(command);
+  }
+
+  /**
    * Classify command as short-lived or long-running
    * Long-running commands use persistent terminals with auto-restart
    */
@@ -2294,6 +2323,14 @@ Please try a DIFFERENT approach:
     prompt += '\n- yarn dev, yarn start';
     prompt += '\nThe system automatically detects long-running servers and runs them in persistent terminals with auto-restart on file changes.';
     prompt += '\nYou do NOT need to report the command to the user - just call run_terminal and the system handles it.';
+    prompt += '\n\n--- BUILD COMMANDS ---';
+    prompt += '\nBuild commands (gradlew, mvn, npm run build) are monitored for failures.';
+    prompt += '\nIf a build fails, you will receive the error output.';
+    prompt += '\nWhen you see BUILD FAILED:';
+    prompt += '\n1. Read the failing files mentioned in the error';
+    prompt += '\n2. Understand what\'s broken (missing imports, typos, API changes)';
+    prompt += '\n3. Propose or apply fixes using write_file or edit_file';
+    prompt += '\n4. Re-run the build to verify the fix';
     prompt += '\n\n--- PATH HANDLING ---';
     prompt += '\n- Always use forward slashes (/) for paths';
     prompt += '\n- Paths are relative to workspace root';

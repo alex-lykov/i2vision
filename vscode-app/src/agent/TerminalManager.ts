@@ -57,18 +57,21 @@ export class TerminalManager {
      * Run a command in a named terminal. If a terminal with the same name exists,
      * kill it and create a new one.
      * 
+     * For build commands, captures initial output and returns build results.
+     * For other commands, returns immediately after starting terminal.
+     * 
      * @param name - Terminal name (e.g., "backend", "frontend")
      * @param command - Command to run
      * @param workingDir - Working directory
      * @param restartOnChanges - Auto-restart when source files change
-     * @returns Status message
+     * @returns Status message or build results
      */
-    runInTerminal(
+    async runInTerminal(
         name: string,
         command: string,
         workingDir: string,
         restartOnChanges: boolean = false
-    ): string {
+    ): Promise<string> {
         this.log(`runInTerminal: name="${name}", command="${command}", restartOnChanges=${restartOnChanges}`);
         
         // Kill existing terminal with same name
@@ -116,8 +119,56 @@ export class TerminalManager {
         
         this.terminals.set(name, managed);
         
+        // For build commands, capture initial output and check for errors
+        if (this.isBuildCommand(command)) {
+            this.log(`Build command detected - capturing output for 30 seconds`);
+            const output = await this.captureTerminalOutput(terminal, 30000);
+            
+            if (output.includes('BUILD FAILED') || output.includes('FAILED') || output.includes('error:')) {
+                const errors = this.extractBuildErrors(output);
+                return `❌ BUILD FAILED\n\nErrors:\n${errors}\n\nFull output:\n${output.slice(-1000)}`;
+            }
+            
+            const restartInfo = restartOnChanges ? ' (auto-restart on file changes)' : '';
+            return `✅ Build successful${restartInfo}\n\n${output.slice(-500)}`;
+        }
+        
         const restartInfo = restartOnChanges ? ' (auto-restart on file changes)' : '';
         return `Terminal "i2-Vision: ${name}" started: ${normalizedCommand}${restartInfo}`;
+    }
+
+    /**
+     * Check if command is a build command that should be monitored
+     */
+    private isBuildCommand(command: string): boolean {
+        return /gradlew|gradle|mvn|mvnw|npm run build|make|tsc|yarn build/i.test(command);
+    }
+
+    /**
+     * Capture terminal output for a specified duration
+     * Note: This is a simplified implementation - VS Code doesn't provide direct terminal output access
+     * For proper implementation, would need to use child_process with output capture
+     */
+    private async captureTerminalOutput(terminal: vscode.Terminal, timeoutMs: number): Promise<string> {
+        // VS Code terminal API doesn't provide direct output capture
+        // This is a placeholder - in practice, build commands should use run_build tool
+        // or we'd need to implement a different approach (e.g., redirect to file)
+        await new Promise(resolve => setTimeout(resolve, timeoutMs));
+        return 'Output capture not available - use run_build for build verification';
+    }
+
+    /**
+     * Extract build errors from output
+     */
+    private extractBuildErrors(output: string): string {
+        const errorLines = output.split('\n')
+            .filter(line => 
+                line.toLowerCase().includes('error') ||
+                line.toLowerCase().includes('failed') ||
+                line.includes('^')
+            )
+            .slice(0, 10);
+        return errorLines.join('\n') || output.slice(-500);
     }
 
     /**

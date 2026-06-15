@@ -1,9 +1,9 @@
-# VSCode Extension Documentation
+﻿# VSCode Extension Documentation
 
 ## Guides
 
-- [**Extension Structure**](STRUCTURE.md) - Directory layout and key files
-- [**Agent Tool Calling Test**](AGENT_TOOL_CALLING_TEST.md) - How to test agent tool calls
+- [**Extension Structure**](structure.md) - Directory layout and key files
+- [**Agent Tool Calling Test**](agent-tool-calling-test.md) - How to test agent tool calls
 
 ## Architecture
 
@@ -43,7 +43,7 @@ Agents are configured in `.vscode/i2vision/agents/*.yaml`. See main docs for con
 
 ## Development
 
-See [STRUCTURE.md](STRUCTURE.md) for development workflow and packaging instructions.
+See [structure.md](structure.md) for development workflow and packaging instructions.
 
 ## Related Documentation
 

@@ -1,4 +1,4 @@
-# Contributing to i²-Vision
+﻿# Contributing to i²-Vision
 
 Thanks for considering contributing! Here's what you need to know.
 

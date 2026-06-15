@@ -1,4 +1,4 @@
-# i²-Vision (i2Vision)
+﻿# i²-Vision (i2Vision)
 
 **i² = Insight × Intelligence**
 **vision = high-quality semantic context for both human developers and LLMs**

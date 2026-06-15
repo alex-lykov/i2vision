@@ -1050,6 +1050,18 @@ export class AgentTabManager {
     if (this.webviewPanel) {
       this.webviewPanel.dispose();
     }
+    
+    // Dispose the current agent bridge (cleans up terminal manager)
+    if (this.currentAgentBridge) {
+      this.currentAgentBridge.dispose();
+      this.currentAgentBridge = null;
+    }
+    
+    // Dispose all agents
+    for (const [tabId, tabState] of this.tabs.entries()) {
+      tabState.agent.dispose();
+    }
+    
     this.tabs.clear();
     this.log('AgentTabManager disposed');
   }

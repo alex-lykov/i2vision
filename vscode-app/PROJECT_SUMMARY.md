@@ -1,4 +1,4 @@
-# i2-Vision VSCode Extension - Project Summary
+﻿# i2-Vision VSCode Extension - Project Summary
 
 ## Overview
 
@@ -196,7 +196,7 @@ Blocked patterns:
    - "Search for 'export' in *.ts files"
 
 ### Agent Tool Testing
-See [docs/AGENT_TOOL_CALLING_TEST.md](docs/AGENT_TOOL_CALLING_TEST.md) for comprehensive test procedures.
+See [docs/agent-tool-calling-test.md](docs/agent-tool-calling-test.md) for comprehensive test procedures.
 
 ## Development Workflow
 

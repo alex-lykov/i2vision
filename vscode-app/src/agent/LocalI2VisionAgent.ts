@@ -290,6 +290,9 @@ export class LocalI2VisionAgent implements vscode.Disposable {
       await this.cancel(requestId);
     }
     
+    // Dispose the bridge (cleans up terminal manager)
+    this.bridge.dispose();
+    
     this.log(`Agent disposed: ${this.id}`);
   }
 

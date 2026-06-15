@@ -1,4 +1,4 @@
-/**
+﻿/**
  * AgentBridge - Bridge between VSCode extension and agent core
  * 
  * Wraps agent core functionality and provides a clean API for AgentTabManager
@@ -13,6 +13,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import { CLI, LLMResponse, LLMTool, LLMMessage, LLMToolCall, LLMChunk } from '../cliIntegration';
+import { TerminalManager } from './TerminalManager';
 
 /**
  * Context profile - defines what context to load eagerly vs lazily
@@ -171,6 +172,8 @@ export interface AgentConfig {
         regexSearchEnabled: boolean;
       };
     };
+    // Long-running command patterns for terminal classification
+    longRunningPatterns?: string[];
   };
   
   // Formatting section
@@ -293,6 +296,7 @@ interface AgentLoopOptions {
 export class AgentBridge {
   private config: AgentConfig;
   private cli: CLI;
+  private terminalManager: TerminalManager;
   private isInitialized: boolean = false;
   private outputChannel?: vscode.OutputChannel;
   private workspaceRoot: string;
@@ -304,25 +308,36 @@ export class AgentBridge {
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000; // characters
   private static readonly MAX_LIST_FILES_RESULTS = 100; // max files to return
 
-  // Blocked command patterns to prevent long-running processes
-  private static readonly BLOCKED_COMMAND_PATTERNS = [
-    'npm run dev',
-    'npm start',
-    'yarn dev',
-    'yarn start',
-    'pnpm dev',
-    'pnpm start',
-    'gradlew run',
-    './gradlew run',
-    'gradle run',
-    'mvn spring-boot:run',
-    'mvn jetty:run',
-    'node server',
+  // Long-running command patterns - these trigger persistent terminal mode
+  // Configurable via YAML: execution.longRunningPatterns
+  private longRunningPatterns: string[] = [
+    'run',
+    'serve',
+    'dev',
+    'start',
+    'watch',
     'nodemon',
-    'webpack-dev-server',
     'vite',
     'next dev',
-    'gatsby develop'
+    'spring-boot:run',
+    'jetty:run',
+    'webpack --watch',
+    'tsc --watch',
+    'gulp watch',
+    'grunt watch',
+    'cargo run',
+    'go run',
+    'python -m uvicorn',
+    'poetry run'
+  ];
+
+  // Blocked commands - never execute (security)
+  private static readonly BLOCKED_COMMAND_PATTERNS = [
+    'rm -rf /',
+    'del /F /S /Q C:\\*',
+    'format',
+    'mkfs',
+    'dd if=/dev/zero'
   ];
 
   constructor(config: AgentConfig, outputChannel?: vscode.OutputChannel, extensionRoot?: string, workspaceRoot?: string) {
@@ -347,6 +362,21 @@ export class AgentBridge {
 
     // Initialize CLI with workspace root for user's project operations
     this.cli = new CLI(this.workspaceRoot, outputChannel);
+    
+    // Initialize TerminalManager for persistent terminals
+    // Use configurable debounce from YAML (default 1000ms for Gradle projects)
+    const debounceMs = 1000; // Default 1 second for Gradle projects
+    this.terminalManager = new TerminalManager(outputChannel, debounceMs);
+    
+    // Load custom long-running patterns from YAML config if provided
+    const customPatterns = (config as any).execution?.longRunningPatterns;
+    if (customPatterns && Array.isArray(customPatterns) && customPatterns.length > 0) {
+      // Replace default patterns with configured ones (not append)
+      this.longRunningPatterns = customPatterns;
+      this.log(`Loaded ${customPatterns.length} long-running patterns from YAML config`);
+    } else {
+      this.log(`Using ${this.longRunningPatterns.length} default long-running patterns`);
+    }
   }
 
   /**
@@ -779,7 +809,7 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'run_terminal',
-          description: 'Run a short-lived terminal command and return stdout/stderr. Max 30 seconds. BLOCKED: servers, watchers, interactive commands.',
+          description: 'Run a short-lived terminal command and return stdout/stderr. Max 30 seconds. For long-running servers, the command automatically runs in a persistent terminal with auto-restart on file changes.',
           parameters: {
             type: 'object',
             properties: {
@@ -793,6 +823,54 @@ export class AgentBridge {
               }
             },
             required: ['command']
+          }
+        }
+      },
+      
+      // ===== TERMINAL MANAGEMENT (Manual control) =====
+      {
+        type: 'function',
+        function: {
+          name: 'kill_terminal',
+          description: 'Stop a running managed terminal by name. Use this to stop servers or watchers started by run_terminal.',
+          parameters: {
+            type: 'object',
+            properties: {
+              name: { 
+                type: 'string', 
+                description: 'Terminal name (e.g., "backend", "frontend")' 
+              }
+            },
+            required: ['name']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'list_terminals',
+          description: 'List all managed terminals and their status.',
+          parameters: {
+            type: 'object',
+            properties: {},
+            required: []
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'terminal_status',
+          description: 'Check if a specific terminal is running and get its status. Use this when the user asks "is X running?" or "what state is X in?".',
+          parameters: {
+            type: 'object',
+            properties: {
+              name: { 
+                type: 'string', 
+                description: 'Terminal name to check (e.g., "backend", "frontend")' 
+              }
+            },
+            required: ['name']
           }
         }
       }
@@ -1835,60 +1913,75 @@ Please try a DIFFERENT approach:
           const command = toolCall.args.command;
           const workingDir = toolCall.args.workingDir 
             ? this.resolvePath(toolCall.args.workingDir) 
-            : undefined;
+            : this.workspaceRoot;
           
           this.log(`  Running terminal: ${command}`);
           
-          // Block dangerous/long-running commands
+          // Block dangerous commands
           const blocked = AgentBridge.BLOCKED_COMMAND_PATTERNS;
           const isBlocked = blocked.some(b => command.includes(b));
           
           if (isBlocked) {
             return { 
               result: '', 
-              error: `BLOCKED: This command starts a server or long-running process ('${blocked.find(b => command.includes(b))}'). Tell the user to run it manually in their terminal instead.`
+              error: `BLOCKED: This command is dangerous ('${blocked.find(b => command.includes(b))}').`
             };
           }
           
-          const timeout = 30000; // 30 seconds
-          const result = await this.runCommandWithTimeout(command, timeout, workingDir);
+          // UNIFIED APPROACH: Classify command and route appropriately
+          const classification = this.classifyCommand(command);
           
-          // Include exit code and both stdout/stderr for better diagnostics
-          const output = result.stdout || result.stderr || 'Command completed with no output.';
-          const exitCodeInfo = result.exitCode !== null ? ` (exit: ${result.exitCode})` : '';
+          if (classification === 'long') {
+            // Long-running: Use persistent terminal with auto-restart
+            const terminalName = this.generateTerminalName(command);
+            const result = this.terminalManager.runInTerminal(
+              terminalName,
+              command,
+              workingDir,
+              true // Enable auto-restart on file changes
+            );
+            return { result };
+          } else {
+            // Short-lived: Run with timeout and return output
+            const timeout = 30000; // 30 seconds
+            const result = await this.runCommandWithTimeout(command, timeout, workingDir);
+            
+            const output = result.stdout || result.stderr || 'Command completed with no output.';
+            const exitCodeInfo = result.exitCode !== null ? ` (exit: ${result.exitCode})` : '';
+            
+            return { result: `${output}${exitCodeInfo}` };
+          }
+        }
+        
+        // ===== TERMINAL MANAGEMENT TOOLS =====
+        case 'kill_terminal': {
+          const name = toolCall.args.name;
+          this.log(`  Killing terminal: ${name}`);
+          const result = this.terminalManager.killTerminal(name);
+          return { result };
+        }
+        
+        case 'list_terminals': {
+          this.log(`  Listing terminals`);
+          const result = this.terminalManager.listTerminals();
+          return { result };
+        }
+        
+        case 'terminal_status': {
+          const name = toolCall.args.name;
+          this.log(`  Checking terminal status: ${name}`);
+          
+          const status = this.terminalManager.getTerminalStatus(name);
+          
+          if (!status) {
+            return { result: `Terminal "${name}" is not running.` };
+          }
           
           return { 
-            result: `${output}${exitCodeInfo}`
+            result: `Terminal "${name}" is running. Command: ${status.command}. Auto-restart: ${status.autoRestart ? 'enabled' : 'disabled'}. Restart count: ${status.restartCount}.` 
           };
         }
         
-        // Legacy - kept for backward compatibility
-        case 'run_command': {
-          const command = toolCall.args.command;
-          const workingDir = toolCall.args.workingDir ? this.resolvePath(toolCall.args.workingDir) : undefined;
-          
-          this.log(`  Running command: ${command}`);
-          
-          // Block long-running commands that would timeout
-          const blockedPattern = AgentBridge.BLOCKED_COMMAND_PATTERNS.find(p => command.includes(p));
-          if (blockedPattern) {
-            this.log(`  BLOCKED: Command contains '${blockedPattern}'`);
-            return {
-              result: '',
-              error: `BLOCKED: This command starts a long-running server ('${blockedPattern}'). Tell the user to run it manually in a terminal instead.`
-            };
-          }
-          
-          const result = await this.cli.runCommand(command, workingDir);
-          
-          // Include exit code info if available
-          const output = result.stdout || result.stderr || 'Command completed with no output';
-          const exitCodeInfo = (result as any).exitCode !== undefined ? ` (exit: ${(result as any).exitCode})` : '';
-          
-          return {
-            result: `${output}${exitCodeInfo}`
-          };
-        }
         
         default:
           throw new Error(`Unknown tool: ${toolCall.toolName}`);
@@ -2023,6 +2116,35 @@ Please try a DIFFERENT approach:
   }
 
   /**
+   * Classify command as short-lived or long-running
+   * Long-running commands use persistent terminals with auto-restart
+   */
+  private classifyCommand(command: string): 'short' | 'long' {
+    const cmdLower = command.toLowerCase();
+    
+    // Check against configured patterns
+    for (const pattern of this.longRunningPatterns) {
+      if (cmdLower.includes(pattern.toLowerCase())) {
+        return 'long';
+      }
+    }
+    
+    // Additional heuristic: commands with watch/dev/run typically long-running
+    if (/\b(watch|dev|server|serve)\b/i.test(command)) {
+      return 'long';
+    }
+    
+    return 'short';
+  }
+
+  /**
+   * Generate unique terminal name from command
+   */
+  private generateTerminalName(command: string): string {
+    return this.terminalManager.generateTerminalName(command);
+  }
+
+  /**
    * Resolve relative path to absolute
    */
   private resolvePath(relativePath: string): string {
@@ -2079,6 +2201,15 @@ Please try a DIFFERENT approach:
   }
 
   /**
+   * Dispose resources - clean up terminal manager
+   */
+  dispose(): void {
+    this.log('Disposing AgentBridge...');
+    this.terminalManager.dispose();
+    this.log('AgentBridge disposed');
+  }
+
+  /**
    * Build system prompt from template
    */
   private buildSystemPrompt(variables: Record<string, string>): string {
@@ -2112,7 +2243,9 @@ Please try a DIFFERENT approach:
     prompt += '\n• git_branch — List branches or show current branch';
     prompt += '\n• git_commit — Stage and commit changes';
     prompt += '\n• run_build — Run build commands (Gradle, npm, Maven)';
-    prompt += '\n• run_terminal — Run short-lived shell commands (max 30 seconds)';
+    prompt += '\n• run_terminal — Run shell commands (short commands return output, servers run in persistent terminals)';
+    prompt += '\n• kill_terminal — Stop a running terminal by name';
+    prompt += '\n• list_terminals — List all managed terminals';
     prompt += '\n\n--- TOOL RESULT INTERPRETATION (CRITICAL) ---';
     prompt += '\nWhen you receive a tool result:';
     prompt += '\n1. "This directory is empty. No files found." → Tell the user the directory exists but is empty, then STOP';
@@ -2134,13 +2267,16 @@ Please try a DIFFERENT approach:
     prompt += '\n- DO NOT retry the same tool call more than once';
     prompt += '\n- NEVER try more than 2 different approaches for the same task';
     prompt += '\n- If stuck, report to user and ask for clarification';
+    prompt += '\n\n--- TERMINAL MANAGEMENT ---';
+    prompt += '\nThe run_terminal tool handles both short commands and long-running servers:';
+    prompt += '\n• Short commands (git, ls, npm test): Run immediately, return output in 30s';
+    prompt += '\n• Long-running servers (npm run dev, gradlew run): Start in persistent terminal with auto-restart on file changes';
+    prompt += '\n• Use kill_terminal to stop a running server';
+    prompt += '\n• Use list_terminals to see all running terminals';
     prompt += '\n\n--- BLOCKED COMMANDS ---';
-    prompt += '\nThe run_command tool BLOCKS these long-running commands:';
-    prompt += '\n- npm run dev, npm start, yarn dev, yarn start';
-    prompt += '\n- gradlew run, ./gradlew run, gradle run';
-    prompt += '\n- mvn spring-boot:run, mvn jetty:run';
-    prompt += '\n- node server, nodemon, webpack-dev-server, vite, next dev';
-    prompt += '\nIf blocked, tell the user to run the command manually in their terminal.';
+    prompt += '\nThese dangerous commands are BLOCKED:';
+    prompt += '\n- rm -rf /, del /F /S /Q C:\\*, format, mkfs';
+    prompt += '\nIf blocked, tell the user the command is dangerous and cannot be executed.';
     prompt += '\n\n--- PATH HANDLING ---';
     prompt += '\n- Always use forward slashes (/) for paths';
     prompt += '\n- Paths are relative to workspace root';

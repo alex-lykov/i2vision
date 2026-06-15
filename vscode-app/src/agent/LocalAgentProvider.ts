@@ -262,7 +262,9 @@ export class LocalAgentProvider {
             ...defaults.execution?.fileOperations?.shell,
             ...overrides.execution?.fileOperations?.shell
           }
-        }
+        },
+        // Merge longRunningPatterns - overrides replace defaults
+        longRunningPatterns: overrides.execution.longRunningPatterns || defaults.execution?.longRunningPatterns
       };
     }
     if (overrides.formatting) merged.formatting = { ...defaults.formatting, ...overrides.formatting };
@@ -416,7 +418,8 @@ export class LocalAgentProvider {
             listDirectoryEnabled: yamlConfig.execution?.fileOperations?.shell?.listDirectoryEnabled ?? true,
             regexSearchEnabled: yamlConfig.execution?.fileOperations?.shell?.regexSearchEnabled ?? true
           }
-        }
+        },
+        longRunningPatterns: yamlConfig.execution?.longRunningPatterns
       },
       
       // Formatting section
@@ -641,7 +644,10 @@ export class LocalAgentProvider {
       safety: { ...config.safety },
       parsing: { ...config.parsing },
       discovery: { ...config.discovery },
-      execution: { ...config.execution },
+      execution: { 
+        ...config.execution,
+        longRunningPatterns: config.execution?.longRunningPatterns
+      },
       formatting: { ...config.formatting },
       streaming: { ...config.streaming },
       mcp: { ...config.mcp }

@@ -1,4 +1,4 @@
-# VSCode Extension Structure
+﻿# VSCode Extension Structure
 
 ## Directory Layout
 
@@ -102,7 +102,7 @@ toolSelection:
 3. Test tool calls with various prompts
 
 ### Agent Tool Testing
-See `docs/AGENT_TOOL_CALLING_TEST.md` for detailed test procedures.
+See `docs/agent-tool-calling-test.md` for detailed test procedures.
 
 ## Packaging
 

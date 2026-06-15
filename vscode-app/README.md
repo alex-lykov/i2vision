@@ -1,4 +1,4 @@
-# i2-Vision VSCode Extension
+﻿# i2-Vision VSCode Extension
 
 AI-powered coding assistant with agent-based automation, integrated directly into VSCode.
 

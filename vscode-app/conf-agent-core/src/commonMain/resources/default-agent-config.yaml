@@ -225,3 +225,28 @@ execution:
   
   # Shell to use for command execution
   shell: "bash"
+  
+  # Long-running command patterns - commands matching these use persistent terminals
+  # with auto-restart on file changes. Customize for your project's build tools.
+  longRunningPatterns:
+    - "run"
+    - "serve"
+    - "dev"
+    - "start"
+    - "watch"
+    - "nodemon"
+    - "vite"
+    - "next dev"
+    - "spring-boot:run"
+    - "jetty:run"
+    - "webpack --watch"
+    - "tsc --watch"
+    - "gulp watch"
+    - "grunt watch"
+    - "cargo run"
+    - "go run"
+    - "python -m uvicorn"
+    - "poetry run"
+    - "./gradlew :app:server:run"
+    - "npm run dev"
+    - "make run"

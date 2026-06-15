@@ -1250,10 +1250,11 @@ export class AgentBridge {
       if (streamingToolCalls.length === 0) {
         const trimmedResponse = responseText.trim();
         
-        // Simple plan detection - catches most common patterns
+        // Plan detection - catches LLM outputting descriptions instead of tool calls
         // System prompt instructs LLM to avoid these, this is just a safety net
         const isPlanOnly = trimmedResponse.length < 200 && (
           /^(I will|I'll|Let me|First,? I)/i.test(trimmedResponse) ||
+          /^I will:\s*Calling/i.test(trimmedResponse) ||  // Catch "I will: Calling tool(...)" format
           trimmedResponse.toLowerCase().includes('calling ')
         );
 

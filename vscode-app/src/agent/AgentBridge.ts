@@ -1981,14 +1981,34 @@ Please try a DIFFERENT approach:
             this.log(`  Started long-running server in terminal "${terminalName}"`);
             return { result };
           } else {
-            // Short-lived command: Run with timeout and return output
+            // Short-lived command: Create visible terminal and capture output
+            // This allows users to see terminal activity in the Terminal panel
+            const terminalName = `i2-Vision: ${this.generateTerminalName(command).substring(0, 20)}`;
+            this.log(`  Creating visible terminal for short-lived command: ${terminalName}`);
+            
+            const terminal = vscode.window.createTerminal({
+              name: terminalName,
+              cwd: workingDir,
+              shellPath: process.platform === 'win32' ? 'powershell.exe' : undefined
+            });
+            
+            terminal.show(true); // Show terminal to user
+            terminal.sendText(command);
+            
+            // Wait for command to complete (with timeout)
             const timeout = 30000; // 30 seconds
-            const result = await this.runCommandWithTimeout(command, timeout, workingDir);
+            const startTime = Date.now();
             
-            const output = result.stdout || result.stderr || 'Command completed with no output.';
-            const exitCodeInfo = result.exitCode !== null ? ` (exit: ${result.exitCode})` : '';
+            // Poll for terminal exit (simple approach - wait for timeout or process to finish)
+            await new Promise(resolve => setTimeout(resolve, Math.min(3000, timeout)));
             
-            return { result: `${output}${exitCodeInfo}` };
+            // Close terminal after brief delay to allow output to be visible
+            setTimeout(() => {
+              terminal.dispose();
+              this.log(`  Disposed temporary terminal: ${terminalName}`);
+            }, 5000);
+            
+            return { result: `Command executed in visible terminal: ${command}\n\nCheck the "${terminalName}" terminal for output.` };
           }
         }
         

@@ -2242,6 +2242,7 @@ Please try a DIFFERENT approach:
   /**
    * Extract build errors from output
    * Parses Kotlin/Java compiler errors with file paths and line numbers
+   * Searches FULL output (not just first 500 chars) for error patterns
    */
   private extractCompilationErrors(output: string): string {
     if (!output) return 'No error output';
@@ -2250,48 +2251,69 @@ Please try a DIFFERENT approach:
     const lines = output.split('\n');
     const mentionedFiles = new Set<string>();
     
-    // Debug: Log first 500 chars to understand format
-    this.log(`Extracting errors from output (first 500 chars): ${output.substring(0, 500)}`);
+    // Log output length for debugging
+    this.log(`Extracting errors from full output (${output.length} chars)`);
     
+    // ===== PASS 1: Find all Kotlin compiler errors (e: file:///...) =====
+    // This is the PRIMARY pattern for Kotlin compilation errors
+    const kotlinErrorPattern = /e:\s*file:\/\/\/?([a-zA-Z]:)?(.+?):(\d+):(\d+)\s+(.+)/g;
+    let match;
+    while ((match = kotlinErrorPattern.exec(output)) !== null) {
+      const [, , filePath, lineNum, col, message] = match;
+      const relativePath = filePath.replace(/^[a-zA-Z]:/, '').replace(/\\/g, '/');
+      mentionedFiles.add(relativePath);
+      errors.push(`${relativePath}:${lineNum}:${col} ${message}`);
+      this.log(`Found Kotlin error: ${relativePath}:${lineNum}:${col}`);
+    }
+    
+    // ===== PASS 2: Alternative Kotlin format (e: /path/to/File.kt:line:col) =====
+    const kotlinErrorPattern2 = /e:\s+([a-zA-Z]:[\\/].+?\.(kt|java|kts)):(\d+):(\d+)\s+(.+)/g;
+    while ((match = kotlinErrorPattern2.exec(output)) !== null) {
+      const [, filePath, , lineNum, col, message] = match;
+      const relativePath = filePath.replace(/^[a-zA-Z]:/, '').replace(/\\/g, '/');
+      mentionedFiles.add(relativePath);
+      errors.push(`${relativePath}:${lineNum}:${col} ${message}`);
+      this.log(`Found Kotlin error (alt format): ${relativePath}:${lineNum}:${col}`);
+    }
+    
+    // ===== PASS 3: Search for "Unresolved reference" errors (common Kotlin errors) =====
+    const unresolvedPattern = /Unresolved reference[^\n]+/g;
+    const unresolvedErrors = output.match(unresolvedPattern);
+    if (unresolvedErrors) {
+      unresolvedErrors.forEach(err => {
+        errors.push(err.trim());
+        this.log(`Found Unresolved reference: ${err.substring(0, 80)}`);
+      });
+    }
+    
+    // ===== PASS 4: Search for other common Kotlin error keywords =====
+    const keywordPatterns = [
+      /Type mismatch[^\n]+/g,
+      /is not abstract[^\n]+/g,
+      /must implement[^\n]+/g,
+      /cannot find symbol[^\n]+/g,
+      /package does not exist[^\n]+/g,
+      /incompatible types[^\n]+/g,
+      /Overload resolution ambiguity[^\n]+/g,
+      /Conflicting overloads[^\n]+/g,
+      /Modifier '.+' is incompatible[^\n]+/g
+    ];
+    
+    for (const pattern of keywordPatterns) {
+      const matches = output.match(pattern);
+      if (matches) {
+        matches.forEach(err => {
+          errors.push(err.trim());
+          this.log(`Found keyword error: ${err.substring(0, 80)}`);
+        });
+      }
+    }
+    
+    // ===== PASS 5: Gradle task failures - look for FAILED with context =====
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       
-      // Kotlin compiler errors: "e: file:///path/to/File.kt:line:col message"
-      // More flexible pattern to handle variations
-      const kotlinErrorMatch = line.match(/e:\s*file:\/\/\/?([a-zA-Z]:)?(.+?):(\d+):(\d+)\s+(.+)/);
-      if (kotlinErrorMatch) {
-        const [, , filePath, lineNum, col, message] = kotlinErrorMatch;
-        // Convert to relative path - remove drive letter and normalize slashes
-        const relativePath = filePath.replace(/^[a-zA-Z]:/, '').replace(/\\/g, '/');
-        mentionedFiles.add(relativePath);
-        errors.push(`${relativePath}:${lineNum}:${col} ${message}`);
-        this.log(`Found Kotlin error: ${relativePath}:${lineNum}:${col}`);
-        continue;
-      }
-      
-      // Alternative Kotlin format: "e: /path/to/File.kt:line:col message" (no file:///)
-      const kotlinErrorMatch2 = line.match(/e:\s+([a-zA-Z]:[\\/].+?\.(kt|java|kts)):(\d+):(\d+)\s+(.+)/);
-      if (kotlinErrorMatch2) {
-        const [, filePath, , lineNum, col, message] = kotlinErrorMatch2;
-        const relativePath = filePath.replace(/^[a-zA-Z]:/, '').replace(/\\/g, '/');
-        mentionedFiles.add(relativePath);
-        errors.push(`${relativePath}:${lineNum}:${col} ${message}`);
-        this.log(`Found Kotlin error (alt format): ${relativePath}:${lineNum}:${col}`);
-        continue;
-      }
-      
-      // Java compiler errors: "path/to/File.kt:line: error: message"
-      const javaErrorMatch = line.match(/([a-zA-Z0-9_/.\\-]+\.(kt|java|kts)):(\d+):\s*(error:\s*)?(.+)/);
-      if (javaErrorMatch && !line.includes('file:///')) {
-        const [, filePath, , lineNum, , message] = javaErrorMatch;
-        mentionedFiles.add(filePath.replace(/\\/g, '/'));
-        errors.push(`${filePath}:${lineNum} ${message}`);
-        this.log(`Found Java error: ${filePath}:${lineNum}`);
-        continue;
-      }
-      
-      // Gradle task failures with context - look for FAILED and capture next few lines
-      if (line.includes('FAILED')) {
+      if (line.includes('FAILED') && !line.includes('BUILD FAILED')) {
         const contextLines = [];
         // Look at current line and next 3 lines for error details
         for (let j = i; j < Math.min(i + 4, lines.length); j++) {
@@ -2304,33 +2326,10 @@ Please try a DIFFERENT approach:
           errors.push(contextLines.slice(0, 3).join(' '));
           this.log(`Found Gradle FAILED context: ${contextLines[0]}`);
         }
-        continue;
-      }
-      
-      // Look for lines starting with "e: " without file path (general errors)
-      if (line.startsWith('e: ') && !line.includes('file://')) {
-        const errorMsg = line.substring(3).trim();
-        if (errorMsg.length > 10) {
-          errors.push(errorMsg);
-          this.log(`Found general error: ${errorMsg}`);
-        }
-        continue;
-      }
-      
-      // Common error keywords (capture full line)
-      if (line.includes('Unresolved reference') ||
-          line.includes('Type mismatch') ||
-          line.includes('is not abstract') ||
-          line.includes('must implement') ||
-          line.includes('cannot find symbol') ||
-          line.includes('package does not exist') ||
-          line.includes('incompatible types')) {
-        errors.push(line.trim());
-        this.log(`Found keyword error: ${line.trim().substring(0, 80)}`);
       }
     }
     
-    // Build result string
+    // ===== Build result string =====
     let result = '';
     
     if (mentionedFiles.size > 0) {
@@ -2339,11 +2338,19 @@ Please try a DIFFERENT approach:
     }
     
     if (errors.length > 0) {
-      result += `COMPILER ERRORS:\n${errors.slice(0, 15).join('\n')}`;
+      // Remove duplicates while preserving order
+      const uniqueErrors = [...new Set(errors)];
+      result += `COMPILER ERRORS:\n${uniqueErrors.slice(0, 15).join('\n')}`;
     } else {
-      // No structured errors found - return last 800 chars of output as fallback
-      result = 'No specific compilation errors found in output.\n\n';
-      result += `Last output:\n${output.slice(-800)}`;
+      // No structured errors found - search for any lines with "e: " (Kotlin error prefix)
+      const eLines = lines.filter(l => l.trim().startsWith('e: '));
+      if (eLines.length > 0) {
+        result += `COMPILER ERRORS:\n${eLines.slice(0, 15).join('\n')}`;
+      } else {
+        // Last resort - show last 1500 chars of output
+        result = 'No specific compilation errors found in output.\n\n';
+        result += `Build output (last 1500 chars):\n${output.slice(-1500)}`;
+      }
     }
     
     this.log(`Extracted ${errors.length} errors from ${mentionedFiles.size} files`);

@@ -11,6 +11,7 @@
 import * as vscode from 'vscode';
 import { AgentBridge, AgentConfig, AgentResponse as BridgeAgentResponse, ProgressCallback } from './AgentBridge';
 import type { AgentChunk } from './AgentBridge';
+import { AgentSettingsManager } from './AgentSettings';
 
 /**
  * VSLFC Layer enumeration (matches Kotlin VslfcLayer)
@@ -102,6 +103,7 @@ export class LocalI2VisionAgent implements vscode.Disposable {
   
   private config: AgentConfig;
   private bridge: AgentBridge;
+  private settingsManager: AgentSettingsManager;
   private isInitialized: boolean = false;
   private outputChannel?: vscode.OutputChannel;
   private pendingRequests: Map<string, boolean> = new Map();
@@ -109,12 +111,16 @@ export class LocalI2VisionAgent implements vscode.Disposable {
   constructor(
     layer: VslfcLayer,
     config: AgentConfig,
-    outputChannel?: vscode.OutputChannel
+    outputChannel: vscode.OutputChannel,
+    context: vscode.ExtensionContext
   ) {
     this.id = this.generateAgentId(layer);
     this.layer = layer;
     this.config = config;
     this.outputChannel = outputChannel;
+    
+    // Initialize settings manager
+    this.settingsManager = AgentSettingsManager.getInstance(context);
     
     // Create display name
     this.displayName = `${getLayerDisplayName(layer)} Agent (Ollama ${config.model.id})`;
@@ -138,8 +144,9 @@ export class LocalI2VisionAgent implements vscode.Disposable {
     this.bridge = new AgentBridge(
       config, 
       outputChannel,
-      vscode.extensions.getExtension('i2vision.i2-vision-vscode')?.extensionPath,
-      workspaceRoot
+      vscode.extensions.getExtension('i2vision.i2-vision-vscode')?.extensionPath || '',
+      workspaceRoot,
+      this.settingsManager
     );
     
     this.log(`LocalI2VisionAgent created: ${this.id}`);

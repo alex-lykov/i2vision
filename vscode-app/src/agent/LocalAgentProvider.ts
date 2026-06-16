@@ -169,7 +169,7 @@ export class LocalAgentProvider {
       this.log(`Config loaded: provider=${config.model.provider}, model=${config.model.id}`);
       
       // Create the agent
-      const agent = new LocalI2VisionAgent(layer, config, this.outputChannel);
+      const agent = new LocalI2VisionAgent(layer, config, this.outputChannel, this.context);
       
       this.log(`✅ Created agent: ${agent.id} (${agent.displayName})`);
       this.log(`   Provider: ${config.model.provider}, Model: ${config.model.id}`);

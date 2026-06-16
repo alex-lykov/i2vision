@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { CLI, LLMResponse, LLMTool, LLMMessage, LLMToolCall, LLMChunk } from '../cliIntegration';
 import { TerminalManager } from './TerminalManager';
+import { AgentSettingsManager } from './AgentSettings';
 
 /**
  * Context profile - defines what context to load eagerly vs lazily
@@ -297,6 +298,7 @@ export class AgentBridge {
   private config: AgentConfig;
   private cli: CLI;
   private terminalManager: TerminalManager;
+  private settingsManager: AgentSettingsManager;
   private isInitialized: boolean = false;
   private outputChannel?: vscode.OutputChannel;
   private workspaceRoot: string;
@@ -340,7 +342,13 @@ export class AgentBridge {
     'dd if=/dev/zero'
   ];
 
-  constructor(config: AgentConfig, outputChannel?: vscode.OutputChannel, extensionRoot?: string, workspaceRoot?: string) {
+  constructor(
+    config: AgentConfig, 
+    outputChannel: vscode.OutputChannel, 
+    extensionRoot: string, 
+    workspaceRoot: string,
+    settingsManager?: AgentSettingsManager
+  ) {
     this.config = config;
     this.outputChannel = outputChannel;
     
@@ -353,7 +361,10 @@ export class AgentBridge {
     }
     
     this.workspaceRoot = workspaceRoot;
-    this.extensionRoot = extensionRoot || '';
+    this.extensionRoot = extensionRoot;
+    
+    // Store settings manager if provided
+    this.settingsManager = settingsManager!;
     
     this.log(`Workspace root (target project): ${this.workspaceRoot}`);
     if (this.extensionRoot) {
@@ -364,9 +375,12 @@ export class AgentBridge {
     this.cli = new CLI(this.workspaceRoot, outputChannel);
     
     // Initialize TerminalManager for persistent terminals
-    // Use configurable debounce from YAML (default 1000ms for Gradle projects)
-    const debounceMs = 1000; // Default 1 second for Gradle projects
+    // Use settings for auto-close delay
+    const settings = this.settingsManager.getSettings();
+    const debounceMs = settings.terminal.autoCloseDelayMs;
     this.terminalManager = new TerminalManager(outputChannel, debounceMs);
+    
+    this.log(`Terminal auto-close delay: ${debounceMs}ms (from settings)`);
     
     // Load custom long-running patterns from YAML config if provided
     const customPatterns = (config as any).execution?.longRunningPatterns;

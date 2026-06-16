@@ -12,6 +12,7 @@ import { AgentBridge, AgentChunk, ToolCall, AgentConfig } from './AgentBridge';
 import { LocalAgentProvider } from './LocalAgentProvider';
 import { LocalI2VisionAgent, VslfcLayer, getLayerName } from './LocalI2VisionAgent';
 import { ConversationHistoryManager, ChatMessage } from './ConversationHistoryManager';
+import { AgentSettingsManager } from './AgentSettings';
 
 /**
  * Tab state for tracking agent session
@@ -34,6 +35,7 @@ export class AgentTabManager {
   private context: vscode.ExtensionContext;
   private outputChannel: vscode.OutputChannel;
   private agentProvider: LocalAgentProvider;
+  private settingsManager: AgentSettingsManager;
   private historyManager: ConversationHistoryManager | null = null;
   private tabs: Map<string, AgentTabState> = new Map();
   private activeTabId: string | null = null;
@@ -50,6 +52,7 @@ export class AgentTabManager {
     this.context = context;
     this.outputChannel = outputChannel;
     this.agentProvider = agentProvider;
+    this.settingsManager = AgentSettingsManager.getInstance(context);
     
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
     if (workspaceRoot) {
@@ -108,7 +111,8 @@ export class AgentTabManager {
       config,
       this.outputChannel,
       this.context.extensionPath,
-      workspaceRoot
+      workspaceRoot,
+      this.settingsManager
     );
     await this.currentAgentBridge.initialize();
     
@@ -480,6 +484,10 @@ export class AgentTabManager {
         case 'fetch_models':
           await this.fetchAndSendModels();
           break;
+          
+        case 'open_settings':
+          vscode.commands.executeCommand('i2vision.settings');
+          break;
       }
     }, null, this.context.subscriptions);
     
@@ -683,6 +691,9 @@ export class AgentTabManager {
       }
     }
     
+    // Get settings for terminal behavior
+    const settings = this.settingsManager.getSettings();
+    
     // Escape workspace name for HTML (Node.js safe - no document)
     const escapeHtmlStr = (text: string) => {
       return text
@@ -778,6 +789,23 @@ export class AgentTabManager {
     .selector-group select:focus {
       outline: 2px solid var(--vscode-focusBorder);
       outline-offset: -2px;
+    }
+    
+    /* Settings button */
+    .btn-settings {
+      padding: 4px 8px;
+      font-size: 1.2em;
+      background: transparent;
+      border: 1px solid var(--vscode-editorWidget-border);
+      border-radius: 4px;
+      cursor: pointer;
+      color: var(--vscode-foreground);
+      transition: all 0.2s ease;
+    }
+    
+    .btn-settings:hover {
+      background-color: var(--vscode-editor-selectionBackground);
+      border-color: var(--vscode-focusBorder);
     }
     
     /* Token usage meter */
@@ -1168,6 +1196,13 @@ export class AgentTabManager {
       </div>
       <span class="token-text" id="tokenText">0 / 0 tokens</span>
     </div>
+    
+    <!-- Settings Button -->
+    <div style="margin-left: 15px;">
+      <button class="btn-settings" onclick="openSettings()" title="Agent Settings" style="padding: 4px 8px; font-size: 1.2em; background: transparent; border: 1px solid var(--vscode-editorWidget-border); border-radius: 4px; cursor: pointer; color: var(--vscode-foreground);">
+        ⚙️
+      </button>
+    </div>
   </div>
   
   <!-- Single timeline container - everything appends here in order -->
@@ -1266,6 +1301,11 @@ export class AgentTabManager {
     function onModelChange() {
       const model = modelSelect.value;
       vscode.postMessage({ type: 'change_model', model: model });
+    }
+    
+    // Open settings
+    function openSettings() {
+      vscode.postMessage({ type: 'open_settings' });
     }
     
     // Handle messages from extension - all events append to timeline in order

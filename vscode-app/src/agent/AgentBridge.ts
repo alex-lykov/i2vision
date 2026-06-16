@@ -2261,14 +2261,15 @@ Please try a DIFFERENT approach:
     
     // ===== PASS 1: Find all Kotlin compiler errors (e: file:///...) =====
     // This is the PRIMARY pattern for Kotlin compilation errors
-    const kotlinErrorPattern = /e:\s*file:\/\/\/?([a-zA-Z]:)?(.+?):(\d+):(\d+)\s+(.+)/g;
+    const kotlinErrorPattern = /e:\s*file:\/\/\/?([a-zA-Z]:[\\/].+?):(\d+):(\d+)\s+(.+)/g;
     let match;
     while ((match = kotlinErrorPattern.exec(output)) !== null) {
-      const [, , filePath, lineNum, col, message] = match;
-      const relativePath = filePath.replace(/^[a-zA-Z]:/, '').replace(/\\/g, '/');
-      mentionedFiles.add(relativePath);
-      errors.push(`${relativePath}:${lineNum}:${col} ${message}`);
-      this.log(`Found Kotlin error: ${relativePath}:${lineNum}:${col}`);
+      const [, filePath, lineNum, col, message] = match;
+      // Keep full absolute path for Windows files
+      const normalizedPath = filePath.replace(/\\/g, '/');
+      mentionedFiles.add(normalizedPath);
+      errors.push(`${normalizedPath}:${lineNum}:${col} ${message}`);
+      this.log(`Found Kotlin error: ${normalizedPath}:${lineNum}:${col}`);
     }
     
     // ===== PASS 2: Alternative Kotlin format (e: /path/to/File.kt:line:col) =====
@@ -2283,13 +2284,19 @@ Please try a DIFFERENT approach:
     
     // ===== PASS 3: Search for .kt file errors WITHOUT e: prefix =====
     // Some Gradle outputs show: path/to/File.kt:line: error message
+    // EXCLUDE lines with file:/// to avoid double-matching PASS 1 errors
     const ktFilePattern = /([a-zA-Z]:[\\/].+?\.kt):(\d+):\s*(.+)/g;
     while ((match = ktFilePattern.exec(output)) !== null) {
+      const fullMatch = match[0];
+      // Skip if this is part of a file:/// URL (already handled by PASS 1)
+      if (output.substring(Math.max(0, match.index - 20), match.index).includes('file:///')) {
+        continue;
+      }
       const [, filePath, lineNum, message] = match;
-      const relativePath = filePath.replace(/^[a-zA-Z]:/, '').replace(/\\/g, '/');
-      mentionedFiles.add(relativePath);
-      errors.push(`${relativePath}:${lineNum} ${message}`);
-      this.log(`Found .kt file error: ${relativePath}:${lineNum}`);
+      const normalizedPath = filePath.replace(/\\/g, '/');
+      mentionedFiles.add(normalizedPath);
+      errors.push(`${normalizedPath}:${lineNum} ${message}`);
+      this.log(`Found .kt file error: ${normalizedPath}:${lineNum}`);
     }
     
     // ===== PASS 4: Search for "Unresolved reference" errors (common Kotlin errors) =====

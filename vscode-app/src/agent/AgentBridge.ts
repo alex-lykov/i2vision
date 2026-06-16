@@ -308,6 +308,9 @@ export class AgentBridge {
   
   // Track files that need to be read after build failure (auto-fix workflow)
   private _pendingFixes: string[] = [];
+  
+  // Track consecutive build failures to force fix mode
+  private _buildFailureCount: number = 0;
 
   // Truncation settings
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000; // characters
@@ -1202,21 +1205,38 @@ export class AgentBridge {
           }
         }
         
-        // Add explicit instruction to LLM
+        // Increment build failure counter
+        this._buildFailureCount++;
+        const isRepeatedFailure = this._buildFailureCount >= 2;
+        
+        // Build stronger instruction for repeated failures
+        let instructionContent = `I've automatically read the failing files for you. 
+
+**COMPILATION ERRORS TO FIX:**
+- InMemoryConductorRepository.kt:13:1 — Class is not abstract, doesn't implement abstract member
+- ProjectValidationEngine.kt:507:22 — Unresolved reference: rightRoomId
+- ProjectValidationEngine.kt:508:22 — Unresolved reference: leftRoomId
+
+**REQUIRED ACTIONS:**
+1. InMemoryConductorRepository.kt: Add the missing method implementation or make the class abstract
+2. ProjectValidationEngine.kt: Define or import rightRoomId and leftRoomId variables
+
+**USE THESE TOOLS:**
+- write_file — Replace entire file with fixed code
+- edit_file — Edit specific lines
+
+**DO NOT:**
+- ❌ Re-run the build (it will fail again)
+- ❌ Just read files (you already have the content)
+- ❌ Describe plans (take action instead)
+
+${isRepeatedFailure ? `⚠️  WARNING: Build has failed ${this._buildFailureCount} times. You MUST fix the code before running build again.` : ''}
+
+Now write the fixed code for these files.`;
+        
         messages.push({
           role: 'user',
-          content: `I've automatically read the failing files for you. 
-
-Your task:
-1. Review the compilation errors shown earlier
-2. Identify the specific code issues in these files
-3. Use write_file or edit_file to fix each error
-4. DO NOT re-run the build until you've fixed all errors
-
-Files you need to fix:
-${filesToRead.map(f => f.replace(/^(e:\/\/\/|file:\/\/\/)/, '')).join('\n')}
-
-Now propose specific code fixes and apply them.`
+          content: instructionContent
         });
         
         this.log(`[AUTO-FIX] Added ${filesToRead.length} file contents + fix instruction to LLM context`);
@@ -2067,6 +2087,9 @@ Please try a DIFFERENT approach:
             if (result.exitCode !== 0 || output.includes('BUILD FAILED') || output.includes('FAILED')) {
               const errors = this.extractCompilationErrors(output);
               
+              // Increment failure counter
+              this._buildFailureCount++;
+              
               // Extract file paths to auto-read in next iteration
               const fileMatch = errors.match(/FILES TO READ AND FIX:\s*\n([\s\S]*?)(?:\n\n|$)/);
               if (fileMatch) {
@@ -2082,15 +2105,17 @@ Please try a DIFFERENT approach:
                 }
                 
                 this._pendingFixes = Array.from(cleanPaths).slice(0, 5); // Limit to 5 unique files
-                this.log(`Auto-fix: Queued ${this._pendingFixes.length} unique files: ${this._pendingFixes.join(', ')}`);
+                this.log(`Auto-fix: Queued ${this._pendingFixes.length} unique files (failure #${this._buildFailureCount})`);
               }
               
               return {
-                result: `❌ BUILD FAILED\n\nExit code: ${result.exitCode}\n\n${errors}\n\n⚠️ DO NOT re-run the build. READ the files listed above, FIX the compilation errors, then re-run.`,
+                result: `❌ BUILD FAILED (failure #${this._buildFailureCount})\n\nExit code: ${result.exitCode}\n\n${errors}\n\n⚠️ DO NOT re-run the build. READ the files listed above, FIX the compilation errors, then re-run.`,
                 error: 'Build failed'
               };
             }
             
+            // Build succeeded - reset failure counter
+            this._buildFailureCount = 0;
             return { result: `✅ Build successful${exitCodeInfo}\n\n${output.slice(-1000)}` };
           }
           

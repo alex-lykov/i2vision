@@ -498,7 +498,13 @@ export class AgentTabManager {
           break;
           
         case 'open_settings':
-          vscode.commands.executeCommand('i2vision.settings');
+          try {
+            this.log('Opening settings panel...');
+            await vscode.commands.executeCommand('i2vision.settings');
+          } catch (error: any) {
+            this.log(`Error opening settings: ${error.message}`);
+            vscode.window.showErrorMessage(`Failed to open settings: ${error.message}`);
+          }
           break;
       }
     }, null, this.context.subscriptions);

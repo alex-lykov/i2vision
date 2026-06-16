@@ -1947,6 +1947,14 @@ Please try a DIFFERENT approach:
             ? this.resolvePath(toolCall.args.workingDir) 
             : this.workspaceRoot;
           
+          // GRADLE TASK FIX: If command starts with ':' it's a Gradle task - prepend gradlew
+          // LLMs sometimes send just the task name without the gradlew wrapper
+          if (/^:/.test(command)) {
+            const gradleWrapper = process.platform === 'win32' ? '.\\gradlew' : './gradlew';
+            command = `${gradleWrapper} ${command}`;
+            this.log(`  Gradle task detected: prepended '${gradleWrapper}'`);
+          }
+          
           // WINDOWS POWERSHELL FIX: Prepend .\ to gradlew commands
           // PowerShell doesn't load commands from current directory by default
           if (process.platform === 'win32') {

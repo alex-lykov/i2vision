@@ -460,6 +460,8 @@ export class AgentTabManager {
     this.webviewPanel.webview.html = this.getWebviewContent();
     
     this.webviewPanel.webview.onDidReceiveMessage(async (message) => {
+      this.log(`Webview message received: ${message.type}`);
+      
       switch (message.type) {
         case 'user_input':
           // Get current file from VSCode
@@ -499,13 +501,19 @@ export class AgentTabManager {
           
         case 'open_settings':
           try {
-            this.log('Opening settings panel...');
-            await vscode.commands.executeCommand('i2vision.settings');
+            this.log('Opening settings panel from webview...');
+            // Try both methods
+            const success = await vscode.commands.executeCommand('i2vision.settings');
+            this.log(`Settings command executed, result: ${success}`);
           } catch (error: any) {
             this.log(`Error opening settings: ${error.message}`);
+            this.log(`Error stack: ${error.stack}`);
             vscode.window.showErrorMessage(`Failed to open settings: ${error.message}`);
           }
           break;
+          
+        default:
+          this.log(`Unknown message type: ${message.type}`);
       }
     }, null, this.context.subscriptions);
     

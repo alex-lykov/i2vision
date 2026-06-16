@@ -12,6 +12,8 @@ import { FileSystemIntegration, FSUtils } from './fileSystemIntegration';
 import { AgentTabManager } from './agent/AgentTabManager';
 import { LocalAgentProvider } from './agent/LocalAgentProvider';
 import { registerDebugCommands } from './agent/ToolCallDebugger';
+import { AgentSettingsManager } from './agent/AgentSettings';
+import { SettingsPanel } from './agent/SettingsPanel';
 
 /**
  * Extension context
@@ -274,6 +276,12 @@ function registerCommands(context: vscode.ExtensionContext, workspaceRoot: strin
         vscode.window.showInformationMessage('Agent config cache cleared. Create a new agent to reload config.');
     });
     context.subscriptions.push(reloadConfigCmd);
+    
+    // Open Settings command
+    const settingsCmd = vscode.commands.registerCommand('i2vision.settings', async () => {
+        SettingsPanel.show(context);
+    });
+    context.subscriptions.push(settingsCmd);
 }
 
 /**

@@ -126,7 +126,12 @@ formattingRules:
 # Controls agent iteration behavior
 iterationSettings:
   # Maximum number of tool call iterations
-  maxIterations: 10
+  # Increased from 10 to 15 to allow time for:
+  # - Discovery (exploring project structure)
+  # - Diagnosis (running build, reading errors)
+  # - Auto-fix (reading failing files, proposing fixes)
+  # - Verification (re-running build after fixes)
+  maxIterations: 15
   
   # Maximum tool calls per iteration
   maxToolCallsPerIteration: 1

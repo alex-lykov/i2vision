@@ -499,6 +499,11 @@ export class AgentTabManager {
           await this.fetchAndSendModels();
           break;
           
+        case 'debug_test':
+          this.log(`DEBUG TEST RECEIVED: ${message.message}`);
+          vscode.window.showInformationMessage(`Debug test: ${message.message}`);
+          break;
+          
         case 'open_settings':
           try {
             this.log('Opening settings panel from webview...');
@@ -1230,6 +1235,10 @@ export class AgentTabManager {
       <button class="btn-settings" onclick="openSettings()" title="Agent Settings" style="padding: 4px 8px; font-size: 1.2em; background: transparent; border: 1px solid var(--vscode-editorWidget-border); border-radius: 4px; cursor: pointer; color: var(--vscode-foreground);">
         ⚙️
       </button>
+      <!-- Debug button - remove after testing -->
+      <button class="btn-settings" onclick="testJs()" title="Test JavaScript" style="padding: 4px 8px; font-size: 1.2em; background: transparent; border: 1px solid var(--vscode-editorWidget-border); border-radius: 4px; cursor: pointer; color: var(--vscode-foreground); margin-left: 5px;">
+        🐛
+      </button>
     </div>
   </div>
   
@@ -1335,9 +1344,22 @@ export class AgentTabManager {
       vscode.postMessage({ type: 'change_model', model: model });
     }
     
+    // Test JavaScript is working
+    function testJs() {
+      console.log('Test button clicked - JavaScript is working!');
+      alert('JavaScript is working! Check console for more details.');
+      vscode.postMessage({ type: 'debug_test', message: 'JavaScript working' });
+    }
+    
     // Open settings
     function openSettings() {
-      vscode.postMessage({ type: 'open_settings' });
+      console.log('Settings button clicked!');
+      try {
+        vscode.postMessage({ type: 'open_settings' });
+        console.log('Message sent to extension: open_settings');
+      } catch (err) {
+        console.error('Error sending message:', err);
+      }
     }
     
     // Handle messages from extension - all events append to timeline in order

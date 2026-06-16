@@ -243,6 +243,11 @@ export class AgentTabManager {
     this.isProcessing = true;
     tabState.lastActivityAt = Date.now();
     
+    // Get settings
+    const settings = this.settingsManager.getSettings();
+    const streamingEnabled = settings.streaming.enabled;
+    const showThinking = settings.streaming.showThinkingIndicator;
+    
     // Add user message to history
     const userMessage: ChatMessage = {
       role: 'user',
@@ -269,14 +274,19 @@ export class AgentTabManager {
       let responseText = '';
       let startTime = Date.now();
       
-      // Show thinking indicator at start
-      this.sendToWebview({
-        type: 'thinking',
-        message: 'Agent is thinking...',
-        timestamp: Date.now()
-      });
+      // Show thinking indicator at start (if enabled)
+      if (showThinking) {
+        this.sendToWebview({
+          type: 'thinking',
+          message: 'Agent is thinking...',
+          timestamp: Date.now()
+        });
+      }
       
-      for await (const chunk of this.currentAgentBridge.processStreaming(userInput, currentFile)) {
+      // Use streaming or non-streaming based on settings
+      const streamGenerator = this.currentAgentBridge.processStreaming(userInput, currentFile);
+      
+      for await (const chunk of streamGenerator) {
         // Check if cancelled
         if (this.cancelTokenSource.token.isCancellationRequested) {
           this.log('Processing cancelled by user');
@@ -318,12 +328,14 @@ export class AgentTabManager {
             
           case 'text':
             responseText += chunk.text;
-            // Stream text incrementally to timeline
-            this.sendToWebview({
-              type: 'streaming_text',
-              text: chunk.text,
-              timestamp: chunk.timestamp
-            });
+            // Stream text incrementally to timeline (if streaming enabled)
+            if (streamingEnabled) {
+              this.sendToWebview({
+                type: 'streaming_text',
+                text: chunk.text,
+                timestamp: chunk.timestamp
+              });
+            }
             break;
             
           case 'done':
@@ -691,8 +703,10 @@ export class AgentTabManager {
       }
     }
     
-    // Get settings for terminal behavior
+    // Get settings for terminal behavior and streaming
     const settings = this.settingsManager.getSettings();
+    const streamingEnabled = settings.streaming.enabled;
+    const showThinking = settings.streaming.showThinkingIndicator;
     
     // Escape workspace name for HTML (Node.js safe - no document)
     const escapeHtmlStr = (text: string) => {
@@ -1255,6 +1269,10 @@ export class AgentTabManager {
     let thinkingEl = null;
     let isProcessing = false;
     
+    // Settings from extension
+    const streamingEnabled = ${streamingEnabled};
+    const showThinkingIndicator = ${showThinking};
+    
     // Fetch models on load
     window.addEventListener('load', () => {
       vscode.postMessage({ type: 'fetch_models' });
@@ -1447,6 +1465,11 @@ export class AgentTabManager {
     }
     
     function showThinkingIndicator(message) {
+      // Check if thinking indicator is enabled
+      if (!showThinkingIndicator) {
+        return;
+      }
+      
       // Remove any existing thinking indicator
       if (thinkingEl) {
         thinkingEl.remove();

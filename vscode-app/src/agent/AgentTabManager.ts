@@ -1274,6 +1274,10 @@ export class AgentTabManager {
   </div>
   
   <script>
+    // IMMEDIATE TEST - Check if JavaScript is running
+    console.log('🔵 SCRIPT LOADED - JavaScript is running!');
+    document.body.style.border = '2px solid red'; // Visual indicator
+    
     const vscode = acquireVsCodeApi();
     const timeline = document.getElementById('timeline');
     const userInput = document.getElementById('userInput');

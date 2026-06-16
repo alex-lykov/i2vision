@@ -355,9 +355,9 @@ export class AgentTabManager {
             break;
             
           case 'thinking':
-            // Move thinking indicator to the end (latest position)
+            // Send thinking indicator to webview
             this.sendToWebview({
-              type: 'thinking_update',
+              type: 'thinking',
               message: chunk.message,
               timestamp: chunk.timestamp
             });

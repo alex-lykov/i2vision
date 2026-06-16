@@ -305,6 +305,9 @@ export class AgentBridge {
   private extensionRoot: string;
   private currentIteration: number = 1;
   private progressCallback?: ProgressCallback;
+  
+  // Track files that need to be read after build failure (auto-fix workflow)
+  private _pendingFixes: string[] = [];
 
   // Truncation settings
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000; // characters
@@ -1154,6 +1157,59 @@ export class AgentBridge {
 
     this.log(`Starting agent loop (streaming=${options.streaming}) with max ${maxIterations} iterations, ${tools.length} tools`);
 
+    // ===== AUTO-FIX WORKFLOW: Check if we have pending files to read after build failure =====
+    if (this._pendingFixes && this._pendingFixes.length > 0) {
+      this.log(`[AUTO-FIX] Processing ${this._pendingFixes.length} pending files from build failure`);
+      
+      const filesToRead = [...this._pendingFixes];
+      this._pendingFixes = []; // Clear immediately to prevent re-processing
+      
+      // Auto-read all pending files
+      for (const file of filesToRead) {
+        this.log(`[AUTO-FIX] Reading file: ${file}`);
+        try {
+          const result = await this.executeTool({
+            toolName: 'read_file',
+            args: { path: file }
+          });
+          
+          // Add tool result to messages
+          messages.push({
+            role: 'tool',
+            content: result.error ? `Error reading ${file}: ${result.error}` : result.result,
+            tool_call_id: `auto_fix_${Date.now()}_${file}`
+          });
+        } catch (e: any) {
+          messages.push({
+            role: 'tool',
+            content: `Error reading ${file}: ${e.message}`,
+            tool_call_id: `auto_fix_${Date.now()}_${file}`
+          });
+        }
+      }
+      
+      // Add explicit instruction to LLM
+      messages.push({
+        role: 'user',
+        content: `I've automatically read the failing files for you. Here are their contents. 
+
+Your task:
+1. Review the compilation errors shown earlier
+2. Identify the specific code issues in these files
+3. Use write_file or edit_file to fix each error
+4. DO NOT re-run the build until you've fixed all errors
+
+Files you need to fix:
+${filesToRead.join('\n')}
+
+Now propose specific code fixes and apply them.`
+      });
+      
+      // Continue to next iteration - LLM will process the auto-read results
+      this.log(`[AUTO-FIX] Added ${filesToRead.length} file contents + fix instruction to LLM context`);
+    }
+    // ===== END AUTO-FIX WORKFLOW =====
+
     for (let iteration = 1; iteration <= maxIterations; iteration++) {
       this.currentIteration = iteration;
       this.log(`[Iter ${iteration}/${maxIterations}] Calling LLM...`);
@@ -1998,6 +2054,17 @@ Please try a DIFFERENT approach:
             // Check for build failures
             if (result.exitCode !== 0 || output.includes('BUILD FAILED') || output.includes('FAILED')) {
               const errors = this.extractCompilationErrors(output);
+              
+              // Extract file paths to auto-read in next iteration
+              const fileMatch = errors.match(/FILES TO READ AND FIX:\s*\n([\s\S]*?)(?:\n\n|$)/);
+              if (fileMatch) {
+                const files = fileMatch[1].split('\n')
+                  .map(f => f.replace(/^\s*-\s*/, '').trim())
+                  .filter(f => f.length > 0);
+                this._pendingFixes = files.slice(0, 5); // Limit to first 5 files
+                this.log(`Auto-fix: Queued ${this._pendingFixes.length} files to read: ${this._pendingFixes.join(', ')}`);
+              }
+              
               return {
                 result: `❌ BUILD FAILED\n\nExit code: ${result.exitCode}\n\n${errors}\n\n⚠️ DO NOT re-run the build. READ the files listed above, FIX the compilation errors, then re-run.`,
                 error: 'Build failed'

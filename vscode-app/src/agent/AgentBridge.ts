@@ -1157,41 +1157,55 @@ export class AgentBridge {
 
     this.log(`Starting agent loop (streaming=${options.streaming}) with max ${maxIterations} iterations, ${tools.length} tools`);
 
-    // ===== AUTO-FIX WORKFLOW: Check if we have pending files to read after build failure =====
-    if (this._pendingFixes && this._pendingFixes.length > 0) {
-      this.log(`[AUTO-FIX] Processing ${this._pendingFixes.length} pending files from build failure`);
+    for (let iteration = 1; iteration <= maxIterations; iteration++) {
+      this.currentIteration = iteration;
       
-      const filesToRead = [...this._pendingFixes];
-      this._pendingFixes = []; // Clear immediately to prevent re-processing
-      
-      // Auto-read all pending files
-      for (const file of filesToRead) {
-        this.log(`[AUTO-FIX] Reading file: ${file}`);
-        try {
-          const result = await this.executeTool({
-            toolName: 'read_file',
-            args: { path: file }
-          });
+      // ===== AUTO-FIX WORKFLOW: Consume pending files at START of each iteration =====
+      if (this._pendingFixes && this._pendingFixes.length > 0) {
+        this.log(`[AUTO-FIX] Processing ${this._pendingFixes.length} pending files from build failure`);
+        
+        const filesToRead = [...this._pendingFixes];
+        this._pendingFixes = []; // Clear immediately to prevent re-processing
+        
+        // Auto-read all pending files BEFORE calling LLM
+        for (const file of filesToRead) {
+          // Normalize path - remove e:/// or file:/// prefixes
+          const cleanPath = file.replace(/^(e:\/\/\/|file:\/\/\/)/, '');
+          this.log(`[AUTO-FIX] Reading file: ${cleanPath}`);
           
-          // Add tool result to messages
-          messages.push({
-            role: 'tool',
-            content: result.error ? `Error reading ${file}: ${result.error}` : result.result,
-            tool_call_id: `auto_fix_${Date.now()}_${file}`
-          });
-        } catch (e: any) {
-          messages.push({
-            role: 'tool',
-            content: `Error reading ${file}: ${e.message}`,
-            tool_call_id: `auto_fix_${Date.now()}_${file}`
-          });
+          try {
+            const result = await this.executeTool({
+              toolName: 'read_file',
+              args: { path: cleanPath }
+            });
+            
+            // Add as assistant message (agent is reading) + tool result
+            messages.push({
+              role: 'assistant',
+              content: `Reading ${cleanPath} to understand the compilation error.`
+            });
+            
+            messages.push({
+              role: 'tool',
+              content: `[AUTO-READ] ${cleanPath}:\n${result.result?.substring(0, 3000) || result.error}`,
+              tool_call_id: `auto_fix_${Date.now()}_${cleanPath}`
+            });
+            
+            this.log(`[AUTO-FIX] Read ${cleanPath} (${result.result?.length || 0} chars)`);
+          } catch (e: any) {
+            messages.push({
+              role: 'tool',
+              content: `[AUTO-READ ERROR] ${cleanPath}: ${e.message}`,
+              tool_call_id: `auto_fix_${Date.now()}_${cleanPath}`
+            });
+            this.log(`[AUTO-FIX] Failed to read ${cleanPath}: ${e.message}`);
+          }
         }
-      }
-      
-      // Add explicit instruction to LLM
-      messages.push({
-        role: 'user',
-        content: `I've automatically read the failing files for you. Here are their contents. 
+        
+        // Add explicit instruction to LLM
+        messages.push({
+          role: 'user',
+          content: `I've automatically read the failing files for you. 
 
 Your task:
 1. Review the compilation errors shown earlier
@@ -1200,18 +1214,16 @@ Your task:
 4. DO NOT re-run the build until you've fixed all errors
 
 Files you need to fix:
-${filesToRead.join('\n')}
+${filesToRead.map(f => f.replace(/^(e:\/\/\/|file:\/\/\/)/, '')).join('\n')}
 
 Now propose specific code fixes and apply them.`
-      });
+        });
+        
+        this.log(`[AUTO-FIX] Added ${filesToRead.length} file contents + fix instruction to LLM context`);
+        // Continue to LLM call with the auto-read context
+      }
+      // ===== END AUTO-FIX WORKFLOW =====
       
-      // Continue to next iteration - LLM will process the auto-read results
-      this.log(`[AUTO-FIX] Added ${filesToRead.length} file contents + fix instruction to LLM context`);
-    }
-    // ===== END AUTO-FIX WORKFLOW =====
-
-    for (let iteration = 1; iteration <= maxIterations; iteration++) {
-      this.currentIteration = iteration;
       this.log(`[Iter ${iteration}/${maxIterations}] Calling LLM...`);
 
       // Emit thinking event (streaming only)
@@ -2061,8 +2073,16 @@ Please try a DIFFERENT approach:
                 const files = fileMatch[1].split('\n')
                   .map(f => f.replace(/^\s*-\s*/, '').trim())
                   .filter(f => f.length > 0);
-                this._pendingFixes = files.slice(0, 5); // Limit to first 5 files
-                this.log(`Auto-fix: Queued ${this._pendingFixes.length} files to read: ${this._pendingFixes.join(', ')}`);
+                
+                // Deduplicate: normalize paths by removing e:/// and file:/// prefixes
+                const cleanPaths = new Set<string>();
+                for (const file of files) {
+                  const clean = file.replace(/^(e:\/\/\/|file:\/\/\/)/, '');
+                  cleanPaths.add(clean);
+                }
+                
+                this._pendingFixes = Array.from(cleanPaths).slice(0, 5); // Limit to 5 unique files
+                this.log(`Auto-fix: Queued ${this._pendingFixes.length} unique files: ${this._pendingFixes.join(', ')}`);
               }
               
               return {

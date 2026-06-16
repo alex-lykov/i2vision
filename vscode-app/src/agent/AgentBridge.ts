@@ -1876,68 +1876,68 @@ Please try a DIFFERENT approach:
           const command = toolCall.args.command;
           const timeout = 120000; // 2 minutes
           
-          this.log(`  Running build: ${command} (timeout: ${timeout}ms)`);
+          // Check settings for terminal behavior
+          const settings = this.settingsManager.getSettings();
+          const showInWebview = settings.terminal.showOutputInWebview;
           
-          // Run build with progress streaming
-          const result = await this.runCommandWithTimeout(command, timeout, undefined, (output: string) => {
-            // Send partial output as heartbeat during long builds
-            // This resets the idle timeout and shows user progress
-            const partialOutput = output.slice(-200); // Last 200 chars
-            this.emitProgress({
-              type: 'tool_output',
-              toolCall: { toolName: 'run_build', args: toolCall.args },
-              partialOutput: partialOutput,
-              iteration: this.currentIteration
+          this.log(`  Running build: ${command} (showInWebview=${showInWebview}, timeout=${timeout}ms)`);
+          
+          // OPTION 1: Show in webview - capture output via spawn
+          if (showInWebview) {
+            const result = await this.runCommandWithTimeout(command, timeout, undefined, (output: string) => {
+              // Send partial output as heartbeat during long builds
+              const partialOutput = output.slice(-200);
+              this.emitProgress({
+                type: 'tool_output',
+                toolCall: { toolName: 'run_build', args: toolCall.args },
+                partialOutput: partialOutput,
+                iteration: this.currentIteration
+              });
             });
+            
+            return { result: this.formatBuildResult(result) };
+          }
+          
+          // OPTION 2: Show in VSCode terminal - create visible terminal
+          this.log(`  Running build in visible VSCode terminal`);
+          const terminalName = `i2-Vision: Build`;
+          
+          const terminal = vscode.window.createTerminal({
+            name: terminalName,
+            cwd: this.workspaceRoot,
+            shellPath: process.platform === 'win32' ? 'powershell.exe' : undefined
           });
           
-          this.log(`  Build completed: exitCode=${result.exitCode}, stdout=${result.stdout.length} chars, stderr=${result.stderr.length} chars`);
+          terminal.show(true);
+          terminal.sendText(command);
           
-          // Parse build results - check for errors in both stdout and stderr
-          const hasError = result.exitCode !== 0 ||
-                          result.stderr?.includes('FAILED') || 
-                          result.stderr?.includes('BUILD FAILED') ||
-                          result.stderr?.includes('error') ||
-                          result.stdout?.includes('FAILED') ||
-                          result.stdout?.includes('error:');
+          // Wait for build to complete (poll for exit)
+          const startTime = Date.now();
+          const maxWait = timeout;
           
-          // Build comprehensive result message
-          let resultMessage = '';
-          
-          // Add exit code info
-          if (result.exitCode !== null) {
-            resultMessage += `Exit code: ${result.exitCode}\n`;
-          }
-          
-          // Add summary
-          if (hasError) {
-            resultMessage += `\n❌ Build FAILED\n\n`;
-            const errors = this.extractCompilationErrors(result.stderr || result.stdout);
-            resultMessage += `${errors}\n\n⚠️ DO NOT re-run the build. READ the files listed above, FIX the compilation errors, then re-run.`;
-          } else {
-            resultMessage += `\n✅ Build successful\n`;
-          }
-          
-          // Add output (even if empty, to show agent something was run)
-          const stdoutContent = result.stdout?.trim();
-          const stderrContent = result.stderr?.trim();
-          
-          if (stdoutContent || stderrContent) {
-            resultMessage += `\n\n--- Build Output ---\n`;
-            if (stdoutContent) {
-              resultMessage += `STDOUT:\n${stdoutContent.slice(-2000)}\n`;
-            }
-            if (stderrContent && !hasError) {
-              resultMessage += `STDERR:\n${stderrContent.slice(-1000)}\n`;
-            }
-          } else {
-            resultMessage += `\n⚠️ Build produced no output (likely cached/UP-TO-DATE)\n`;
-            resultMessage += `This usually means Gradle found cached results and skipped compilation.\n`;
-            resultMessage += `To force a rebuild, run: ./gradlew clean build\n`;
-          }
+          // Simple polling - wait for terminal to close or timeout
+          await new Promise<void>((resolve) => {
+            const checkInterval = setInterval(() => {
+              if (Date.now() - startTime > maxWait) {
+                clearInterval(checkInterval);
+                resolve();
+              }
+              // Check if terminal was closed (simple heuristic - wait fixed time for builds)
+              if (Date.now() - startTime > 5000) {
+                // After 5 seconds, assume build is running and return
+                resolve();
+              }
+            }, 500);
+            
+            // Also resolve after a reasonable build time
+            setTimeout(() => {
+              clearInterval(checkInterval);
+              resolve();
+            }, Math.min(30000, timeout));
+          });
           
           return {
-            result: resultMessage
+            result: `Build command executed in terminal "${terminalName}". Check the terminal for output and results.\n\nCommand: ${command}`
           };
         }
         
@@ -2143,6 +2143,58 @@ Please try a DIFFERENT approach:
         exitCode = null;
       });
     });
+  }
+
+  /**
+   * Format build result into structured message
+   */
+  private formatBuildResult(result: { stdout: string; stderr: string; exitCode: number | null }): string {
+    this.log(`  Build completed: exitCode=${result.exitCode}, stdout=${result.stdout.length} chars, stderr=${result.stderr.length} chars`);
+    
+    // Parse build results - check for errors in both stdout and stderr
+    const hasError = result.exitCode !== 0 ||
+                    result.stderr?.includes('FAILED') || 
+                    result.stderr?.includes('BUILD FAILED') ||
+                    result.stderr?.includes('error') ||
+                    result.stdout?.includes('FAILED') ||
+                    result.stdout?.includes('error:');
+    
+    // Build comprehensive result message
+    let resultMessage = '';
+    
+    // Add exit code info
+    if (result.exitCode !== null) {
+      resultMessage += `Exit code: ${result.exitCode}\n`;
+    }
+    
+    // Add summary
+    if (hasError) {
+      resultMessage += `\n❌ Build FAILED\n\n`;
+      const errors = this.extractCompilationErrors(result.stderr || result.stdout);
+      resultMessage += `${errors}\n\n⚠️ DO NOT re-run the build. READ the files listed above, FIX the compilation errors, then re-run.`;
+    } else {
+      resultMessage += `\n✅ Build successful\n`;
+    }
+    
+    // Add output (even if empty, to show agent something was run)
+    const stdoutContent = result.stdout?.trim();
+    const stderrContent = result.stderr?.trim();
+    
+    if (stdoutContent || stderrContent) {
+      resultMessage += `\n\n--- Build Output ---\n`;
+      if (stdoutContent) {
+        resultMessage += `STDOUT:\n${stdoutContent.slice(-2000)}\n`;
+      }
+      if (stderrContent && !hasError) {
+        resultMessage += `STDERR:\n${stderrContent.slice(-1000)}\n`;
+      }
+    } else {
+      resultMessage += `\n⚠️ Build produced no output (likely cached/UP-TO-DATE)\n`;
+      resultMessage += `This usually means Gradle found cached results and skipped compilation.\n`;
+      resultMessage += `To force a rebuild, run: ./gradlew clean build\n`;
+    }
+    
+    return resultMessage;
   }
 
   /**

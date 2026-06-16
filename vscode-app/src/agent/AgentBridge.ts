@@ -2141,17 +2141,33 @@ Please try a DIFFERENT approach:
     const lines = output.split('\n');
     const mentionedFiles = new Set<string>();
     
+    // Debug: Log first 500 chars to understand format
+    this.log(`Extracting errors from output (first 500 chars): ${output.substring(0, 500)}`);
+    
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       
       // Kotlin compiler errors: "e: file:///path/to/File.kt:line:col message"
-      const kotlinErrorMatch = line.match(/e: file:\/\/\/?(.+?):(\d+):(\d+)\s+(.+)/);
+      // More flexible pattern to handle variations
+      const kotlinErrorMatch = line.match(/e:\s*file:\/\/\/?([a-zA-Z]:)?(.+?):(\d+):(\d+)\s+(.+)/);
       if (kotlinErrorMatch) {
-        const [, filePath, lineNum, col, message] = kotlinErrorMatch;
-        // Convert to relative path
+        const [, , filePath, lineNum, col, message] = kotlinErrorMatch;
+        // Convert to relative path - remove drive letter and normalize slashes
         const relativePath = filePath.replace(/^[a-zA-Z]:/, '').replace(/\\/g, '/');
         mentionedFiles.add(relativePath);
         errors.push(`${relativePath}:${lineNum}:${col} ${message}`);
+        this.log(`Found Kotlin error: ${relativePath}:${lineNum}:${col}`);
+        continue;
+      }
+      
+      // Alternative Kotlin format: "e: /path/to/File.kt:line:col message" (no file:///)
+      const kotlinErrorMatch2 = line.match(/e:\s+([a-zA-Z]:[\\/].+?\.(kt|java|kts)):(\d+):(\d+)\s+(.+)/);
+      if (kotlinErrorMatch2) {
+        const [, filePath, , lineNum, col, message] = kotlinErrorMatch2;
+        const relativePath = filePath.replace(/^[a-zA-Z]:/, '').replace(/\\/g, '/');
+        mentionedFiles.add(relativePath);
+        errors.push(`${relativePath}:${lineNum}:${col} ${message}`);
+        this.log(`Found Kotlin error (alt format): ${relativePath}:${lineNum}:${col}`);
         continue;
       }
       
@@ -2161,26 +2177,47 @@ Please try a DIFFERENT approach:
         const [, filePath, , lineNum, , message] = javaErrorMatch;
         mentionedFiles.add(filePath.replace(/\\/g, '/'));
         errors.push(`${filePath}:${lineNum} ${message}`);
+        this.log(`Found Java error: ${filePath}:${lineNum}`);
         continue;
       }
       
-      // Gradle task failures with context
-      if (line.includes('FAILED') || line.includes('> Task')) {
-        const nextLine = lines[i + 1]?.trim();
-        if (nextLine && !nextLine.startsWith('>')) {
-          errors.push(`${line.trim()} → ${nextLine}`);
-        } else {
-          errors.push(line.trim());
+      // Gradle task failures with context - look for FAILED and capture next few lines
+      if (line.includes('FAILED')) {
+        const contextLines = [];
+        // Look at current line and next 3 lines for error details
+        for (let j = i; j < Math.min(i + 4, lines.length); j++) {
+          const contextLine = lines[j].trim();
+          if (contextLine && !contextLine.startsWith('> Task') && contextLine.length > 10) {
+            contextLines.push(contextLine);
+          }
         }
+        if (contextLines.length > 0) {
+          errors.push(contextLines.slice(0, 3).join(' '));
+          this.log(`Found Gradle FAILED context: ${contextLines[0]}`);
+        }
+        continue;
+      }
+      
+      // Look for lines starting with "e: " without file path (general errors)
+      if (line.startsWith('e: ') && !line.includes('file://')) {
+        const errorMsg = line.substring(3).trim();
+        if (errorMsg.length > 10) {
+          errors.push(errorMsg);
+          this.log(`Found general error: ${errorMsg}`);
+        }
+        continue;
       }
       
       // Common error keywords (capture full line)
       if (line.includes('Unresolved reference') ||
           line.includes('Type mismatch') ||
-          line.includes('not abstract') ||
-          line.includes('Override') ||
-          line.includes('Expecting')) {
+          line.includes('is not abstract') ||
+          line.includes('must implement') ||
+          line.includes('cannot find symbol') ||
+          line.includes('package does not exist') ||
+          line.includes('incompatible types')) {
         errors.push(line.trim());
+        this.log(`Found keyword error: ${line.trim().substring(0, 80)}`);
       }
     }
     
@@ -2189,16 +2226,18 @@ Please try a DIFFERENT approach:
     
     if (mentionedFiles.size > 0) {
       const fileList = Array.from(mentionedFiles).slice(0, 5).join('\n  - ');
-      result += `FILES WITH COMPILATION ERRORS:\n  - ${fileList}\n\n`;
+      result += `FILES TO READ AND FIX:\n  - ${fileList}\n\n`;
     }
     
     if (errors.length > 0) {
-      result += `ERRORS:\n${errors.slice(0, 15).join('\n')}`;
+      result += `COMPILER ERRORS:\n${errors.slice(0, 15).join('\n')}`;
     } else {
-      result += 'No specific compilation errors found in output.';
-      result += '\n\nTry running with --info for more details.';
+      // No structured errors found - return last 800 chars of output as fallback
+      result = 'No specific compilation errors found in output.\n\n';
+      result += `Last output:\n${output.slice(-800)}`;
     }
     
+    this.log(`Extracted ${errors.length} errors from ${mentionedFiles.size} files`);
     return result;
   }
 

@@ -1942,10 +1942,25 @@ Please try a DIFFERENT approach:
         }
         
         case 'run_terminal': {
-          const command = toolCall.args.command;
+          let command = toolCall.args.command;
           const workingDir = toolCall.args.workingDir 
             ? this.resolvePath(toolCall.args.workingDir) 
             : this.workspaceRoot;
+          
+          // WINDOWS POWERSHELL FIX: Prepend .\ to gradlew commands
+          // PowerShell doesn't load commands from current directory by default
+          if (process.platform === 'win32') {
+            // Fix gradlew commands (without .bat extension)
+            if (/^gradlew(\s|$)/i.test(command)) {
+              command = command.replace(/^gradlew/i, '.\\gradlew');
+              this.log(`  Windows PowerShell fix: gradlew -> .\\gradlew`);
+            }
+            // Fix ./gradlew commands (Unix-style)
+            if (/^\.\//i.test(command)) {
+              command = command.replace(/^\.\//, '.\\');
+              this.log(`  Windows PowerShell fix: ./ -> .\\`);
+            }
+          }
           
           this.log(`  Running terminal: ${command}`);
           

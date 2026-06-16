@@ -1988,8 +1988,12 @@ Please try a DIFFERENT approach:
             const timeout = 120000; // 2 minutes for builds
             const result = await this.runCommandWithTimeout(command, timeout, workingDir);
             
-            const output = result.stdout || result.stderr || 'Command completed with no output.';
+            // COMBINE stdout and stderr - Kotlin errors often go to stderr
+            const output = (result.stdout || '') + '\n' + (result.stderr || '');
             const exitCodeInfo = result.exitCode !== null ? ` (exit: ${result.exitCode})` : '';
+            
+            // Log output sources for debugging
+            this.log(`  Build output: stdout=${result.stdout?.length || 0} chars, stderr=${result.stderr?.length || 0} chars`);
             
             // Check for build failures
             if (result.exitCode !== 0 || output.includes('BUILD FAILED') || output.includes('FAILED')) {
@@ -2251,8 +2255,9 @@ Please try a DIFFERENT approach:
     const lines = output.split('\n');
     const mentionedFiles = new Set<string>();
     
-    // Log output length for debugging
+    // Log first 2000 chars for debugging (increased from 500)
     this.log(`Extracting errors from full output (${output.length} chars)`);
+    this.log(`Output preview (first 2000 chars):\n${output.substring(0, 2000)}`);
     
     // ===== PASS 1: Find all Kotlin compiler errors (e: file:///...) =====
     // This is the PRIMARY pattern for Kotlin compilation errors
@@ -2276,7 +2281,18 @@ Please try a DIFFERENT approach:
       this.log(`Found Kotlin error (alt format): ${relativePath}:${lineNum}:${col}`);
     }
     
-    // ===== PASS 3: Search for "Unresolved reference" errors (common Kotlin errors) =====
+    // ===== PASS 3: Search for .kt file errors WITHOUT e: prefix =====
+    // Some Gradle outputs show: path/to/File.kt:line: error message
+    const ktFilePattern = /([a-zA-Z]:[\\/].+?\.kt):(\d+):\s*(.+)/g;
+    while ((match = ktFilePattern.exec(output)) !== null) {
+      const [, filePath, lineNum, message] = match;
+      const relativePath = filePath.replace(/^[a-zA-Z]:/, '').replace(/\\/g, '/');
+      mentionedFiles.add(relativePath);
+      errors.push(`${relativePath}:${lineNum} ${message}`);
+      this.log(`Found .kt file error: ${relativePath}:${lineNum}`);
+    }
+    
+    // ===== PASS 4: Search for "Unresolved reference" errors (common Kotlin errors) =====
     const unresolvedPattern = /Unresolved reference[^\n]+/g;
     const unresolvedErrors = output.match(unresolvedPattern);
     if (unresolvedErrors) {
@@ -2286,7 +2302,7 @@ Please try a DIFFERENT approach:
       });
     }
     
-    // ===== PASS 4: Search for other common Kotlin error keywords =====
+    // ===== PASS 5: Search for other common Kotlin error keywords =====
     const keywordPatterns = [
       /Type mismatch[^\n]+/g,
       /is not abstract[^\n]+/g,
@@ -2309,7 +2325,7 @@ Please try a DIFFERENT approach:
       }
     }
     
-    // ===== PASS 5: Gradle task failures - look for FAILED with context =====
+    // ===== PASS 6: Gradle task failures - look for FAILED with context =====
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       

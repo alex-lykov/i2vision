@@ -1298,7 +1298,7 @@ export class AgentTabManager {
     
     // Settings from extension
     const streamingEnabled = ${streamingEnabled};
-    const showThinkingIndicator = ${showThinking};
+    const showThinkingSetting = ${showThinking};
     
     // Fetch models on load
     window.addEventListener('load', () => {
@@ -1506,7 +1506,7 @@ export class AgentTabManager {
     
     function showThinkingIndicator(message) {
       // Check if thinking indicator is enabled
-      if (!showThinkingIndicator) {
+      if (!showThinkingSetting) {
         return;
       }
       

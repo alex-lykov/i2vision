@@ -314,6 +314,12 @@ export class AgentBridge {
   
   // Track files already auto-read to prevent duplicate reads
   private _autoReadFiles: Set<string> = new Set();
+  
+  // Auto-nudge message to inject after successful writes
+  private _autoNudge: string | null = null;
+  
+  // Track consecutive plan-only responses to detect spiraling
+  private _consecutivePlans: number = 0;
 
   // Truncation settings
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000; // characters
@@ -1157,16 +1163,74 @@ export class AgentBridge {
 
     // Get tools (filtered by lazy profile)
     const tools = this.getTools(contextProfile?.lazy);
-    const maxIterations = this.config.iterationSettings.maxIterations;
+    
+    // Validate maxIterations: range [0..100], default 50
+    let maxIterations = this.config.iterationSettings.maxIterations;
+    if (typeof maxIterations !== 'number' || maxIterations < 0 || maxIterations > 100) {
+      this.log(`⚠️ maxIterations (${maxIterations}) out of range [0..100], using default 50`);
+      maxIterations = 50;
+    }
+    
     const toolCalls: ToolCall[] = [];
     const history: ToolCallHistory[] = [];
 
-    this.log(`Starting agent loop (streaming=${options.streaming}) with max ${maxIterations} iterations, ${tools.length} tools`);
+    this.log(`Starting agent loop (streaming=${options.streaming}), safety net at ${maxIterations} iterations`);
 
     // Reset auto-read tracking for new task
     this._autoReadFiles.clear();
 
-    for (let iteration = 1; iteration <= maxIterations; iteration++) {
+    // ===== MODERN AGENTIC LOOP: while(true) with natural exit conditions =====
+    let iteration = 0;
+    
+    while (true) {
+      iteration++;
+      
+      // Reset auto-nudge at start of each iteration
+      this._autoNudge = null;
+      
+      // ===== SAFETY NET: Prevent infinite loops =====
+      if (iteration > maxIterations) {
+        this.log(`⚠️ Safety net: ${maxIterations} iterations reached without final answer`);
+        
+        // Give LLM one final chance to provide answer
+        const finalResponse = await this.callLLM(messages, tools);
+        if (finalResponse.toolCalls.length === 0) {
+          this.log(`Final answer from LLM: ${finalResponse.content.length} chars`);
+          
+          if (options.streaming) {
+            yield {
+              type: 'text',
+              text: finalResponse.content,
+              timestamp: Date.now()
+            };
+            yield {
+              type: 'done',
+              outcome: 'success',
+              timestamp: Date.now(),
+              iterations: iteration,
+              tokenUsage: (this as any)._lastTokenUsage
+            };
+          }
+          return;
+        }
+        
+        // Still calling tools after safety net - force stop
+        if (options.streaming) {
+          yield {
+            type: 'text',
+            text: `⚠️ Stopped after ${iteration} iterations. The agent was stuck in a loop.`,
+            timestamp: Date.now()
+          };
+          yield {
+            type: 'done',
+            outcome: 'error',
+            timestamp: Date.now(),
+            iterations: iteration
+          };
+        }
+        return;
+      }
+      
       this.currentIteration = iteration;
       
       // ===== AUTO-FIX WORKFLOW: Consume pending files at START of each iteration =====
@@ -1261,13 +1325,13 @@ Now write the fixed code for these files.`;
       }
       // ===== END AUTO-FIX WORKFLOW =====
       
-      this.log(`[Iter ${iteration}/${maxIterations}] Calling LLM...`);
+      this.log(`[Iter ${iteration}] Calling LLM...`);
 
-      // Emit thinking event (streaming only)
+      // Emit thinking event (streaming only) - NO iteration count (implementation detail)
       if (options.streaming) {
         yield {
           type: 'thinking',
-          message: `Iteration ${iteration}: Calling LLM...`,
+          message: `Processing...`,
           timestamp: Date.now()
         };
       }
@@ -1365,7 +1429,7 @@ Now write the fixed code for these files.`;
 
       this.log(`[Iter ${iteration}] LLM: ${responseText.length} chars, ${streamingToolCalls.length} tool(s)`);
 
-      // No tool calls - check if plan or final answer
+      // ===== NATURAL EXIT: No tool calls = task complete =====
       if (streamingToolCalls.length === 0) {
         const trimmedResponse = responseText.trim();
         
@@ -1378,7 +1442,25 @@ Now write the fixed code for these files.`;
         );
 
         if (isPlanOnly) {
-          this.log(`[Iter ${iteration}] Plan detected - pushing explicit tool call`);
+          this._consecutivePlans++;
+          this.log(`[Iter ${iteration}] Plan detected (${this._consecutivePlans} consecutive) - pushing explicit tool call`);
+          
+          // Force-break after 3 consecutive plans - auto-fix remaining files
+          if (this._consecutivePlans >= 3 && this._pendingFixes.length > 0) {
+            this.log(`[Iter ${iteration}] Force-break: ${this._consecutivePlans} consecutive plans, auto-fixing remaining files`);
+            const nextFile = this._pendingFixes.shift();
+            if (nextFile) {
+              this.log(`  Auto-reading: ${nextFile}`);
+              this._autoReadFiles.add(nextFile.toLowerCase());
+              messages.push({
+                role: 'user',
+                content: `Auto-fix mode: Read and fix ${nextFile}. Apply the fix using write_file.`
+              });
+              this._consecutivePlans = 0;
+              continue;
+            }
+          }
+          
           // Find the last build error result to extract file names
           const lastBuildError = messages
             .filter(m => m.role === 'tool' && typeof m.content === 'string' && m.content.includes('BUILD FAILED'))
@@ -1401,6 +1483,9 @@ Now write the fixed code for these files.`;
             content: nudgeMessage
           });
           continue;
+        } else {
+          // Reset consecutive plans counter on successful tool call
+          this._consecutivePlans = 0;
         }
 
         // Final answer - yield/send text
@@ -1430,12 +1515,10 @@ Now write the fixed code for these files.`;
           });
         }
         
-        return;
+        return; // Natural exit - task complete
       }
 
-      // Has tool calls - DO NOT yield text yet (it's just reasoning, not the final answer)
-      // The final answer will come in a later iteration after tools complete
-      // Just log that we're executing tools
+      // Has tool calls - execute them
       this.log(`[Iter ${iteration}] Executing ${streamingToolCalls.length} tool(s)...`);
 
       // ===== LOOP DETECTION (SHARED LOGIC) =====
@@ -1653,9 +1736,20 @@ Please try a DIFFERENT approach:
         this.log(`[Iter ${iteration}] Linked tool result to ${toolCallId}`);
       }
 
+      // Inject auto-nudge after successful write_file
+      if (this._autoNudge) {
+        this.log(`[Iter ${iteration}] Injecting auto-nudge: ${this._autoNudge}`);
+        messages.push({
+          role: 'user',
+          content: this._autoNudge
+        });
+        this._autoNudge = null;
+      }
+
+      // ===== MODERN NUDGE: No iteration pressure =====
       messages.push({
         role: 'user',
-        content: `Tool results received. You have ${maxIterations - iteration} of ${maxIterations} iterations remaining. If you have enough information to answer the user's question, provide your answer now. Only call another tool if you're missing critical information.`
+        content: `Tool results received. If you have enough information to answer the user's question, provide your answer now. Only call another tool if you're missing critical information.`
       });
 
       // Emit iteration complete event
@@ -1672,45 +1766,7 @@ Please try a DIFFERENT approach:
         });
       }
     }
-
-    this.log(`Max iterations (${maxIterations}) reached without final answer - giving LLM one more chance`);
-    
-    // Give LLM one final chance to provide a final answer
-    const finalResponse = await this.callLLM(messages, tools);
-    if (finalResponse.toolCalls.length === 0) {
-      this.log(`Final answer from LLM: ${finalResponse.content.length} chars`);
-      
-      if (options.streaming) {
-        yield {
-          type: 'text',
-          text: finalResponse.content,
-          timestamp: Date.now()
-        };
-        yield {
-          type: 'done',
-          outcome: 'success',
-          timestamp: Date.now(),
-          iterations: maxIterations + 1
-        };
-      } else if (options.onProgress) {
-        options.onProgress({
-          type: 'tool_complete',
-          toolCall: { toolName: 'final_answer', args: {}, result: finalResponse.content },
-          iteration: maxIterations + 1
-        });
-      }
-      return;
-    }
-    
-    // Max iterations reached
-    if (options.streaming) {
-      yield {
-        type: 'done',
-        outcome: 'success',
-        timestamp: Date.now(),
-        iterations: maxIterations
-      };
-    }
+    // ===== END MODERN AGENTIC LOOP =====
   }
 
   /**
@@ -1875,9 +1931,20 @@ Please try a DIFFERENT approach:
           
           await this.cli.writeFile(filePath, toolCall.args.content);
           
-          return {
-            result: `Successfully wrote ${toolCall.args.content.length} characters to ${filePath}`
-          };
+          const result = `Successfully wrote ${toolCall.args.content.length} characters to ${filePath}`;
+          
+          // Auto-advance: if there are more pending fixes, inject a nudge to continue
+          if (this._pendingFixes && this._pendingFixes.length > 0) {
+            const nextFile = this._pendingFixes[0];
+            this.log(`  ✅ File written — ${this._pendingFixes.length} pending fix(es) remaining. Next: ${nextFile}`);
+            // Inject a system message to guide the next iteration
+            this._autoNudge = `You successfully wrote ${filePath}. There are still ${this._pendingFixes.length} failing file(s) to fix. Next, read and fix: ${nextFile}`;
+          } else {
+            this.log(`  ✅ File written — no pending fixes remaining. Suggest re-building.`);
+            this._autoNudge = `Fix applied to ${filePath}. Re-run the build to verify: .\\gradlew :app:server:compileKotlin`;
+          }
+          
+          return { result };
         }
         
         case 'search_files': {

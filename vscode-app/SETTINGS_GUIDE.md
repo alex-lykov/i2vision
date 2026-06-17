@@ -94,12 +94,12 @@ Customize the agent UI appearance and behavior.
 
 Control agent loop and conversation management.
 
-| Setting | Type | Default | Description |
-|---------|------|---------|-------------|
-| **Max Iterations** | number | `10` | Maximum agent loop iterations (1-50) |
-| **Enable Loop Detection** | boolean | `true` | Detect and prevent infinite loops |
-| **Auto-Save Conversation** | boolean | `true` | Automatically save conversation history |
-| **Conversation History Limit** | number | `50` | Max messages to keep in history (10-200) |
+| Setting | Type | Default | Description                              |
+|---------|------|---------|------------------------------------------|
+| **Max Iterations** | number | `50`   | Maximum agent loop iterations (1-100)   |
+| **Enable Loop Detection** | boolean | `true`  | Detect and prevent infinite loops        |
+| **Auto-Save Conversation** | boolean | `true`  | Automatically save conversation history  |
+| **Conversation History Limit** | number | `50`    | Max messages to keep in history (10-200) |
 
 **Use Cases:**
 - Increase max iterations for complex multi-step tasks

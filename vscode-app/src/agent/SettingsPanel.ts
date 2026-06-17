@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * SettingsPanel - VSCode webview panel for agent settings
  * 
@@ -540,7 +547,7 @@ export class SettingsPanel {
         <div class="setting-description">Maximum agent loop iterations</div>
       </div>
       <div class="setting-control">
-        <input type="range" id="agent.maxIterations" min="1" max="50" value="${settings.agent.maxIterations}">
+        <input type="range" id="agent.maxIterations" min="1" max="100" value="${settings.agent.maxIterations}">
         <div class="range-value">${settings.agent.maxIterations}</div>
       </div>
     </div>

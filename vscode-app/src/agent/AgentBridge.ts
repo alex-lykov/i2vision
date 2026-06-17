@@ -311,6 +311,9 @@ export class AgentBridge {
   
   // Track consecutive build failures to force fix mode
   private _buildFailureCount: number = 0;
+  
+  // Track files already auto-read to prevent duplicate reads
+  private _autoReadFiles: Set<string> = new Set();
 
   // Truncation settings
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000; // characters
@@ -1160,6 +1163,9 @@ export class AgentBridge {
 
     this.log(`Starting agent loop (streaming=${options.streaming}) with max ${maxIterations} iterations, ${tools.length} tools`);
 
+    // Reset auto-read tracking for new task
+    this._autoReadFiles.clear();
+
     for (let iteration = 1; iteration <= maxIterations; iteration++) {
       this.currentIteration = iteration;
       
@@ -1174,6 +1180,14 @@ export class AgentBridge {
         for (const file of filesToRead) {
           // Normalize path - remove e:/// or file:/// prefixes
           const cleanPath = file.replace(/^(e:\/\/\/|file:\/\/\/)/, '');
+          const normalizedPath = cleanPath.toLowerCase(); // For duplicate detection
+          
+          // Skip if already auto-read in a previous failure
+          if (this._autoReadFiles.has(normalizedPath)) {
+            this.log(`[AUTO-FIX] Skipping ${cleanPath} (already auto-read)`);
+            continue;
+          }
+          
           this.log(`[AUTO-FIX] Reading file: ${cleanPath}`);
           
           try {
@@ -1181,6 +1195,9 @@ export class AgentBridge {
               toolName: 'read_file',
               args: { path: cleanPath }
             });
+            
+            // Track as auto-read to prevent duplicate reads later
+            this._autoReadFiles.add(normalizedPath);
             
             // Add as assistant message (agent is reading) + tool result
             messages.push({
@@ -1818,6 +1835,16 @@ Please try a DIFFERENT approach:
         
         case 'read_file': {
           const filePath = this.resolvePath(toolCall.args.path);
+          const normalizedPath = filePath.toLowerCase();
+          
+          // Check if this file was already auto-read during build failure
+          if (this._autoReadFiles.has(normalizedPath)) {
+            this.log(`  Skipping duplicate read (already auto-read): ${filePath}`);
+            return { 
+              result: `[Already read during auto-fix workflow. Content is available in previous tool results. Focus on proposing fixes using write_file or edit_file.]` 
+            };
+          }
+          
           this.log(`  Reading file: ${filePath}`);
           
           try {
@@ -2114,8 +2141,9 @@ Please try a DIFFERENT approach:
               };
             }
             
-            // Build succeeded - reset failure counter
+            // Build succeeded - reset failure counter and auto-read tracking
             this._buildFailureCount = 0;
+            this._autoReadFiles.clear();
             return { result: `✅ Build successful${exitCodeInfo}\n\n${output.slice(-1000)}` };
           }
           

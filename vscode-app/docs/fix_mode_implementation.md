@@ -1,13 +1,26 @@
-# Fix Mode Implementation - Breaking the Plan Loop
+# Fix Mode Implementation - Build Failure Auto-Fix
 
-## Problem: 27 Consecutive Plan Detections
+## Overview
 
-The agent entered a permanent plan loop where:
-- Iterations 1-8: Normal operation with tool calls
-- Iterations 9-41: **Every response was "Plan detected."**
-- The `apply_edits` tool was registered but **never used**
+Fix mode is an intelligent auto-fix system that activates when a build fails, guiding the agent to fix compilation errors efficiently by reducing tool options and providing explicit guidance.
 
-**Root Cause**: The LLM defaults to learned patterns (`read_file`, `search_files`) and doesn't know to use the new `apply_edits` tool without explicit guidance.
+---
+
+## Problem: Plan Loop After Build Failure
+
+When a build failed, the agent would enter a plan loop:
+
+```
+[Build Failed] → Agent should fix errors
+[Iter 11] LLM called with 16 tools → Uses search_files
+[Iter 12] search_files → No results
+[Iter 13] search_files → No results
+...
+[Iter 48] Finally calls apply_edits (1 time in 50 iterations)
+[Iter 50] Safety net reached
+```
+
+**Root Cause:** The LLM defaults to learned patterns (`read_file`, `search_files`) and doesn't know to use `apply_edits` without explicit guidance.
 
 ---
 
@@ -21,120 +34,222 @@ When a build fails, activate **fix mode** which filters tools to only those need
 // After build failure:
 this._fixMode = true;
 
-// Filter tools to only fix-related ones
+// Filter tools to only edit-related ones (excludes run_terminal/run_build)
 const fixTools = allTools.filter(t => 
-  ['apply_edits', 'read_file', 'write_file', 'run_terminal', 'run_build'].includes(t.function.name)
+  ['apply_edits', 'read_file', 'write_file', 'get_file_context'].includes(t.function.name)
 );
 
-// Result: 16 tools → 5 tools
-// Prevents LLM from reaching for search_files or list_directory
+// Result: 16 tools → 4 tools (edit-only)
+// Prevents LLM from re-running build before fixes applied
 ```
 
-**Benefit**: Eliminates decision paralysis and keeps the LLM focused on fixing.
+**Why edit-only?** The auto-nudge after successful edits tells the user when to rebuild, so `run_terminal` and `run_build` are excluded to prevent premature rebuilds.
 
 ---
 
-### 2. **Explicit JSON Examples** - Show Exactly What to Output
+### 2. **Dynamic Tool Selection** - Call `getTools()` Inside Loop
 
-Instead of vague instructions like "fix the errors", provide the exact JSON structure:
+**Bug:** `getTools()` was called once at the start of `executeAgentLoop()`, but `_fixMode` was set inside the loop.
 
 ```typescript
-const instructionContent = `**USE THIS TOOL NOW:**
-Call \`apply_edits\` with this exact JSON structure:
-
-\`\`\`json
-{
-  "path": "service/project/src/main/kotlin/com/electricity/service/ProjectValidationEngine.kt",
-  "edits": [
-    {
-      "search": "rightRoomId",
-      "replace": "rightRoom?.id ?:\\"\\""
-    },
-    {
-      "search": "leftRoomId", 
-      "replace": "leftRoom?.id ?:\\"\\""
+// BEFORE: Bug
+async *executeAgentLoop() {
+  const tools = this.getTools(contextProfile?.lazy, this._fixMode);  // Called ONCE
+  
+  while (true) {
+    if (buildFailed) {
+      this._fixMode = true;  // Too late! tools already selected
     }
-  ]
+    const response = await cli.callLLM(messages, tools);  // Stale tools
+  }
 }
-\`\`\`
 
-Apply the edits NOW. Do not read any more files. Do not search. Just call apply_edits.`;
+// AFTER: Fix
+async *executeAgentLoop() {
+  while (true) {
+    const tools = this.getTools(contextProfile?.lazy, this._fixMode);  // Inside loop
+    
+    if (buildFailed) {
+      this._fixMode = true;  // Affects NEXT iteration's tool selection
+    }
+    const response = await cli.callLLM(messages, tools);  // Current tools
+  }
+}
 ```
-
-**Benefit**: LLMs are pattern matchers - show them the exact pattern to output.
 
 ---
 
-### 3. **Directive Instructions** - Command, Don't Suggest
+### 3. **Retry Logic** - Prevent Infinite Loops on Failed Edits
 
-Replace passive language with active commands:
+If `apply_edits` fails to match the search string, track attempts and skip after 3 failures:
 
-| Before (Ineffective) | After (Effective) |
-|---------------------|-------------------|
-| "You should fix the errors" | "Apply the edits NOW" |
-| "Consider using apply_edits" | "Call apply_edits with this exact JSON" |
-| "You might want to read files" | "Do NOT read any more files" |
-| "Try to fix the code" | "Do NOT describe plans - output the tool call JSON directly" |
+```typescript
+// In apply_edits handler:
+if (editResult.appliedCount === 0) {
+    this._failedEditAttempts++;
+    
+    if (this._failedEditAttempts >= 3) {
+        // Give up on this file after 3 attempts
+        this._pendingFixes.shift(); // Remove from pending
+        this._failedEditAttempts = 0;
+        this._autoNudge = `Failed to edit ${filePath} after 3 attempts. Moving to next file.`;
+    } else {
+        this._autoNudge = `Edit failed on ${filePath}. Read the file to find the EXACT text, then retry.`;
+    }
+} else {
+    this._failedEditAttempts = 0; // Reset on success
+}
 
-**Benefit**: Removes ambiguity and prevents the LLM from defaulting to planning mode.
+// In run_terminal, when build fails:
+this._fixMode = true;
+this._failedEditAttempts = 0; // Fresh start with new errors
+```
 
 ---
 
 ## Implementation Details
 
-### Changes Made
+### State Variables
 
-| File | Change | Line |
-|------|--------|------|
-| `AgentBridge.ts` | Added `_fixMode` flag | ~280 |
-| `AgentBridge.ts` | Updated `getTools()` signature | ~520 |
-| `AgentBridge.ts` | Added fix mode filtering logic | ~650 |
-| `AgentBridge.ts` | Activated fix mode after build failure | ~1320 |
-| `AgentBridge.ts` | Reset fix mode on build success | ~1950 |
-| `AgentBridge.ts` | Enhanced plan detection with JSON examples | ~1450 |
-
-### Fix Mode Lifecycle
-
+```typescript
+private _fixMode: boolean = false;              // Is fix mode active?
+private _pendingFixes: string[] = [];           // Files to fix
+private _failedEditAttempts: number = 0;        // Retry counter
+private _autoNudge: string | null = null;       // Next-step guidance
 ```
-1. Build fails → this._fixMode = true
-2. Next LLM call → getTools(fixMode=true) → 5 tools instead of 16
-3. Auto-fix instruction → Includes explicit JSON example
-4. LLM calls apply_edits → Edits applied
-5. Build succeeds → this._fixMode = false
-6. Normal operation resumes → All 16 tools available
+
+### Fix Mode Activation
+
+```typescript
+// In run_terminal handler, when build fails:
+if (result.exitCode !== 0 || output.includes('BUILD FAILED')) {
+    this._buildFailureCount++;
+    
+    // ACTIVATE FIX MODE IMMEDIATELY
+    this._fixMode = true;
+    this._failedEditAttempts = 0; // Reset retry counter
+    this.log(`Build failed (failure #${this._buildFailureCount}) - FIX MODE ACTIVATED`);
+    
+    // Extract files to auto-read
+    const errors = this.extractCompilationErrors(output);
+    const files = extractFilesFromErrors(errors);
+    this._pendingFixes = files.slice(0, 5);
+    
+    return {
+        result: `❌ BUILD FAILED...`,
+        error: 'Build failed'
+    };
+}
+
+// Build succeeded - reset fix mode
+this._fixMode = false;
+this._buildFailureCount = 0;
+```
+
+### Auto-Nudge on Successful Edits
+
+```typescript
+// In apply_edits/write_file handlers, after successful edit:
+if (this._pendingFixes && this._pendingFixes.length > 0) {
+    const nextFile = this._pendingFixes[0];
+    this._autoNudge = `You successfully edited ${filePath}. There are still ${this._pendingFixes.length} failing file(s) to fix. Next: ${nextFile}`;
+    // Keep fix mode active - more fixes needed
+} else {
+    // All fixes complete - reset fix mode
+    this._fixMode = false;
+    this._autoNudge = `Fix applied to ${filePath}. All pending fixes complete. Re-run the build to verify: .\\gradlew compileKotlin`;
+}
 ```
 
 ---
 
-## Plan Detection Enhancement
+## Fix Mode Lifecycle
 
-When the LLM outputs plans instead of tool calls, the nudge now includes:
+### Scenario A: Successful Fixes
 
-```typescript
-// Extract specific file paths from build error
-const files = ['path/to/File.kt', 'path/to/AnotherFile.kt'];
-
-// Build explicit JSON example
-nudgeMessage += `
-Example of what to call RIGHT NOW:
-
-\`\`\`json
-{
-  "tool": "apply_edits",
-  "args": {
-    "path": "${files[0]}",
-    "edits": [
-      {
-        "search": "the broken code",
-        "replace": "the fixed code"
-      }
-    ]
-  }
-}
-\`\`\`
-
-Do NOT read more files. Do NOT search. Call apply_edits with the exact JSON structure above.`;
 ```
+1. Build fails
+   → _fixMode = true
+   → _pendingFixes = [File1.kt, File2.kt]
+   → _failedEditAttempts = 0
+   → Tools: 16 → 4
+
+2. Iteration N: LLM called with 4 tools
+   → Calls apply_edits on File1.kt
+   → Edits applied successfully
+   → _failedEditAttempts = 0 (reset)
+   → _pendingFixes = [File2.kt] (still pending)
+   → Fix mode STAYS active
+
+3. Iteration N+1: LLM called with 4 tools
+   → Calls apply_edits on File2.kt
+   → Edits applied successfully
+   → _failedEditAttempts = 0 (reset)
+   → _pendingFixes = [] (all done)
+   → Auto-nudge: "Re-run the build"
+   → _fixMode = false (reset by auto-nudge)
+
+4. Iteration N+2: LLM called with 16 tools
+   → Calls run_terminal with build command
+   → Build succeeds
+   → Task complete
+```
+
+### Scenario B: Failed Edits (Skip Logic)
+
+```
+1. Build fails
+   → _fixMode = true
+   → _pendingFixes = [File1.kt, File2.kt]
+   → _failedEditAttempts = 0
+
+2. Iteration N: LLM called with 4 tools
+   → Calls apply_edits on File1.kt
+   → ❌ Search string doesn't match
+   → _failedEditAttempts = 1
+   → Auto-nudge: "Edit failed (attempt 1/3). Read the file to find the EXACT text."
+
+3. Iteration N+1: LLM called with 4 tools
+   → Calls apply_edits again (different search string)
+   → ❌ Still doesn't match
+   → _failedEditAttempts = 2
+   → Auto-nudge: "Edit failed (attempt 2/3). Read carefully and retry."
+
+4. Iteration N+2: LLM called with 4 tools
+   → Calls apply_edits again
+   → ❌ Third failure
+   → _failedEditAttempts = 3 → TRIGGER SKIP LOGIC
+   → _pendingFixes.shift() → [File2.kt]
+   → _failedEditAttempts = 0 (reset)
+   → Auto-nudge: "Failed after 3 attempts. Moving to next file: File2.kt"
+
+5. Iteration N+3: LLM called with 4 tools
+   → Calls apply_edits on File2.kt
+   → ✅ Edits applied
+   → _pendingFixes = [] (all done)
+   → Auto-nudge: "Re-run the build"
+   → _fixMode = false
+
+6. Iteration N+4: LLM called with 16 tools
+   → Calls run_terminal
+   → Build succeeds (File1.kt errors resolved despite failed edit)
+   → Task complete
+```
+
+---
+
+## Changes Made
+
+| File | Change | Purpose |
+|------|--------|---------|
+| `AgentBridge.ts` | Added `_fixMode` flag | Track fix mode state |
+| `AgentBridge.ts` | Added `_failedEditAttempts` counter | Track retry attempts |
+| `AgentBridge.ts` | Moved `getTools()` inside `while(true)` loop | Dynamic tool selection |
+| `AgentBridge.ts` | Added `_fixMode = true` in `run_terminal` build failure | Activate on first failure |
+| `AgentBridge.ts` | Added retry logic in `apply_edits` handler | Prevent infinite loops |
+| `AgentBridge.ts` | Reset counter on success/new build | Fresh starts |
+| `AgentBridge.ts` | Reduced fix mode tools to 4 (edit-only) | Prevent premature rebuilds |
+| `AgentBridge.ts` | Auto-nudge resets `_fixMode = false` | Allow rebuild after fixes |
 
 ---
 
@@ -142,35 +257,54 @@ Do NOT read more files. Do NOT search. Call apply_edits with the exact JSON stru
 
 ### Before Fix
 ```
-[Iter 9] Plan detected
-[Iter 10] Plan detected
-[Iter 11] Plan detected
+[Build Failed] → _fixMode = true (but ignored)
+[Iter 11] LLM called with 16 tools → Uses search_files
+[Iter 12] search_files → No results
+[Iter 13] search_files → No results
 ...
-[Iter 41] Plan detected
-→ Agent stuck, user frustration
+[Iter 48] Finally calls apply_edits (1 time in 50 iterations)
+[Iter 50] Safety net reached
 ```
 
 ### After Fix
 ```
-[Build Failed] → Fix mode ACTIVATED (16→5 tools)
-[Iter 9] Plan detected → Nudge with JSON example
-[Iter 10] ✅ apply_edits called with correct JSON
-[Iter 10] ✅ Edits applied
-[Build Success] → Fix mode DEACTIVATED (5→16 tools)
-→ Task complete
+[Build Failed] → _fixMode = true
+[Iter 11] LLM called with 4 tools (edit-only)
+[Iter 11] ✅ Must call apply_edits (only edit tool available)
+[Iter 11] ✅ Edits applied → Auto-nudge: "Re-run the build"
+[Iter 11] Auto-nudge resets _fixMode = false
+[Iter 12] LLM called with 16 tools → Calls run_terminal
+[Build Success] → Task complete
 ```
 
 ---
 
 ## Testing Checklist
 
-- [ ] Build failure triggers fix mode
-- [ ] Fix mode reduces tools to 5 (apply_edits, read_file, write_file, run_terminal, run_build)
-- [ ] Auto-fix instruction includes explicit JSON example
-- [ ] Plan detection nudge includes JSON example
+- [ ] Build failure triggers fix mode immediately
+- [ ] Fix mode reduces tools to 4 (apply_edits, read_file, write_file, get_file_context)
+- [ ] `getTools()` called inside agent loop (not once at start)
+- [ ] Auto-read failing files before LLM acts
+- [ ] LLM calls apply_edits (not search_files)
+- [ ] Successful edits reset retry counter
+- [ ] Failed edits increment counter (max 3)
+- [ ] After 3 failures, file skipped and counter reset
+- [ ] Auto-nudge suggests rebuild after all fixes complete
 - [ ] Build success resets fix mode
-- [ ] Normal operation resumes with all 16 tools
-- [ ] LLM actually calls apply_edits (not just plans)
+- [ ] New build failure resets counter and pending files
+
+---
+
+## Key Insights
+
+### Tool Selection Timing
+**Tool selection must happen immediately before each LLM call**, not once at the start of the agent loop. This ensures that state changes (like fix mode activation) are reflected in the tools available to the LLM.
+
+### Edit-Only Fix Mode
+Excluding `run_terminal` and `run_build` from fix mode prevents the agent from re-running the build prematurely. The auto-nudge after successful edits tells the user when to rebuild, and also resets `_fixMode = false` so the next LLM call has all tools available.
+
+### Retry Logic
+Tracking failed edit attempts prevents the agent from looping infinitely on a file it can't fix. After 3 attempts, the file is skipped and the agent moves to the next pending file.
 
 ---
 
@@ -186,6 +320,6 @@ Do NOT read more files. Do NOT search. Call apply_edits with the exact JSON stru
 
 ## References
 
-- [Original Issue: 27 Consecutive Plan Detections](#user-prompt)
-- [apply_edits Tool Implementation](./APPLY_EDITS_IMPLEMENTATION.md)
-- [apply_edits Documentation](./apply-edits-tool.md)
+- [apply_edits Tool Documentation](./apply-edits-tool.md)
+- [Terminal Management](./terminal-management.md)
+- [Structure Guide](./structure.md)

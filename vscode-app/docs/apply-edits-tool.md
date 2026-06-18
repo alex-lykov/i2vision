@@ -315,4 +315,4 @@ npm test -- ApplyEditsTool
 - [Cursor Editing Pattern](https://cursor.sh)
 - [Claude Code Tool Design](https://claude.ai/code)
 - [GitHub Copilot Workspace](https://github.com/features/copilot)
-- [Fix Mode Implementation](./FIX_MODE_IMPLEMENTATION.md)
+- [Fix Mode Implementation](fix_mode_implementation.md)

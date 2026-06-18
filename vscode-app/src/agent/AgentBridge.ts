@@ -15,6 +15,7 @@ import * as path from 'path';
 import { CLI, LLMResponse, LLMTool, LLMMessage, LLMToolCall, LLMChunk } from '../cliIntegration';
 import { TerminalManager } from './TerminalManager';
 import { AgentSettingsManager } from './AgentSettings';
+import { applyEditsToContent, EditOperation, formatEditFailure } from './ApplyEditsTool';
 
 /**
  * Context profile - defines what context to load eagerly vs lazily
@@ -320,6 +321,12 @@ export class AgentBridge {
   
   // Track consecutive plan-only responses to detect spiraling
   private _consecutivePlans: number = 0;
+
+  // Fix mode - activated after build failure to reduce tool options
+  private _fixMode: boolean = false;
+  
+  // Track failed edit attempts to prevent infinite loops on unfixable files
+  private _failedEditAttempts: number = 0;
 
   // Truncation settings
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000; // characters
@@ -628,9 +635,9 @@ export class AgentBridge {
   }
 
   /**
-   * Get available tools (filtered by lazy context profile)
+   * Get available tools (filtered by lazy context profile and fix mode)
    */
-  private getTools(lazyProfile?: ContextProfile['lazy']): LLMTool[] {
+  private getTools(lazyProfile?: ContextProfile['lazy'], fixMode: boolean = false): LLMTool[] {
     const allTools: LLMTool[] = [
       // ===== FILE OPERATIONS =====
       {
@@ -674,6 +681,33 @@ export class AgentBridge {
               content: { type: 'string', description: 'Content to write' }
             },
             required: ['path', 'content']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'apply_edits',
+          description: 'Apply one or more targeted edits to an existing file. Each edit has a search string (must match exactly once) and a replacement. Use this for small, targeted changes (1-5 lines). For large rewrites, use write_file instead.',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: 'File path (relative to workspace root)' },
+              edits: {
+                type: 'array',
+                items: {
+                  type: 'object',
+                  properties: {
+                    search: { type: 'string', description: 'Exact text to find (must be unique in the file)' },
+                    replace: { type: 'string', description: 'Replacement text' },
+                    lineHint: { type: 'number', description: 'Optional: approximate line number where this text appears' }
+                  },
+                  required: ['search', 'replace']
+                },
+                description: 'List of edit operations to apply'
+              }
+            },
+            required: ['path', 'edits']
           }
         }
       },
@@ -927,6 +961,17 @@ export class AgentBridge {
       }
     }
 
+    // FIX MODE: After build failure, reduce to only edit-related tools
+    // Excludes run_terminal/run_build to prevent re-running build before fixes are applied
+    // The auto-nudge after successful edits tells the user when to rebuild
+    if (fixMode) {
+      const fixTools = allTools.filter(t => 
+        ['apply_edits', 'read_file', 'write_file', 'get_file_context'].includes(t.function.name)
+      );
+      this.log(`Fix mode active: reduced from ${allTools.length} to ${fixTools.length} tools (edit-only)`);
+      return fixTools;
+    }
+
     return allTools;
   }
 
@@ -1161,9 +1206,6 @@ export class AgentBridge {
       { role: 'user', content: userInput }
     ];
 
-    // Get tools (filtered by lazy profile)
-    const tools = this.getTools(contextProfile?.lazy);
-    
     // Validate maxIterations: range [0..100], default 50
     let maxIterations = this.config.iterationSettings.maxIterations;
     if (typeof maxIterations !== 'number' || maxIterations < 0 || maxIterations > 100) {
@@ -1187,6 +1229,10 @@ export class AgentBridge {
       
       // Reset auto-nudge at start of each iteration
       this._autoNudge = null;
+      
+      // Get tools (filtered by lazy profile and CURRENT fix mode state)
+      // This is called INSIDE the loop so fix mode changes take effect immediately
+      const tools = this.getTools(contextProfile?.lazy, this._fixMode);
       
       // ===== SAFETY NET: Prevent infinite loops =====
       if (iteration > maxIterations) {
@@ -1286,8 +1332,8 @@ export class AgentBridge {
           }
         }
         
-        // Increment build failure counter
-        this._buildFailureCount++;
+        // Note: _buildFailureCount was already incremented in run_terminal handler
+        // Note: _fixMode was already activated in run_terminal handler
         const isRepeatedFailure = this._buildFailureCount >= 2;
         
         // Build stronger instruction for repeated failures
@@ -1302,18 +1348,34 @@ export class AgentBridge {
 1. InMemoryConductorRepository.kt: Add the missing method implementation or make the class abstract
 2. ProjectValidationEngine.kt: Define or import rightRoomId and leftRoomId variables
 
-**USE THESE TOOLS:**
-- write_file — Replace entire file with fixed code
-- edit_file — Edit specific lines
+**USE THIS TOOL NOW:**
+Call \`apply_edits\` with this exact JSON structure:
+
+\`\`\`json
+{
+  "path": "service/project/src/main/kotlin/com/electricity/service/ProjectValidationEngine.kt",
+  "edits": [
+    {
+      "search": "rightRoomId",
+      "replace": "rightRoom?.id ?:\\"\\""
+    },
+    {
+      "search": "leftRoomId", 
+      "replace": "leftRoom?.id ?:\\"\\""
+    }
+  ]
+}
+\`\`\`
 
 **DO NOT:**
 - ❌ Re-run the build (it will fail again)
 - ❌ Just read files (you already have the content)
 - ❌ Describe plans (take action instead)
+- ❌ Use search_files or list_directory (not needed for fixing)
 
 ${isRepeatedFailure ? `⚠️  WARNING: Build has failed ${this._buildFailureCount} times. You MUST fix the code before running build again.` : ''}
 
-Now write the fixed code for these files.`;
+Apply the edits NOW. Do not read any more files. Do not search. Just call apply_edits with the JSON above.`;
         
         messages.push({
           role: 'user',
@@ -1466,15 +1528,54 @@ Now write the fixed code for these files.`;
             .filter(m => m.role === 'tool' && typeof m.content === 'string' && m.content.includes('BUILD FAILED'))
             .pop();
           
+          // Activate fix mode if we have build errors
+          if (lastBuildError) {
+            this._fixMode = true;
+          }
+          
           let nudgeMessage = `STOP describing plans. Use the tool calling API NOW.`;
           
           if (lastBuildError) {
             const content = lastBuildError.content as string;
             const fileMatch = content.match(/FILES TO READ AND FIX:[\s\S]*?(?:COMPILER ERRORS|$)/);
+            
             if (fileMatch) {
-              nudgeMessage += `\n\nThe build failed. Read these files:\n${fileMatch[0]}\n\nCall read_file on each path shown above. Then propose fixes.`;
+              // Extract specific file paths and errors
+              const files = fileMatch[0].split('\n')
+                .filter(line => line.includes('.kt') || line.includes('.java'))
+                .map(line => line.replace(/^\s*-\s*/, '').trim());
+              
+              // Build explicit JSON example for apply_edits
+              const exampleEdits = files.slice(0, 2).map(file => {
+                const fileName = path.basename(file);
+                return `  {
+    "search": "/* find the error in ${fileName} */",
+    "replace": "/* fix it here */"
+  }`;
+              }).join(',\n');
+              
+              nudgeMessage += `\n\nThe build failed. You MUST fix the code using \`apply_edits\`.
+              
+Example of what to call RIGHT NOW:
+
+\`\`\`json
+{
+  "tool": "apply_edits",
+  "args": {
+    "path": "${files[0] || "path/to/File.kt"}",
+    "edits": [
+${exampleEdits || '      {\n        "search": "the broken code",\n        "replace": "the fixed code"\n      }'}
+    ]
+  }
+}
+\`\`\`
+
+Files to fix:
+${files.map(f => `- ${f}`).join('\n')}
+
+Do NOT read more files. Do NOT search. Call apply_edits with the exact JSON structure above.`;
             } else {
-              nudgeMessage += `\n\nThe build failed with compilation errors. Read the failing source files and fix them.`;
+              nudgeMessage += `\n\nThe build failed with compilation errors. Call \`apply_edits\` to fix the code. Do not describe plans - output the tool call JSON directly.`;
             }
           }
           
@@ -1897,7 +1998,7 @@ Please try a DIFFERENT approach:
           if (this._autoReadFiles.has(normalizedPath)) {
             this.log(`  Skipping duplicate read (already auto-read): ${filePath}`);
             return { 
-              result: `[Already read during auto-fix workflow. Content is available in previous tool results. Focus on proposing fixes using write_file or edit_file.]` 
+              result: `[Already read during auto-fix workflow. Content is available in previous tool results. Focus on proposing fixes using write_file or apply_edits.]` 
             };
           }
           
@@ -1931,6 +2032,9 @@ Please try a DIFFERENT approach:
           
           await this.cli.writeFile(filePath, toolCall.args.content);
           
+          // Reset failed attempts counter on successful write
+          this._failedEditAttempts = 0;
+          
           const result = `Successfully wrote ${toolCall.args.content.length} characters to ${filePath}`;
           
           // Auto-advance: if there are more pending fixes, inject a nudge to continue
@@ -1939,12 +2043,95 @@ Please try a DIFFERENT approach:
             this.log(`  ✅ File written — ${this._pendingFixes.length} pending fix(es) remaining. Next: ${nextFile}`);
             // Inject a system message to guide the next iteration
             this._autoNudge = `You successfully wrote ${filePath}. There are still ${this._pendingFixes.length} failing file(s) to fix. Next, read and fix: ${nextFile}`;
+            // Keep fix mode active - more fixes needed
           } else {
-            this.log(`  ✅ File written — no pending fixes remaining. Suggest re-building.`);
-            this._autoNudge = `Fix applied to ${filePath}. Re-run the build to verify: .\\gradlew :app:server:compileKotlin`;
+            this.log(`  ✅ File written — no pending fixes remaining. Deactivating fix mode.`);
+            // Reset fix mode - all edits applied, agent can now rebuild
+            this._fixMode = false;
+            this._autoNudge = `Fix applied to ${filePath}. All pending fixes complete. Re-run the build to verify: .\\gradlew :app:server:compileKotlin`;
           }
           
           return { result };
+        }
+        
+        case 'apply_edits': {
+          const filePath = this.resolvePath(toolCall.args.path);
+          const edits: EditOperation[] = toolCall.args.edits;
+          
+          this.log(`  Applying ${edits.length} edit(s) to: ${filePath}`);
+          
+          // Read current content
+          const currentContent = await this.cli.readFile(filePath);
+          
+          // Apply edits using the structured edit tool
+          const editResult = applyEditsToContent(currentContent, edits);
+          
+          // Check if any edits were applied
+          if (editResult.appliedCount === 0) {
+            // All edits failed - track attempts to prevent infinite loops
+            this._failedEditAttempts++;
+            this.log(`  ❌ No edits applied to ${filePath} (attempt ${this._failedEditAttempts}/3)`);
+            
+            // Build failure message
+            const failureMessages = editResult.failures.map(f => formatEditFailure(f, filePath));
+            let resultMessage = `❌ No edits could be applied to ${filePath}\n\n${failureMessages.join('\n\n')}`;
+            
+            // Handle retry logic
+            if (this._failedEditAttempts >= 3) {
+              // Give up on this file after 3 failed attempts
+              this.log(`  ⚠️ Failed 3 times on ${filePath} - moving to next file`);
+              if (this._pendingFixes && this._pendingFixes.length > 0) {
+                this._pendingFixes.shift(); // Remove this file
+              }
+              this._failedEditAttempts = 0; // Reset counter
+              
+              if (this._pendingFixes && this._pendingFixes.length > 0) {
+                const nextFile = this._pendingFixes[0];
+                this._autoNudge = `Failed to edit ${filePath} after 3 attempts. Moving to next file: ${nextFile}. Read it carefully and use apply_edits with exact text matches.`;
+              } else {
+                // No more pending files - allow rebuild
+                this._fixMode = false;
+                this._autoNudge = `Failed to edit ${filePath} after 3 attempts. No more files to fix. Re-run the build to see if other errors are resolved.`;
+              }
+            } else {
+              // Less than 3 attempts - nudge to re-read and retry
+              this._autoNudge = `Edit failed on ${filePath} (attempt ${this._failedEditAttempts}/3). The search string didn't match. Read the file to find the EXACT text, then retry apply_edits with the correct search string.`;
+            }
+            
+            return {
+              result: resultMessage,
+              error: 'All edits failed validation'
+            };
+          }
+          
+          // Reset failed attempts counter on success
+          this._failedEditAttempts = 0;
+          
+          // Write the modified content back
+          await this.cli.writeFile(filePath, editResult.finalContent);
+          
+          // Build result message
+          let resultMessage = `✅ Applied ${editResult.appliedCount}/${editResult.totalCount} edits to ${filePath}\n`;
+          
+          if (editResult.failures.length > 0) {
+            resultMessage += `\n⚠️ ${editResult.failures.length} edit(s) failed:\n`;
+            resultMessage += editResult.failures.map(f => formatEditFailure(f, filePath)).join('\n');
+          }
+          
+          // Auto-advance for pending fixes (same as write_file)
+          if (this._pendingFixes && this._pendingFixes.length > 0) {
+            const nextFile = this._pendingFixes[0];
+            this.log(`  ✅ Edits applied — ${this._pendingFixes.length} pending fix(es) remaining. Next: ${nextFile}`);
+            this._autoNudge = `You successfully edited ${filePath}. There are still ${this._pendingFixes.length} failing file(s) to fix. Next, read and fix: ${nextFile}`;
+            // Keep fix mode active - more fixes needed
+          } else {
+            this.log(`  ✅ Edits applied — no pending fixes remaining. Deactivating fix mode.`);
+            // Reset fix mode - all edits applied, agent can now rebuild
+            this._fixMode = false;
+            this._autoNudge = `Fix applied to ${filePath}. All pending fixes complete. Re-run the build to verify: .\\gradlew :app:server:compileKotlin`;
+          }
+          
+          return { result: resultMessage };
         }
         
         case 'search_files': {
@@ -2184,6 +2371,11 @@ Please try a DIFFERENT approach:
               // Increment failure counter
               this._buildFailureCount++;
               
+              // ACTIVATE FIX MODE IMMEDIATELY - affects next LLM call
+              this._fixMode = true;
+              this._failedEditAttempts = 0; // Reset retry counter for fresh start
+              this.log(`Build failed (failure #${this._buildFailureCount}) - FIX MODE ACTIVATED`);
+              
               // Extract file paths to auto-read in next iteration
               const fileMatch = errors.match(/FILES TO READ AND FIX:\s*\n([\s\S]*?)(?:\n\n|$)/);
               if (fileMatch) {
@@ -2208,9 +2400,11 @@ Please try a DIFFERENT approach:
               };
             }
             
-            // Build succeeded - reset failure counter and auto-read tracking
+            // Build succeeded - reset failure counter, auto-read tracking, and fix mode
             this._buildFailureCount = 0;
             this._autoReadFiles.clear();
+            this._fixMode = false;
+            this.log(`Build succeeded - fix mode deactivated`);
             return { result: `✅ Build successful${exitCodeInfo}\n\n${output.slice(-1000)}` };
           }
           

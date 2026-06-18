@@ -320,7 +320,7 @@ export class LocalI2VisionAgent implements vscode.Disposable {
       'list_directory',
       'read_file',
       'write_file',
-      'edit_file',
+      'apply_edits',
       'search_files'
     ];
     

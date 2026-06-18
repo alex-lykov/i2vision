@@ -5,7 +5,7 @@
 - [**Extension Structure**](structure.md) - Directory layout and key files
 - [**Agent Tool Calling Test**](agent-tool-calling-test.md) - How to test agent tool calls
 - [**apply_edits Tool**](apply-edits-tool.md) - Modern structured editing with retry logic
-- [**Fix Mode**](FIX_MODE_IMPLEMENTATION.md) - Build failure auto-fix workflow
+- [**Fix Mode**](fix_mode_implementation.md) - Build failure auto-fix workflow
 
 ## Architecture
 

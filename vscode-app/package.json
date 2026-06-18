@@ -368,6 +368,8 @@
         "compile": "tsc -p ./ && node scripts/copy-resources.js",
         "watch": "tsc -watch -p ./",
         "lint": "eslint src --ext ts",
+        "test": "node ./out/test/runTest.js",
+        "test:unit": "mocha ./out/test/suite/**/*.js",
         "package": "vsce package",
         "publish": "vsce publish"
     },

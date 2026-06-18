@@ -164,17 +164,17 @@ export const DEFAULT_TOOL_CARD_CONFIG: ToolCardConfig = {
             showDuration: true,
             collapseOnSuccess: true
         },
-        'edit_file': {
-            maxLines: 10,
-            maxChars: 1500,
+        'apply_edits': {
+            maxLines: 15,
+            maxChars: 2000,
             foldThreshold: 5,
             foldDefault: 'collapsed',
-            format: 'raw',
-            showLineNumbers: true,
-            syntaxHighlight: true,
+            format: 'markdown',
+            showLineNumbers: false,
+            syntaxHighlight: false,
             showArgs: true,
             showDuration: true,
-            collapseOnSuccess: true
+            collapseOnSuccess: false  // Show failures prominently
         },
         'run_command': {
             maxLines: 30,

@@ -143,6 +143,10 @@ export class TerminalManager {
      * Check if command is a build command that should be monitored
      */
     private isBuildCommand(command: string): boolean {
+        // Long-running commands (run/serve/watch) should NOT be treated as builds
+        if (/\b(run|serve|server|start|watch)\b/i.test(command)) {
+            return false;
+        }
         return /gradlew|gradle|mvn|mvnw|npm run build|make|tsc|yarn build/i.test(command);
     }
 

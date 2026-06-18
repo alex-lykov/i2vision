@@ -1,4 +1,4 @@
-/**
+﻿/**
  * AgentTabManager - Manages agent tabs in the VSCode webview
  * 
  * Implements unified timeline UX: thinking, tool execution, and streaming text
@@ -1252,6 +1252,310 @@ export class AgentTabManager {
     .tool-card.collapsed .toggle-icon {
       transform: rotate(0deg);
     }
+    /* Diff Card Styles */
+    .diff-card {
+      border: 1px solid var(--vscode-editorWidget-border, #333);
+      border-radius: 6px;
+      overflow: hidden;
+      font-family: var(--vscode-editor-font-family, 'Consolas', monospace);
+      font-size: var(--vscode-editor-font-size, 13px);
+      background: var(--vscode-editor-background, #1e1e1e);
+      color: var(--vscode-editor-foreground, #d4d4d4);
+      margin-top: 6px;
+    }
+
+    .diff-card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px;
+      background: var(--vscode-editorWidget-background, #252526);
+      border-bottom: 1px solid var(--vscode-editorWidget-border, #333);
+    }
+
+    .diff-header-left {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .diff-icon {
+      font-size: 1.1em;
+    }
+
+    .diff-source {
+      font-weight: 600;
+      color: var(--vscode-foreground, #d4d4d4);
+    }
+
+    .diff-header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 0.85em;
+    }
+
+    .diff-file-count {
+      color: var(--vscode-descriptionForeground, #888);
+    }
+
+    .diff-additions {
+      color: #4ec9b0;
+      font-weight: 600;
+    }
+
+    .diff-deletions {
+      color: #f44747;
+      font-weight: 600;
+    }
+
+    .diff-stats-bar {
+      display: flex;
+      height: 6px;
+      background: var(--vscode-editorWidget-border, #333);
+    }
+
+    .diff-stats-additions {
+      background: #4ec9b0;
+      color: transparent;
+      font-size: 0;
+      min-width: 2px;
+    }
+
+    .diff-stats-deletions {
+      background: #f44747;
+      color: transparent;
+      font-size: 0;
+      min-width: 2px;
+    }
+
+    .diff-files {
+      max-height: 600px;
+      overflow-y: auto;
+    }
+
+    .diff-file-section {
+      border-bottom: 1px solid var(--vscode-editorWidget-border, #333);
+    }
+
+    .diff-file-section:last-child {
+      border-bottom: none;
+    }
+
+    .diff-file-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 12px;
+      background: var(--vscode-editorWidget-background, #252526);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .diff-file-header:hover {
+      background: var(--vscode-list-hoverBackground, #2a2d2e);
+    }
+
+    .diff-file-toggle {
+      font-size: 0.7em;
+      color: var(--vscode-descriptionForeground, #888);
+      width: 12px;
+    }
+
+    .diff-file-icon {
+      font-size: 0.9em;
+    }
+
+    .diff-file-path {
+      flex: 1;
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: 0.9em;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .diff-file-badge {
+      font-size: 0.7em;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .diff-file-added .diff-file-badge {
+      background: rgba(78, 201, 176, 0.2);
+      color: #4ec9b0;
+    }
+
+    .diff-file-removed .diff-file-badge {
+      background: rgba(244, 71, 71, 0.2);
+      color: #f44747;
+    }
+
+    .diff-file-modified .diff-file-badge {
+      background: rgba(220, 200, 100, 0.2);
+      color: #dcc864;
+    }
+
+    .diff-file-renamed .diff-file-badge {
+      background: rgba(100, 150, 220, 0.2);
+      color: #6496dc;
+    }
+
+    .diff-file-stats {
+      display: flex;
+      gap: 8px;
+      font-size: 0.8em;
+    }
+
+    .diff-add-count {
+      color: #4ec9b0;
+    }
+
+    .diff-del-count {
+      color: #f44747;
+    }
+
+    .diff-file-content {
+      overflow-x: auto;
+    }
+
+    .diff-binary-notice {
+      padding: 12px;
+      text-align: center;
+      color: var(--vscode-descriptionForeground, #888);
+      font-style: italic;
+    }
+
+    .diff-hunk {
+      border-top: 1px solid var(--vscode-editorWidget-border, #333);
+    }
+
+    .diff-hunk-header {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      background: rgba(100, 150, 220, 0.08);
+      cursor: pointer;
+      user-select: none;
+      font-size: 0.85em;
+    }
+
+    .diff-hunk-header:hover {
+      background: rgba(100, 150, 220, 0.15);
+    }
+
+    .diff-hunk-toggle {
+      font-size: 0.7em;
+      color: var(--vscode-descriptionForeground, #888);
+    }
+
+    .diff-hunk-info {
+      color: rgba(100, 150, 220, 0.8);
+      font-size: 0.85em;
+    }
+
+    .diff-hunk-content {
+      overflow-x: auto;
+    }
+
+    .diff-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-family: var(--vscode-editor-font-family, monospace);
+      font-size: var(--vscode-editor-font-size, 13px);
+      line-height: 1.4;
+    }
+
+    .diff-line-num {
+      width: 50px;
+      min-width: 50px;
+      padding: 0 8px;
+      text-align: right;
+      color: var(--vscode-descriptionForeground, #858585);
+      background: var(--vscode-editorGutter-background, #1e1e1e);
+      user-select: none;
+      font-size: 0.85em;
+      vertical-align: top;
+    }
+
+    .diff-line-prefix {
+      width: 15px;
+      min-width: 15px;
+      padding: 0 4px;
+      text-align: center;
+      color: var(--vscode-descriptionForeground, #858585);
+      user-select: none;
+      font-size: 0.85em;
+      vertical-align: top;
+    }
+
+    .diff-line-content {
+      padding: 0 8px;
+      white-space: pre-wrap;
+      word-break: break-all;
+      vertical-align: top;
+    }
+
+    .diff-line-added {
+      background: rgba(78, 201, 176, 0.12);
+    }
+
+    .diff-line-added .diff-line-prefix {
+      color: #4ec9b0;
+    }
+
+    .diff-line-added .diff-line-content {
+      color: #b5cea8;
+    }
+
+    .diff-line-removed {
+      background: rgba(244, 71, 71, 0.12);
+    }
+
+    .diff-line-removed .diff-line-prefix {
+      color: #f44747;
+    }
+
+    .diff-line-removed .diff-line-content {
+      color: #ce9178;
+    }
+
+    .diff-line-context {
+      background: transparent;
+    }
+
+    .diff-truncation-notice {
+      padding: 8px 12px;
+      text-align: center;
+      color: var(--vscode-descriptionForeground, #888);
+      font-size: 0.85em;
+      background: var(--vscode-editorWidget-background, #252526);
+    }
+
+    .diff-expand-btn {
+      background: var(--vscode-button-background, #0e639c);
+      color: var(--vscode-button-foreground, #fff);
+      border: none;
+      padding: 2px 10px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 0.85em;
+      margin-left: 8px;
+    }
+
+    .diff-expand-btn:hover {
+      background: var(--vscode-button-hoverBackground, #1177bb);
+    }
+
+    .diff-empty {
+      padding: 20px;
+      text-align: center;
+      color: var(--vscode-descriptionForeground, #888);
+      font-style: italic;
+    }
   </style>
 </head>
 <body>
@@ -1296,7 +1600,7 @@ export class AgentTabManager {
     <!-- Settings Button -->
     <div style="margin-left: 15px;">
       <button class="btn-settings" onclick="openSettings()" title="Agent Settings" style="padding: 4px 8px; font-size: 1.2em; background: transparent; border: 1px solid var(--vscode-editorWidget-border); border-radius: 4px; cursor: pointer; color: var(--vscode-foreground);">
-        ⚙️
+        ⚙
       </button>
     </div>
   </div>
@@ -1304,13 +1608,13 @@ export class AgentTabManager {
   <!-- Single timeline container - everything appends here in order -->
   <div class="timeline" id="timeline">
     <div class="message agent">
-      👋 Hello! I'm your i2-Vision coding agent. I can help you with:
+      🤖 Hello! I'm your i2-Vision coding agent. I can help you with:
       
-      • Reading and analyzing code files
-      • Searching for patterns in your codebase
-      • Running builds and tests
-      • Git operations (status, diff, log, commit)
-      • Writing new files
+      ✓ Reading and analyzing code files
+      ✓ Searching for patterns in your codebase
+      ✓ Running builds and tests
+      ✓ Git operations (status, diff, log, commit)
+      ✓ Writing new files
       
       What would you like to work on?
     </div>
@@ -1325,7 +1629,7 @@ export class AgentTabManager {
     ></textarea>
     <div class="button-row">
       <button class="btn-action send" id="actionBtn">
-        <span id="actionIcon">⏵</span>
+        <span id="actionIcon">▶</span>
         <span id="actionText">Send</span>
       </button>
       <button class="btn btn-secondary" id="clearBtn">Clear</button>
@@ -1526,7 +1830,7 @@ export class AgentTabManager {
       // Add timestamp
       const date = new Date(timestamp);
       const timeStr = date.toLocaleTimeString();
-      div.title = 'Restored from history • ' + timeStr;
+      div.title = 'Restored from history 📂 ' + timeStr;
       
       timeline.appendChild(div);
       
@@ -1537,7 +1841,7 @@ export class AgentTabManager {
           card.className = 'tool-card done collapsed';
           card.innerHTML = \`
             <div class="tool-card-header" onclick="toggleToolCard('\${card.id}')">
-              <span class="tool-card-status">🔧</span>
+              <span class="tool-card-status">✓</span>
               <span>\${escapeHtml(tc.toolName)}</span>
               <span class="toggle-icon">▶</span>
             </div>
@@ -1600,7 +1904,7 @@ export class AgentTabManager {
         const statusEl = streamingElement.querySelector('.response-card-status');
         if (statusEl) {
           statusEl.className = 'response-card-status done';
-          statusEl.textContent = '✓';
+          statusEl.textContent = '✓ Done';
         }
         streamingElement.className = 'response-card done';
         streamingElement = null;
@@ -1677,9 +1981,9 @@ export class AgentTabManager {
         streamingElement.className = 'response-card streaming';
         streamingElement.innerHTML = \`
           <div class="response-card-header">
-            <span class="response-card-icon">✨</span>
+            <span class="response-card-icon">💬</span>
             <span class="response-card-title">Response</span>
-            <span class="response-card-status streaming">●</span>
+            <span class="response-card-status streaming">⏳ Streaming...</span>
           </div>
           <div class="response-card-body"></div>
         \`;
@@ -1713,7 +2017,7 @@ export class AgentTabManager {
         const statusEl = targetElement.querySelector('.response-card-status');
         if (statusEl) {
           statusEl.className = 'response-card-status done';
-          statusEl.textContent = '✓';
+          statusEl.textContent = '✓ Done';
         }
         targetElement.className = 'response-card done';
         
@@ -1722,11 +2026,11 @@ export class AgentTabManager {
         footer.className = 'message-footer';
         footer.innerHTML = \`
           <div class="footer-left">
-            <span>⏱️ \${durationMs ? (durationMs / 1000).toFixed(1) : '?'}s</span>
+            <span>⏱ \${durationMs ? (durationMs / 1000).toFixed(1) : '?'}s</span>
           </div>
           <div class="footer-right">
             <button class="btn btn-secondary" onclick="copyResponse()" style="padding: 4px 8px; font-size: 0.85em;">📋 Copy</button>
-            <button class="btn btn-secondary" onclick="applyChanges()" style="padding: 4px 8px; font-size: 0.85em;">✅ Apply</button>
+            <button class="btn btn-secondary" onclick="applyChanges()" style="padding: 4px 8px; font-size: 0.85em;">✓ Apply</button>
           </div>
         \`;
         targetElement.appendChild(footer);
@@ -1762,7 +2066,7 @@ export class AgentTabManager {
     function appendStoppedMessage() {
       const div = document.createElement('div');
       div.className = 'message stopped';
-      div.textContent = '⏹️ Processing stopped by user.';
+      div.textContent = '⏹ Processing stopped by user.';
       timeline.appendChild(div);
     }
     
@@ -1826,7 +2130,7 @@ export class AgentTabManager {
         // Change to Send state
         actionBtn.classList.remove('stop');
         actionBtn.classList.add('send');
-        actionIcon.textContent = '⏵';
+        actionIcon.textContent = '▶';
         actionText.textContent = 'Send';
         userInput.disabled = false;
         userInput.style.opacity = '1';

@@ -2846,6 +2846,12 @@ Please try a DIFFERENT approach:
    * Check if command is a build command that should capture output
    */
   private isBuildCommand(command: string): boolean {
+    // Long-running commands (run/serve/watch) should NOT be treated as builds
+    // even if they use build tools like gradlew
+    if (/\b(run|serve|server|start|watch)\b/i.test(command)) {
+      return false;
+    }
+    // Match build-oriented commands
     return /gradlew|gradle|mvn|mvnw|npm run build|make|tsc|yarn build/i.test(command);
   }
 

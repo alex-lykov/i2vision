@@ -321,6 +321,8 @@ export class AgentBridge {
   
   // Track consecutive plan-only responses to detect spiraling
   private _consecutivePlans: number = 0;
+  // Track consecutive successful edits to trigger forced build verification
+  private _consecutiveSuccessfulEdits: number = 0;
 
   // Fix mode - activated after build failure to reduce tool options
   private _fixMode: boolean = false;
@@ -1406,7 +1408,34 @@ Apply the edits NOW. Do not read any more files. Do not search. Just call apply_
         // Continue to LLM call with the auto-read context
       }
       // ===== END AUTO-FIX WORKFLOW =====
-      
+
+      // If we've applied several edits in a row, force a build verification now
+      // to avoid continuing to iterate without checking whether the fixes resolved
+      // the compilation errors. This runs the build locally and injects the
+      // formatted build output into the LLM context as a tool result so the
+      // model can decide the next action.
+      if (this._consecutiveSuccessfulEdits >= 3) {
+        this.log(`Consecutive successful edits (${this._consecutiveSuccessfulEdits}) reached - forcing build verification`);
+        // Reset counters and mode
+        this._consecutiveSuccessfulEdits = 0;
+        this._pendingFixes = [];
+        this._fixMode = false;
+
+        const buildCmd = process.platform === 'win32' ? 'gradlew.bat compileKotlin' : './gradlew compileKotlin';
+        const timeout = 120000;
+        try {
+          const buildResult = await this.runCommandWithTimeout(buildCmd, timeout);
+          const formatted = this.formatBuildResult(buildResult);
+          // Inject the build output as a tool result for the LLM to consume
+          messages.push({ role: 'tool', content: formatted, tool_call_id: `auto_build_${Date.now()}` } as any);
+          // Also add a short user instruction so the LLM focuses on build result
+          messages.push({ role: 'user', content: `You've applied 3 fixes. Build verification was run and results are above.` });
+        } catch (e: any) {
+          this.log(`Auto-build verification failed to execute: ${e.message}`);
+          messages.push({ role: 'tool', content: `Error running automated build verification: ${e.message}` } as any);
+        }
+      }
+
       this.log(`[Iter ${iteration}] Calling LLM...`);
 
       // Emit thinking event (streaming only) - NO iteration count (implementation detail)
@@ -2109,7 +2138,10 @@ Please try a DIFFERENT approach:
           
           // Reset failed attempts counter on successful write
           this._failedEditAttempts = 0;
-          
+          // Track consecutive successful edits for forced build verification
+          this._consecutiveSuccessfulEdits++;
+          this.log(`Consecutive successful edits: ${this._consecutiveSuccessfulEdits}`);
+
           const result = `Successfully wrote ${toolCall.args.content.length} characters to ${filePath}`;
           
           // Auto-advance: if there are more pending fixes, inject a nudge to continue
@@ -2145,6 +2177,8 @@ Please try a DIFFERENT approach:
           if (editResult.appliedCount === 0) {
             // All edits failed - track attempts to prevent infinite loops
             this._failedEditAttempts++;
+            // Reset consecutive successful edits since this attempt failed
+            this._consecutiveSuccessfulEdits = 0;
             this.log(`  ❌ No edits applied to ${filePath} (attempt ${this._failedEditAttempts}/3)`);
             
             // Build failure message
@@ -2181,7 +2215,10 @@ Please try a DIFFERENT approach:
           
           // Reset failed attempts counter on success
           this._failedEditAttempts = 0;
-          
+          // Track consecutive successful edits for forced build verification
+          this._consecutiveSuccessfulEdits++;
+          this.log(`Consecutive successful edits: ${this._consecutiveSuccessfulEdits}`);
+
           // Write the modified content back
           await this.cli.writeFile(filePath, editResult.finalContent);
           
@@ -2422,7 +2459,9 @@ Please try a DIFFERENT approach:
               
               // Increment failure counter
               this._buildFailureCount++;
-              
+              // Reset consecutive successful edits - build failed
+              this._consecutiveSuccessfulEdits = 0;
+
               // ACTIVATE FIX MODE IMMEDIATELY - affects next LLM call
               this._fixMode = true;
               this._failedEditAttempts = 0; // Reset retry counter for fresh start
@@ -2456,6 +2495,8 @@ Please try a DIFFERENT approach:
             this._buildFailureCount = 0;
             this._autoReadFiles.clear();
             this._fixMode = false;
+            // Reset consecutive successful edits after a verified successful build
+            this._consecutiveSuccessfulEdits = 0;
             this.log(`Build succeeded - fix mode deactivated`);
             return { result: `✅ Build successful${exitCodeInfo}\n\n${output.slice(-1000)}` };
           }

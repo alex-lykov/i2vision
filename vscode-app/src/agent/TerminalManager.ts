@@ -350,23 +350,37 @@ export class TerminalManager {
         // Preserve config before disposal
         const { command, workingDir, restartOnChanges } = managed;
         const restartCount = (managed.restartCount || 0) + 1;
-        
+
+        // If a terminal has restarted repeatedly, consider it stale and kill it to
+        // avoid terminal sprawl. After 3 restarts we stop recreating it.
+        if (restartCount > 3) {
+            this.log(`Terminal "${name}" exceeded restart limit (${restartCount}) - killing instead of restarting`);
+            // Dispose and remove completely
+            managed.terminal.dispose();
+            managed.watcher?.dispose();
+            if (managed.restartTimeout) {
+                clearTimeout(managed.restartTimeout);
+            }
+            this.terminals.delete(name);
+            return `Terminal "i2-Vision: ${name}" killed after ${restartCount} restarts to prevent sprawl.`;
+        }
+
         // Dispose existing terminal and watcher
         managed.terminal.dispose();
         managed.watcher?.dispose();
         if (managed.restartTimeout) {
             clearTimeout(managed.restartTimeout);
         }
-        
+
         // Create new terminal with same config
         this.runInTerminal(name, command, workingDir, restartOnChanges);
-        
+
         // Update restart count
         const updated = this.terminals.get(name);
         if (updated) {
             updated.restartCount = restartCount;
         }
-        
+
         return `Terminal "i2-Vision: ${name}" restarted (restart #${restartCount}).`;
     }
 

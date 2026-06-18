@@ -31,6 +31,7 @@ interface ManagedTerminal {
     watcher?: vscode.FileSystemWatcher;
     restartTimeout?: NodeJS.Timeout;
     restartCount?: number;
+    createdAt?: number;
 }
 
 /**
@@ -97,6 +98,17 @@ export class TerminalManager {
         this.log(`Normalized command: ${normalizedCommand}`);
         
         // Create new terminal
+        // Prevent terminal sprawl: if we already have too many managed terminals, kill the oldest
+        const MAX_MANAGED_TERMINALS = 3;
+        if (this.terminals.size >= MAX_MANAGED_TERMINALS) {
+            const oldest = [...this.terminals.entries()]
+                .sort((a, b) => (a[1].createdAt || 0) - (b[1].createdAt || 0))[0];
+            if (oldest) {
+                this.log(`Max managed terminals reached (${this.terminals.size}) - killing oldest: ${oldest[0]}`);
+                this.killTerminal(oldest[0]);
+            }
+        }
+
         const terminal = vscode.window.createTerminal({
             name: `i2-Vision: ${name}`,
             cwd: workingDir,
@@ -112,6 +124,7 @@ export class TerminalManager {
             command,
             workingDir,
             restartOnChanges
+            ,createdAt: Date.now()
         };
         
         // Set up file watcher for auto-restart

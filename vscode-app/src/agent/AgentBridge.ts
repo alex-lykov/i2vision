@@ -1414,22 +1414,37 @@ Apply the edits NOW. Do not read any more files. Do not search. Just call apply_
       // the compilation errors. This runs the build locally and injects the
       // formatted build output into the LLM context as a tool result so the
       // model can decide the next action.
-      if (this._consecutiveSuccessfulEdits >= 3) {
+      // Force a build verification after a small number of consecutive successful edits
+      // to create a feedback loop: apply edits -> verify build -> continue fixing only if needed.
+      if (this._consecutiveSuccessfulEdits >= 2) {
         this.log(`Consecutive successful edits (${this._consecutiveSuccessfulEdits}) reached - forcing build verification`);
-        // Reset counters and mode
+        // Reset counters and mode so the LLM cannot continue editing without seeing build results
         this._consecutiveSuccessfulEdits = 0;
         this._pendingFixes = [];
         this._fixMode = false;
 
-        const buildCmd = process.platform === 'win32' ? 'gradlew.bat compileKotlin' : './gradlew compileKotlin';
-        const timeout = 120000;
+        const buildCmd = process.platform === 'win32'
+          ? '.\\gradlew :app:server:compileKotlin --console=plain'
+          : './gradlew :app:server:compileKotlin --console=plain';
+
         try {
-          const buildResult = await this.runCommandWithTimeout(buildCmd, timeout);
-          const formatted = this.formatBuildResult(buildResult);
-          // Inject the build output as a tool result for the LLM to consume
-          messages.push({ role: 'tool', content: formatted, tool_call_id: `auto_build_${Date.now()}` } as any);
-          // Also add a short user instruction so the LLM focuses on build result
-          messages.push({ role: 'user', content: `You've applied 3 fixes. Build verification was run and results are above.` });
+          // Use executeTool so the build runs through the same tool pipeline and the
+          // result is returned in the same format the LLM expects.
+          const buildResult = await this.executeTool({
+            toolName: 'run_terminal',
+            args: { command: buildCmd, workingDir: this.workspaceRoot }
+          });
+
+          const buildOutput = (buildResult && (buildResult.result || buildResult.error)) || 'No output';
+
+          // Inject build result into LLM context as a tool message so the model sees it
+          messages.push({ role: 'tool', content: `[AUTO BUILD VERIFICATION]\n${buildOutput}`, tool_call_id: `auto_build_${Date.now()}` } as any);
+
+          // Prompt the LLM to review build results before taking further editing actions
+          messages.push({ role: 'user', content: 'Build verification complete. Review the results above. If the build passed, the task is complete. If there are errors, fix them.' });
+
+          // Continue the loop so the LLM processes the build results in the next iteration
+          continue;
         } catch (e: any) {
           this.log(`Auto-build verification failed to execute: ${e.message}`);
           messages.push({ role: 'tool', content: `Error running automated build verification: ${e.message}` } as any);

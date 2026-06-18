@@ -1402,6 +1402,9 @@ Apply the edits NOW. Do not read any more files. Do not search. Just call apply_
       let responseText = '';
       let streamingToolCalls: LLMToolCall[] = [];
       let textBuffer: string[] = [];
+      let textAlreadyStreamed = false; // Track if text was yielded during streaming
+      let toolCallDetected = false; // Stop streaming text once tool_call: is detected
+      let streamBuffer = ''; // Buffer for detecting tool_call: across chunk boundaries
 
       if (options.streaming) {
         // Streaming: collect chunks
@@ -1421,6 +1424,44 @@ Apply the edits NOW. Do not read any more files. Do not search. Just call apply_
           if (chunk.text) {
             responseText += chunk.text;
             textBuffer.push(chunk.text);
+            
+            // Stream text in real-time, but stop once tool_call: is detected
+            // This shows the LLM's reasoning text even during tool call iterations
+            if (!toolCallDetected) {
+              streamBuffer += chunk.text;
+              
+              // Check if we've hit a tool_call: marker
+              const toolCallIdx = streamBuffer.indexOf('tool_call:');
+              if (toolCallIdx !== -1) {
+                toolCallDetected = true;
+                // Stream everything before the tool_call: marker
+                const beforeToolCall = streamBuffer.substring(0, toolCallIdx).trim();
+                if (beforeToolCall) {
+                  textAlreadyStreamed = true;
+                  yield {
+                    type: 'text',
+                    text: beforeToolCall,
+                    timestamp: Date.now()
+                  };
+                }
+                streamBuffer = '';
+              } else if (streamBuffer.length > 20) {
+                // Buffer is growing without hitting tool_call: - stream it in chunks
+                // Keep a small tail in case 'tool_call:' spans a chunk boundary
+                const safeLength = streamBuffer.length - 10;
+                const textToStream = streamBuffer.substring(0, safeLength);
+                streamBuffer = streamBuffer.substring(safeLength);
+                if (textToStream) {
+                  textAlreadyStreamed = true;
+                  yield {
+                    type: 'text',
+                    text: textToStream,
+                    timestamp: Date.now()
+                  };
+                }
+              }
+            }
+            // After tool_call: detected, we stop streaming text (it's JSON args)
           }
           if (chunk.toolCalls) {
             streamingToolCalls = chunk.toolCalls;
@@ -1432,6 +1473,17 @@ Apply the edits NOW. Do not read any more files. Do not search. Just call apply_
           if (chunk.done) {
             break;
           }
+        }
+        
+        // Flush any remaining buffered text (for pure text responses without tool calls)
+        if (!toolCallDetected && streamBuffer.trim()) {
+          textAlreadyStreamed = true;
+          yield {
+            type: 'text',
+            text: streamBuffer.trim(),
+            timestamp: Date.now()
+          };
+          streamBuffer = '';
         }
 
         // FALLBACK: Parse tool calls from text if structured tool calls not provided
@@ -1593,12 +1645,15 @@ Do NOT read more files. Do NOT search. Call apply_edits with the exact JSON stru
         this.log(`[Iter ${iteration}] Final answer received (${trimmedResponse.length} chars)`);
         
         if (options.streaming) {
-          for (const textChunk of textBuffer) {
-            yield {
-              type: 'text',
-              text: textChunk,
-              timestamp: Date.now()
-            };
+          // Only yield text if it wasn't already streamed during the LLM call
+          if (!textAlreadyStreamed) {
+            for (const textChunk of textBuffer) {
+              yield {
+                type: 'text',
+                text: textChunk,
+                timestamp: Date.now()
+              };
+            }
           }
           yield {
             type: 'done',

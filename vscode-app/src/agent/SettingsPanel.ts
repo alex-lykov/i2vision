@@ -90,6 +90,10 @@ export class SettingsPanel {
         case 'importSettings':
           this.handleImportSettings(message.settings);
           break;
+          
+        case 'requestImportSettings':
+          await this.handleRequestImportSettings();
+          break;
       }
     }, null, this.disposables);
   }
@@ -150,6 +154,25 @@ export class SettingsPanel {
     
     this.settingsManager.updateSettings(newSettings);
     this.updateWebview();
+  }
+  
+  /**
+   * Handle request to import settings (shows input box on extension host)
+   */
+  private async handleRequestImportSettings(): Promise<void> {
+    const input = await vscode.window.showInputBox({
+      prompt: 'Paste settings JSON',
+      placeHolder: '{"streaming": {...}}'
+    });
+    
+    if (input) {
+      try {
+        const settings = JSON.parse(input);
+        this.handleImportSettings(settings);
+      } catch (e) {
+        vscode.window.showErrorMessage('Invalid JSON');
+      }
+    }
   }
   
   /**
@@ -524,6 +547,17 @@ export class SettingsPanel {
     
     <div class="setting-row">
       <div class="setting-label">
+        <div>Max Visible Tool Cards</div>
+        <div class="setting-description">Maximum number of tool cards shown before collapsing</div>
+      </div>
+      <div class="setting-control">
+        <input type="range" id="ui.maxVisibleToolCards" min="1" max="20" value="${settings.ui.maxVisibleToolCards}">
+        <div class="range-value">${settings.ui.maxVisibleToolCards}</div>
+      </div>
+    </div>
+    
+    <div class="setting-row">
+      <div class="setting-label">
         <div>Theme</div>
         <div class="setting-description">Color theme for agent UI</div>
       </div>
@@ -554,6 +588,17 @@ export class SettingsPanel {
     
     <div class="setting-row">
       <div class="setting-label">
+        <div>Max Consecutive Tool Calls</div>
+        <div class="setting-description">Maximum consecutive tool calls before forcing a response</div>
+      </div>
+      <div class="setting-control">
+        <input type="range" id="agent.maxConsecutiveToolCalls" min="1" max="20" value="${settings.agent.maxConsecutiveToolCalls}">
+        <div class="range-value">${settings.agent.maxConsecutiveToolCalls}</div>
+      </div>
+    </div>
+    
+    <div class="setting-row">
+      <div class="setting-label">
         <div>Enable Loop Detection</div>
         <div class="setting-description">Detect and prevent infinite loops</div>
       </div>
@@ -569,6 +614,16 @@ export class SettingsPanel {
       </div>
       <div class="setting-control">
         <input type="checkbox" id="agent.autoSaveConversation" ${settings.agent.autoSaveConversation ? 'checked' : ''}>
+      </div>
+    </div>
+    
+    <div class="setting-row">
+      <div class="setting-label">
+        <div>Conversation History Limit</div>
+        <div class="setting-description">Maximum number of conversations to keep in history</div>
+      </div>
+      <div class="setting-control">
+        <input type="number" id="agent.conversationHistoryLimit" min="10" max="500" value="${settings.agent.conversationHistoryLimit}">
       </div>
     </div>
   </div>
@@ -602,12 +657,43 @@ export class SettingsPanel {
     
     <div class="setting-row">
       <div class="setting-label">
+        <div>Context Length</div>
+        <div class="setting-description">Maximum context window size in tokens</div>
+      </div>
+      <div class="setting-control">
+        <input type="number" id="model.contextLength" min="512" max="131072" value="${settings.model.contextLength}">
+      </div>
+    </div>
+    
+    <div class="setting-row">
+      <div class="setting-label">
+        <div>Max Output Tokens</div>
+        <div class="setting-description">Maximum number of tokens in model response</div>
+      </div>
+      <div class="setting-control">
+        <input type="number" id="model.maxOutputTokens" min="64" max="65536" value="${settings.model.maxOutputTokens}">
+      </div>
+    </div>
+    
+    <div class="setting-row">
+      <div class="setting-label">
         <div>Temperature</div>
         <div class="setting-description">Model creativity (0 = deterministic, 2 = creative)</div>
       </div>
       <div class="setting-control">
         <input type="range" id="model.temperature" min="0" max="2" step="0.1" value="${settings.model.temperature}">
         <div class="range-value">${settings.model.temperature}</div>
+      </div>
+    </div>
+    
+    <div class="setting-row">
+      <div class="setting-label">
+        <div>Top P</div>
+        <div class="setting-description">Nucleus sampling threshold (0.1 = focused, 1.0 = diverse)</div>
+      </div>
+      <div class="setting-control">
+        <input type="range" id="model.topP" min="0" max="1" step="0.05" value="${settings.model.topP}">
+        <div class="range-value">${settings.model.topP}</div>
       </div>
     </div>
   </div>
@@ -633,6 +719,16 @@ export class SettingsPanel {
       </div>
       <div class="setting-control">
         <input type="checkbox" id="advanced.logToolCalls" ${settings.advanced.logToolCalls ? 'checked' : ''}>
+      </div>
+    </div>
+    
+    <div class="setting-row">
+      <div class="setting-label">
+        <div>Log LLM Requests</div>
+        <div class="setting-description">Log all LLM API requests and responses</div>
+      </div>
+      <div class="setting-control">
+        <input type="checkbox" id="advanced.logLLMRequests" ${settings.advanced.logLLMRequests ? 'checked' : ''}>
       </div>
     </div>
     
@@ -700,21 +796,28 @@ export class SettingsPanel {
           showDuration: document.getElementById('ui.showDuration').checked,
           showToolCards: document.getElementById('ui.showToolCards').checked,
           collapseOldToolCards: document.getElementById('ui.collapseOldToolCards').checked,
+          maxVisibleToolCards: parseInt(document.getElementById('ui.maxVisibleToolCards').value),
           theme: document.getElementById('ui.theme').value
         },
         agent: {
           maxIterations: parseInt(document.getElementById('agent.maxIterations').value),
+          maxConsecutiveToolCalls: parseInt(document.getElementById('agent.maxConsecutiveToolCalls').value),
           enableLoopDetection: document.getElementById('agent.enableLoopDetection').checked,
-          autoSaveConversation: document.getElementById('agent.autoSaveConversation').checked
+          autoSaveConversation: document.getElementById('agent.autoSaveConversation').checked,
+          conversationHistoryLimit: parseInt(document.getElementById('agent.conversationHistoryLimit').value)
         },
         model: {
           defaultProvider: document.getElementById('model.defaultProvider').value,
           defaultModel: document.getElementById('model.defaultModel').value,
-          temperature: parseFloat(document.getElementById('model.temperature').value)
+          contextLength: parseInt(document.getElementById('model.contextLength').value),
+          maxOutputTokens: parseInt(document.getElementById('model.maxOutputTokens').value),
+          temperature: parseFloat(document.getElementById('model.temperature').value),
+          topP: parseFloat(document.getElementById('model.topP').value)
         },
         advanced: {
           debugLogging: document.getElementById('advanced.debugLogging').checked,
           logToolCalls: document.getElementById('advanced.logToolCalls').checked,
+          logLLMRequests: document.getElementById('advanced.logLLMRequests').checked,
           enableExperimentalFeatures: document.getElementById('advanced.enableExperimentalFeatures').checked
         }
       };
@@ -732,19 +835,7 @@ export class SettingsPanel {
     }
     
     function importSettings() {
-      vscode.window.showInputBox({
-        prompt: 'Paste settings JSON',
-        placeHolder: '{"streaming": {...}}'
-      }).then(input => {
-        if (input) {
-          try {
-            const settings = JSON.parse(input);
-            vscode.postMessage({ type: 'importSettings', settings });
-          } catch (e) {
-            vscode.window.showErrorMessage('Invalid JSON');
-          }
-        }
-      });
+      vscode.postMessage({ type: 'requestImportSettings' });
     }
     
     function showToast(message) {

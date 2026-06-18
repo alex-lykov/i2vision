@@ -1047,6 +1047,74 @@ export class AgentTabManager {
       word-break: break-word;
     }
     
+    /* Response card (for streaming agent responses) */
+    .response-card {
+      background-color: var(--vscode-editorWidget-background);
+      border: 1px solid var(--vscode-editorWidget-border);
+      border-radius: 6px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      transition: all 0.2s ease;
+    }
+    
+    .response-card.streaming {
+      border-left: 3px solid var(--vscode-progressBarBackground);
+    }
+    
+    .response-card.done {
+      border-left: 3px solid var(--vscode-testing-iconPassed, #73c991);
+    }
+    
+    .response-card-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.9em;
+      font-weight: 600;
+      color: var(--vscode-foreground);
+    }
+    
+    .response-card-icon {
+      font-size: 1.1em;
+    }
+    
+    .response-card-title {
+      flex: 1;
+    }
+    
+    .response-card-status {
+      font-size: 0.8em;
+    }
+    
+    .response-card-status.streaming {
+      color: var(--vscode-progressBarBackground);
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    
+    .response-card-status.done {
+      color: var(--vscode-testing-iconPassed, #73c991);
+    }
+    
+    .response-card-body {
+      background-color: var(--vscode-textCodeBlock-background);
+      padding: 10px 12px;
+      border-radius: 4px;
+      font-family: var(--vscode-editor-font-family);
+      font-size: 0.9em;
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.5;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    
     /* Input area */
     .input-container {
       margin-top: 30px;
@@ -1376,6 +1444,10 @@ export class AgentTabManager {
           break;
           
         case 'assistant_response':
+          // If streaming was disabled, no streamingElement exists yet - create one with full content
+          if (!streamingElement && message.content) {
+            appendStreamingText(message.content);
+          }
           finalizeStreamingText(message.durationMs);
           setProcessingState(false);
           break;
@@ -1522,6 +1594,18 @@ export class AgentTabManager {
     }
     
     function appendToolCard(toolName, args) {
+      // Finalize any active streaming element before adding a tool card
+      // so text from the next iteration appears below this tool card
+      if (streamingElement) {
+        const statusEl = streamingElement.querySelector('.response-card-status');
+        if (statusEl) {
+          statusEl.className = 'response-card-status done';
+          statusEl.textContent = '✓';
+        }
+        streamingElement.className = 'response-card done';
+        streamingElement = null;
+      }
+
       const cardId = 'tool-' + Date.now();
       const card = document.createElement('div');
       card.className = 'tool-card running expanded';
@@ -1588,19 +1672,51 @@ export class AgentTabManager {
     
     function appendStreamingText(text) {
       if (!streamingElement) {
+        // Create a response card similar to tool cards
         streamingElement = document.createElement('div');
-        streamingElement.className = 'message agent';
+        streamingElement.className = 'response-card streaming';
+        streamingElement.innerHTML = \`
+          <div class="response-card-header">
+            <span class="response-card-icon">✨</span>
+            <span class="response-card-title">Response</span>
+            <span class="response-card-status streaming">●</span>
+          </div>
+          <div class="response-card-body"></div>
+        \`;
         timeline.appendChild(streamingElement);
+        scrollToBottom();
       }
-      streamingElement.textContent += text;
+      const body = streamingElement.querySelector('.response-card-body');
+      if (body) {
+        body.textContent += text;
+        scrollToBottom();
+      }
     }
     
     function finalizeStreamingText(durationMs) {
       // Hide thinking indicator
       hideThinkingIndicator();
       
-      // Streaming element already has the text from chunks - just finalize it
-      if (streamingElement) {
+      // Find the target element: either the active streaming element
+      // or the last response card (if streaming was finalized by a tool call)
+      let targetElement = streamingElement;
+      if (!targetElement) {
+        const responseCards = timeline.querySelectorAll('.response-card');
+        if (responseCards.length > 0) {
+          targetElement = responseCards[responseCards.length - 1];
+        }
+      }
+      
+      // Finalize the response card
+      if (targetElement) {
+        // Remove streaming status indicator
+        const statusEl = targetElement.querySelector('.response-card-status');
+        if (statusEl) {
+          statusEl.className = 'response-card-status done';
+          statusEl.textContent = '✓';
+        }
+        targetElement.className = 'response-card done';
+        
         // Add unified footer bar with timing + actions
         const footer = document.createElement('div');
         footer.className = 'message-footer';
@@ -1610,10 +1726,10 @@ export class AgentTabManager {
           </div>
           <div class="footer-right">
             <button class="btn btn-secondary" onclick="copyResponse()" style="padding: 4px 8px; font-size: 0.85em;">📋 Copy</button>
-            <button class="btn btn-secondary" onclick="applyChanges()" style="padding: 4px 8px; font-size: 0.85em;">📝 Apply</button>
+            <button class="btn btn-secondary" onclick="applyChanges()" style="padding: 4px 8px; font-size: 0.85em;">✅ Apply</button>
           </div>
         \`;
-        streamingElement.appendChild(footer);
+        targetElement.appendChild(footer);
         
         streamingElement = null;
       }

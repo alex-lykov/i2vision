@@ -327,6 +327,7 @@ export class AgentBridge {
   
   // Track failed edit attempts to prevent infinite loops on unfixable files
   private _failedEditAttempts: number = 0;
+  private _lastBuildErrors: string = '';
 
   // Truncation settings
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000; // characters
@@ -1337,32 +1338,51 @@ export class AgentBridge {
         const isRepeatedFailure = this._buildFailureCount >= 2;
         
         // Build stronger instruction for repeated failures
+        // Parse actual errors from _lastBuildErrors to build dynamic instruction
+        const errorLines = this._lastBuildErrors
+          .split('\n')
+          .filter(l => l.trim() && !l.startsWith('FILES TO READ') && !l.startsWith('---'));
+        
+        const compilerErrors = this._lastBuildErrors
+          .split('\n')
+          .filter(l => l.includes('.kt:') || l.includes('.java:') || l.includes('Unresolved reference') || l.includes('Type mismatch') || l.includes('is not abstract') || l.includes('must implement') || l.includes('cannot find symbol') || l.includes('Overload resolution') || l.includes('Conflicting overloads'))
+          .map(l => l.trim())
+          .filter(l => l.length > 0)
+          .slice(0, 10);
+
+        const fileList = filesToRead.slice(0, 5).map(f => {
+          const fileName = path.basename(f);
+          return `${fileName} → ${f}`;
+        }).join('\n  ');
+
+        // Build example apply_edits JSON using actual file paths
+        const examplePath = filesToRead[0] || 'path/to/File.kt';
+        const exampleEdits = compilerErrors.length > 0
+          ? compilerErrors.slice(0, 3).map(err => {
+              // Try to extract the symbol name from the error for a realistic example
+              const symbolMatch = err.match(/Unresolved reference[.:]\s*(\S+)/) || 
+                                  err.match(/["']([\w]+)['"]/);
+              const symbol = symbolMatch ? symbolMatch[1] : 'brokenCode';
+              return `    {\n      "search": "${symbol}",\n      "replace": "/* fixed version of ${symbol} */"\n    }`;
+            }).join(',\n')
+          : `    {\n      "search": "the broken code",\n      "replace": "the fixed code"\n    }`;
+
         let instructionContent = `I've automatically read the failing files for you. 
 
 **COMPILATION ERRORS TO FIX:**
-- InMemoryConductorRepository.kt:13:1 — Class is not abstract, doesn't implement abstract member
-- ProjectValidationEngine.kt:507:22 — Unresolved reference: rightRoomId
-- ProjectValidationEngine.kt:508:22 — Unresolved reference: leftRoomId
+${compilerErrors.length > 0 ? compilerErrors.map(e => `- ${e}`).join('\n') : '(see build output above for specific errors)'}
 
-**REQUIRED ACTIONS:**
-1. InMemoryConductorRepository.kt: Add the missing method implementation or make the class abstract
-2. ProjectValidationEngine.kt: Define or import rightRoomId and leftRoomId variables
+**FILES WITH ERRORS:**
+  ${fileList || '(none detected)'}
 
 **USE THIS TOOL NOW:**
 Call \`apply_edits\` with this exact JSON structure:
 
 \`\`\`json
 {
-  "path": "service/project/src/main/kotlin/com/electricity/service/ProjectValidationEngine.kt",
+  "path": "${examplePath}",
   "edits": [
-    {
-      "search": "rightRoomId",
-      "replace": "rightRoom?.id ?:\\"\\""
-    },
-    {
-      "search": "leftRoomId", 
-      "replace": "leftRoom?.id ?:\\"\\""
-    }
+${exampleEdits}
   ]
 }
 \`\`\`
@@ -2222,6 +2242,19 @@ Please try a DIFFERENT approach:
           const filePath = this.resolvePath(toolCall.args.path);
           this.log(`  Getting file context: ${filePath}`);
           
+          // Guard against directories - get_file_context only works on files
+          try {
+            const stat = fs.statSync(filePath);
+            if (stat.isDirectory()) {
+              return {
+                result: '',
+                error: 'PATH_IS_DIRECTORY: Use list_directory for folders, not get_file_context. The path you provided is a directory.'
+              };
+            }
+          } catch (e: any) {
+            // File doesn't exist - let getContext handle the error
+          }
+          
           const context = await this.cli.getContext(filePath);
           
           return {
@@ -2306,10 +2339,13 @@ Please try a DIFFERENT approach:
           
           this.log(`  Running build: ${command} (showInWebview=${showInWebview}, timeout=${timeout}ms)`);
           
-          // OPTION 1: Show in webview - capture output via spawn
-          if (showInWebview) {
-            const result = await this.runCommandWithTimeout(command, timeout, undefined, (output: string) => {
-              // Send partial output as heartbeat during long builds
+          // ALWAYS capture build output via spawn - the agent needs to see
+          // build results (success/failure/errors) to make decisions.
+          // showInWebview only controls whether partial output is streamed
+          // to the webview as a heartbeat during long builds.
+          const result = await this.runCommandWithTimeout(command, timeout, undefined, (output: string) => {
+            // Send partial output as heartbeat during long builds (only if webview mode)
+            if (showInWebview) {
               const partialOutput = output.slice(-200);
               this.emitProgress({
                 type: 'tool_output',
@@ -2317,52 +2353,10 @@ Please try a DIFFERENT approach:
                 partialOutput: partialOutput,
                 iteration: this.currentIteration
               });
-            });
-            
-            return { result: this.formatBuildResult(result) };
-          }
-          
-          // OPTION 2: Show in VSCode terminal - create visible terminal
-          this.log(`  Running build in visible VSCode terminal`);
-          const terminalName = `i2-Vision: Build`;
-          
-          const terminal = vscode.window.createTerminal({
-            name: terminalName,
-            cwd: this.workspaceRoot,
-            shellPath: process.platform === 'win32' ? 'powershell.exe' : undefined
+            }
           });
           
-          terminal.show(true);
-          terminal.sendText(command);
-          
-          // Wait for build to complete (poll for exit)
-          const startTime = Date.now();
-          const maxWait = timeout;
-          
-          // Simple polling - wait for terminal to close or timeout
-          await new Promise<void>((resolve) => {
-            const checkInterval = setInterval(() => {
-              if (Date.now() - startTime > maxWait) {
-                clearInterval(checkInterval);
-                resolve();
-              }
-              // Check if terminal was closed (simple heuristic - wait fixed time for builds)
-              if (Date.now() - startTime > 5000) {
-                // After 5 seconds, assume build is running and return
-                resolve();
-              }
-            }, 500);
-            
-            // Also resolve after a reasonable build time
-            setTimeout(() => {
-              clearInterval(checkInterval);
-              resolve();
-            }, Math.min(30000, timeout));
-          });
-          
-          return {
-            result: `Build command executed in terminal "${terminalName}". Check the terminal for output and results.\n\nCommand: ${command}`
-          };
+          return { result: this.formatBuildResult(result) };
         }
         
         case 'run_terminal': {
@@ -2422,6 +2416,9 @@ Please try a DIFFERENT approach:
             // Check for build failures
             if (result.exitCode !== 0 || output.includes('BUILD FAILED') || output.includes('FAILED')) {
               const errors = this.extractCompilationErrors(output);
+              
+              // Store errors for use in auto-fix instruction
+              this._lastBuildErrors = errors;
               
               // Increment failure counter
               this._buildFailureCount++;

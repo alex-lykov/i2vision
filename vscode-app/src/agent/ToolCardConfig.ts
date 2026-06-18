@@ -247,6 +247,18 @@ export const DEFAULT_TOOL_CARD_CONFIG: ToolCardConfig = {
             showArgs: true,
             showDuration: false,
             collapseOnSuccess: true
+        },
+        'git_diff': {
+            maxLines: 0,          // Show all lines (diffs need full context)
+            maxChars: 0,          // No char limit
+            foldThreshold: 5,
+            foldDefault: 'expanded',
+            format: 'raw',        // Parsed by DiffCard component
+            showLineNumbers: true,
+            syntaxHighlight: false,
+            showArgs: true,
+            showDuration: true,
+            collapseOnSuccess: false
         }
     }
 };

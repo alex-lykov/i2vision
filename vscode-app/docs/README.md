@@ -1,13 +1,15 @@
-﻿# VSCode Extension Documentation
+# VSCode Extension Documentation
 
 ## Guides
 
 - [**Extension Structure**](structure.md) - Directory layout and key files
 - [**Agent Tool Calling Test**](agent-tool-calling-test.md) - How to test agent tool calls
+- [**apply_edits Tool**](apply-edits-tool.md) - Modern structured editing with retry logic
+- [**Fix Mode**](FIX_MODE_IMPLEMENTATION.md) - Build failure auto-fix workflow
 
 ## Architecture
 
-- **AgentBridge**: Core agent integration with loop detection and streaming
+- **AgentBridge**: Core agent integration with loop detection, fix mode, and streaming
 - **AgentTabManager**: Webview UI for agent interactions
 - **CLI Integration**: Tool execution via command-line interface
 - **File System Provider**: Virtual file system for agent tabs
@@ -21,10 +23,17 @@
 - **Force Completion**: Stops after 4+ repeated tool calls
 
 ### Tool Calling
-- **6 Tools**: read_file, write_file, list_directory, search_files, run_command, get_file_context
+- **7 Tools**: read_file, write_file, apply_edits, list_directory, search_files, run_terminal, run_build
 - **Tool Result Linking**: Uses `tool_call_id` for proper OpenAI/Ollama compatibility
 - **Blocked Commands**: Prevents long-running servers (npm run dev, gradlew run, etc.)
 - **Path Resolution**: Workspace-aware relative path handling
+
+### Fix Mode (Auto-Fix Workflow)
+- **Immediate Activation**: Activates on first build failure
+- **Edit-Only Tools**: Filters to 4 tools (apply_edits, read_file, write_file, get_file_context)
+- **Auto-Read**: Automatically reads all failing files before LLM acts
+- **Retry Logic**: Failed edits retry up to 3 times before skipping the file
+- **Guided Rebuild**: Auto-nudge suggests when to re-run the build
 
 ### Streaming
 - **Real-Time Progress**: Shows tool calls as they execute

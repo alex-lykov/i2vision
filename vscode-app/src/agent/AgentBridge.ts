@@ -135,6 +135,20 @@ export class AgentBridge {
   // File snapshots for revert capability
   private _fileSnapshots: Map<string, string> = new Map();
 
+  // Legacy state tracking (migrated to state machine context)
+  // These are kept for backward compatibility during transition
+  private _pendingFixes: string[] = [];
+  private _buildFailureCount: number = 0;
+  private _consecutivePlans: number = 0;
+  private _consecutiveSuccessfulEdits: number = 0;
+  private _fixMode: boolean = false;
+  private _failedEditAttempts: number = 0;
+  private _lastBuildErrors: string = '';
+  private _serverJustStarted: string | null = null;
+  private _lastSearchPattern: string | null = null;
+  private _lastSearchFiles: string[] = [];
+  private _lastSearchIteration: number = 0;
+
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000;
   private static readonly MAX_LIST_FILES_RESULTS = 100;
   private static readonly MAX_APPLY_EDITS = 50;

@@ -17,9 +17,7 @@ import {
   AgentStateMachine,
   AgentState,
   AgentEvent,
-  StateContext,
-  createInitialContext,
-} from '../AgentStateMachine';
+} from '../../agent/AgentStateMachine';
 
 suite('AgentStateMachine', () => {
   let stateMachine: AgentStateMachine;
@@ -616,9 +614,4 @@ suite('AgentStateMachine', () => {
       assert.strictEqual(stateMachine.context.intentType, 'debug'); // Updated
     });
   });
-});
-
-suite('StateMachineObserver', () => {
-  // Tests for the observer would go here
-  // This is a placeholder for future implementation
 });

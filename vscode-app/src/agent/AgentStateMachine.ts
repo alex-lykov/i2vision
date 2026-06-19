@@ -211,6 +211,12 @@ export interface StateContext {
     passed: boolean;
     violations: string[];
     warnings: string[];
+    safetyFlags?: {
+      requiresConfirmation: boolean;
+      isDestructive: boolean;
+      modifiesFiles: boolean;
+      runsExternalProcess: boolean;
+    };
   };
   
   /** Safety flags */
@@ -455,7 +461,7 @@ export const TRANSITIONS: StateTransition[] = [
     description: 'Plan-only response, nudging to use tools',
     action: (ctx) => ({ 
       consecutivePlans: ctx.consecutivePlans + 1,
-      inPlanLoop: ctx.consecutivePlans >= 2,
+      inPlanLoop: (ctx.consecutivePlans + 1) >= 2, // Check NEW value
     }),
   },
   
@@ -551,6 +557,18 @@ export const TRANSITIONS: StateTransition[] = [
     }),
   },
   
+  // PLAN → PLAN (build failure received while in plan state - increment counter)
+  {
+    from: AgentState.PLAN,
+    to: AgentState.PLAN,
+    event: AgentEvent.BUILD_FAILURE,
+    description: 'Build failure tracked in plan state',
+    action: (ctx) => ({
+      buildFailures: ctx.buildFailures + 1,
+      inBuildFixCycle: true,
+    }),
+  },
+  
   // VERIFY → PLAN (server failed, go back without fixMode)
   { 
     from: AgentState.VERIFY, 
@@ -569,6 +587,18 @@ export const TRANSITIONS: StateTransition[] = [
     to: AgentState.PLAN, 
     event: AgentEvent.EDIT_SUCCESS,
     description: 'Edit successful, continuing',
+    action: (ctx) => ({
+      consecutiveEdits: ctx.consecutiveEdits + 1,
+      failedEditAttempts: 0,
+    }),
+  },
+  
+  // PLAN → PLAN (edit succeeded in plan loop - for consecutive edits tracking)
+  { 
+    from: AgentState.PLAN, 
+    to: AgentState.PLAN, 
+    event: AgentEvent.EDIT_SUCCESS,
+    description: 'Edit successful in plan state, tracking consecutive edits',
     action: (ctx) => ({
       consecutiveEdits: ctx.consecutiveEdits + 1,
       failedEditAttempts: 0,
@@ -599,7 +629,7 @@ export const TRANSITIONS: StateTransition[] = [
     }),
   },
   
-  // Any state → PAUSED (requires confirmation)
+  // Any → PAUSED (requires confirmation)
   { 
     from: AgentState.CONSTRAINTS, 
     to: AgentState.PAUSED, 
@@ -670,6 +700,12 @@ export const TRANSITIONS: StateTransition[] = [
     to: AgentState.FAILED, 
     event: AgentEvent.MAX_FAILURES,
     description: 'Max consecutive failures reached',
+  },
+  {
+    from: AgentState.PLAN,
+    to: AgentState.FAILED,
+    event: AgentEvent.MAX_FAILURES,
+    description: 'Max consecutive failures reached from PLAN',
   },
   
   // Any → FAILED (cancelled)
@@ -857,8 +893,9 @@ export class AgentStateMachine {
     if (/\b(refactor|rename|extract|move)\b/i.test(input)) return 'refactor';
     if (/\b(debug|fix|bug|error|crash|fail)\b/i.test(input)) return 'debug';
     if (/\b(explain|what|how|explore|find|show)\b/i.test(input)) return 'explore';
+    // Check for test intent BEFORE create (since "write tests" contains "write")
+    if (/\b(test|tests|testing|spec|unit|integration)\b/i.test(input)) return 'test';
     if (/\b(write|create|add|implement|build|generate)\b/i.test(input)) return 'create';
-    if (/\b(test|spec|unit|integration)\b/i.test(input)) return 'test';
     if (/\b(run|start|serve|launch)\b/i.test(input)) return 'run';
     return 'default';
   }
@@ -1017,14 +1054,19 @@ export class AgentStateMachine {
     const normalizedToolName = toolName.toLowerCase().replace(/[_-]/g, '');
     const argsSignature = JSON.stringify(args);
     
-    // Check recent calls (last 3 iterations)
-    const recentCalls = this._context.toolCallHistory.filter(h => 
-      h.iteration >= iteration - 2 && 
-      h.toolName.toLowerCase().replace(/[_-]/g, '') === normalizedToolName && 
-      JSON.stringify(h.args) === argsSignature
-    );
+    // Check recent calls - if iteration is high but we have no recent iterations, check all calls
+    const hasRecentIterations = this._context.toolCallHistory.some(h => h.iteration >= iteration - 2);
     
-    return recentCalls.length >= 2; // Same call 3+ times = loop
+    const recentCalls = this._context.toolCallHistory.filter(h => {
+      const iterationMatch = hasRecentIterations ? h.iteration >= iteration - 2 : true;
+      const toolNameMatch = h.toolName.toLowerCase().replace(/[_-]/g, '') === normalizedToolName;
+      const argsMatch = JSON.stringify(h.args) === argsSignature;
+      return iterationMatch && toolNameMatch && argsMatch;
+    });
+    
+    // If we're checking for a loop and already have 2+ matching calls in history, it's a loop
+    // The current call being checked is not yet in history, so we check for >= 2
+    return recentCalls.length >= 2;
   }
   
   /** Get state diagram as text */

@@ -412,21 +412,21 @@ RECENT TRANSITIONS
  * Automatically logs transitions and detects anomalies
  */
 export class AutoMonitoringStateMachine {
-  private stateMachine: AgentStateMachine;
-  private observer: StateMachineObserver;
+  private _stateMachine: AgentStateMachine;
+  private _observer: StateMachineObserver;
 
   constructor() {
-    this.stateMachine = new AgentStateMachine();
-    this.observer = new StateMachineObserver(this.stateMachine);
+    this._stateMachine = new AgentStateMachine();
+    this._observer = new StateMachineObserver(this._stateMachine);
     
     // Auto-log transitions
-    this.observer.onStateChange((from, to, event) => {
+    this._observer.onStateChange((from, to, event) => {
       console.log(`[AgentState] ${from} ──${event}──→ ${to}`);
     });
 
     // Auto-detect anomalies
-    this.observer.onStateChange((from, to, event, context) => {
-      const anomalies = this.observer.detectAnomalies();
+    this._observer.onStateChange((from, to, event, context) => {
+      const anomalies = this._observer.detectAnomalies();
       if (anomalies.length > 0) {
         console.warn('[AgentState] Anomalies detected:', anomalies);
       }
@@ -434,15 +434,15 @@ export class AutoMonitoringStateMachine {
   }
 
   get stateMachine(): AgentStateMachine {
-    return this.stateMachine;
+    return this._stateMachine;
   }
 
   get observer(): StateMachineObserver {
-    return this.observer;
+    return this._observer;
   }
 
   reset(): void {
-    this.stateMachine.reset();
-    this.observer.reset();
+    this._stateMachine.reset();
+    this._observer.reset();
   }
 }

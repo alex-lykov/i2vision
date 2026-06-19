@@ -14,7 +14,7 @@ import { ProgressEvent, ToolCall } from './AgentBridge';
  * Formatted progress event for webview
  */
 export interface FormattedProgressEvent {
-    type: 'tool_start' | 'tool_complete' | 'iteration_complete' | 'thinking' | 'tool_output';
+    type: 'tool_start' | 'tool_complete' | 'iteration_complete' | 'thinking' | 'tool_output' | 'state_change';
     iteration: number;
     toolCard?: FormattedToolCard;
     toolCall?: {
@@ -23,6 +23,7 @@ export interface FormattedProgressEvent {
     };
     message?: string;
     partialOutput?: string; // For streaming build output
+    state?: { from: string; to: string; event: string }; // For state_change events
 }
 
 /**
@@ -84,10 +85,21 @@ export class ToolCardManager implements vscode.Disposable {
             };
         }
 
+        // Handle state_change events
+        if (event.type === 'state_change') {
+            return {
+                type: event.type,
+                iteration: event.iteration,
+                message: event.message,
+                state: event.state
+            };
+        }
+
         return {
             type: event.type,
             iteration: event.iteration,
-            message: event.message
+            message: event.message,
+            partialOutput: event.partialOutput
         };
     }
 

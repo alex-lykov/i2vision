@@ -4,6 +4,122 @@
 
 The Agent State Machine provides robust flow control for the entire LLM task lifecycle, ensuring predictable behavior, safety constraints, and optimal tool execution.
 
+## Sequence Diagram
+
+```seqd
+participant User
+participant AgentBridge
+participant StateMachine
+participant LLM
+participant Tools
+participant BuildSystem
+
+User->AgentBridge: userInput (task description)
+AgentBridge->StateMachine: dispatch(USER_INPUT)
+StateMachine->StateMachine: IDLE → INTENT
+AgentBridge->StateMachine: classifyIntent(userInput)
+StateMachine->StateMachine: intentType = 'debug/create/explore/etc'
+AgentBridge->StateMachine: dispatch(INTENT_CLASSIFIED)
+StateMachine->StateMachine: INTENT → PLAN
+
+loop Task Processing
+    AgentBridge->LLM: Call with context + tools
+    LLM->AgentBridge: Response (tool calls OR text)
+    
+    alt Has Tool Calls
+        AgentBridge->StateMachine: dispatch(TOOL_CALLS_RECEIVED)
+        StateMachine->StateMachine: PLAN → CONSTRAINTS
+        AgentBridge->StateMachine: validateConstraints(toolCalls)
+        StateMachine->StateMachine: Check safety limits
+        
+        alt Constraints Pass
+            AgentBridge->StateMachine: dispatch(PLAN_VALIDATED)
+            StateMachine->StateMachine: CONSTRAINTS → SEQUENCE
+            AgentBridge->StateMachine: optimizeSequence(toolCalls)
+            StateMachine->StateMachine: Order: read → edit → build → run
+            AgentBridge->StateMachine: dispatch(SEQUENCE_READY)
+            StateMachine->StateMachine: SEQUENCE → EXECUTE
+            
+            loop Execute Tools
+                AgentBridge->Tools: Execute tool (read_file/apply_edits/etc)
+                Tools->AgentBridge: Result + duration
+                AgentBridge->StateMachine: recordToolCall(...)
+            end
+            
+            AgentBridge->StateMachine: dispatch(TOOLS_EXECUTED)
+            StateMachine->StateMachine: EXECUTE → VERIFY
+            
+            alt Build Result
+                AgentBridge->BuildSystem: run_build
+                BuildSystem->AgentBridge: BUILD SUCCESSFUL
+                AgentBridge->StateMachine: dispatch(BUILD_SUCCESS)
+                StateMachine->StateMachine: VERIFY → COMPLETE
+            else Build Failed
+                BuildSystem->AgentBridge: BUILD FAILED + errors
+                AgentBridge->StateMachine: dispatch(BUILD_FAILURE)
+                StateMachine->StateMachine: VERIFY → PLAN
+                StateMachine->StateMachine: buildFailures++
+            else Server Started
+                BuildSystem->AgentBridge: Server running on port 8080
+                AgentBridge->StateMachine: dispatch(SERVER_STARTED)
+                StateMachine->StateMachine: VERIFY → COMPLETE
+            else Edit Success
+                Tools->AgentBridge: ✅ Applied 3 edits
+                AgentBridge->StateMachine: dispatch(EDIT_SUCCESS)
+                StateMachine->StateMachine: VERIFY → PLAN
+                StateMachine->StateMachine: consecutiveEdits++
+            else Edit Failed
+                Tools->AgentBridge: ❌ Search text not found
+                AgentBridge->StateMachine: dispatch(EDIT_FAILURE)
+                StateMachine->StateMachine: VERIFY → PLAN
+                StateMachine->StateMachine: failedEditAttempts++
+            end
+        else Constraints Fail
+            AgentBridge->StateMachine: dispatch(PLAN_INVALID)
+            StateMachine->StateMachine: CONSTRAINTS → PLAN
+            
+            alt Requires Confirmation
+                StateMachine->StateMachine: → PAUSED
+                AgentBridge->User: Confirm destructive action?
+                User->AgentBridge: Confirmed/Rejected
+                AgentBridge->StateMachine: dispatch(USER_CONFIRMED/USER_REJECTED)
+            end
+        end
+    else Text Only (No Tools)
+        AgentBridge->StateMachine: dispatch(TEXT_ONLY)
+        StateMachine->StateMachine: PLAN → COMPLETE
+    else Plan Only (Describing, not doing)
+        AgentBridge->StateMachine: dispatch(PLAN_ONLY)
+        StateMachine->StateMachine: PLAN → PLAN
+        StateMachine->StateMachine: consecutivePlans++
+        
+        alt Stuck in Plan Loop
+            StateMachine->StateMachine: consecutivePlans >= 3
+            AgentBridge->StateMachine: dispatch(LOOP_DETECTED)
+            StateMachine->StateMachine: PLAN → FAILED
+        end
+    end
+    
+    alt Loop Detection
+        StateMachine->StateMachine: detectLoop(tool, args)
+        StateMachine->StateMachine: Loop found
+        AgentBridge->StateMachine: dispatch(LOOP_DETECTED)
+        StateMachine->StateMachine: → FAILED
+    else Max Iterations
+        StateMachine->StateMachine: iteration >= maxIterations
+        AgentBridge->StateMachine: dispatch(MAX_ITERATIONS)
+        StateMachine->StateMachine: → FAILED
+    else Max Failures
+        StateMachine->StateMachine: buildFailures >= 3
+        AgentBridge->StateMachine: dispatch(MAX_FAILURES)
+        StateMachine->StateMachine: → FAILED
+    end
+end
+
+StateMachine->AgentBridge: Final state: COMPLETE/FAILED
+AgentBridge->User: Response + state summary
+```
+
 ## Flow Diagram
 
 ```

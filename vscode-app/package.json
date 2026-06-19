@@ -383,6 +383,7 @@
         "@vscode/test-electron": "^2.5.2",
         "@vscode/vsce": "^2.24.0",
         "eslint": "^8.57.0",
+        "mocha": "^11.7.6",
         "typescript": "^5.4.0"
     },
     "dependencies": {

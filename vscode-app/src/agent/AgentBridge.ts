@@ -1187,19 +1187,33 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
             };
           }
           
-          const results = await this.cli.searchFiles(pattern, searchPath);
+          // TIP: If pattern looks like "class X" or "function Y", suggest simpler search
+          const classMatch = pattern.match(/class\s+(\w+)/);
+          const functionMatch = pattern.match(/function\s+(\w+)/);
+          const simplePattern = classMatch ? classMatch[1] : functionMatch ? functionMatch[1] : pattern;
+          
+          const results = await this.cli.searchFiles(simplePattern, searchPath);
           
           // Track this search for loop detection
           this._lastSearchPattern = pattern;
           this._lastSearchFiles = results;
           
           if (results.length === 0) {
-            return { result: `No files found matching pattern "${pattern}". Try a different search term or use list_directory to explore.`, error: 'NO_RESULTS' };
+            let suggestion = 'Try a different search term or use list_directory to explore.';
+            
+            // If searched for "class X", suggest searching just "X"
+            if (classMatch) {
+              suggestion = `TIP: Instead of searching for "class ${classMatch[1]}", try searching for just "${classMatch[1]}" (the class name without the keyword). Also check if the class exists in a different module or has a different name.`;
+            } else if (functionMatch) {
+              suggestion = `TIP: Instead of searching for "function ${functionMatch[1]}", try searching for just "${functionMatch[1]}" (the function name without the keyword).`;
+            }
+            
+            return { result: `No files found matching pattern "${pattern}". ${suggestion}`, error: 'NO_RESULTS' };
           }
           
           // If many results found, suggest reading instead of more searching
           if (results.length > 10) {
-            return { result: `Found ${results.length} files matching "${pattern}". Here are the first 10:\n${results.slice(0, 10).join('\n')}\n\nTIP: You found many results. Instead of searching more, READ one of these files to understand the code.`, error: 'MANY_RESULTS' };
+            return { result: `Found ${results.length} files matching "${simplePattern}". Here are the first 10:\n${results.slice(0, 10).join('\n')}\n\nTIP: You found many results. Instead of searching more, READ one of these files to understand the code.`, error: 'MANY_RESULTS' };
           }
           
           return { result: `Found ${results.length} file(s):\n${results.join('\n')}\n\nTIP: You found the files! Now READ one of them instead of searching more.` };

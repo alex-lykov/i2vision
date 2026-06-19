@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * AgentBridge - Bridge between VSCode extension and agent core
  */
@@ -5,10 +12,10 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import { CLI, LLMResponse, LLMTool, LLMMessage, LLMToolCall, LLMChunk } from '../cliIntegration';
-import { TerminalManager } from './TerminalManager';
-import { AgentSettingsManager } from './AgentSettings';
-import { applyEditsToContent, EditOperation, formatEditFailure } from './ApplyEditsTool';
+import {CLI, LLMChunk, LLMMessage, LLMResponse, LLMTool, LLMToolCall} from '../cliIntegration';
+import {TerminalManager} from './TerminalManager';
+import {AgentSettingsManager} from './AgentSettings';
+import {applyEditsToContent, EditOperation, formatEditFailure} from './ApplyEditsTool';
 
 export interface ContextProfile {
   eager: { currentFile?: boolean; projectMetadata?: boolean; gitStatus?: boolean; gitDiff?: boolean; relatedFiles?: boolean; directoryStructure?: boolean };
@@ -118,6 +125,11 @@ export class AgentBridge {
   private _lastSearchPattern: string | null = null; // Track last search pattern to prevent loops
   private _lastSearchFiles: string[] = [];
   private _lastSearchIteration: number = 0;
+  
+  // MODERN EDIT PIPELINE: File snapshots for reverts
+  private _fileSnapshots: Map<string, string> = new Map();
+  private _waitingForConfirmation: boolean = false;
+  private _pendingEdit: { path: string; content: string; edits?: any[] } | null = null;
 
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000;
   private static readonly MAX_LIST_FILES_RESULTS = 100;
@@ -405,6 +417,36 @@ export class AgentBridge {
             required: ['name']
           }
         }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'revert_file',
+          description: 'Revert a file to its original state before edits were made. Use this to undo changes that caused build failures.',
+          parameters: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: 'File path relative to workspace root to revert' }
+            },
+            required: ['path']
+          }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'revert_all',
+          description: 'Revert ALL modified files to their original state. Use this to undo all changes in the current session.',
+          parameters: { type: 'object', properties: {}, required: [] }
+        }
+      },
+      {
+        type: 'function',
+        function: {
+          name: 'list_snapshots',
+          description: 'List all files that have been modified and can be reverted.',
+          parameters: { type: 'object', properties: {}, required: [] }
+        }
       }
     ];
 
@@ -507,9 +549,23 @@ export class AgentBridge {
     let maxIterations = this.config.iterationSettings.maxIterations;
     if (typeof maxIterations !== 'number' || maxIterations < 0 || maxIterations > 100) maxIterations = 50;
     
+    // Reset all state for a fresh conversation
+    this._pendingFixes = [];
+    this._buildFailureCount = 0;
+    this._autoReadFiles.clear();
+    this._consecutivePlans = 0;
+    this._consecutiveSuccessfulEdits = 0;
+    this._fixMode = false;
+    this._failedEditAttempts = 0;
+    this._lastBuildErrors = '';
+    this._serverJustStarted = null;
+    this._lastSearchPattern = null;
+    this._lastSearchFiles = [];
+    this._lastSearchIteration = 0;
+    this._autoNudge = null;
+
     const toolCalls: ToolCall[] = [];
     const history: ToolCallHistory[] = [];
-    this._autoReadFiles.clear();
 
     let iteration = 0;
     
@@ -857,16 +913,31 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         
         case 'write_file': {
           const filePath = this.resolvePath(toolCall.args.path);
-          await this.cli.writeFile(filePath, toolCall.args.content);
+          const content = toolCall.args.content;
+          
+          // MODERN EDIT PIPELINE: Snapshot before edit
+          if (!this._fileSnapshots.has(filePath)) {
+            try {
+              const original = await this.cli.readFile(filePath);
+              this._fileSnapshots.set(filePath, original);
+              this.log(`$(save) Snapshot saved: ${filePath} (${original.length} chars)`);
+            } catch {
+              // New file - no snapshot needed
+              this.log(`$(file) New file: ${filePath}`);
+            }
+          }
+          
+          await this.cli.writeFile(filePath, content);
           this._failedEditAttempts = 0;
           this._consecutiveSuccessfulEdits++;
+          
           if (this._pendingFixes && this._pendingFixes.length > 0) {
             this._autoNudge = `Wrote ${filePath}. ${this._pendingFixes.length} fix(es) remaining. Next: ${this._pendingFixes[0]}`;
           } else {
             this._fixMode = false;
             this._autoNudge = `Fix applied to ${filePath}. Re-run build: .\\gradlew :app:server:compileKotlin`;
           }
-          return { result: `Successfully wrote ${toolCall.args.content.length} characters to ${filePath}` };
+          return { result: `Successfully wrote ${content.length} characters to ${filePath}` };
         }
         
         case 'apply_edits': {
@@ -875,6 +946,17 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           
           if (edits.length > AgentBridge.MAX_APPLY_EDITS) {
             return { result: '', error: `Too many edits (${edits.length}). Maximum ${AgentBridge.MAX_APPLY_EDITS} edits per call. For large changes, use write_file to replace the entire file instead.` };
+          }
+          
+          // MODERN EDIT PIPELINE: Snapshot before edit
+          if (!this._fileSnapshots.has(filePath)) {
+            try {
+              const original = await this.cli.readFile(filePath);
+              this._fileSnapshots.set(filePath, original);
+              this.log(`📸 Snapshot saved: ${filePath} (${original.length} chars)`);
+            } catch {
+              this.log(`📄 Reading file for edits: ${filePath}`);
+            }
           }
           
           const currentContent = await this.cli.readFile(filePath);
@@ -968,7 +1050,17 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           const filePath = toolCall.args.path || '';
           const flag = target === 'staged' ? '--staged' : '';
           const result = await this.cli.runCommand(`git diff ${flag} ${filePath}`);
-          return { result: result.stdout || 'No differences.' };
+          const diffOutput = result.stdout || 'No differences.';
+          
+          // If there are actual changes, format as diff card HTML
+          if (diffOutput !== 'No differences.' && diffOutput.trim()) {
+            // Return diff output with marker for webview to detect
+            return { 
+              result: `DIFF_CARD_START\n${diffOutput}\nDIFF_CARD_END`,
+              error: undefined
+            };
+          }
+          return { result: diffOutput };
         }
         
         case 'git_log': {
@@ -1034,8 +1126,11 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           this._lastBuildErrors = errors;
           this._buildFailureCount++;
           this._consecutiveSuccessfulEdits = 0;
-          this._fixMode = true;
           this._failedEditAttempts = 0;
+          
+          // IMPORTANT: Do NOT set _fixMode = true here. The LLM needs all tools
+          // (including run_build and run_terminal) to diagnose and fix the issue.
+          // _fixMode should only be set by the plan-only detection logic.
           
           const fileMatch = errors.match(/FILES TO READ AND FIX:\s*\n([\s\S]*?)(?:\n\n|$)/);
           if (fileMatch) {
@@ -1084,7 +1179,6 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
               this._lastBuildErrors = errors;
               this._buildFailureCount++;
               this._consecutiveSuccessfulEdits = 0;
-              this._fixMode = true;
               this._failedEditAttempts = 0;
               const fileMatch = errors.match(/FILES TO READ AND FIX:\s*\n([\s\S]*?)(?:\n\n|$)/);
               if (fileMatch) {
@@ -1108,11 +1202,21 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
             const terminalName = this.generateTerminalName(command);
             const result = await this.terminalManager.runInTerminal(terminalName, command, workingDir, true);
             
+            // Server commands capture output to detect build failures.
+            // If the build failed, return the errors to the LLM so it can fix them.
+            // IMPORTANT: Do NOT set _fixMode here - the LLM needs all tools (including
+            // run_build and run_terminal) to diagnose and fix the issue.
             this._serverJustStarted = terminalName;
+            
+            if (result.includes('❌') || result.includes('BUILD FAILED') || result.includes('FAILED')) {
+              this.log(`Server build failed - returning errors to LLM without activating fixMode`);
+              return { result };
+            }
+            
             (this as any)._pendingMessages = (this as any)._pendingMessages || [];
             (this as any)._pendingMessages.push({ 
               role: 'user', 
-              content: `Server starting in terminal "${terminalName}". **WAIT 20+ seconds** before checking terminal_status. Then use terminal_status to verify. If you see BUILD FAILED, run: .\\gradlew :app:server:compileKotlin to see errors.` 
+              content: `Server started in terminal "${terminalName}". It's running in background with auto-restart. You can check status later with terminal_status.` 
             });
             return { result };
           } else {
@@ -1141,6 +1245,45 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           const status = this.terminalManager.getTerminalStatus(name);
           if (!status) return { result: `Terminal "${name}" is not running.` };
           return { result: `Terminal "${name}" running. Auto-restart: ${status.autoRestart ? 'enabled' : 'disabled'}.` };
+        }
+        
+        // MODERN EDIT PIPELINE: Revert tools
+        case 'revert_file': {
+          const filePath = this.resolvePath(toolCall.args.path);
+          const original = this._fileSnapshots.get(filePath);
+          
+          if (!original) {
+            return { result: '', error: `No snapshot available for ${toolCall.args.path}. It may not have been edited in this session.` };
+          }
+          
+          await this.cli.writeFile(filePath, original);
+          this._fileSnapshots.delete(filePath);
+          this.log(`🔄 Reverted: ${filePath}`);
+          
+          return { result: `Reverted ${toolCall.args.path} to original state (${original.length} chars).` };
+        }
+        
+        case 'revert_all': {
+          let count = 0;
+          for (const [filePath, original] of this._fileSnapshots) {
+            await this.cli.writeFile(filePath, original);
+            count++;
+          }
+          const paths = Array.from(this._fileSnapshots.keys());
+          this._fileSnapshots.clear();
+          this.log(`🔄 Reverted all: ${count} files`);
+          
+          return { result: count > 0 
+            ? `Reverted ${count} file(s) to original state:\n${paths.map(p => `  - ${p}`).join('\n')}`
+            : 'No files were modified in this session.' };
+        }
+        
+        case 'list_snapshots': {
+          if (this._fileSnapshots.size === 0) {
+            return { result: 'No files have been modified in this session.' };
+          }
+          const files = Array.from(this._fileSnapshots.keys());
+          return { result: `Modified files (${files.length}):\n${files.map(f => `  - ${f}`).join('\n')}` };
         }
         
         default: throw new Error(`Unknown tool: ${toolCall.toolName}`);
@@ -1261,7 +1404,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
     const extensions = ['', '.ts', '.tsx', '.js', '.jsx', '.kt', '.java'];
     for (const ext of extensions) {
       const candidate = resolvedPath + ext;
-      try { fs.accessSync(candidate); return candidate; } catch { continue; }
+      try { fs.accessSync(candidate); return candidate; } catch {  }
     }
     return null;
   }

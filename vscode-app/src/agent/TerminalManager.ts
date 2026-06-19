@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * TerminalManager - Manages persistent VS Code terminals for long-running processes
  * 
@@ -15,9 +22,7 @@
  */
 
 import * as vscode from 'vscode';
-import * as path from 'path';
-import { exec } from 'child_process';
-import * as fs from 'fs';
+import {exec} from 'child_process';
 
 /**
  * Managed terminal instance
@@ -134,18 +139,54 @@ export class TerminalManager {
         
         this.terminals.set(name, managed);
         
-        // For build commands, capture initial output and check for errors
+        // For build commands: capture output and check for errors
         if (this.isBuildCommand(command)) {
-            this.log(`Build command detected - capturing output for 30 seconds`);
-            const output = await this.captureTerminalOutput(terminal, 30000);
+            this.log(`Build command detected - capturing output for 15 seconds`);
+            const output = await this.captureTerminalOutput(terminal, 15000);
             
-            if (output.includes('BUILD FAILED') || output.includes('FAILED') || output.includes('error:')) {
+            // Build: check for all failure indicators
+            const hasFailure = 
+                output.includes('BUILD FAILED') || 
+                output.includes('FAILED') || 
+                output.includes('exit value') || 
+                output.includes('error:') ||
+                output.includes('e: file:///') ||
+                output.includes('Unresolved reference') ||
+                output.includes('is not abstract') ||
+                output.includes('must implement') ||
+                output.includes('cannot find symbol');
+            
+            if (hasFailure) {
                 const errors = this.extractBuildErrors(output);
                 return `❌ BUILD FAILED\n\nErrors:\n${errors}\n\nFull output:\n${output.slice(-1000)}`;
             }
             
+            return `✅ Build successful\n\n${output.slice(-500)}`;
+        }
+        
+        // For SERVER commands: capture output to detect build failures, but don't
+        // let the timeout kill the server. We capture for a limited time to check
+        // for compilation errors, then return the result.
+        if (this.isServerCommand(command)) {
+            this.log(`Server command detected - capturing output for 15 seconds to check for build errors`);
+            const output = await this.captureTerminalOutput(terminal, 15000);
+            
+            // Check for build failures in the captured output
+            const hasFailure = 
+                output.includes('BUILD FAILED') || 
+                output.includes('FAILED') || 
+                output.includes('error:') ||
+                output.includes('e: file:///') ||
+                output.includes('Unresolved reference');
+            
+            if (hasFailure) {
+                const errors = this.extractBuildErrors(output);
+                this.log(`Server build failed - returning errors to agent`);
+                return `❌ BUILD FAILED\n\nErrors:\n${errors}\n\nFull output:\n${output.slice(-1000)}`;
+            }
+            
             const restartInfo = restartOnChanges ? ' (auto-restart on file changes)' : '';
-            return `✅ Build successful${restartInfo}\n\n${output.slice(-500)}`;
+            return `✅ Server starting in terminal "i2-Vision: ${name}"${restartInfo}\n\nServer is starting up. Use terminal_status to check status after 15-30 seconds.`;
         }
         
         const restartInfo = restartOnChanges ? ' (auto-restart on file changes)' : '';
@@ -161,6 +202,13 @@ export class TerminalManager {
             return false;
         }
         return /gradlew|gradle|mvn|mvnw|npm run build|make|tsc|yarn build/i.test(command);
+    }
+
+    /**
+     * Check if command is a server/run command that should be monitored for startup failures
+     */
+    private isServerCommand(command: string): boolean {
+        return /\b(gradlew.*:run|run|serve|server|start)\b/i.test(command) && /gradlew|gradle/i.test(command);
     }
 
     /**
@@ -218,13 +266,24 @@ export class TerminalManager {
                 if (!timedOut) {
                     this.log(`Command completed with exit code: ${code}`);
                     resolve(stdout + stderr);
+                } else {
+                    // If timed out, resolve with whatever output we captured
+                    // This prevents the promise from hanging forever
+                    this.log(`Command timed out - resolving with captured output`);
+                    resolve(stdout + stderr);
                 }
             });
             
             child.on('error', (err) => {
                 clearTimeout(timeout);
-                this.log(`Command execution error: ${err.message}`);
-                resolve(`Error executing command: ${err.message}`);
+                if (!timedOut) {
+                    this.log(`Command execution error: ${err.message}`);
+                    resolve(`Error executing command: ${err.message}`);
+                } else {
+                    // If already timed out, resolve with captured output
+                    this.log(`Command error after timeout: ${err.message}`);
+                    resolve(stdout + stderr);
+                }
             });
         });
     }

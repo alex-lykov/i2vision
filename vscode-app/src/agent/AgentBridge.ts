@@ -61,6 +61,15 @@ export interface ToolCall {
   toolCallId?: string;
 }
 
+export interface InteractionRecord {
+  timestamp: number;
+  userInput: string;
+  agentResponse: string;
+  toolCalls: ToolCall[];
+  iterations: number;
+  durationMs: number;
+}
+
 export interface ProgressEvent {
   type: 'tool_start' | 'tool_complete' | 'iteration_complete' | 'thinking' | 'tool_output';
   iteration: number;
@@ -106,7 +115,9 @@ export class AgentBridge {
   private _failedEditAttempts: number = 0;
   private _lastBuildErrors: string = '';
   private _serverJustStarted: string | null = null;
-  private _lastSearchResults: { pattern: string; files: string[]; iteration: number } | null = null; // Track search to prevent loops
+  private _lastSearchPattern: string | null = null; // Track last search pattern to prevent loops
+  private _lastSearchFiles: string[] = [];
+  private _lastSearchIteration: number = 0;
 
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000;
   private static readonly MAX_LIST_FILES_RESULTS = 100;
@@ -899,21 +910,19 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           const searchPath = toolCall.args.path ? this.resolvePath(toolCall.args.path) : undefined;
           
           // Check for search loop - same pattern searched multiple times
-          if (this._lastSearchResults && this._lastSearchResults.pattern === pattern) {
-            const iterationsSinceLastSearch = iteration - this._lastSearchResults.iteration;
-            if (iterationsSinceLastSearch < 3) {
-              this.log(`SEARCH LOOP: Pattern "${pattern}" already searched at iteration ${this._lastSearchResults.iteration} (${this._lastSearchResults.files.length} results). Found ${this._lastSearchResults.files.length} files: ${this._lastSearchResults.files.slice(0, 3).join(', ')}...`);
-              return {
-                result: `⚠️ You already searched for "${pattern}" at iteration ${this._lastSearchResults.iteration} and found ${this._lastSearchResults.files.length} files. Instead of searching again, READ one of these files: ${this._lastSearchResults.files.slice(0, 3).join(', ')}`,
-                error: 'SEARCH_LOOP_DETECTED'
-              };
-            }
+          if (this._lastSearchPattern === pattern && this._lastSearchFiles.length > 0) {
+            this.log(`SEARCH LOOP: Pattern "${pattern}" already searched. Found ${this._lastSearchFiles.length} files: ${this._lastSearchFiles.slice(0, 3).join(', ')}...`);
+            return {
+              result: `⚠️ You already searched for "${pattern}" and found ${this._lastSearchFiles.length} files. Instead of searching again, READ one of these files: ${this._lastSearchFiles.slice(0, 3).join(', ')}`,
+              error: 'SEARCH_LOOP_DETECTED'
+            };
           }
           
           const results = await this.cli.searchFiles(pattern, searchPath);
           
           // Track this search for loop detection
-          this._lastSearchResults = { pattern, files: results, iteration };
+          this._lastSearchPattern = pattern;
+          this._lastSearchFiles = results;
           
           if (results.length === 0) {
             return { result: `No files found matching pattern "${pattern}". Try a different search term or use list_directory to explore.`, error: 'NO_RESULTS' };

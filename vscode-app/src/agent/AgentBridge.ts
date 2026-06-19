@@ -134,6 +134,10 @@ export class AgentBridge {
   
   // File snapshots for revert capability
   private _fileSnapshots: Map<string, string> = new Map();
+  
+  // Auto-inject build context tracking (per-workspace)
+  private _buildFileReadAttempts = new Map<string, number>();
+  private _hasReadBuildFiles = new Map<string, boolean>();
 
   // Legacy state tracking (migrated to state machine context)
   // These are kept for backward compatibility during transition
@@ -734,6 +738,14 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
 
       if (options.streaming) yield { type: 'thinking', message: `Processing...`, timestamp: Date.now() };
 
+      // INJECT PENDING MESSAGES (auto-context, auto-fix, etc.)
+      const pendingMessages = (this as any)._pendingMessages as LLMMessage[] | undefined;
+      if (pendingMessages && pendingMessages.length > 0) {
+        messages.push(...pendingMessages);
+        this.log(`Injected ${pendingMessages.length} pending message(s) into conversation`);
+        (this as any)._pendingMessages = []; // Clear after injection
+      }
+
       let responseText = '';
       let streamingToolCalls: LLMToolCall[] = [];
       let textBuffer: string[] = [];
@@ -1256,6 +1268,35 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           let command = toolCall.args.command;
           const timeout = 120000;
           
+          // AUTO-INJECT BUILD CONTEXT: First build/run attempt - read build file
+          const workspaceKey = this.getWorkspaceKey();
+          if (!this._hasReadBuildFiles.get(workspaceKey) && (this._buildFileReadAttempts.get(workspaceKey) || 0) < 2) {
+            const attempts = (this._buildFileReadAttempts.get(workspaceKey) || 0) + 1;
+            this._buildFileReadAttempts.set(workspaceKey, attempts);
+            
+            const buildFile = await this.findBuildFile();
+            if (buildFile) {
+              try {
+                const content = await this.cli.readFile(buildFile);
+                const extractedInfo = this.extractBuildTasks(buildFile, content);
+                const contextMessage = `[AUTO-CONTEXT] Build configuration from ${buildFile}:\n${extractedInfo}`;
+                
+                // Inject context into messages for next LLM call
+                (this as any)._pendingMessages = (this as any)._pendingMessages || [];
+                (this as any)._pendingMessages.push({ 
+                  role: 'tool', 
+                  content: contextMessage,
+                  tool_call_id: `auto_context_${Date.now()}`
+                });
+                
+                this._hasReadBuildFiles.set(workspaceKey, true);
+                this.log(`Auto-injected build context from ${buildFile}`);
+              } catch (e: any) {
+                this.log(`Failed to read build file: ${e.message}`);
+              }
+            }
+          }
+          
           if (process.platform === 'win32' && /^\.\//i.test(command)) {
             command = command.replace(/^\.\//, '.\\');
             this.log(`  Windows PowerShell fix: ./ -> .\\`);
@@ -1310,6 +1351,35 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         case 'run_terminal': {
           let command = toolCall.args.command;
           const workingDir = toolCall.args.workingDir ? this.resolvePath(toolCall.args.workingDir) : this.workspaceRoot;
+          
+          // AUTO-INJECT BUILD CONTEXT: First build/run attempt - read build file
+          const workspaceKey = this.getWorkspaceKey();
+          if (!this._hasReadBuildFiles.get(workspaceKey) && (this._buildFileReadAttempts.get(workspaceKey) || 0) < 2) {
+            const attempts = (this._buildFileReadAttempts.get(workspaceKey) || 0) + 1;
+            this._buildFileReadAttempts.set(workspaceKey, attempts);
+            
+            const buildFile = await this.findBuildFile();
+            if (buildFile) {
+              try {
+                const content = await this.cli.readFile(buildFile);
+                const extractedInfo = this.extractBuildTasks(buildFile, content);
+                const contextMessage = `[AUTO-CONTEXT] Build configuration from ${buildFile}:\n${extractedInfo}`;
+                
+                // Inject context into messages for next LLM call
+                (this as any)._pendingMessages = (this as any)._pendingMessages || [];
+                (this as any)._pendingMessages.push({ 
+                  role: 'tool', 
+                  content: contextMessage,
+                  tool_call_id: `auto_context_${Date.now()}`
+                });
+                
+                this._hasReadBuildFiles.set(workspaceKey, true);
+                this.log(`Auto-injected build context from ${buildFile}`);
+              } catch (e: any) {
+                this.log(`Failed to read build file: ${e.message}`);
+              }
+            }
+          }
           
           if (/^:/.test(command)) {
             const gradleWrapper = process.platform === 'win32' ? '.\\gradlew' : './gradlew';
@@ -1556,6 +1626,85 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
 
   private generateTerminalName(command: string): string { return this.terminalManager.generateTerminalName(command); }
   private resolvePath(relativePath: string): string { return path.isAbsolute(relativePath) ? relativePath : path.join(this.workspaceRoot, relativePath); }
+  
+  /** Get workspace key for per-workspace tracking */
+  private getWorkspaceKey(): string {
+    return this.workspaceRoot || 'default';
+  }
+  
+  /** Find build file in workspace (root first, then common subdirs) */
+  private async findBuildFile(): Promise<string | null> {
+    const candidates = [
+      'build.gradle.kts',
+      'build.gradle',
+      'pom.xml',
+      'package.json',
+      'Makefile',
+      'CMakeLists.txt',
+      // Common subdirectories
+      'backend/build.gradle.kts',
+      'server/build.gradle.kts',
+      'app/build.gradle.kts',
+    ];
+    
+    for (const candidate of candidates) {
+      const candidatePath = this.resolvePath(candidate);
+      try {
+        await fs.promises.access(candidatePath);
+        return candidate;
+      } catch {
+        // File doesn't exist, try next
+      }
+    }
+    return null;
+  }
+  
+  /** Extract relevant task information from build file */
+  private extractBuildTasks(buildFile: string, content: string): string {
+    const fileExt = path.extname(buildFile).toLowerCase();
+    
+    // For Gradle Kotlin DSL
+    if (fileExt === '.kts' || fileExt === '.gradle') {
+      const taskMatches = content.match(/task\s*\(['"`]?(\w+)['"`]?\)/g);
+      if (taskMatches && taskMatches.length > 0) {
+        const tasks = taskMatches.map(m => {
+          const match = m.match(/task\s*\(['"`]?(\w+)['"`]?\)/);
+          return match ? match[1] : '';
+        }).filter(t => t);
+        return `Available Gradle tasks: ${tasks.join(', ')}`;
+      }
+      
+      // Look for run tasks
+      const runTaskMatch = content.match(/:([\w:-]+):run/);
+      if (runTaskMatch) {
+        return `Server run task found: gradlew :${runTaskMatch[1]}:run`;
+      }
+    }
+    
+    // For Maven
+    if (fileExt === '.xml') {
+      const pluginMatch = content.match(/<artifactId>(maven-[\w-]+|spring-boot-maven-plugin)<\/artifactId>/);
+      if (pluginMatch) {
+        return `Build system: Maven with ${pluginMatch[1]}`;
+      }
+    }
+    
+    // For npm
+    if (fileExt === '.json') {
+      try {
+        const pkg = JSON.parse(content);
+        if (pkg.scripts) {
+          const scripts = Object.keys(pkg.scripts);
+          return `Available npm scripts: ${scripts.join(', ')}`;
+        }
+      } catch {
+        // Invalid JSON, return raw
+      }
+    }
+    
+    // Default: return first 2000 chars
+    return content.substring(0, 2000);
+  }
 
   private resolveImportPath(importPath: string, currentFile: string): string | null {
     const match = importPath.match(/['"](.+?)['"]/);

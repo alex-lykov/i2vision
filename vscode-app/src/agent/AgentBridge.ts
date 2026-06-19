@@ -105,11 +105,13 @@ export class AgentBridge {
   private _fixMode: boolean = false;
   private _failedEditAttempts: number = 0;
   private _lastBuildErrors: string = '';
-  private _serverJustStarted: string | null = null; // Track recently started server terminal
+  private _serverJustStarted: string | null = null;
+  private _lastSearchResults: { pattern: string; files: string[]; iteration: number } | null = null; // Track search to prevent loops
 
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000;
   private static readonly MAX_LIST_FILES_RESULTS = 100;
   private static readonly MAX_APPLY_EDITS = 50;
+  private static readonly MAX_SEARCH_ITERATIONS = 3; // Max iterations searching for same pattern
 
   private longRunningPatterns: string[] = [
     'run', 'serve', 'dev', 'start', 'watch', 'nodemon', 'vite', 'next dev',
@@ -267,7 +269,7 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'search_files',
-          description: 'Search for files matching a regex pattern',
+          description: 'Search for files matching a regex pattern. Returns file paths and matching lines. TIP: If you find a file, read it immediately instead of searching more.',
           parameters: {
             type: 'object',
             properties: {
@@ -317,17 +319,18 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'run_build',
-          description: 'Run a build command. FOR COMPILATION: use compileKotlin. FOR RUNNING SERVER: use run_terminal with :app:server:run. AVOID "build" - it runs ALL tests (slow, often fails).',
+          description: 'Run a build command. FOR COMPILATION: use compileKotlin (source only, NO tests). FOR TESTS: use test. NEVER use "build" - it runs ALL tests and is slow.',
           parameters: {
             type: 'object',
             properties: {
               command: {
                 type: 'string',
-                description: 'Build command. FOR COMPILATION: ./gradlew compileKotlin. FOR TESTS: ./gradlew test. AVOID ./gradlew build (runs all tests).',
+                description: 'Build command. FOR COMPILATION (source only): ./gradlew compileKotlin. FOR TESTS: ./gradlew test. NEVER use ./gradlew build (runs all tests, slow).',
                 enum: [
                   './gradlew compileKotlin',
                   './gradlew :app:server:compileKotlin',
                   './gradlew :app:shared:compileKotlin',
+                  './gradlew :app:client:compileKotlin',
                   './gradlew test',
                   './gradlew :app:server:test',
                   'gradlew.bat compileKotlin',
@@ -678,7 +681,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
             const content = lastBuildError.content as string;
             const fileMatch = content.match(/FILES TO READ AND FIX:[\s\S]*?(?:COMPILER ERRORS|$)/);
             if (fileMatch) {
-              const files = fileMatch[0].split('\n').filter(line => line.includes('.kt') || line.includes('.java')).map(line => line.replace(/^\s*-\s*/, '').trim());
+              const files = fileMatch[0].split('\n').filter(line => line.includes('.kt:') || line.includes('.java')).map(line => line.replace(/^\s*-\s*/, '').trim());
               nudgeMessage += `\n\nBuild failed. Use apply_edits to fix:\n${files.map(f => `- ${f}`).join('\n')}`;
             }
           }
@@ -894,9 +897,34 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         case 'search_files': {
           const pattern = toolCall.args.pattern;
           const searchPath = toolCall.args.path ? this.resolvePath(toolCall.args.path) : undefined;
+          
+          // Check for search loop - same pattern searched multiple times
+          if (this._lastSearchResults && this._lastSearchResults.pattern === pattern) {
+            const iterationsSinceLastSearch = iteration - this._lastSearchResults.iteration;
+            if (iterationsSinceLastSearch < 3) {
+              this.log(`SEARCH LOOP: Pattern "${pattern}" already searched at iteration ${this._lastSearchResults.iteration} (${this._lastSearchResults.files.length} results). Found ${this._lastSearchResults.files.length} files: ${this._lastSearchResults.files.slice(0, 3).join(', ')}...`);
+              return {
+                result: `⚠️ You already searched for "${pattern}" at iteration ${this._lastSearchResults.iteration} and found ${this._lastSearchResults.files.length} files. Instead of searching again, READ one of these files: ${this._lastSearchResults.files.slice(0, 3).join(', ')}`,
+                error: 'SEARCH_LOOP_DETECTED'
+              };
+            }
+          }
+          
           const results = await this.cli.searchFiles(pattern, searchPath);
-          if (results.length === 0) return { result: 'No files found matching pattern.' };
-          return { result: results.join('\n') };
+          
+          // Track this search for loop detection
+          this._lastSearchResults = { pattern, files: results, iteration };
+          
+          if (results.length === 0) {
+            return { result: `No files found matching pattern "${pattern}". Try a different search term or use list_directory to explore.`, error: 'NO_RESULTS' };
+          }
+          
+          // If many results found, suggest reading instead of more searching
+          if (results.length > 10) {
+            return { result: `Found ${results.length} files matching "${pattern}". Here are the first 10:\n${results.slice(0, 10).join('\n')}\n\nTIP: You found many results. Instead of searching more, READ one of these files to understand the code.`, error: 'MANY_RESULTS' };
+          }
+          
+          return { result: `Found ${results.length} file(s):\n${results.join('\n')}\n\nTIP: You found the files! Now READ one of them instead of searching more.` };
         }
         
         case 'get_file_context': {
@@ -1049,9 +1077,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           if (classification === 'long') {
             const terminalName = this.generateTerminalName(command);
             const result = await this.terminalManager.runInTerminal(terminalName, command, workingDir, true);
-            // Track that server was just started - don't check status immediately
             this._serverJustStarted = terminalName;
-            // Inject guidance about waiting
             (this as any)._pendingMessages = (this as any)._pendingMessages || [];
             (this as any)._pendingMessages.push({ 
               role: 'user', 
@@ -1075,7 +1101,6 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         
         case 'terminal_status': {
           const name = toolCall.args.name;
-          // Check if this is checking a server we just started
           if (this._serverJustStarted && name.includes(this._serverJustStarted)) {
             return { 
               result: `⚠️ You're checking terminal_status too soon! The server was just started and needs 15-30 seconds to initialize. Wait before checking again. Terminal "${name}" may show as "not running" during startup - this is normal.`,
@@ -1218,11 +1243,13 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
     prompt += '\n\n--- RULES ---';
     prompt += '\n• ALWAYS use tool calls. Never describe plans.';
     prompt += '\n• FOR "run backend" or "run server": use run_terminal with gradlew :app:server:run (NOT run_build)';
-    prompt += '\n• FOR compilation check: use run_build with compileKotlin (NOT build - that runs ALL tests)';
+    prompt += '\n• FOR compilation: use run_build with compileKotlin (source code ONLY, NO tests). NEVER use "build" - it runs ALL tests.';
     prompt += '\n• apply_edits: MAX 50 edits per call. For large changes, use write_file instead.';
     prompt += '\n• When build fails: READ failing files, FIX code, THEN re-run compileKotlin.';
     prompt += '\n• NEVER re-run build without fixing first.';
     prompt += '\n• SERVER STARTUP: After run_terminal starts a server, WAIT 15-30 seconds before checking terminal_status. Servers take time to start!';
+    prompt += '\n• SEARCH TIP: If search_files finds files, READ them immediately. Do NOT search again with different patterns.';
+    prompt += '\n• FOCUS: Fix source files (src/main), NOT test files (src/test), unless user specifically asks about tests.';
     prompt += '\n• Paths: relative to workspace root, use forward slashes (/).';
     return prompt;
   }

@@ -1,8 +1,14 @@
-﻿/**
+/**
  * AgentTabManager - Manages agent tabs in the VSCode webview
  * 
  * Implements unified timeline UX: thinking, tool execution, and streaming text
  * all appear inline in one chronological stream - not separate sections.
+ * 
+ * HISTORY MANAGEMENT:
+ * - Auto-saves conversations after each assistant response (if enabled)
+ * - Periodic auto-save every 5 minutes during active sessions
+ * - Enforces conversation history limit with auto-pruning
+ * - Saves on tab close as fallback
  */
 
 import * as vscode from 'vscode';
@@ -26,6 +32,7 @@ interface AgentTabState {
   isActive: boolean;
   createdAt: number;
   lastActivityAt: number;
+  lastAutoSaveAt?: number; // Track last auto-save time
 }
 
 /**
@@ -43,6 +50,10 @@ export class AgentTabManager {
   private currentAgentBridge: AgentBridge | null = null;
   private isProcessing: boolean = false;
   private cancelTokenSource: vscode.CancellationTokenSource | null = null;
+  
+  // AUTO-SAVE: Periodic save timer
+  private autoSaveTimer: NodeJS.Timeout | null = null;
+  private readonly AUTO_SAVE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
   constructor(
     context: vscode.ExtensionContext,
@@ -67,7 +78,118 @@ export class AgentTabManager {
    */
   async initialize(): Promise<void> {
     await this.agentProvider.initialize();
+    this.startAutoSaveTimer();
     this.log('AgentTabManager initialization complete');
+  }
+
+  /**
+   * Start periodic auto-save timer
+   */
+  private startAutoSaveTimer(): void {
+    if (this.autoSaveTimer) {
+      clearInterval(this.autoSaveTimer);
+    }
+    
+    this.autoSaveTimer = setInterval(() => {
+      this.autoSaveAllTabs();
+    }, this.AUTO_SAVE_INTERVAL_MS);
+    
+    this.log(`Auto-save timer started (interval: ${this.AUTO_SAVE_INTERVAL_MS / 1000}s)`);
+  }
+
+  /**
+   * Stop periodic auto-save timer
+   */
+  private stopAutoSaveTimer(): void {
+    if (this.autoSaveTimer) {
+      clearInterval(this.autoSaveTimer);
+      this.autoSaveTimer = null;
+      this.log('Auto-save timer stopped');
+    }
+  }
+
+  /**
+   * Auto-save all active tabs (called by periodic timer)
+   */
+  private async autoSaveAllTabs(): Promise<void> {
+    const settings = this.settingsManager.getSettings();
+    if (!settings.agent.autoSaveConversation) {
+      return; // Auto-save disabled
+    }
+    
+    const now = Date.now();
+    const savePromises: Promise<void>[] = [];
+    
+    for (const [tabId, tabState] of this.tabs.entries()) {
+      // Only save if there's been activity since last save
+      const shouldSave = !tabState.lastAutoSaveAt || 
+                         (tabState.lastActivityAt > tabState.lastAutoSaveAt) ||
+                         (now - tabState.createdAt > 10 * 60 * 1000); // Or if session > 10 min
+      
+      if (shouldSave && tabState.history.length > 0) {
+        savePromises.push(this.saveTabQuietly(tabId, tabState));
+      }
+    }
+    
+    if (savePromises.length > 0) {
+      await Promise.all(savePromises);
+      this.log(`Auto-saved ${savePromises.length} tab(s)`);
+    }
+  }
+
+  /**
+   * Save a tab's conversation without throwing errors (for auto-save)
+   */
+  private async saveTabQuietly(tabId: string, tabState: AgentTabState): Promise<void> {
+    if (!this.historyManager) return;
+    
+    try {
+      await this.historyManager.save(tabId, tabState.history, tabState.layer);
+      tabState.lastAutoSaveAt = Date.now();
+      this.log(`Auto-saved tab ${tabId} (${tabState.history.length} messages)`);
+    } catch (error: any) {
+      // Don't show error to user for background auto-save
+      this.log(`Auto-save failed for ${tabId}: ${error.message}`);
+    }
+  }
+
+  /**
+   * Enforce conversation history limit by pruning oldest conversations
+   */
+  private async enforceHistoryLimit(): Promise<void> {
+    if (!this.historyManager) return;
+    
+    const settings = this.settingsManager.getSettings();
+    const limit = settings.agent.conversationHistoryLimit;
+    
+    try {
+      const conversations = await this.historyManager.list();
+      
+      if (conversations.length <= limit) {
+        return; // Within limit
+      }
+      
+      // Get metadata for all conversations to sort by date
+      const convWithMeta = await Promise.all(
+        conversations.map(async (id) => {
+          const saved = await this.historyManager!.load(id);
+          return { id, updatedAt: saved?.updatedAt || 0 };
+        })
+      );
+      
+      // Sort by last updated (oldest first)
+      convWithMeta.sort((a, b) => a.updatedAt - b.updatedAt);
+      
+      // Delete oldest conversations until we're at the limit
+      const toDelete = convWithMeta.slice(0, convWithMeta.length - limit);
+      const deletePromises = toDelete.map(c => this.historyManager!.delete(c.id));
+      
+      await Promise.all(deletePromises);
+      
+      this.log(`Pruned ${toDelete.length} old conversation(s) (limit: ${limit})`);
+    } catch (error: any) {
+      this.log(`Failed to enforce history limit: ${error.message}`);
+    }
   }
 
   /**
@@ -98,7 +220,8 @@ export class AgentTabManager {
       accumulatedToolCalls: [],
       isActive: true,
       createdAt: Date.now(),
-      lastActivityAt: Date.now()
+      lastActivityAt: Date.now(),
+      lastAutoSaveAt: undefined
     };
     
     this.tabs.set(tabId, tabState);
@@ -154,6 +277,7 @@ export class AgentTabManager {
     // Restore history
     tabState.history = saved.messages;
     tabState.lastActivityAt = saved.updatedAt;
+    tabState.lastAutoSaveAt = saved.updatedAt;
     
     this.log(`Loaded conversation with ${saved.messages.length} messages`);
     
@@ -381,6 +505,11 @@ export class AgentTabManager {
           timestamp: Date.now()
         };
         tabState.history.push(assistantMessage);
+        
+        // AUTO-SAVE: Save conversation after each assistant response (if enabled)
+        if (settings.agent.autoSaveConversation && this.historyManager) {
+          await this.saveTabQuietly(this.activeTabId!, tabState);
+        }
         
         // Finalize streaming text in timeline
         const durationMs = Date.now() - startTime;
@@ -2154,7 +2283,7 @@ export class AgentTabManager {
   async closeTab(tabId: string): Promise<void> {
     const tab = this.tabs.get(tabId);
     if (tab) {
-      // Save conversation history before closing
+      // Save conversation history before closing (final save)
       if (this.historyManager && tab.history.length > 0) {
         await this.historyManager.save(tabId, tab.history, tab.layer);
         this.log(`Saved conversation history for ${tabId} (${tab.history.length} messages)`);
@@ -2205,6 +2334,9 @@ export class AgentTabManager {
    * Dispose of the manager
    */
   async dispose(): Promise<void> {
+    // Stop auto-save timer
+    this.stopAutoSaveTimer();
+    
     if (this.webviewPanel) {
       this.webviewPanel.dispose();
     }
@@ -2227,5 +2359,8 @@ export class AgentTabManager {
     this.log('AgentTabManager disposed');
     
     await Promise.all(savePromises);
+    
+    // Enforce history limit after saving all tabs
+    await this.enforceHistoryLimit();
   }
 }

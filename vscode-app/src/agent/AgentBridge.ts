@@ -1278,7 +1278,12 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
     prompt += '\n• apply_edits: MAX 50 edits per call. For large changes, use write_file instead.';
     prompt += '\n• When build fails: READ failing files, FIX code, THEN re-run compileKotlin.';
     prompt += '\n• NEVER re-run build without fixing first.';
-    prompt += '\n• SERVER STARTUP: After run_terminal starts a server, WAIT 15-30 seconds before checking terminal_status. Servers take time to start!';
+    prompt += '\n• SERVER STARTUP WORKFLOW:';
+    prompt += '\n  1. Start server with run_terminal';
+    prompt += '\n  2. WAIT 20-30 seconds (Gradle servers take time!)';
+    prompt += '\n  3. Check terminal_status';
+    prompt += '\n  4. If terminal shows "not running" or BUILD FAILED: run .\\gradlew :app:server:compileKotlin to see errors';
+    prompt += '\n  5. Fix errors with apply_edits, then retry';
     prompt += '\n• SEARCH TIP: If search_files finds files, READ them immediately. Do NOT search again with different patterns.';
     prompt += '\n• FOCUS: Fix source files (src/main), NOT test files (src/test), unless user specifically asks about tests.';
     prompt += '\n• Paths: relative to workspace root, use forward slashes (/).';

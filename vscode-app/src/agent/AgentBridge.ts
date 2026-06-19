@@ -1107,6 +1107,20 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           if (classification === 'long') {
             const terminalName = this.generateTerminalName(command);
             const result = await this.terminalManager.runInTerminal(terminalName, command, workingDir, true);
+            
+            // Check if command failed immediately (e.g., build failure before server starts)
+            if (result.includes('BUILD FAILED') || result.includes('FAILED') || result.includes('exit value')) {
+              this._buildFailureCount++;
+              this._consecutiveSuccessfulEdits = 0;
+              this._fixMode = true;
+              const errors = this.extractCompilationErrors(result);
+              this._lastBuildErrors = errors;
+              return { 
+                result: `❌ Server failed to start (failure #${this._buildFailureCount})\n\n${errors}\n\n⚠️ DO NOT re-run. FIX errors first, then try again.`, 
+                error: 'Server startup failed' 
+              };
+            }
+            
             this._serverJustStarted = terminalName;
             (this as any)._pendingMessages = (this as any)._pendingMessages || [];
             (this as any)._pendingMessages.push({ 

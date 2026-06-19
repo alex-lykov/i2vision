@@ -7,6 +7,9 @@
 
 /**
  * AgentBridge - Bridge between VSCode extension and agent core
+ * 
+ * Integrated with AgentStateMachine for comprehensive flow control:
+ *   Intent → Plan → Constraints → Sequence → Execute → Verify → Output
  */
 
 import * as vscode from 'vscode';
@@ -16,6 +19,12 @@ import {CLI, LLMChunk, LLMMessage, LLMResponse, LLMTool, LLMToolCall} from '../c
 import {TerminalManager} from './TerminalManager';
 import {AgentSettingsManager} from './AgentSettings';
 import {applyEditsToContent, EditOperation, formatEditFailure} from './ApplyEditsTool';
+import {
+  AgentStateMachine,
+  AgentState,
+  AgentEvent,
+  StateContext,
+} from './AgentStateMachine';
 
 export interface ContextProfile {
   eager: { currentFile?: boolean; projectMetadata?: boolean; gitStatus?: boolean; gitDiff?: boolean; relatedFiles?: boolean; directoryStructure?: boolean };
@@ -78,11 +87,12 @@ export interface InteractionRecord {
 }
 
 export interface ProgressEvent {
-  type: 'tool_start' | 'tool_complete' | 'iteration_complete' | 'thinking' | 'tool_output';
+  type: 'tool_start' | 'tool_complete' | 'iteration_complete' | 'thinking' | 'tool_output' | 'state_change';
   iteration: number;
   toolCall?: ToolCall;
   message?: string;
   partialOutput?: string;
+  state?: { from: string; to: string; event: string };
 }
 
 export type ProgressCallback = (event: ProgressEvent) => void;
@@ -95,7 +105,8 @@ export type AgentChunk =
   | { type: 'text'; text: string; timestamp: number }
   | { type: 'done'; outcome: 'success' | 'error'; timestamp: number; iterations?: number; durationMs?: number; tokenUsage?: { prompt: number; completion: number; total: number } }
   | { type: 'iteration_complete'; iteration: number; timestamp: number }
-  | { type: 'error'; error: string; timestamp: number };
+  | { type: 'error'; error: string; timestamp: number }
+  | { type: 'state_change'; from: string; to: string; event: string; timestamp: number };
 
 interface ToolCallHistory { toolName: string; argsSignature: string; iteration: number; }
 interface AgentLoopOptions { streaming: boolean; onProgress?: ProgressCallback; toolCallArgs?: Map<string, Record<string, any>>; }
@@ -112,24 +123,17 @@ export class AgentBridge {
   private currentIteration: number = 1;
   private progressCallback?: ProgressCallback;
   
-  private _pendingFixes: string[] = [];
-  private _buildFailureCount: number = 0;
-  private _autoReadFiles: Set<string> = new Set();
-  private _autoNudge: string | null = null;
-  private _consecutivePlans: number = 0;
-  private _consecutiveSuccessfulEdits: number = 0;
-  private _fixMode: boolean = false;
-  private _failedEditAttempts: number = 0;
-  private _lastBuildErrors: string = '';
-  private _serverJustStarted: string | null = null;
-  private _lastSearchPattern: string | null = null; // Track last search pattern to prevent loops
-  private _lastSearchFiles: string[] = [];
-  private _lastSearchIteration: number = 0;
+  // STATE MACHINE: Single source of truth for all agent state
+  private stateMachine: AgentStateMachine = new AgentStateMachine();
   
-  // MODERN EDIT PIPELINE: File snapshots for reverts
+  // Auto-read tracking (not part of state machine - it's per-session cache)
+  private _autoReadFiles: Set<string> = new Set();
+  
+  // Auto-nudge message (generated during tool execution, consumed in next iteration)
+  private _autoNudge: string | null = null;
+  
+  // File snapshots for revert capability
   private _fileSnapshots: Map<string, string> = new Map();
-  private _waitingForConfirmation: boolean = false;
-  private _pendingEdit: { path: string; content: string; edits?: any[] } | null = null;
 
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000;
   private static readonly MAX_LIST_FILES_RESULTS = 100;
@@ -175,16 +179,30 @@ export class AgentBridge {
     }
   }
 
-  async initialize(): Promise<void> { this.isInitialized = true; }
+  async initialize(): Promise<void> { 
+    this.isInitialized = true;
+    this.stateMachine.reset();
+    this.log('AgentBridge initialized with state machine');
+  }
 
   setWorkspaceRoot(newWorkspaceRoot: string): void {
     if (newWorkspaceRoot && newWorkspaceRoot !== this.workspaceRoot) {
       this.workspaceRoot = newWorkspaceRoot;
       this.cli = new CLI(this.workspaceRoot, this.outputChannel);
+      this.stateMachine.reset();
     }
   }
 
   getConfig(): AgentConfig { return { ...this.config }; }
+
+  /** Get current state machine state for debugging/monitoring */
+  getState(): { state: AgentState; context: StateContext; history: Array<{ from: AgentState; to: AgentState; event: AgentEvent }> } {
+    return {
+      state: this.stateMachine.state,
+      context: this.stateMachine.context,
+      history: this.stateMachine.getLastTransitions(10),
+    };
+  }
 
   private log(message: string): void {
     const timestamp = new Date().toLocaleTimeString();
@@ -193,15 +211,11 @@ export class AgentBridge {
     console.log(formatted);
   }
 
+  /** Detect task type from user input */
   private detectTaskType(userInput: string): string {
-    const input = userInput.toLowerCase();
-    if (/\b(refactor|rename|extract|move)\b/i.test(input)) return 'refactor';
-    if (/\b(debug|fix|bug|error|crash|fail)\b/i.test(input)) return 'debug';
-    if (/\b(explain|what|how|explore|find|show)\b/i.test(input)) return 'explore';
-    if (/\b(write|create|add|implement|build|generate)\b/i.test(input)) return 'create';
-    if (/\b(test|spec|unit|integration)\b/i.test(input)) return 'test';
-    if (/\b(run|start|serve|launch)\b/i.test(input)) return 'run';
-    return 'default';
+    const intent = this.stateMachine.classifyIntent(userInput);
+    this.log(`Intent classified: ${intent}`);
+    return intent;
   }
 
   private async loadEagerContext(profile: ContextProfile, currentFile?: string): Promise<VslfcContext> {
@@ -217,7 +231,12 @@ export class AgentBridge {
     return merged;
   }
 
-  private getTools(lazyProfile?: ContextProfile['lazy'], fixMode: boolean = false): LLMTool[] {
+  private getTools(lazyProfile?: ContextProfile['lazy'], toolFilter?: 'all' | 'fix_only' | 'read_only'): LLMTool[] {
+    // Use state machine to determine tool filter if not explicitly provided
+    if (!toolFilter) {
+      toolFilter = this.stateMachine.getToolFilter();
+    }
+
     const allTools: LLMTool[] = [
       {
         type: 'function',
@@ -450,12 +469,20 @@ export class AgentBridge {
       }
     ];
 
-    if (fixMode) {
+    if (toolFilter === 'fix_only') {
       const fixTools = allTools.filter(t => 
         ['apply_edits', 'read_file', 'write_file', 'get_file_context'].includes(t.function.name)
       );
-      this.log(`Fix mode: reduced from ${allTools.length} to ${fixTools.length} tools`);
+      this.log(`Tool filter: fix_only (${fixTools.length}/${allTools.length} tools)`);
       return fixTools;
+    }
+    
+    if (toolFilter === 'read_only') {
+      const readTools = allTools.filter(t => 
+        ['read_file', 'list_directory', 'search_files', 'get_file_context', 'git_status', 'git_diff', 'git_log', 'git_branch', 'list_terminals', 'terminal_status', 'list_snapshots'].includes(t.function.name)
+      );
+      this.log(`Tool filter: read_only (${readTools.length}/${allTools.length} tools)`);
+      return readTools;
     }
 
     return allTools;
@@ -512,6 +539,9 @@ export class AgentBridge {
       } else if (chunk.type === 'iteration_complete') iterations = chunk.iteration;
       else if (chunk.type === 'error') error = chunk.error;
       else if (chunk.type === 'done' && chunk.iterations) iterations = chunk.iterations;
+      else if (chunk.type === 'state_change') {
+        this.log(`State: ${chunk.from} → ${chunk.to} (${chunk.event})`);
+      }
     }
 
     return { finalText, toolCalls, iterations, durationMs: Date.now() - startTime, success: !error, error };
@@ -529,6 +559,8 @@ export class AgentBridge {
   }
 
   async *executeAgentLoop(userInput: string, systemPrompt: string, options: AgentLoopOptions = { streaming: false }): AsyncGenerator<AgentChunk> {
+    // STATE MACHINE FLOW: Intent → Plan → Constraints → Sequence → Execute → Verify → Output
+    
     const taskType = this.detectTaskType(userInput);
     let contextProfile: ContextProfile | undefined;
     
@@ -550,6 +582,7 @@ export class AgentBridge {
     if (typeof maxIterations !== 'number' || maxIterations < 0 || maxIterations > 100) maxIterations = 50;
     
     // Reset all state for a fresh conversation
+    this.stateMachine.reset();
     this._pendingFixes = [];
     this._buildFailureCount = 0;
     this._autoReadFiles.clear();
@@ -572,17 +605,24 @@ export class AgentBridge {
     while (true) {
       iteration++;
       this._autoNudge = null;
-      const tools = this.getTools(contextProfile?.lazy, this._fixMode);
+      this.stateMachine.incrementIteration();
       
-      if (iteration > maxIterations) {
-        const finalResponse = await this.callLLM(messages, tools);
-        if (finalResponse.toolCalls.length === 0) {
-          if (options.streaming) {
-            yield { type: 'text', text: finalResponse.content, timestamp: Date.now() };
-            yield { type: 'done', outcome: 'success', timestamp: Date.now(), iterations: iteration };
-          }
-          return;
+      // STATE: INTENT - Classify user intent
+      if (iteration === 1) {
+        this.stateMachine.dispatch(AgentEvent.USER_INPUT);
+        this.stateMachine.dispatch(AgentEvent.INTENT_CLASSIFIED, { 
+          intentType: taskType,
+          taskDescription: userInput,
+        });
+        
+        if (options.streaming) {
+          yield { type: 'thinking', message: `Understanding task: ${taskType}`, timestamp: Date.now() };
         }
+      }
+      
+      // Check iteration limits
+      if (iteration > maxIterations) {
+        this.stateMachine.dispatch(AgentEvent.MAX_ITERATIONS);
         if (options.streaming) {
           yield { type: 'text', text: `⚠️ Stopped after ${iteration} iterations.`, timestamp: Date.now() };
           yield { type: 'done', outcome: 'error', timestamp: Date.now(), iterations: iteration };
@@ -590,9 +630,27 @@ export class AgentBridge {
         return;
       }
       
+      // Check for stuck states
+      if (this.stateMachine.isPlanLoopStuck()) {
+        this.log('Plan loop detected - forcing tool usage');
+      }
+      
+      if (this.stateMachine.isBuildFixCycleStuck()) {
+        this.log('Build-fix cycle stuck after 3 failures - stopping');
+        this.stateMachine.dispatch(AgentEvent.MAX_FAILURES);
+        if (options.streaming) {
+          yield { type: 'text', text: `⚠️ Build failed ${this._buildFailureCount} times. Manual intervention required.`, timestamp: Date.now() };
+          yield { type: 'done', outcome: 'error', timestamp: Date.now(), iterations: iteration };
+        }
+        return;
+      }
+      
       this.currentIteration = iteration;
 
-      // AUTO-FIX WORKFLOW
+      // STATE: PLAN - Get tools based on current state
+      const tools = this.getTools(contextProfile?.lazy, this.stateMachine.getToolFilter());
+      
+      // AUTO-FIX WORKFLOW (when in build-fix cycle)
       if (this._pendingFixes && this._pendingFixes.length > 0) {
         const filesToRead = [...this._pendingFixes];
         this._pendingFixes = [];
@@ -640,8 +698,8 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         });
       }
 
-      // FORCED BUILD VERIFICATION
-      if (this._consecutiveSuccessfulEdits >= 2) {
+      // FORCED BUILD VERIFICATION (after consecutive successful edits)
+      if (this.stateMachine.shouldForceBuild()) {
         this.log(`Consecutive edits (${this._consecutiveSuccessfulEdits}) - forcing build verification`);
         this._consecutiveSuccessfulEdits = 0;
         this._pendingFixes = [];
@@ -684,32 +742,32 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         } else {
           const streamResponse = rawResponse as AsyncGenerator<LLMChunk>;
           for await (const chunk of streamResponse) {
-          if (chunk.text) {
-            responseText += chunk.text;
-            textBuffer.push(chunk.text);
-            
-            if (!toolCallDetected) {
-              streamBuffer += chunk.text;
-              const toolCallIdx = streamBuffer.indexOf('tool_call:');
-              if (toolCallIdx !== -1) {
-                toolCallDetected = true;
-                const beforeToolCall = streamBuffer.substring(0, toolCallIdx).trim();
-                if (beforeToolCall) {
-                  textAlreadyStreamed = true;
-                  yield { type: 'text', text: beforeToolCall, timestamp: Date.now() };
-                }
-                streamBuffer = '';
-              } else if (streamBuffer.length > 20) {
-                const safeLength = streamBuffer.length - 10;
-                const textToStream = streamBuffer.substring(0, safeLength);
-                streamBuffer = streamBuffer.substring(safeLength);
-                if (textToStream) {
-                  textAlreadyStreamed = true;
-                  yield { type: 'text', text: textToStream, timestamp: Date.now() };
+            if (chunk.text) {
+              responseText += chunk.text;
+              textBuffer.push(chunk.text);
+              
+              if (!toolCallDetected) {
+                streamBuffer += chunk.text;
+                const toolCallIdx = streamBuffer.indexOf('tool_call:');
+                if (toolCallIdx !== -1) {
+                  toolCallDetected = true;
+                  const beforeToolCall = streamBuffer.substring(0, toolCallIdx).trim();
+                  if (beforeToolCall) {
+                    textAlreadyStreamed = true;
+                    yield { type: 'text', text: beforeToolCall, timestamp: Date.now() };
+                  }
+                  streamBuffer = '';
+                } else if (streamBuffer.length > 20) {
+                  const safeLength = streamBuffer.length - 10;
+                  const textToStream = streamBuffer.substring(0, safeLength);
+                  streamBuffer = streamBuffer.substring(safeLength);
+                  if (textToStream) {
+                    textAlreadyStreamed = true;
+                    yield { type: 'text', text: textToStream, timestamp: Date.now() };
+                  }
                 }
               }
             }
-          }
             if (chunk.toolCalls) streamingToolCalls = chunk.toolCalls;
             if (chunk.tokenUsage) (this as any)._lastTokenUsage = chunk.tokenUsage;
             if (chunk.done) break;
@@ -745,10 +803,15 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         streamingToolCalls = response.toolCalls.map(tc => ({ id: tc.id, name: tc.name, arguments: tc.arguments }));
       }
 
-      // NATURAL EXIT
-      if (streamingToolCalls.length === 0) {
+      // STATE: PLAN → CONSTRAINTS/COMPLETE
+      // Classify LLM response and transition state machine
+      const hasToolCalls = streamingToolCalls.length > 0;
+      const responseEvent = this.stateMachine.classifyLLMResponse(responseText, hasToolCalls, this.stateMachine.context);
+      
+      // NATURAL EXIT (no tool calls)
+      if (!hasToolCalls) {
         const trimmedResponse = responseText.trim();
-        const isPlanOnly = trimmedResponse.length < 200 && (/^(I will|I'll|Let me|First,? I)/i.test(trimmedResponse) || trimmedResponse.toLowerCase().includes('calling '));
+        const isPlanOnly = responseEvent === AgentEvent.PLAN_ONLY;
 
         if (isPlanOnly) {
           this._consecutivePlans++;
@@ -766,11 +829,14 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           }
           
           messages.push({ role: 'user', content: nudgeMessage });
+          this.stateMachine.dispatch(responseEvent);
           continue;
         } else {
           this._consecutivePlans = 0;
         }
 
+        // Complete naturally
+        this.stateMachine.dispatch(responseEvent);
         if (options.streaming) {
           if (!textAlreadyStreamed) {
             for (const textChunk of textBuffer) yield { type: 'text', text: textChunk, timestamp: Date.now() };
@@ -780,6 +846,47 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         return;
       }
 
+      // STATE: CONSTRAINTS - Validate tool calls
+      this.log(`Validating ${streamingToolCalls.length} tool calls against constraints...`);
+      this.stateMachine.dispatch(AgentEvent.TOOL_CALLS_RECEIVED);
+      
+      const toolCallObjs = streamingToolCalls.map(tc => ({ toolName: tc.name, args: tc.arguments }));
+      const validation = this.stateMachine.validateConstraints(toolCallObjs);
+      
+      if (!validation.passed) {
+        this.log(`Constraints validation failed: ${validation.violations.join(', ')}`);
+        this.stateMachine.dispatch(AgentEvent.PLAN_INVALID, {
+          constraintsValidation: validation,
+        });
+        
+        // Inject constraint violations as user message
+        messages.push({ 
+          role: 'user', 
+          content: `⚠️ Plan validation failed:\n${validation.violations.join('\n')}\n\nPlease revise your tool calls to comply with constraints.` 
+        });
+        continue;
+      }
+      
+      if (validation.warnings.length > 0) {
+        this.log(`Constraints warnings: ${validation.warnings.join(', ')}`);
+      }
+      
+      this.stateMachine.dispatch(AgentEvent.PLAN_VALIDATED, {
+        constraintsValidation: validation,
+        safetyFlags: validation.safetyFlags,
+        validatedToolCalls: streamingToolCalls.map(tc => ({ toolName: tc.name, args: tc.arguments, toolCallId: tc.id })),
+      });
+      
+      // STATE: SEQUENCE - Optimize execution order
+      this.log('Optimizing tool execution sequence...');
+      const optimizedSequence = this.stateMachine.optimizeSequence(
+        streamingToolCalls.map(tc => ({ toolName: tc.name, args: tc.arguments, toolCallId: tc.id }))
+      );
+      
+      this.stateMachine.dispatch(AgentEvent.SEQUENCE_READY, {
+        executionSequence: optimizedSequence,
+      });
+      
       // LOOP DETECTION
       const repeatCountMap = new Map<string, number>();
       const shouldNudge: string[] = [];
@@ -798,6 +905,17 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           continue;
         }
         thisIterationCalls.set(callKey, argsSignature);
+        
+        // Check state machine history for loop detection
+        if (this.stateMachine.detectLoop(toolCall.name, normalizedArgs, iteration)) {
+          this.log(`LOOP DETECTED: ${toolCall.name} with same arguments`);
+          this.stateMachine.dispatch(AgentEvent.LOOP_DETECTED);
+          if (options.streaming) {
+            yield { type: 'text', text: `⚠️ Loop detected. Stopping.`, timestamp: Date.now() };
+            yield { type: 'done', outcome: 'error', timestamp: Date.now(), iterations: iteration };
+          }
+          return;
+        }
         
         const recentCalls = history.filter(h => h.iteration >= iteration - 2 && h.toolName.toLowerCase().replace(/[_-]/g, '') === normalizedToolName && h.argsSignature === argsSignature);
         const totalRepeatCount = (repeatCountMap.get(callKey) || 0) + recentCalls.length;
@@ -821,11 +939,25 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         messages.push({ role: 'user', content: `NOTICE: You called ${[...new Set(shouldNudge)].join(', ')} with same arguments. Try a DIFFERENT approach.` });
       }
 
-      // EXECUTE TOOLS
+      // STATE: EXECUTE - Execute tools
+      this.stateMachine.dispatch(AgentEvent.SEQUENCE_READY);
       const currentIterationToolCalls: ToolCall[] = [];
 
       for (const toolCall of streamingToolCalls) {
-        if (options.streaming) yield { type: 'tool_call_started', toolName: toolCall.name, args: toolCall.arguments, timestamp: Date.now() };
+        const startTime = Date.now();
+        
+        if (options.streaming) {
+          yield { type: 'tool_call_started', toolName: toolCall.name, args: toolCall.arguments, timestamp: Date.now() };
+          
+          // Emit state change for monitoring
+          yield { 
+            type: 'state_change', 
+            from: this.stateMachine.state, 
+            to: AgentState.EXECUTE, 
+            event: AgentEvent.TOOL_CALLS_RECEIVED,
+            timestamp: Date.now() 
+          };
+        }
 
         const toolCallObj: ToolCall = { toolName: toolCall.name, args: toolCall.arguments, toolCallId: toolCall.id };
 
@@ -833,10 +965,21 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           const result = await this.executeTool({ toolName: toolCall.name, args: toolCall.arguments });
           toolCallObj.result = result.result;
           if (result.error) toolCallObj.error = result.error;
-          if (options.streaming) yield { type: 'tool_call_completed', toolName: toolCall.name, result: result.result, timestamp: Date.now() };
+          
+          const durationMs = Date.now() - startTime;
+          
+          // Record in state machine for loop detection and metrics
+          this.stateMachine.recordToolCall(toolCall.name, toolCall.arguments, result.result, result.error, durationMs);
+          
+          if (options.streaming) {
+            yield { type: 'tool_call_completed', toolName: toolCall.name, result: result.result, timestamp: Date.now() };
+          }
         } catch (error: any) {
           toolCallObj.error = error.message;
-          if (options.streaming) yield { type: 'tool_call_completed', toolName: toolCall.name, result: `Error: ${error.message}`, timestamp: Date.now() };
+          this.stateMachine.recordToolCall(toolCall.name, toolCall.arguments, undefined, error.message);
+          if (options.streaming) {
+            yield { type: 'tool_call_completed', toolName: toolCall.name, result: `Error: ${error.message}`, timestamp: Date.now() };
+          }
         }
 
         currentIterationToolCalls.push(toolCallObj);
@@ -863,7 +1006,12 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
 
       messages.push({ role: 'user', content: 'Tool results received. If you have enough information, answer now. Only call another tool if missing critical info.' });
 
-      if (options.streaming) yield { type: 'iteration_complete', iteration, timestamp: Date.now() };
+      // STATE: VERIFY - Transition and check results
+      this.stateMachine.dispatch(AgentEvent.TOOLS_EXECUTED);
+      
+      if (options.streaming) {
+        yield { type: 'iteration_complete', iteration, timestamp: Date.now() };
+      }
     }
   }
 
@@ -1006,6 +1154,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           // Check for search loop - same pattern searched multiple times
           if (this._lastSearchPattern === pattern && this._lastSearchFiles.length > 0) {
             this.log(`SEARCH LOOP: Pattern "${pattern}" already searched. Found ${this._lastSearchFiles.length} files: ${this._lastSearchFiles.slice(0, 3).join(', ')}...`);
+            this.stateMachine.dispatch(AgentEvent.SEARCH_LOOP);
             return {
               result: `⚠️ You already searched for "${pattern}" and found ${this._lastSearchFiles.length} files. Instead of searching again, READ one of these files: ${this._lastSearchFiles.slice(0, 3).join(', ')}`,
               error: 'SEARCH_LOOP_DETECTED'

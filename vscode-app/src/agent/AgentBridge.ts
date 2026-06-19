@@ -1662,22 +1662,41 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
   /** Extract relevant task information from build file */
   private extractBuildTasks(buildFile: string, content: string): string {
     const fileExt = path.extname(buildFile).toLowerCase();
+    const extractedInfo: string[] = [];
     
     // For Gradle Kotlin DSL
     if (fileExt === '.kts' || fileExt === '.gradle') {
+      // EXTRACT MAIN CLASS (highest priority - tells agent what to search for)
+      const mainClassMatch = content.match(/mainClass\.set\(["']([^"']+)["']\)/);
+      if (mainClassMatch) {
+        extractedInfo.push(`🎯 MAIN CLASS: ${mainClassMatch[1]}`);
+        extractedInfo.push(`   → This is the server entry point. Read this file to understand the startup.`);
+      }
+      
+      // Extract application block info
+      const applicationMatch = content.match(/application\s*\{[\s\S]*?mainClass[\s\S]*?\}/);
+      if (applicationMatch && !mainClassMatch) {
+        const mainInBlock = applicationMatch[0].match(/mainClass\s*=\s*["']([^"']+)["']/);
+        if (mainInBlock) {
+          extractedInfo.push(`🎯 MAIN CLASS: ${mainInBlock[1]}`);
+          extractedInfo.push(`   → This is the server entry point.`);
+        }
+      }
+      
+      // Extract available tasks
       const taskMatches = content.match(/task\s*\(['"`]?(\w+)['"`]?\)/g);
       if (taskMatches && taskMatches.length > 0) {
         const tasks = taskMatches.map(m => {
           const match = m.match(/task\s*\(['"`]?(\w+)['"`]?\)/);
           return match ? match[1] : '';
         }).filter(t => t);
-        return `Available Gradle tasks: ${tasks.join(', ')}`;
+        extractedInfo.push(`Available Gradle tasks: ${tasks.join(', ')}`);
       }
       
-      // Look for run tasks
+      // Look for run tasks in subprojects
       const runTaskMatch = content.match(/:([\w:-]+):run/);
       if (runTaskMatch) {
-        return `Server run task found: gradlew :${runTaskMatch[1]}:run`;
+        extractedInfo.push(`Server run task: gradlew :${runTaskMatch[1]}:run`);
       }
     }
     
@@ -1685,7 +1704,14 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
     if (fileExt === '.xml') {
       const pluginMatch = content.match(/<artifactId>(maven-[\w-]+|spring-boot-maven-plugin)<\/artifactId>/);
       if (pluginMatch) {
-        return `Build system: Maven with ${pluginMatch[1]}`;
+        extractedInfo.push(`Build system: Maven with ${pluginMatch[1]}`);
+      }
+      
+      // Extract main class from Maven
+      const mainClassMatch = content.match(/<mainClass>([^<]+)<\/mainClass>/);
+      if (mainClassMatch) {
+        extractedInfo.push(`🎯 MAIN CLASS: ${mainClassMatch[1]}`);
+        extractedInfo.push(`   → This is the server entry point.`);
       }
     }
     
@@ -1695,11 +1721,19 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         const pkg = JSON.parse(content);
         if (pkg.scripts) {
           const scripts = Object.keys(pkg.scripts);
-          return `Available npm scripts: ${scripts.join(', ')}`;
+          extractedInfo.push(`Available npm scripts: ${scripts.join(', ')}`);
+        }
+        if (pkg.main) {
+          extractedInfo.push(`🎯 MAIN ENTRY: ${pkg.main}`);
         }
       } catch {
-        // Invalid JSON, return raw
+        // Invalid JSON, will return raw content
       }
+    }
+    
+    // Return extracted info, or fallback to raw content
+    if (extractedInfo.length > 0) {
+      return extractedInfo.join('\n');
     }
     
     // Default: return first 2000 chars

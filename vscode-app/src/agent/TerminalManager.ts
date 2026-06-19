@@ -515,16 +515,22 @@ export class TerminalManager {
     /**
      * Get terminal status info
      */
-    getTerminalStatus(name: string): { running: boolean; command?: string; autoRestart?: boolean; restartCount?: number } | undefined {
+    getTerminalStatus(name: string): { running: boolean; command?: string; autoRestart?: boolean; restartCount?: number; ageSeconds?: number } | undefined {
         const managed = this.terminals.get(name);
         if (!managed) {
             return undefined;
         }
+        
+        // Consider terminal "running" if created within last 30 seconds (startup period)
+        const age = Date.now() - (managed.createdAt || Date.now());
+        const isStartingUp = age < 30000;
+        
         return {
-            running: true,
+            running: true, // Terminal exists in managed list = running
             command: managed.command,
             autoRestart: managed.restartOnChanges,
-            restartCount: managed.restartCount || 0
+            restartCount: managed.restartCount || 0,
+            ageSeconds: Math.round(age / 1000)
         };
     }
 

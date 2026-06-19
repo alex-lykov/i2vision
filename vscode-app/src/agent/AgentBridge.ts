@@ -1469,15 +1469,21 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         
         case 'terminal_status': {
           const name = toolCall.args.name;
-          if (this._serverJustStarted && name.includes(this._serverJustStarted)) {
-            return { 
-              result: `⚠️ You're checking terminal_status too soon! The server was just started and needs 15-30 seconds to initialize. Wait before checking again. Terminal "${name}" may show as "not running" during startup - this is normal.`,
-              error: 'CHECKING_TOO_SOON'
-            };
-          }
           const status = this.terminalManager.getTerminalStatus(name);
-          if (!status) return { result: `Terminal "${name}" is not running.` };
-          return { result: `Terminal "${name}" running. Auto-restart: ${status.autoRestart ? 'enabled' : 'disabled'}.` };
+          
+          if (!status) {
+            return { result: `Terminal "${name}" is not running.` };
+          }
+          
+          // Terminal is running - provide age info to help agent understand startup progress
+          const ageInfo = status.ageSeconds ? ` (started ${status.ageSeconds}s ago)` : '';
+          const startupNote = status.ageSeconds && status.ageSeconds < 30 
+            ? ` Server is still starting up - this is normal for Gradle servers.` 
+            : '';
+          
+          return { 
+            result: `Terminal "${name}" is running${ageInfo}. Auto-restart: ${status.autoRestart ? 'enabled' : 'disabled'}.${startupNote}` 
+          };
         }
         
         // MODERN EDIT PIPELINE: Revert tools

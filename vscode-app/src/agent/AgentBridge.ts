@@ -614,9 +614,20 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
       let streamBuffer = '';
 
       if (options.streaming) {
-        const streamResponse = await this.cli.callLLM(this.config.model.id, messages, { temperature: this.config.model.temperature, top_p: this.config.model.topP, max_tokens: this.config.model.maxOutputTokens }, tools, true) as AsyncGenerator<LLMChunk>;
-
-        for await (const chunk of streamResponse) {
+        const rawResponse = await this.cli.callLLM(this.config.model.id, messages, { temperature: this.config.model.temperature, top_p: this.config.model.topP, max_tokens: this.config.model.maxOutputTokens }, tools, true);
+        
+        // Check if response is actually an AsyncGenerator (streaming supported)
+        const isAsyncGenerator = rawResponse && typeof (rawResponse as any)[Symbol.asyncIterator] === 'function';
+        
+        if (!isAsyncGenerator) {
+          // Streaming not supported, fall back to non-streaming
+          this.log(`Streaming not available, falling back to non-streaming mode`);
+          const nonStreamResponse = await this.cli.callLLM(this.config.model.id, messages, { temperature: this.config.model.temperature, top_p: this.config.model.topP, max_tokens: this.config.model.maxOutputTokens }, tools, false) as LLMResponse;
+          responseText = nonStreamResponse.content;
+          streamingToolCalls = nonStreamResponse.toolCalls.map(tc => ({ id: tc.id, name: tc.name, arguments: tc.arguments }));
+        } else {
+          const streamResponse = rawResponse as AsyncGenerator<LLMChunk>;
+          for await (const chunk of streamResponse) {
           if (chunk.text) {
             responseText += chunk.text;
             textBuffer.push(chunk.text);
@@ -643,34 +654,35 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
               }
             }
           }
-          if (chunk.toolCalls) streamingToolCalls = chunk.toolCalls;
-          if (chunk.tokenUsage) (this as any)._lastTokenUsage = chunk.tokenUsage;
-          if (chunk.done) break;
-        }
-        
-        if (!toolCallDetected && streamBuffer.trim()) {
-          textAlreadyStreamed = true;
-          yield { type: 'text', text: streamBuffer.trim(), timestamp: Date.now() };
-        }
-
-        if (streamingToolCalls.length === 0 && responseText.includes('tool_call:')) {
-          const toolCallPattern = /tool_call:\s*({[\s\S]*?})(?=\n|$|tool_call:)/g;
-          let match;
-          let parseIndex = 0;
-          while ((match = toolCallPattern.exec(responseText)) !== null) {
-            try {
-              let jsonStr = match[1].replace(/""/g, ',"').replace(/\\}/g, '}').replace(/\\{/g, '{').replace(/'/g, '"');
-              const toolCallObj = JSON.parse(jsonStr);
-              if (toolCallObj.tool) {
-                streamingToolCalls.push({ id: `call_${iteration}_${parseIndex}`, name: toolCallObj.tool, arguments: toolCallObj.args || {} });
-                parseIndex++;
-              }
-            } catch (e: any) {}
+            if (chunk.toolCalls) streamingToolCalls = chunk.toolCalls;
+            if (chunk.tokenUsage) (this as any)._lastTokenUsage = chunk.tokenUsage;
+            if (chunk.done) break;
           }
-        }
+          
+          if (!toolCallDetected && streamBuffer.trim()) {
+            textAlreadyStreamed = true;
+            yield { type: 'text', text: streamBuffer.trim(), timestamp: Date.now() };
+          }
 
-        responseText = this.extractFinalResponse(responseText);
-        textBuffer = [responseText];
+          if (streamingToolCalls.length === 0 && responseText.includes('tool_call:')) {
+            const toolCallPattern = /tool_call:\s*({[\s\S]*?})(?=\n|$|tool_call:)/g;
+            let match;
+            let parseIndex = 0;
+            while ((match = toolCallPattern.exec(responseText)) !== null) {
+              try {
+                let jsonStr = match[1].replace(/""/g, ',"').replace(/\\}/g, '}').replace(/\\{/g, '{').replace(/'/g, '"');
+                const toolCallObj = JSON.parse(jsonStr);
+                if (toolCallObj.tool) {
+                  streamingToolCalls.push({ id: `call_${iteration}_${parseIndex}`, name: toolCallObj.tool, arguments: toolCallObj.args || {} });
+                  parseIndex++;
+                }
+              } catch (e: any) {}
+            }
+          }
+
+          responseText = this.extractFinalResponse(responseText);
+          textBuffer = [responseText];
+        }
       } else {
         const response = await this.callLLM(messages, tools);
         responseText = response.content;

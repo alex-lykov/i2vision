@@ -1,4 +1,4 @@
-﻿/**
+/**
  * AgentBridge - Bridge between VSCode extension and agent core
  * 
  * Wraps agent core functionality and provides a clean API for AgentTabManager
@@ -21,7 +21,6 @@ import { applyEditsToContent, EditOperation, formatEditFailure } from './ApplyEd
  * Context profile - defines what context to load eagerly vs lazily
  */
 export interface ContextProfile {
-  // What to load eagerly (before agent starts)
   eager: {
     currentFile?: boolean;
     projectMetadata?: boolean;
@@ -30,7 +29,6 @@ export interface ContextProfile {
     relatedFiles?: boolean;
     directoryStructure?: boolean;
   };
-  // What the agent can request via tools (lazy)
   lazy: {
     discovery?: boolean;
     fullContext?: boolean;
@@ -38,17 +36,11 @@ export interface ContextProfile {
   };
 }
 
-/**
- * Task-specific context overrides
- */
 export interface TaskContextProfile {
   eager?: Partial<ContextProfile['eager']>;
   lazy?: Partial<ContextProfile['lazy']>;
 }
 
-/**
- * Loaded context data passed to agent
- */
 export interface VslfcContext {
   layer: string;
   currentFile?: {
@@ -67,23 +59,15 @@ export interface VslfcContext {
   };
 }
 
-/**
- * Agent configuration interface (matches YAML structure)
- * Extended with context management settings
- */
 export interface AgentConfig {
   key: string;
   agentType: string;
   version: string;
   isActive: boolean;
-  
-  // Prompt section
   systemPromptTemplate: string;
   templateVariables: Record<string, string>;
   ruleSetKeys?: string[];
   parserTemplateName?: string;
-  
-  // Model section
   model: {
     id: string;
     provider: string;
@@ -92,8 +76,6 @@ export interface AgentConfig {
     temperature: number;
     topP: number;
   };
-  
-  // LLM behavior section
   llm: {
     timeoutSeconds: number;
     modificationTimeoutSeconds: number;
@@ -101,8 +83,6 @@ export interface AgentConfig {
     maxRetries: number;
     retryBackoffMs: number[];
   };
-  
-  // Formatting rules section
   formattingRules: {
     rules: string;
     brief: string;
@@ -110,24 +90,18 @@ export interface AgentConfig {
     toolCallHeader: string;
     eosMarker: string;
   };
-  
-  // Iteration section
   iterationSettings: {
     maxIterations: number;
     maxConsecutiveToolCalls: number;
     enableKickstart: boolean;
     kickstartMinInvalidOutputs: number;
   };
-  
-  // Tool selection section
   toolSelection: {
     requiredToolsForModification: string[];
     defaultRelevanceThreshold: number;
     maxToolsPerTask: number;
     toolTimeoutSeconds: number;
   };
-  
-  // Safety section
   safety: {
     modificationKeywords: string[];
     listingKeywords: string[];
@@ -135,8 +109,6 @@ export interface AgentConfig {
     blockGeneratedPaths: string[];
     allowNewFileCreationPatterns: string[];
   };
-  
-  // Parsing section
   parsing: {
     enabledParsers: string[];
     headerPattern: string;
@@ -145,18 +117,12 @@ export interface AgentConfig {
     maxResponseSize: number;
     maxProseChars: number;
   };
-  
-  // Repair strategies section
   repairStrategies: any[];
-  
-  // Discovery section
   discovery: {
     maxSearchTerms: number;
     maxCandidates: number;
     frameworkProfiles: Record<string, any>;
   };
-  
-  // Execution section
   execution: {
     enableBuildVerification: boolean;
     buildCommand: string;
@@ -174,18 +140,13 @@ export interface AgentConfig {
         regexSearchEnabled: boolean;
       };
     };
-    // Long-running command patterns for terminal classification
     longRunningPatterns?: string[];
   };
-  
-  // Formatting section
   formatting: {
     chunkSize: number;
     delayMs: number;
     maxObservationChars: number;
   };
-  
-  // Streaming section
   streaming: {
     enabled: boolean;
     methodCandidates: string[];
@@ -193,8 +154,6 @@ export interface AgentConfig {
     fallbackChunkSize: number;
     fallbackChunkDelayMs: number;
   };
-  
-  // MCP section
   mcp: {
     enabled: boolean;
     injectClusterContext: boolean;
@@ -202,45 +161,31 @@ export interface AgentConfig {
     allowedToolPrefixes: string[];
     strictToolNamePolicy: boolean;
   };
-
-  // ===== CONTEXT MANAGEMENT (NEW) =====
   context?: {
     default: ContextProfile;
     tasks?: Record<string, TaskContextProfile>;
   };
 }
 
-/**
- * Tool call record from agent response
- */
 export interface ToolCall {
   toolName: string;
   args: Record<string, any>;
   result?: string;
   error?: string;
   durationMs?: number;
-  toolCallId?: string; // OpenAI-compatible ID for linking results
+  toolCallId?: string;
 }
 
-/**
- * Progress event for real-time updates
- */
 export interface ProgressEvent {
   type: 'tool_start' | 'tool_complete' | 'iteration_complete' | 'thinking' | 'tool_output';
   iteration: number;
   toolCall?: ToolCall;
   message?: string;
-  partialOutput?: string; // For streaming build output
+  partialOutput?: string;
 }
 
-/**
- * Progress callback type
- */
 export type ProgressCallback = (event: ProgressEvent) => void;
 
-/**
- * Interaction record for history tracking
- */
 export interface InteractionRecord {
   timestamp: number;
   userInput: string;
@@ -250,9 +195,6 @@ export interface InteractionRecord {
   durationMs: number;
 }
 
-/**
- * Agent response after processing
- */
 export interface AgentResponse {
   finalText: string;
   toolCalls: ToolCall[];
@@ -262,9 +204,6 @@ export interface AgentResponse {
   error?: string;
 }
 
-/**
- * Agent chunk types for streaming responses
- */
 export type AgentChunk = 
   | { type: 'thinking'; message: string; timestamp: number }
   | { type: 'tool_call_started'; toolName: string; args: Record<string, any>; timestamp: number }
@@ -274,27 +213,18 @@ export type AgentChunk =
   | { type: 'iteration_complete'; iteration: number; timestamp: number }
   | { type: 'error'; error: string; timestamp: number };
 
-/**
- * Track tool call history for loop detection
- */
 interface ToolCallHistory {
   toolName: string;
   argsSignature: string;
   iteration: number;
 }
 
-/**
- * Options for agent loop execution
- */
 interface AgentLoopOptions {
   streaming: boolean;
   onProgress?: ProgressCallback;
-  toolCallArgs?: Map<string, Record<string, any>>; // Track tool args for non-streaming compatibility
+  toolCallArgs?: Map<string, Record<string, any>>;
 }
 
-/**
- * AgentBridge - Manages agent lifecycle and communication
- */
 export class AgentBridge {
   private config: AgentConfig;
   private cli: CLI;
@@ -307,64 +237,27 @@ export class AgentBridge {
   private currentIteration: number = 1;
   private progressCallback?: ProgressCallback;
   
-  // Track files that need to be read after build failure (auto-fix workflow)
   private _pendingFixes: string[] = [];
-  
-  // Track consecutive build failures to force fix mode
   private _buildFailureCount: number = 0;
-  
-  // Track files already auto-read to prevent duplicate reads
   private _autoReadFiles: Set<string> = new Set();
-  
-  // Auto-nudge message to inject after successful writes
   private _autoNudge: string | null = null;
-  
-  // Track consecutive plan-only responses to detect spiraling
   private _consecutivePlans: number = 0;
-  // Track consecutive successful edits to trigger forced build verification
   private _consecutiveSuccessfulEdits: number = 0;
-
-  // Fix mode - activated after build failure to reduce tool options
   private _fixMode: boolean = false;
-  
-  // Track failed edit attempts to prevent infinite loops on unfixable files
   private _failedEditAttempts: number = 0;
   private _lastBuildErrors: string = '';
 
-  // Truncation settings
-  private static readonly MAX_TOOL_RESULT_LENGTH = 2000; // characters
-  private static readonly MAX_LIST_FILES_RESULTS = 100; // max files to return
+  private static readonly MAX_TOOL_RESULT_LENGTH = 2000;
+  private static readonly MAX_LIST_FILES_RESULTS = 100;
 
-  // Long-running command patterns - these trigger persistent terminal mode
-  // Configurable via YAML: execution.longRunningPatterns
   private longRunningPatterns: string[] = [
-    'run',
-    'serve',
-    'dev',
-    'start',
-    'watch',
-    'nodemon',
-    'vite',
-    'next dev',
-    'spring-boot:run',
-    'jetty:run',
-    'webpack --watch',
-    'tsc --watch',
-    'gulp watch',
-    'grunt watch',
-    'cargo run',
-    'go run',
-    'python -m uvicorn',
-    'poetry run'
+    'run', 'serve', 'dev', 'start', 'watch', 'nodemon', 'vite', 'next dev',
+    'spring-boot:run', 'jetty:run', 'webpack --watch', 'tsc --watch',
+    'gulp watch', 'grunt watch', 'cargo run', 'go run', 'python -m uvicorn', 'poetry run'
   ];
 
-  // Blocked commands - never execute (security)
   private static readonly BLOCKED_COMMAND_PATTERNS = [
-    'rm -rf /',
-    'del /F /S /Q C:\\*',
-    'format',
-    'mkfs',
-    'dd if=/dev/zero'
+    'rm -rf /', 'del /F /S /Q C:\\*', 'format', 'mkfs', 'dd if=/dev/zero'
   ];
 
   constructor(
@@ -380,75 +273,41 @@ export class AgentBridge {
     if (!workspaceRoot) {
       throw new Error('workspaceRoot must be explicitly provided');
     }
-
     if (extensionRoot && extensionRoot === workspaceRoot) {
       throw new Error('workspaceRoot and extensionRoot cannot be the same path');
     }
     
     this.workspaceRoot = workspaceRoot;
     this.extensionRoot = extensionRoot;
-    
-    // Store settings manager if provided
     this.settingsManager = settingsManager!;
     
-    this.log(`Workspace root (target project): ${this.workspaceRoot}`);
-    if (this.extensionRoot) {
-      this.log(`Extension root: ${this.extensionRoot}`);
-    }
-
-    // Initialize CLI with workspace root for user's project operations
+    this.log(`Workspace root: ${this.workspaceRoot}`);
     this.cli = new CLI(this.workspaceRoot, outputChannel);
     
-    // Initialize TerminalManager for persistent terminals
-    // Use settings for auto-close delay
     const settings = this.settingsManager.getSettings();
-    const debounceMs = settings.terminal.autoCloseDelayMs;
-    this.terminalManager = new TerminalManager(outputChannel, debounceMs);
+    this.terminalManager = new TerminalManager(outputChannel, settings.terminal.autoCloseDelayMs);
     
-    this.log(`Terminal auto-close delay: ${debounceMs}ms (from settings)`);
-    
-    // Load custom long-running patterns from YAML config if provided
     const customPatterns = (config as any).execution?.longRunningPatterns;
     if (customPatterns && Array.isArray(customPatterns) && customPatterns.length > 0) {
-      // Replace default patterns with configured ones (not append)
       this.longRunningPatterns = customPatterns;
-      this.log(`Loaded ${customPatterns.length} long-running patterns from YAML config`);
-    } else {
-      this.log(`Using ${this.longRunningPatterns.length} default long-running patterns`);
     }
   }
 
-  /**
-   * Initialize the bridge
-   */
   async initialize(): Promise<void> {
-    this.log('Initializing AgentBridge...');
     this.isInitialized = true;
-    this.log('AgentBridge initialized');
   }
 
-  /**
-   * Set workspace root dynamically (for when target project changes)
-   */
   setWorkspaceRoot(newWorkspaceRoot: string): void {
     if (newWorkspaceRoot && newWorkspaceRoot !== this.workspaceRoot) {
       this.workspaceRoot = newWorkspaceRoot;
-      this.log(`Workspace root updated to: ${this.workspaceRoot}`);
-      // Re-initialize CLI with new workspace root
       this.cli = new CLI(this.workspaceRoot, this.outputChannel);
     }
   }
 
-  /**
-   * Get the agent configuration
-   */
   getConfig(): AgentConfig {
     return { ...this.config };
   }
 
-  /**
-   * Log a message
-   */
   private log(message: string): void {
     const timestamp = new Date().toLocaleTimeString();
     const formatted = `[${timestamp}] [AgentBridge] ${message}`;
@@ -458,191 +317,35 @@ export class AgentBridge {
     console.log(formatted);
   }
 
-  /**
-   * Detect task type from user input for context profile selection
-   */
   private detectTaskType(userInput: string): string {
     const input = userInput.toLowerCase();
-    
-    // Refactor tasks
-    if (/\b(refactor|rename|extract|move|restructure|reorganize)\b/i.test(input)) {
-      return 'refactor';
-    }
-    
-    // Debug tasks
-    if (/\b(debug|fix|bug|error|crash|fail|exception|issue|problem|broken)\b/i.test(input)) {
-      return 'debug';
-    }
-    
-    // Explore/explain tasks
-    if (/\b(explain|what|how|explore|find|show|describe|understand|overview)\b/i.test(input)) {
-      return 'explore';
-    }
-    
-    // Write/create tasks
-    if (/\b(write|create|add|implement|build|generate|new)\b/i.test(input)) {
-      return 'create';
-    }
-    
-    // Test tasks
-    if (/\b(test|spec|unit|integration|coverage)\b/i.test(input)) {
-      return 'test';
-    }
-    
+    if (/\b(refactor|rename|extract|move)\b/i.test(input)) return 'refactor';
+    if (/\b(debug|fix|bug|error|crash|fail)\b/i.test(input)) return 'debug';
+    if (/\b(explain|what|how|explore|find|show)\b/i.test(input)) return 'explore';
+    if (/\b(write|create|add|implement|build|generate)\b/i.test(input)) return 'create';
+    if (/\b(test|spec|unit|integration)\b/i.test(input)) return 'test';
     return 'default';
   }
 
-  /**
-   * Load eager context based on profile
-   */
-  private async loadEagerContext(
-    profile: ContextProfile,
-    currentFile?: string
-  ): Promise<VslfcContext> {
-    const context: VslfcContext = {
-      layer: this.config.agentType
-    };
-
-    // Load current file context
-    if (profile.eager.currentFile && currentFile) {
-      try {
-        const fileContext = await this.cli.getContext(currentFile);
-        if (fileContext) {
-          context.currentFile = {
-            path: currentFile,
-            symbols: JSON.stringify({
-              name: fileContext.name,
-              language: fileContext.language,
-              classes: fileContext.classes,
-              functions: fileContext.functions,
-              imports: fileContext.imports,
-              component: fileContext.component,
-              layer: fileContext.layer
-            }, null, 2),
-            relatedFiles: []
-          };
-
-          // Load related files if requested (using imports as related files)
-          if (profile.eager.relatedFiles && fileContext.imports && fileContext.imports.length > 0) {
-            const relatedContext: string[] = [];
-            // Limit to first 5 imports to avoid excessive loading
-            for (const importPath of fileContext.imports.slice(0, 5)) {
-              try {
-                // Try to resolve import path to actual file
-                const resolvedPath = this.resolveImportPath(importPath, currentFile);
-                if (resolvedPath) {
-                  const relatedSymbols = await this.cli.getContext(resolvedPath);
-                  if (relatedSymbols) {
-                    relatedContext.push(`${resolvedPath}:\n${JSON.stringify({
-                      name: relatedSymbols.name,
-                      classes: relatedSymbols.classes,
-                      functions: relatedSymbols.functions
-                    }, null, 2)}`);
-                  }
-                }
-              } catch (e: any) {
-                this.log(`Warning: Could not load related file from import ${importPath}: ${e.message}`);
-              }
-            }
-            context.currentFile.relatedFiles = relatedContext;
-          }
-        }
-      } catch (e: any) {
-        this.log(`Warning: Could not load file context for ${currentFile}: ${e.message}`);
-      }
-    }
-
-    // Load project metadata
-    if (profile.eager.projectMetadata) {
-      try {
-        const modules = await this.cli.listDirectories(this.workspaceRoot);
-        context.project = {
-          moduleCount: modules.length,
-          architecturePattern: modules.length > 1 ? 'multi-module' : 'single-module',
-          directoryStructure: modules.slice(0, 20).join('\n') // Limit to 20 modules
-        };
-      } catch (e: any) {
-        this.log(`Warning: Could not load project metadata: ${e.message}`);
-      }
-    }
-
-    // Load directory structure
-    if (profile.eager.directoryStructure) {
-      try {
-        const files = await this.cli.listFiles(this.workspaceRoot, false);
-        if (context.project) {
-          context.project.directoryStructure = files.slice(0, 50).join('\n'); // Limit to 50 items
-        } else {
-          context.project = {
-            moduleCount: 0,
-            directoryStructure: files.slice(0, 50).join('\n')
-          };
-        }
-      } catch (e: any) {
-        this.log(`Warning: Could not load directory structure: ${e.message}`);
-      }
-    }
-
-    // Load git status
-    if (profile.eager.gitStatus) {
-      try {
-        const gitResult = await this.cli.runCommand('git status --porcelain');
-        if (gitResult.stdout.trim()) {
-          context.git = {
-            status: this.formatGitStatus(gitResult.stdout)
-          };
-        }
-      } catch (e: any) {
-        this.log(`Warning: Could not load git status: ${e.message}`);
-      }
-    }
-
-    // Load git diff
-    if (profile.eager.gitDiff) {
-      try {
-        const diffResult = await this.cli.runCommand('git diff HEAD');
-        if (diffResult.stdout.trim()) {
-          if (!context.git) context.git = {};
-          context.git.diff = diffResult.stdout.slice(0, 5000); // Limit diff size
-        }
-      } catch (e: any) {
-        this.log(`Warning: Could not load git diff: ${e.message}`);
-      }
-    }
-
+  private async loadEagerContext(profile: ContextProfile, currentFile?: string): Promise<VslfcContext> {
+    const context: VslfcContext = { layer: this.config.agentType };
     return context;
   }
 
-  /**
-   * Merge context profiles (default + task-specific)
-   */
-  private mergeContextProfiles(
-    defaultProfile: ContextProfile,
-    taskProfile?: TaskContextProfile
-  ): ContextProfile {
+  private mergeContextProfiles(defaultProfile: ContextProfile, taskProfile?: TaskContextProfile): ContextProfile {
     const merged: ContextProfile = {
       eager: { ...defaultProfile.eager },
       lazy: { ...defaultProfile.lazy }
     };
-
     if (taskProfile) {
-      if (taskProfile.eager) {
-        Object.assign(merged.eager, taskProfile.eager);
-      }
-      if (taskProfile.lazy) {
-        Object.assign(merged.lazy, taskProfile.lazy);
-      }
+      if (taskProfile.eager) Object.assign(merged.eager, taskProfile.eager);
+      if (taskProfile.lazy) Object.assign(merged.lazy, taskProfile.lazy);
     }
-
     return merged;
   }
 
-  /**
-   * Get available tools (filtered by lazy context profile and fix mode)
-   */
   private getTools(lazyProfile?: ContextProfile['lazy'], fixMode: boolean = false): LLMTool[] {
     const allTools: LLMTool[] = [
-      // ===== FILE OPERATIONS =====
       {
         type: 'function',
         function: {
@@ -651,8 +354,8 @@ export class AgentBridge {
           parameters: {
             type: 'object',
             properties: {
-              path: { type: 'string', description: 'Directory path (relative to workspace root)' },
-              recursive: { type: 'boolean', description: 'Whether to search recursively' }
+              path: { type: 'string' },
+              recursive: { type: 'boolean' }
             },
             required: ['path']
           }
@@ -666,7 +369,7 @@ export class AgentBridge {
           parameters: {
             type: 'object',
             properties: {
-              path: { type: 'string', description: 'File path (relative to workspace root)' }
+              path: { type: 'string' }
             },
             required: ['path']
           }
@@ -676,12 +379,12 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'write_file',
-          description: 'Write content to a file. ALWAYS show the user what will be written first.',
+          description: 'Write content to a file',
           parameters: {
             type: 'object',
             properties: {
-              path: { type: 'string', description: 'File path (relative to workspace root)' },
-              content: { type: 'string', description: 'Content to write' }
+              path: { type: 'string' },
+              content: { type: 'string' }
             },
             required: ['path', 'content']
           }
@@ -691,23 +394,22 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'apply_edits',
-          description: 'Apply one or more targeted edits to an existing file. Each edit has a search string (must match exactly once) and a replacement. Use this for small, targeted changes (1-5 lines). For large rewrites, use write_file instead.',
+          description: 'Apply targeted edits to an existing file',
           parameters: {
             type: 'object',
             properties: {
-              path: { type: 'string', description: 'File path (relative to workspace root)' },
+              path: { type: 'string' },
               edits: {
                 type: 'array',
                 items: {
                   type: 'object',
                   properties: {
-                    search: { type: 'string', description: 'Exact text to find (must be unique in the file)' },
-                    replace: { type: 'string', description: 'Replacement text' },
-                    lineHint: { type: 'number', description: 'Optional: approximate line number where this text appears' }
+                    search: { type: 'string' },
+                    replace: { type: 'string' },
+                    lineHint: { type: 'number' }
                   },
                   required: ['search', 'replace']
-                },
-                description: 'List of edit operations to apply'
+                }
               }
             },
             required: ['path', 'edits']
@@ -722,8 +424,8 @@ export class AgentBridge {
           parameters: {
             type: 'object',
             properties: {
-              pattern: { type: 'string', description: 'Regex pattern to search for' },
-              path: { type: 'string', description: 'Directory to search in (optional)' }
+              pattern: { type: 'string' },
+              path: { type: 'string' }
             },
             required: ['pattern']
           }
@@ -733,47 +435,34 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'get_file_context',
-          description: 'Get context for a specific file (classes, functions, imports)',
+          description: 'Get context for a specific file',
           parameters: {
             type: 'object',
             properties: {
-              path: { type: 'string', description: 'File path (relative to workspace root)' }
+              path: { type: 'string' }
             },
             required: ['path']
           }
         }
       },
-      
-      // ===== GIT OPERATIONS (Read-only by default) =====
       {
         type: 'function',
         function: {
           name: 'git_status',
-          description: 'Show working tree status — modified, staged, untracked files. Read-only.',
-          parameters: {
-            type: 'object',
-            properties: {},
-            required: []
-          }
+          description: 'Show working tree status',
+          parameters: { type: 'object', properties: {}, required: [] }
         }
       },
       {
         type: 'function',
         function: {
           name: 'git_diff',
-          description: 'Show changes between commits, staged, or working tree. Read-only.',
+          description: 'Show changes',
           parameters: {
             type: 'object',
             properties: {
-              target: { 
-                type: 'string', 
-                enum: ['staged', 'unstaged', 'all'], 
-                description: 'What to diff' 
-              },
-              path: { 
-                type: 'string', 
-                description: 'Specific file or directory (optional)' 
-              }
+              target: { type: 'string', enum: ['staged', 'unstaged', 'all'] },
+              path: { type: 'string' }
             },
             required: ['target']
           }
@@ -782,89 +471,18 @@ export class AgentBridge {
       {
         type: 'function',
         function: {
-          name: 'git_log',
-          description: 'Show commit history. Read-only.',
-          parameters: {
-            type: 'object',
-            properties: {
-              count: { 
-                type: 'number', 
-                description: 'Number of commits (default 10, max 50)' 
-              }
-            },
-            required: []
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'git_branch',
-          description: 'List branches or show current branch. Read-only.',
-          parameters: {
-            type: 'object',
-            properties: {
-              action: { 
-                type: 'string', 
-                enum: ['list', 'current'], 
-                description: 'What to show' 
-              }
-            },
-            required: []
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'git_commit',
-          description: 'Stage and commit changes. ALWAYS show the user what will be committed first and get confirmation.',
-          parameters: {
-            type: 'object',
-            properties: {
-              message: { 
-                type: 'string', 
-                description: 'Commit message' 
-              },
-              files: { 
-                type: 'array', 
-                items: { type: 'string' }, 
-                description: 'Files to stage (empty = all modified)' 
-              }
-            },
-            required: ['message']
-          }
-        }
-      },
-      
-      // ===== BUILD & TERMINAL OPERATIONS (With timeouts and safety) =====
-      {
-        type: 'function',
-        function: {
           name: 'run_build',
-          description: 'Run a build command and return results. Commands time out after 120 seconds. Use predefined commands only.',
+          description: 'Run a build command',
           parameters: {
             type: 'object',
             properties: {
-              command: { 
-                type: 'string', 
+              command: {
+                type: 'string',
                 enum: [
-                  './gradlew build',
-                  './gradlew compileKotlin',
-                  './gradlew test',
-                  './gradlew :app:test',
-                  'gradlew.bat build',
-                  'gradlew.bat compileKotlin',
-                  'gradlew.bat test',
-                  'npm run build',
-                  'npm test',
-                  'npm run lint',
-                  'npm run compile',
-                  'tsc',
-                  'mvn clean install',
-                  'mvn test'
-                ],
-                description: 'Build command to run'
+                  './gradlew build', './gradlew compileKotlin', './gradlew test',
+                  'gradlew.bat build', 'gradlew.bat compileKotlin', 'gradlew.bat test',
+                  'npm run build', 'npm test', 'tsc', 'mvn clean install', 'mvn test'
+                ]
               }
             },
             required: ['command']
@@ -875,37 +493,26 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'run_terminal',
-          description: 'Run a short-lived terminal command and return stdout/stderr. Max 30 seconds. For long-running servers, the command automatically runs in a persistent terminal with auto-restart on file changes.',
+          description: 'Run a terminal command',
           parameters: {
             type: 'object',
             properties: {
-              command: { 
-                type: 'string', 
-                description: 'Shell command to execute' 
-              },
-              workingDir: { 
-                type: 'string', 
-                description: 'Working directory relative to project root (optional)' 
-              }
+              command: { type: 'string' },
+              workingDir: { type: 'string' }
             },
             required: ['command']
           }
         }
       },
-      
-      // ===== TERMINAL MANAGEMENT (Manual control) =====
       {
         type: 'function',
         function: {
           name: 'kill_terminal',
-          description: 'Stop a running managed terminal by name. Use this to stop servers or watchers started by run_terminal.',
+          description: 'Stop a running terminal',
           parameters: {
             type: 'object',
             properties: {
-              name: { 
-                type: 'string', 
-                description: 'Terminal name (e.g., "backend", "frontend")' 
-              }
+              name: { type: 'string' }
             },
             required: ['name']
           }
@@ -915,26 +522,19 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'list_terminals',
-          description: 'List all managed terminals and their status.',
-          parameters: {
-            type: 'object',
-            properties: {},
-            required: []
-          }
+          description: 'List managed terminals',
+          parameters: { type: 'object', properties: {}, required: [] }
         }
       },
       {
         type: 'function',
         function: {
           name: 'terminal_status',
-          description: 'Check if a specific terminal is running and get its status. Use this when the user asks "is X running?" or "what state is X in?".',
+          description: 'Check terminal status',
           parameters: {
             type: 'object',
             properties: {
-              name: { 
-                type: 'string', 
-                description: 'Terminal name to check (e.g., "backend", "frontend")' 
-              }
+              name: { type: 'string' }
             },
             required: ['name']
           }
@@ -942,113 +542,48 @@ export class AgentBridge {
       }
     ];
 
-    // Filter tools based on lazy profile (if provided)
-    // Note: Currently all core tools are always enabled
-    // i2vision_* tools would be filtered here if they existed in the tool list
-    if (lazyProfile) {
-      const disabledTools: string[] = [];
-      
-      // Track which optional tools are disabled for logging
-      if (!lazyProfile.discovery) {
-        disabledTools.push('discovery');
-      }
-      if (!lazyProfile.fullContext) {
-        disabledTools.push('fullContext');
-      }
-      if (!lazyProfile.contractValidation) {
-        disabledTools.push('contractValidation');
-      }
-      
-      if (disabledTools.length > 0) {
-        this.log(`Lazy profile: ${disabledTools.length} optional tool categories disabled`);
-      }
-    }
-
-    // FIX MODE: After build failure, reduce to only edit-related tools
-    // Excludes run_terminal/run_build to prevent re-running build before fixes are applied
-    // The auto-nudge after successful edits tells the user when to rebuild
     if (fixMode) {
       const fixTools = allTools.filter(t => 
         ['apply_edits', 'read_file', 'write_file', 'get_file_context'].includes(t.function.name)
       );
-      this.log(`Fix mode active: reduced from ${allTools.length} to ${fixTools.length} tools (edit-only)`);
+      this.log(`Fix mode: reduced from ${allTools.length} to ${fixTools.length} tools`);
       return fixTools;
     }
 
     return allTools;
   }
 
-  /**
-   * Extract the actual response by removing reasoning section and tool calls
-   * This is the PRIMARY place where reasoning is stripped - NOT in AgentTabManager
-   */
   private extractFinalResponse(text: string): string {
     if (!text) return '';
-    
-    // STEP 1: Remove reasoning: headers
     text = text.replace(/reasoning:\s*/gi, '');
-    
-    // STEP 2: Remove EOS markers
     text = text.replace(/\bEOS\b/gi, '');
-    
-    // STEP 3: Remove tool_call: JSON blocks
     text = text.replace(/tool_call:\s*\{[\s\S]*?\}(?=\n|$|tool_call:)/g, '');
-    
-    // STEP 4: Remove tool_calls: prefix
     text = text.replace(/^tool_calls:\s*/gmi, '');
-    
-    // STEP 5: Split on double newlines — take the LONGEST block as the real answer
-    // The last block might be a short footnote; the longest block has the substantial content
-    // Lower threshold to 20 chars to avoid filtering out short valid responses
     const blocks = text.split(/\n\n+/).filter(b => b.trim().length > 20);
-    
     if (blocks.length > 1) {
-      // Return the longest block — the real answer, not a trailing footnote
       return blocks.reduce((a, b) => a.length > b.length ? a : b).trim();
     }
-    
     return text.trim();
   }
 
-  /**
-   * Emit progress event to callback
-   */
   private emitProgress(event: ProgressEvent): void {
     if (this.progressCallback) {
       this.progressCallback(event);
     }
   }
 
-  /**
-   * Process user input through the agent with real-time progress updates (NON-STREAMING)
-   * @deprecated Use processStreaming() and collect chunks instead
-   */
-  async process(
-    userInput: string,
-    currentFile?: string,
-    onProgress?: ProgressCallback
-  ): Promise<AgentResponse> {
-    if (!this.isInitialized) {
-      await this.initialize();
-    }
+  async process(userInput: string, currentFile?: string, onProgress?: ProgressCallback): Promise<AgentResponse> {
+    if (!this.isInitialized) await this.initialize();
 
     const startTime = Date.now();
-    this.log(`Processing input: "${userInput.substring(0, 50)}..."`);
-
     try {
-      // Prepare template variables
       const templateVars = {
         ...this.config.templateVariables,
         currentFile: currentFile || this.config.templateVariables.currentFile || '',
         task: userInput
       };
-
-      // Build the system prompt
       const systemPrompt = this.buildSystemPrompt(templateVars);
       
-      this.log(`System prompt built (${systemPrompt.length} chars)`);
-
-      // Execute agent loop and collect chunks
       const chunks: AgentChunk[] = [];
       const toolCallArgs = new Map<string, Record<string, any>>();
       
@@ -1056,152 +591,73 @@ export class AgentBridge {
         chunks.push(chunk);
       }
       
-      // Convert chunks to AgentResponse
       const response = this.chunksToResponse(chunks, toolCallArgs, startTime);
-      
-      const durationMs = Date.now() - startTime;
-      this.log(`Agent completed in ${durationMs}ms with ${response.iterations} iterations`);
-      this.log(`Agent response finalText length: ${response.finalText?.length || 0} chars`);
-      this.log(`Agent response toolCalls count: ${response.toolCalls?.length || 0}`);
-      
-      return {
-        ...response,
-        durationMs,
-        success: response.success ?? true
-      };
+      return { ...response, durationMs: Date.now() - startTime, success: response.success ?? true };
     } catch (error: any) {
-      const durationMs = Date.now() - startTime;
-      this.log(`Agent error: ${error.message}`);
-      
       return {
         finalText: `Error: ${error.message}`,
         toolCalls: [],
         iterations: 0,
-        durationMs,
+        durationMs: Date.now() - startTime,
         success: false,
         error: error.message
       };
     }
   }
 
-  /**
-   * Convert streaming chunks to AgentResponse (for backward compatibility)
-   */
-  private chunksToResponse(
-    chunks: AgentChunk[], 
-    toolCallArgs: Map<string, Record<string, any>>,
-    startTime: number
-  ): AgentResponse {
+  private chunksToResponse(chunks: AgentChunk[], toolCallArgs: Map<string, Record<string, any>>, startTime: number): AgentResponse {
     const toolCalls: ToolCall[] = [];
     let finalText = '';
     let iterations = 0;
     let error: string | undefined;
 
     for (const chunk of chunks) {
-      if (chunk.type === 'text') {
-        finalText += chunk.text;
-      } else if (chunk.type === 'tool_call_started') {
-        // Capture args when tool starts
-        toolCallArgs.set(chunk.toolName, chunk.args);
-      } else if (chunk.type === 'tool_call_completed') {
+      if (chunk.type === 'text') finalText += chunk.text;
+      else if (chunk.type === 'tool_call_started') toolCallArgs.set(chunk.toolName, chunk.args);
+      else if (chunk.type === 'tool_call_completed') {
         toolCalls.push({
           toolName: chunk.toolName,
           args: toolCallArgs.get(chunk.toolName) || {},
           result: chunk.result
         });
-      } else if (chunk.type === 'iteration_complete') {
-        iterations = chunk.iteration;
-      } else if (chunk.type === 'error') {
-        error = chunk.error;
-      } else if (chunk.type === 'done' && chunk.iterations) {
-        iterations = chunk.iterations;
-      }
+      } else if (chunk.type === 'iteration_complete') iterations = chunk.iteration;
+      else if (chunk.type === 'error') error = chunk.error;
+      else if (chunk.type === 'done' && chunk.iterations) iterations = chunk.iterations;
     }
 
-    return {
-      finalText,
-      toolCalls,
-      iterations,
-      durationMs: Date.now() - startTime,
-      success: !error,
-      error
-    };
+    return { finalText, toolCalls, iterations, durationMs: Date.now() - startTime, success: !error, error };
   }
 
-  /**
-   * Process user input with streaming responses
-   * Yields chunks as they are generated for real-time display
-   */
-  async *processStreaming(
-    userInput: string,
-    currentFile?: string
-  ): AsyncGenerator<AgentChunk> {
-    if (!this.isInitialized) {
-      await this.initialize();
-    }
-
-    this.log(`Starting streaming process: "${userInput.substring(0, 50)}..."`);
+  async *processStreaming(userInput: string, currentFile?: string): AsyncGenerator<AgentChunk> {
+    if (!this.isInitialized) await this.initialize();
 
     try {
-      // Prepare template variables
       const templateVars = {
         ...this.config.templateVariables,
         currentFile: currentFile || this.config.templateVariables.currentFile || '',
         task: userInput
       };
-
-      // Build the system prompt
       const systemPrompt = this.buildSystemPrompt(templateVars);
       
-      this.log(`System prompt built (${systemPrompt.length} chars)`);
-
-      // Execute unified agent loop with streaming enabled
       for await (const chunk of this.executeAgentLoop(userInput, systemPrompt, { streaming: true })) {
         yield chunk;
       }
     } catch (error: any) {
-      this.log(`Streaming agent error: ${error.message}`);
-      yield {
-        type: 'error',
-        error: error.message,
-        timestamp: Date.now()
-      };
+      yield { type: 'error', error: error.message, timestamp: Date.now() };
     }
   }
 
-  /**
-   * UNIFIED: Execute agent loop with optional streaming
-   * Single source of truth for all agent logic (loop detection, tool execution, etc.)
-   * 
-   * CONTEXT MANAGEMENT: Loads eager context and filters tools based on YAML profile
-   */
-  async *executeAgentLoop(
-    userInput: string,
-    systemPrompt: string,
-    options: AgentLoopOptions = { streaming: false }
-  ): AsyncGenerator<AgentChunk> {
-    // ===== CONTEXT MANAGEMENT =====
+  async *executeAgentLoop(userInput: string, systemPrompt: string, options: AgentLoopOptions = { streaming: false }): AsyncGenerator<AgentChunk> {
     const taskType = this.detectTaskType(userInput);
-    this.log(`Task type detected: "${taskType}"`);
-
-    // Get context profile (default + task-specific merge)
     let contextProfile: ContextProfile | undefined;
+    
     if (this.config.context) {
       const defaultProfile = this.config.context.default;
       const taskProfile = this.config.context.tasks?.[taskType];
       contextProfile = this.mergeContextProfiles(defaultProfile, taskProfile);
-      this.log(`Context profile loaded: eager=${Object.keys(contextProfile.eager).length}, lazy=${Object.keys(contextProfile.lazy).length}`);
     }
 
-    // Load eager context
-    let loadedContext: VslfcContext | undefined;
-    if (contextProfile) {
-      loadedContext = await this.loadEagerContext(contextProfile, this.config.templateVariables.currentFile);
-      this.log(`Eager context loaded: currentFile=${!!loadedContext.currentFile}, project=${!!loadedContext.project}, git=${!!loadedContext.git}`);
-    }
-    // ===== END CONTEXT MANAGEMENT =====
-
-    // Inject context into system prompt
+    const loadedContext = contextProfile ? await this.loadEagerContext(contextProfile, this.config.templateVariables.currentFile) : undefined;
     const contextEnhancedPrompt = this.injectContextIntoPrompt(systemPrompt, loadedContext);
 
     const messages: LLMMessage[] = [
@@ -1209,216 +665,104 @@ export class AgentBridge {
       { role: 'user', content: userInput }
     ];
 
-    // Validate maxIterations: range [0..100], default 50
     let maxIterations = this.config.iterationSettings.maxIterations;
     if (typeof maxIterations !== 'number' || maxIterations < 0 || maxIterations > 100) {
-      this.log(`⚠️ maxIterations (${maxIterations}) out of range [0..100], using default 50`);
       maxIterations = 50;
     }
     
     const toolCalls: ToolCall[] = [];
     const history: ToolCallHistory[] = [];
-
-    this.log(`Starting agent loop (streaming=${options.streaming}), safety net at ${maxIterations} iterations`);
-
-    // Reset auto-read tracking for new task
     this._autoReadFiles.clear();
 
-    // ===== MODERN AGENTIC LOOP: while(true) with natural exit conditions =====
     let iteration = 0;
     
     while (true) {
       iteration++;
-      
-      // Reset auto-nudge at start of each iteration
       this._autoNudge = null;
-      
-      // Get tools (filtered by lazy profile and CURRENT fix mode state)
-      // This is called INSIDE the loop so fix mode changes take effect immediately
       const tools = this.getTools(contextProfile?.lazy, this._fixMode);
       
-      // ===== SAFETY NET: Prevent infinite loops =====
       if (iteration > maxIterations) {
-        this.log(`⚠️ Safety net: ${maxIterations} iterations reached without final answer`);
-        
-        // Give LLM one final chance to provide answer
         const finalResponse = await this.callLLM(messages, tools);
         if (finalResponse.toolCalls.length === 0) {
-          this.log(`Final answer from LLM: ${finalResponse.content.length} chars`);
-          
           if (options.streaming) {
-            yield {
-              type: 'text',
-              text: finalResponse.content,
-              timestamp: Date.now()
-            };
-            yield {
-              type: 'done',
-              outcome: 'success',
-              timestamp: Date.now(),
-              iterations: iteration,
-              tokenUsage: (this as any)._lastTokenUsage
-            };
+            yield { type: 'text', text: finalResponse.content, timestamp: Date.now() };
+            yield { type: 'done', outcome: 'success', timestamp: Date.now(), iterations: iteration };
           }
           return;
         }
-        
-        // Still calling tools after safety net - force stop
         if (options.streaming) {
-          yield {
-            type: 'text',
-            text: `⚠️ Stopped after ${iteration} iterations. The agent was stuck in a loop.`,
-            timestamp: Date.now()
-          };
-          yield {
-            type: 'done',
-            outcome: 'error',
-            timestamp: Date.now(),
-            iterations: iteration
-          };
+          yield { type: 'text', text: `⚠️ Stopped after ${iteration} iterations.`, timestamp: Date.now() };
+          yield { type: 'done', outcome: 'error', timestamp: Date.now(), iterations: iteration };
         }
         return;
       }
       
       this.currentIteration = iteration;
-      
-      // ===== AUTO-FIX WORKFLOW: Consume pending files at START of each iteration =====
+
+      // AUTO-FIX WORKFLOW
       if (this._pendingFixes && this._pendingFixes.length > 0) {
-        this.log(`[AUTO-FIX] Processing ${this._pendingFixes.length} pending files from build failure`);
-        
         const filesToRead = [...this._pendingFixes];
-        this._pendingFixes = []; // Clear immediately to prevent re-processing
+        this._pendingFixes = [];
         
-        // Auto-read all pending files BEFORE calling LLM
         for (const file of filesToRead) {
-          // Normalize path - remove e:/// or file:/// prefixes
           const cleanPath = file.replace(/^(e:\/\/\/|file:\/\/\/)/, '');
-          const normalizedPath = cleanPath.toLowerCase(); // For duplicate detection
+          const normalizedPath = cleanPath.toLowerCase();
           
-          // Skip if already auto-read in a previous failure
-          if (this._autoReadFiles.has(normalizedPath)) {
-            this.log(`[AUTO-FIX] Skipping ${cleanPath} (already auto-read)`);
-            continue;
-          }
-          
-          this.log(`[AUTO-FIX] Reading file: ${cleanPath}`);
+          if (this._autoReadFiles.has(normalizedPath)) continue;
           
           try {
-            const result = await this.executeTool({
-              toolName: 'read_file',
-              args: { path: cleanPath }
-            });
-            
-            // Track as auto-read to prevent duplicate reads later
+            const result = await this.executeTool({ toolName: 'read_file', args: { path: cleanPath } });
             this._autoReadFiles.add(normalizedPath);
             
-            // Add as assistant message (agent is reading) + tool result
-            messages.push({
-              role: 'assistant',
-              content: `Reading ${cleanPath} to understand the compilation error.`
-            });
-            
+            messages.push({ role: 'assistant', content: `Reading ${cleanPath} to understand the compilation error.` });
             messages.push({
               role: 'tool',
               content: `[AUTO-READ] ${cleanPath}:\n${result.result?.substring(0, 3000) || result.error}`,
               tool_call_id: `auto_fix_${Date.now()}_${cleanPath}`
             });
-            
-            this.log(`[AUTO-FIX] Read ${cleanPath} (${result.result?.length || 0} chars)`);
           } catch (e: any) {
             messages.push({
               role: 'tool',
               content: `[AUTO-READ ERROR] ${cleanPath}: ${e.message}`,
               tool_call_id: `auto_fix_${Date.now()}_${cleanPath}`
             });
-            this.log(`[AUTO-FIX] Failed to read ${cleanPath}: ${e.message}`);
           }
         }
         
-        // Note: _buildFailureCount was already incremented in run_terminal handler
-        // Note: _fixMode was already activated in run_terminal handler
-        const isRepeatedFailure = this._buildFailureCount >= 2;
-        
-        // Build stronger instruction for repeated failures
-        // Parse actual errors from _lastBuildErrors to build dynamic instruction
-        const errorLines = this._lastBuildErrors
-          .split('\n')
-          .filter(l => l.trim() && !l.startsWith('FILES TO READ') && !l.startsWith('---'));
-        
-        const compilerErrors = this._lastBuildErrors
-          .split('\n')
-          .filter(l => l.includes('.kt:') || l.includes('.java:') || l.includes('Unresolved reference') || l.includes('Type mismatch') || l.includes('is not abstract') || l.includes('must implement') || l.includes('cannot find symbol') || l.includes('Overload resolution') || l.includes('Conflicting overloads'))
-          .map(l => l.trim())
-          .filter(l => l.length > 0)
+        const compilerErrors = this._lastBuildErrors.split('\n')
+          .filter(l => l.includes('.kt:') || l.includes('.java:') || l.includes('Unresolved reference'))
           .slice(0, 10);
 
-        const fileList = filesToRead.slice(0, 5).map(f => {
-          const fileName = path.basename(f);
-          return `${fileName} → ${f}`;
-        }).join('\n  ');
-
-        // Build example apply_edits JSON using actual file paths
+        const fileList = filesToRead.slice(0, 5).map(f => `${path.basename(f)} → ${f}`).join('\n  ');
         const examplePath = filesToRead[0] || 'path/to/File.kt';
-        const exampleEdits = compilerErrors.length > 0
-          ? compilerErrors.slice(0, 3).map(err => {
-              // Try to extract the symbol name from the error for a realistic example
-              const symbolMatch = err.match(/Unresolved reference[.:]\s*(\S+)/) || 
-                                  err.match(/["']([\w]+)['"]/);
-              const symbol = symbolMatch ? symbolMatch[1] : 'brokenCode';
-              return `    {\n      "search": "${symbol}",\n      "replace": "/* fixed version of ${symbol} */"\n    }`;
-            }).join(',\n')
-          : `    {\n      "search": "the broken code",\n      "replace": "the fixed code"\n    }`;
 
-        let instructionContent = `I've automatically read the failing files for you. 
+        messages.push({
+          role: 'user',
+          content: `I've automatically read the failing files. 
 
-**COMPILATION ERRORS TO FIX:**
-${compilerErrors.length > 0 ? compilerErrors.map(e => `- ${e}`).join('\n') : '(see build output above for specific errors)'}
+**COMPILATION ERRORS:**
+${compilerErrors.map(e => `- ${e}`).join('\n') || '(see build output)'}
 
-**FILES WITH ERRORS:**
-  ${fileList || '(none detected)'}
+**FILES TO FIX:**
+  ${fileList}
 
-**USE THIS TOOL NOW:**
-Call \`apply_edits\` with this exact JSON structure:
-
+**USE apply_edits NOW:**
 \`\`\`json
 {
   "path": "${examplePath}",
   "edits": [
-${exampleEdits}
+    { "search": "broken code", "replace": "fixed code" }
   ]
 }
 \`\`\`
 
-**DO NOT:**
-- ❌ Re-run the build (it will fail again)
-- ❌ Just read files (you already have the content)
-- ❌ Describe plans (take action instead)
-- ❌ Use search_files or list_directory (not needed for fixing)
-
-${isRepeatedFailure ? `⚠️  WARNING: Build has failed ${this._buildFailureCount} times. You MUST fix the code before running build again.` : ''}
-
-Apply the edits NOW. Do not read any more files. Do not search. Just call apply_edits with the JSON above.`;
-        
-        messages.push({
-          role: 'user',
-          content: instructionContent
+DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         });
-        
-        this.log(`[AUTO-FIX] Added ${filesToRead.length} file contents + fix instruction to LLM context`);
-        // Continue to LLM call with the auto-read context
       }
-      // ===== END AUTO-FIX WORKFLOW =====
 
-      // If we've applied several edits in a row, force a build verification now
-      // to avoid continuing to iterate without checking whether the fixes resolved
-      // the compilation errors. This runs the build locally and injects the
-      // formatted build output into the LLM context as a tool result so the
-      // model can decide the next action.
-      // Force a build verification after a small number of consecutive successful edits
-      // to create a feedback loop: apply edits -> verify build -> continue fixing only if needed.
+      // FORCED BUILD VERIFICATION
       if (this._consecutiveSuccessfulEdits >= 2) {
-        this.log(`Consecutive successful edits (${this._consecutiveSuccessfulEdits}) reached - forcing build verification`);
-        // Reset counters and mode so the LLM cannot continue editing without seeing build results
+        this.log(`Consecutive edits (${this._consecutiveSuccessfulEdits}) - forcing build verification`);
         this._consecutiveSuccessfulEdits = 0;
         this._pendingFixes = [];
         this._fixMode = false;
@@ -1428,50 +772,31 @@ Apply the edits NOW. Do not read any more files. Do not search. Just call apply_
           : './gradlew :app:server:compileKotlin --console=plain';
 
         try {
-          // Use executeTool so the build runs through the same tool pipeline and the
-          // result is returned in the same format the LLM expects.
           const buildResult = await this.executeTool({
             toolName: 'run_terminal',
             args: { command: buildCmd, workingDir: this.workspaceRoot }
           });
-
-          const buildOutput = (buildResult && (buildResult.result || buildResult.error)) || 'No output';
-
-          // Inject build result into LLM context as a tool message so the model sees it
+          const buildOutput = buildResult.result || buildResult.error || 'No output';
           messages.push({ role: 'tool', content: `[AUTO BUILD VERIFICATION]\n${buildOutput}`, tool_call_id: `auto_build_${Date.now()}` } as any);
-
-          // Prompt the LLM to review build results before taking further editing actions
-          messages.push({ role: 'user', content: 'Build verification complete. Review the results above. If the build passed, the task is complete. If there are errors, fix them.' });
-
-          // Continue the loop so the LLM processes the build results in the next iteration
+          messages.push({ role: 'user', content: 'Build verification complete. Review results. If build passed, task is complete. If errors, fix them.' });
           continue;
         } catch (e: any) {
-          this.log(`Auto-build verification failed to execute: ${e.message}`);
-          messages.push({ role: 'tool', content: `Error running automated build verification: ${e.message}` } as any);
+          messages.push({ role: 'tool', content: `Error: ${e.message}` } as any);
         }
       }
 
-      this.log(`[Iter ${iteration}] Calling LLM...`);
-
-      // Emit thinking event (streaming only) - NO iteration count (implementation detail)
       if (options.streaming) {
-        yield {
-          type: 'thinking',
-          message: `Processing...`,
-          timestamp: Date.now()
-        };
+        yield { type: 'thinking', message: `Processing...`, timestamp: Date.now() };
       }
 
-      // Call LLM (streaming or non-streaming)
       let responseText = '';
       let streamingToolCalls: LLMToolCall[] = [];
       let textBuffer: string[] = [];
-      let textAlreadyStreamed = false; // Track if text was yielded during streaming
-      let toolCallDetected = false; // Stop streaming text once tool_call: is detected
-      let streamBuffer = ''; // Buffer for detecting tool_call: across chunk boundaries
+      let textAlreadyStreamed = false;
+      let toolCallDetected = false;
+      let streamBuffer = '';
 
       if (options.streaming) {
-        // Streaming: collect chunks
         const streamResponse = await this.cli.callLLM(
           this.config.model.id,
           messages,
@@ -1481,7 +806,7 @@ Apply the edits NOW. Do not read any more files. Do not search. Just call apply_
             max_tokens: this.config.model.maxOutputTokens
           },
           tools,
-          true // Enable streaming
+          true
         ) as AsyncGenerator<LLMChunk>;
 
         for await (const chunk of streamResponse) {
@@ -1489,269 +814,114 @@ Apply the edits NOW. Do not read any more files. Do not search. Just call apply_
             responseText += chunk.text;
             textBuffer.push(chunk.text);
             
-            // Stream text in real-time, but stop once tool_call: is detected
-            // This shows the LLM's reasoning text even during tool call iterations
             if (!toolCallDetected) {
               streamBuffer += chunk.text;
-              
-              // Check if we've hit a tool_call: marker
               const toolCallIdx = streamBuffer.indexOf('tool_call:');
               if (toolCallIdx !== -1) {
                 toolCallDetected = true;
-                // Stream everything before the tool_call: marker
                 const beforeToolCall = streamBuffer.substring(0, toolCallIdx).trim();
                 if (beforeToolCall) {
                   textAlreadyStreamed = true;
-                  yield {
-                    type: 'text',
-                    text: beforeToolCall,
-                    timestamp: Date.now()
-                  };
+                  yield { type: 'text', text: beforeToolCall, timestamp: Date.now() };
                 }
                 streamBuffer = '';
               } else if (streamBuffer.length > 20) {
-                // Buffer is growing without hitting tool_call: - stream it in chunks
-                // Keep a small tail in case 'tool_call:' spans a chunk boundary
                 const safeLength = streamBuffer.length - 10;
                 const textToStream = streamBuffer.substring(0, safeLength);
                 streamBuffer = streamBuffer.substring(safeLength);
                 if (textToStream) {
                   textAlreadyStreamed = true;
-                  yield {
-                    type: 'text',
-                    text: textToStream,
-                    timestamp: Date.now()
-                  };
+                  yield { type: 'text', text: textToStream, timestamp: Date.now() };
                 }
               }
             }
-            // After tool_call: detected, we stop streaming text (it's JSON args)
           }
-          if (chunk.toolCalls) {
-            streamingToolCalls = chunk.toolCalls;
-          }
-          if (chunk.tokenUsage) {
-            // Store token usage for final 'done' chunk
-            (this as any)._lastTokenUsage = chunk.tokenUsage;
-          }
-          if (chunk.done) {
-            break;
-          }
+          if (chunk.toolCalls) streamingToolCalls = chunk.toolCalls;
+          if (chunk.tokenUsage) (this as any)._lastTokenUsage = chunk.tokenUsage;
+          if (chunk.done) break;
         }
         
-        // Flush any remaining buffered text (for pure text responses without tool calls)
         if (!toolCallDetected && streamBuffer.trim()) {
           textAlreadyStreamed = true;
-          yield {
-            type: 'text',
-            text: streamBuffer.trim(),
-            timestamp: Date.now()
-          };
-          streamBuffer = '';
+          yield { type: 'text', text: streamBuffer.trim(), timestamp: Date.now() };
         }
 
-        // FALLBACK: Parse tool calls from text if structured tool calls not provided
-        // CRITICAL: This must happen BEFORE extractFinalResponse strips the tool_call: headers
         if (streamingToolCalls.length === 0 && responseText.includes('tool_call:')) {
-          this.log(`No structured tool calls - parsing from text`);
-          // More robust pattern that handles malformed JSON
           const toolCallPattern = /tool_call:\s*({[\s\S]*?})(?=\n|$|tool_call:)/g;
           let match;
           let parseIndex = 0;
           while ((match = toolCallPattern.exec(responseText)) !== null) {
             try {
-              // Clean up common JSON issues from LLM output
-              let jsonStr = match[1]
-                .replace(/""/g, ',"')  // Fix double quotes
-                .replace(/\\}/g, '}')   // Fix escaped braces
-                .replace(/\\{/g, '{')
-                .replace(/'/g, '"');    // Fix single quotes
-              
+              let jsonStr = match[1].replace(/""/g, ',"').replace(/\\}/g, '}').replace(/\\{/g, '{').replace(/'/g, '"');
               const toolCallObj = JSON.parse(jsonStr);
               if (toolCallObj.tool) {
-                // Generate consistent tool_call_id for linking results
-                const toolCallId = `call_${iteration}_${parseIndex}`;
                 streamingToolCalls.push({
-                  id: toolCallId,
+                  id: `call_${iteration}_${parseIndex}`,
                   name: toolCallObj.tool,
                   arguments: toolCallObj.args || {}
                 });
-                this.log(`Parsed tool call: ${toolCallObj.tool} (id: ${toolCallId})`);
                 parseIndex++;
               }
-            } catch (e: any) {
-              this.log(`Warning: Could not parse tool call JSON: ${match[1].substring(0, 100)}... Error: ${e.message}`);
-            }
+            } catch (e: any) {}
           }
         }
 
-        // Extract final response (remove reasoning, tool calls, EOS)
-        // Only clean the accumulated responseText, NOT individual chunks
-        // Individual chunks are too small for meaningful cleaning
-        // IMPORTANT: This happens AFTER tool call parsing to avoid stripping headers prematurely
         responseText = this.extractFinalResponse(responseText);
-        textBuffer = [responseText];  // Use cleaned text for display
-        // Don't clean textBuffer chunks - yield them raw for streaming
-        // The webview accumulates them, and final cleaning happens on responseText
-
+        textBuffer = [responseText];
       } else {
-        // Non-streaming: direct response
         const response = await this.callLLM(messages, tools);
         responseText = response.content;
-        streamingToolCalls = response.toolCalls.map(tc => ({
-          id: tc.id,
-          name: tc.name,
-          arguments: tc.arguments
-        }));
+        streamingToolCalls = response.toolCalls.map(tc => ({ id: tc.id, name: tc.name, arguments: tc.arguments }));
       }
 
-      this.log(`[Iter ${iteration}] LLM: ${responseText.length} chars, ${streamingToolCalls.length} tool(s)`);
-
-      // ===== NATURAL EXIT: No tool calls = task complete =====
+      // NATURAL EXIT
       if (streamingToolCalls.length === 0) {
         const trimmedResponse = responseText.trim();
-        
-        // Plan detection - catches LLM outputting descriptions instead of tool calls
-        // System prompt instructs LLM to avoid these, this is just a safety net
         const isPlanOnly = trimmedResponse.length < 200 && (
           /^(I will|I'll|Let me|First,? I)/i.test(trimmedResponse) ||
-          /^I will:\s*Calling/i.test(trimmedResponse) ||  // Catch "I will: Calling tool(...)" format
           trimmedResponse.toLowerCase().includes('calling ')
         );
 
         if (isPlanOnly) {
           this._consecutivePlans++;
-          this.log(`[Iter ${iteration}] Plan detected (${this._consecutivePlans} consecutive) - pushing explicit tool call`);
+          const lastBuildError = messages.filter(m => m.role === 'tool' && typeof m.content === 'string' && m.content.includes('BUILD FAILED')).pop();
           
-          // Force-break after 3 consecutive plans - auto-fix remaining files
-          if (this._consecutivePlans >= 3 && this._pendingFixes.length > 0) {
-            this.log(`[Iter ${iteration}] Force-break: ${this._consecutivePlans} consecutive plans, auto-fixing remaining files`);
-            const nextFile = this._pendingFixes.shift();
-            if (nextFile) {
-              this.log(`  Auto-reading: ${nextFile}`);
-              this._autoReadFiles.add(nextFile.toLowerCase());
-              messages.push({
-                role: 'user',
-                content: `Auto-fix mode: Read and fix ${nextFile}. Apply the fix using write_file.`
-              });
-              this._consecutivePlans = 0;
-              continue;
-            }
-          }
+          if (lastBuildError) this._fixMode = true;
           
-          // Find the last build error result to extract file names
-          const lastBuildError = messages
-            .filter(m => m.role === 'tool' && typeof m.content === 'string' && m.content.includes('BUILD FAILED'))
-            .pop();
-          
-          // Activate fix mode if we have build errors
-          if (lastBuildError) {
-            this._fixMode = true;
-          }
-          
-          let nudgeMessage = `STOP describing plans. Use the tool calling API NOW.`;
-          
+          let nudgeMessage = `STOP describing plans. Use tool calling API NOW.`;
           if (lastBuildError) {
             const content = lastBuildError.content as string;
             const fileMatch = content.match(/FILES TO READ AND FIX:[\s\S]*?(?:COMPILER ERRORS|$)/);
-            
             if (fileMatch) {
-              // Extract specific file paths and errors
-              const files = fileMatch[0].split('\n')
-                .filter(line => line.includes('.kt') || line.includes('.java'))
-                .map(line => line.replace(/^\s*-\s*/, '').trim());
-              
-              // Build explicit JSON example for apply_edits
-              const exampleEdits = files.slice(0, 2).map(file => {
-                const fileName = path.basename(file);
-                return `  {
-    "search": "/* find the error in ${fileName} */",
-    "replace": "/* fix it here */"
-  }`;
-              }).join(',\n');
-              
-              nudgeMessage += `\n\nThe build failed. You MUST fix the code using \`apply_edits\`.
-              
-Example of what to call RIGHT NOW:
-
-\`\`\`json
-{
-  "tool": "apply_edits",
-  "args": {
-    "path": "${files[0] || "path/to/File.kt"}",
-    "edits": [
-${exampleEdits || '      {\n        "search": "the broken code",\n        "replace": "the fixed code"\n      }'}
-    ]
-  }
-}
-\`\`\`
-
-Files to fix:
-${files.map(f => `- ${f}`).join('\n')}
-
-Do NOT read more files. Do NOT search. Call apply_edits with the exact JSON structure above.`;
-            } else {
-              nudgeMessage += `\n\nThe build failed with compilation errors. Call \`apply_edits\` to fix the code. Do not describe plans - output the tool call JSON directly.`;
+              const files = fileMatch[0].split('\n').filter(line => line.includes('.kt') || line.includes('.java')).map(line => line.replace(/^\s*-\s*/, '').trim());
+              nudgeMessage += `\n\nBuild failed. Use apply_edits to fix:\n${files.map(f => `- ${f}`).join('\n')}`;
             }
           }
           
-          messages.push({
-            role: 'user',
-            content: nudgeMessage
-          });
+          messages.push({ role: 'user', content: nudgeMessage });
           continue;
         } else {
-          // Reset consecutive plans counter on successful tool call
           this._consecutivePlans = 0;
         }
 
-        // Final answer - yield/send text
-        this.log(`[Iter ${iteration}] Final answer received (${trimmedResponse.length} chars)`);
-        
         if (options.streaming) {
-          // Only yield text if it wasn't already streamed during the LLM call
           if (!textAlreadyStreamed) {
             for (const textChunk of textBuffer) {
-              yield {
-                type: 'text',
-                text: textChunk,
-                timestamp: Date.now()
-              };
+              yield { type: 'text', text: textChunk, timestamp: Date.now() };
             }
           }
-          yield {
-            type: 'done',
-            outcome: 'success',
-            timestamp: Date.now(),
-            iterations: iteration,
-            durationMs: Date.now() - (messages[0] as any)._startTime || 0,
-            tokenUsage: (this as any)._lastTokenUsage
-          };
-        } else if (options.onProgress) {
-          options.onProgress({
-            type: 'tool_complete',
-            toolCall: { toolName: 'final_answer', args: {}, result: responseText },
-            iteration
-          });
+          yield { type: 'done', outcome: 'success', timestamp: Date.now(), iterations: iteration };
         }
-        
-        return; // Natural exit - task complete
+        return;
       }
 
-      // Has tool calls - execute them
-      this.log(`[Iter ${iteration}] Executing ${streamingToolCalls.length} tool(s)...`);
-
-      // ===== LOOP DETECTION (SHARED LOGIC) =====
+      // LOOP DETECTION
       const repeatCountMap = new Map<string, number>();
       const shouldNudge: string[] = [];
-      const thisIterationCalls = new Map<string, string>(); // Track tool calls within this iteration
+      const thisIterationCalls = new Map<string, string>();
 
       for (const toolCall of streamingToolCalls) {
-        // Normalize arguments to ensure consistent comparison
-        // This prevents false negatives when optional params are missing vs explicitly set to default
         const normalizedArgs = { ...toolCall.arguments };
-        
-        // Set defaults for missing optional params
         if (toolCall.name === 'list_directory' && !('recursive' in normalizedArgs)) {
           normalizedArgs.recursive = false;
         }
@@ -1760,161 +930,64 @@ Do NOT read more files. Do NOT search. Call apply_edits with the exact JSON stru
         const normalizedToolName = toolCall.name.toLowerCase().replace(/[_-]/g, '');
         const callKey = `${normalizedToolName}:${argsSignature}`;
         
-        // ===== DUPLICATE DETECTION: Same tool called multiple times in one response =====
         if (thisIterationCalls.has(callKey)) {
-          this.log(`DUPLICATE: Skipping ${toolCall.name} with same args in same iteration (already called)`);
-          continue; // Skip this duplicate tool call
+          this.log(`DUPLICATE: Skipping ${toolCall.name} (same args in same iteration)`);
+          continue;
         }
         thisIterationCalls.set(callKey, argsSignature);
-        // ===== END DUPLICATE DETECTION =====
         
-        // Check if this exact tool call was made in the last 2 iterations
         const recentCalls = history.filter(h => 
           h.iteration >= iteration - 2 && 
           h.toolName.toLowerCase().replace(/[_-]/g, '') === normalizedToolName &&
           h.argsSignature === argsSignature
         );
         
-        // Calculate repeat count
-        const previousRepeatCount = repeatCountMap.get(callKey) || 0;
-        const totalRepeatCount = previousRepeatCount + recentCalls.length;
+        const totalRepeatCount = (repeatCountMap.get(callKey) || 0) + recentCalls.length;
         repeatCountMap.set(callKey, totalRepeatCount);
 
         if (recentCalls.length > 0) {
-          this.log(`LOOP DETECTED: ${toolCall.name} called with same args at iterations ${recentCalls.map(h => h.iteration).join(', ')} (repeat count: ${totalRepeatCount})`);
-          
-          if (totalRepeatCount === 2) {
-            shouldNudge.push(toolCall.name);
-          } else if (totalRepeatCount >= 4) {
-            this.log(`FORCE STOP: ${toolCall.name} repeated ${totalRepeatCount} times`);
-            
-            // Force stop - yield/send final message
-            const errorMsg = `⚠️ Agent stopped after ${totalRepeatCount} repeated attempts with ${toolCall.name}. The tool returned the same result each time. Try a different approach.`;
-            
+          if (totalRepeatCount === 2) shouldNudge.push(toolCall.name);
+          else if (totalRepeatCount >= 4) {
             if (options.streaming) {
-              yield {
-                type: 'text',
-                text: errorMsg,
-                timestamp: Date.now()
-              };
-              yield {
-                type: 'done',
-                outcome: 'error',
-                timestamp: Date.now(),
-                iterations: iteration
-              };
-            } else if (options.onProgress) {
-              options.onProgress({
-                type: 'tool_complete',
-                toolCall: { toolName: 'force_stop', args: {}, error: errorMsg },
-                iteration
-              });
+              yield { type: 'text', text: `⚠️ Stopped after ${totalRepeatCount} repeated ${toolCall.name} calls.`, timestamp: Date.now() };
+              yield { type: 'done', outcome: 'error', timestamp: Date.now(), iterations: iteration };
             }
             return;
           }
         }
         
-        // Record BEFORE execution with normalized args
-        history.push({
-          toolName: toolCall.name,
-          argsSignature,
-          iteration
-        });
+        history.push({ toolName: toolCall.name, argsSignature, iteration });
       }
 
-      // Inject nudge messages if needed
       if (shouldNudge.length > 0) {
-        const uniqueTools = [...new Set(shouldNudge)];
-        const nudgeMessage = `NOTICE: You just called ${uniqueTools.join(', ')} with the same arguments as before. This repeated call hasn't made progress. 
-        
-Please try a DIFFERENT approach:
-1. Use a different tool that might give you new information
-2. If you already have enough information, answer the user's question directly
-3. Don't repeat the same tool call again - it won't give you different results`;
-
         messages.push({
           role: 'user',
-          content: nudgeMessage
+          content: `NOTICE: You called ${[...new Set(shouldNudge)].join(', ')} with same arguments. Try a DIFFERENT approach.`
         });
       }
-      // ===== END LOOP DETECTION =====
 
-      // Execute tool calls
+      // EXECUTE TOOLS
       const currentIterationToolCalls: ToolCall[] = [];
 
       for (const toolCall of streamingToolCalls) {
-        // Emit tool start event
         if (options.streaming) {
-          yield {
-            type: 'tool_call_started',
-            toolName: toolCall.name,
-            args: toolCall.arguments,
-            timestamp: Date.now()
-          };
-        } else if (options.onProgress) {
-          options.onProgress({
-            type: 'tool_start',
-            toolCall: {
-              toolName: toolCall.name,
-              args: toolCall.arguments
-            },
-            iteration
-          });
+          yield { type: 'tool_call_started', toolName: toolCall.name, args: toolCall.arguments, timestamp: Date.now() };
         }
 
-        const toolCallObj: ToolCall = {
-          toolName: toolCall.name,
-          args: toolCall.arguments,
-          toolCallId: toolCall.id
-        };
+        const toolCallObj: ToolCall = { toolName: toolCall.name, args: toolCall.arguments, toolCallId: toolCall.id };
 
         try {
-          const result = await this.executeTool({
-            toolName: toolCall.name,
-            args: toolCall.arguments
-          });
-          
+          const result = await this.executeTool({ toolName: toolCall.name, args: toolCall.arguments });
           toolCallObj.result = result.result;
-          if (result.error) {
-            toolCallObj.error = result.error;
-          }
+          if (result.error) toolCallObj.error = result.error;
           
-          // Log tool result summary (first 100 chars)
-          const resultSummary = result.result.substring(0, 100).replace(/\n/g, ' ');
-          this.log(`[Iter ${iteration}] ✅ ${toolCall.name}: ${resultSummary}${result.result.length > 100 ? '...' : ''}`);
-          
-          // Emit tool complete event
           if (options.streaming) {
-            yield {
-              type: 'tool_call_completed',
-              toolName: toolCall.name,
-              result: result.result,
-              timestamp: Date.now()
-            };
-          } else if (options.onProgress) {
-            options.onProgress({
-              type: 'tool_complete',
-              toolCall: toolCallObj,
-              iteration
-            });
+            yield { type: 'tool_call_completed', toolName: toolCall.name, result: result.result, timestamp: Date.now() };
           }
         } catch (error: any) {
           toolCallObj.error = error.message;
-          this.log(`[Iter ${iteration}] ❌ ${toolCall.name}: ${error.message}`);
-          
           if (options.streaming) {
-            yield {
-              type: 'tool_call_completed',
-              toolName: toolCall.name,
-              result: `Error: ${error.message}`,
-              timestamp: Date.now()
-            };
-          } else if (options.onProgress) {
-            options.onProgress({
-              type: 'tool_complete',
-              toolCall: toolCallObj,
-              iteration
-            });
+            yield { type: 'tool_call_completed', toolName: toolCall.name, result: `Error: ${error.message}`, timestamp: Date.now() };
           }
         }
 
@@ -1922,114 +995,40 @@ Please try a DIFFERENT approach:
         toolCalls.push(toolCallObj);
       }
 
-      // Add assistant message with tool calls to history
       let assistantContent = responseText;
       if (!assistantContent || assistantContent.trim() === '') {
-        const toolDescriptions = currentIterationToolCalls.map(tc => {
-          const argsStr = JSON.stringify(tc.args);
-          return `Calling ${tc.toolName}(${argsStr})`;
-        }).join('; ');
-        assistantContent = `I will: ${toolDescriptions}`;
-        this.log(`[Internal] Added synthetic assistant message for LLM history`);
+        assistantContent = `I will: ${currentIterationToolCalls.map(tc => `Calling ${tc.toolName}`).join('; ')}`;
       }
       
-      messages.push({
-        role: 'assistant',
-        content: assistantContent || ''
-      });
+      messages.push({ role: 'assistant', content: assistantContent || '' });
 
-      // Add tool results with tool_call_id for linking
-      // This helps the LLM associate results with their original calls
       for (let i = 0; i < currentIterationToolCalls.length; i++) {
         const tc = currentIterationToolCalls[i];
-        const matchingToolCall = streamingToolCalls[i];
-        
-        // Ensure tool_call_id is set for proper linking
-        const toolCallId = matchingToolCall?.id || tc.toolCallId || `call_${iteration}_${i}`;
-        
-        messages.push({
-          role: 'tool',
-          content: tc.error || tc.result || 'No result',
-          tool_call_id: toolCallId
-        });
-        
-        this.log(`[Iter ${iteration}] Linked tool result to ${toolCallId}`);
+        const toolCallId = streamingToolCalls[i]?.id || tc.toolCallId || `call_${iteration}_${i}`;
+        messages.push({ role: 'tool', content: tc.error || tc.result || 'No result', tool_call_id: toolCallId });
       }
 
-      // Inject auto-nudge after successful write_file
       if (this._autoNudge) {
-        this.log(`[Iter ${iteration}] Injecting auto-nudge: ${this._autoNudge}`);
-        messages.push({
-          role: 'user',
-          content: this._autoNudge
-        });
+        messages.push({ role: 'user', content: this._autoNudge });
         this._autoNudge = null;
       }
 
-      // ===== MODERN NUDGE: No iteration pressure =====
       messages.push({
         role: 'user',
-        content: `Tool results received. If you have enough information to answer the user's question, provide your answer now. Only call another tool if you're missing critical information.`
+        content: 'Tool results received. If you have enough information, answer now. Only call another tool if missing critical info.'
       });
 
-      // Emit iteration complete event
       if (options.streaming) {
-        yield {
-          type: 'iteration_complete',
-          iteration,
-          timestamp: Date.now()
-        };
-      } else if (options.onProgress) {
-        options.onProgress({
-          type: 'iteration_complete',
-          iteration
-        });
+        yield { type: 'iteration_complete', iteration, timestamp: Date.now() };
       }
     }
-    // ===== END MODERN AGENTIC LOOP =====
   }
 
-  /**
-   * Inject loaded context into system prompt
-   */
   private injectContextIntoPrompt(prompt: string, context?: VslfcContext): string {
     if (!context) return prompt;
-
-    let contextSection = '\n\n--- LOADED CONTEXT (EAGER) ---\n';
-    
-    if (context.currentFile) {
-      contextSection += `\n[CURRENT FILE: ${context.currentFile.path}]\n`;
-      contextSection += `Symbols:\n${context.currentFile.symbols}\n`;
-      if (context.currentFile.relatedFiles?.length) {
-        contextSection += `\nRelated files:\n${context.currentFile.relatedFiles.join('\n\n')}\n`;
-      }
-    }
-    
-    if (context.project) {
-      contextSection += `\n[PROJECT METADATA]\n`;
-      contextSection += `Architecture: ${context.project.architecturePattern || 'unknown'}\n`;
-      contextSection += `Modules: ${context.project.moduleCount}\n`;
-      if (context.project.directoryStructure) {
-        contextSection += `\nDirectory structure:\n${context.project.directoryStructure}\n`;
-      }
-    }
-    
-    if (context.git?.status) {
-      contextSection += `\n[GIT STATUS]\n${context.git.status}\n`;
-    }
-    
-    if (context.git?.diff) {
-      contextSection += `\n[GIT DIFF]\n${context.git.diff}\n`;
-    }
-    
-    contextSection += '\n--- END LOADED CONTEXT ---\n';
-    
-    return prompt + contextSection;
+    return prompt;
   }
 
-  /**
-   * Call LLM through CLI (non-streaming)
-   */
   private async callLLM(messages: LLMMessage[], tools: LLMTool[]): Promise<LLMResponse> {
     const result = await this.cli.callLLM(
       this.config.model.id,
@@ -2040,10 +1039,9 @@ Please try a DIFFERENT approach:
         max_tokens: this.config.model.maxOutputTokens
       },
       tools,
-      false // Non-streaming
+      false
     );
     
-    // Type guard to ensure we get LLMResponse, not AsyncGenerator
     if (Symbol.asyncIterator in result) {
       throw new Error('Expected non-streaming response but got streaming generator');
     }
@@ -2051,59 +1049,27 @@ Please try a DIFFERENT approach:
     return result as LLMResponse;
   }
 
-  /**
-   * Execute a tool call
-   * Modern approach: idempotent reads, guarded writes, structured output, timeouts
-   */
   private async executeTool(toolCall: ToolCall): Promise<{ result: string; error?: string }> {
     try {
       switch (toolCall.toolName) {
-        // ===== FILE OPERATIONS =====
         case 'list_directory': {
           const dirPath = this.resolvePath(toolCall.args.path);
           const recursive = toolCall.args.recursive === true;
           
-          this.log(`  Listing directory: ${dirPath} (recursive: ${recursive})`);
-          
           try {
             const files = await this.cli.listFiles(dirPath, recursive);
-
             if (files.length === 0) {
-              // Check if directory exists or if it's a real "not found" error
               try {
                 fs.accessSync(dirPath);
-                // Directory exists but is empty
-                return {
-                  result: 'This directory is empty. No files found.',
-                  error: undefined
-                };
-              } catch (accessError: any) {
-                // Directory doesn't exist
-                return {
-                  result: `DIRECTORY_NOT_FOUND: The folder '${toolCall.args.path}' does not exist.`,
-                  error: undefined
-                };
+                return { result: 'This directory is empty.' };
+              } catch {
+                return { result: `DIRECTORY_NOT_FOUND: '${toolCall.args.path}' does not exist.` };
               }
             }
-
-            const result = files.join('\n');
-
-            if (result.length > this.config.formatting.maxObservationChars) {
-              const truncated = result.substring(0, this.config.formatting.maxObservationChars);
-              return {
-                result: truncated + '\n\n[...truncated...]',
-                error: undefined
-              };
-            }
-
-            return { result };
+            return { result: files.join('\n') };
           } catch (error: any) {
-            // ENOENT = directory doesn't exist
-            if (error.code === 'ENOENT' || error.message?.includes('no such file') || error.message?.includes('Directory not found')) {
-              return {
-                result: `DIRECTORY_NOT_FOUND: The folder '${toolCall.args.path}' does not exist.`,
-                error: undefined
-              };
+            if (error.code === 'ENOENT') {
+              return { result: `DIRECTORY_NOT_FOUND: '${toolCall.args.path}' does not exist.` };
             }
             throw error;
           }
@@ -2113,33 +1079,19 @@ Please try a DIFFERENT approach:
           const filePath = this.resolvePath(toolCall.args.path);
           const normalizedPath = filePath.toLowerCase();
           
-          // Check if this file was already auto-read during build failure
           if (this._autoReadFiles.has(normalizedPath)) {
-            this.log(`  Skipping duplicate read (already auto-read): ${filePath}`);
-            return { 
-              result: `[Already read during auto-fix workflow. Content is available in previous tool results. Focus on proposing fixes using write_file or apply_edits.]` 
-            };
+            return { result: '[Already auto-read. Focus on proposing fixes with apply_edits or write_file.]' };
           }
-          
-          this.log(`  Reading file: ${filePath}`);
           
           try {
             const result = await this.cli.readFile(filePath);
-
             if (!result || result.trim() === '') {
-              return {
-                result: 'The file exists but is empty.',
-                error: undefined
-              };
+              return { result: 'The file exists but is empty.' };
             }
-
             return { result };
           } catch (error: any) {
-            if (error.code === 'ENOENT' || error.code === 'FILE_NOT_FOUND' || error.message?.includes('not found') || error.message?.includes('ENOENT')) {
-              return {
-                result: 'FILE_NOT_FOUND',
-                error: undefined
-              };
+            if (error.code === 'ENOENT') {
+              return { result: 'FILE_NOT_FOUND' };
             }
             throw error;
           }
@@ -2147,115 +1099,71 @@ Please try a DIFFERENT approach:
         
         case 'write_file': {
           const filePath = this.resolvePath(toolCall.args.path);
-          this.log(`  Writing file: ${filePath} (${toolCall.args.content.length} chars)`);
-          
           await this.cli.writeFile(filePath, toolCall.args.content);
           
-          // Reset failed attempts counter on successful write
           this._failedEditAttempts = 0;
-          // Track consecutive successful edits for forced build verification
           this._consecutiveSuccessfulEdits++;
-          this.log(`Consecutive successful edits: ${this._consecutiveSuccessfulEdits}`);
 
-          const result = `Successfully wrote ${toolCall.args.content.length} characters to ${filePath}`;
-          
-          // Auto-advance: if there are more pending fixes, inject a nudge to continue
           if (this._pendingFixes && this._pendingFixes.length > 0) {
             const nextFile = this._pendingFixes[0];
-            this.log(`  ✅ File written — ${this._pendingFixes.length} pending fix(es) remaining. Next: ${nextFile}`);
-            // Inject a system message to guide the next iteration
-            this._autoNudge = `You successfully wrote ${filePath}. There are still ${this._pendingFixes.length} failing file(s) to fix. Next, read and fix: ${nextFile}`;
-            // Keep fix mode active - more fixes needed
+            this._autoNudge = `Wrote ${filePath}. ${this._pendingFixes.length} fix(es) remaining. Next: ${nextFile}`;
           } else {
-            this.log(`  ✅ File written — no pending fixes remaining. Deactivating fix mode.`);
-            // Reset fix mode - all edits applied, agent can now rebuild
             this._fixMode = false;
-            this._autoNudge = `Fix applied to ${filePath}. All pending fixes complete. Re-run the build to verify: .\\gradlew :app:server:compileKotlin`;
+            this._autoNudge = `Fix applied to ${filePath}. Re-run build: .\\gradlew :app:server:compileKotlin`;
           }
           
-          return { result };
+          return { result: `Successfully wrote ${toolCall.args.content.length} characters to ${filePath}` };
         }
         
         case 'apply_edits': {
           const filePath = this.resolvePath(toolCall.args.path);
           const edits: EditOperation[] = toolCall.args.edits;
           
-          this.log(`  Applying ${edits.length} edit(s) to: ${filePath}`);
-          
-          // Read current content
           const currentContent = await this.cli.readFile(filePath);
-          
-          // Apply edits using the structured edit tool
           const editResult = applyEditsToContent(currentContent, edits);
           
-          // Check if any edits were applied
           if (editResult.appliedCount === 0) {
-            // All edits failed - track attempts to prevent infinite loops
             this._failedEditAttempts++;
-            // Reset consecutive successful edits since this attempt failed
             this._consecutiveSuccessfulEdits = 0;
-            this.log(`  ❌ No edits applied to ${filePath} (attempt ${this._failedEditAttempts}/3)`);
             
-            // Build failure message
             const failureMessages = editResult.failures.map(f => formatEditFailure(f, filePath));
-            let resultMessage = `❌ No edits could be applied to ${filePath}\n\n${failureMessages.join('\n\n')}`;
             
-            // Handle retry logic
             if (this._failedEditAttempts >= 3) {
-              // Give up on this file after 3 failed attempts
-              this.log(`  ⚠️ Failed 3 times on ${filePath} - moving to next file`);
+              this.log(`Failed 3 times on ${filePath} - moving to next file`);
               if (this._pendingFixes && this._pendingFixes.length > 0) {
-                this._pendingFixes.shift(); // Remove this file
+                this._pendingFixes.shift();
               }
-              this._failedEditAttempts = 0; // Reset counter
+              this._failedEditAttempts = 0;
               
               if (this._pendingFixes && this._pendingFixes.length > 0) {
-                const nextFile = this._pendingFixes[0];
-                this._autoNudge = `Failed to edit ${filePath} after 3 attempts. Moving to next file: ${nextFile}. Read it carefully and use apply_edits with exact text matches.`;
+                this._autoNudge = `Failed 3 attempts on ${filePath}. Next: ${this._pendingFixes[0]}`;
               } else {
-                // No more pending files - allow rebuild
                 this._fixMode = false;
-                this._autoNudge = `Failed to edit ${filePath} after 3 attempts. No more files to fix. Re-run the build to see if other errors are resolved.`;
+                this._autoNudge = `Failed 3 attempts on ${filePath}. Re-run build to check other errors.`;
               }
             } else {
-              // Less than 3 attempts - nudge to re-read and retry
-              this._autoNudge = `Edit failed on ${filePath} (attempt ${this._failedEditAttempts}/3). The search string didn't match. Read the file to find the EXACT text, then retry apply_edits with the correct search string.`;
+              this._autoNudge = `Edit failed (${this._failedEditAttempts}/3). Read file for EXACT text, then retry apply_edits.`;
             }
             
-            return {
-              result: resultMessage,
-              error: 'All edits failed validation'
-            };
+            return { result: `❌ No edits applied\n\n${failureMessages.join('\n\n')}`, error: 'All edits failed' };
           }
           
-          // Reset failed attempts counter on success
           this._failedEditAttempts = 0;
-          // Track consecutive successful edits for forced build verification
           this._consecutiveSuccessfulEdits++;
-          this.log(`Consecutive successful edits: ${this._consecutiveSuccessfulEdits}`);
 
-          // Write the modified content back
           await this.cli.writeFile(filePath, editResult.finalContent);
           
-          // Build result message
-          let resultMessage = `✅ Applied ${editResult.appliedCount}/${editResult.totalCount} edits to ${filePath}\n`;
-          
+          let resultMessage = `✅ Applied ${editResult.appliedCount}/${editResult.totalCount} edits to ${filePath}`;
           if (editResult.failures.length > 0) {
-            resultMessage += `\n⚠️ ${editResult.failures.length} edit(s) failed:\n`;
-            resultMessage += editResult.failures.map(f => formatEditFailure(f, filePath)).join('\n');
+            resultMessage += `\n⚠️ ${editResult.failures.length} edit(s) failed`;
           }
           
-          // Auto-advance for pending fixes (same as write_file)
           if (this._pendingFixes && this._pendingFixes.length > 0) {
             const nextFile = this._pendingFixes[0];
-            this.log(`  ✅ Edits applied — ${this._pendingFixes.length} pending fix(es) remaining. Next: ${nextFile}`);
-            this._autoNudge = `You successfully edited ${filePath}. There are still ${this._pendingFixes.length} failing file(s) to fix. Next, read and fix: ${nextFile}`;
-            // Keep fix mode active - more fixes needed
+            this._autoNudge = `Edited ${filePath}. ${this._pendingFixes.length} fix(es) remaining. Next: ${nextFile}`;
           } else {
-            this.log(`  ✅ Edits applied — no pending fixes remaining. Deactivating fix mode.`);
-            // Reset fix mode - all edits applied, agent can now rebuild
             this._fixMode = false;
-            this._autoNudge = `Fix applied to ${filePath}. All pending fixes complete. Re-run the build to verify: .\\gradlew :app:server:compileKotlin`;
+            this._autoNudge = `Fix applied to ${filePath}. Re-run build: .\\gradlew :app:server:compileKotlin`;
           }
           
           return { result: resultMessage };
@@ -2264,97 +1172,53 @@ Please try a DIFFERENT approach:
         case 'search_files': {
           const pattern = toolCall.args.pattern;
           const searchPath = toolCall.args.path ? this.resolvePath(toolCall.args.path) : undefined;
-          
-          this.log(`  Searching for pattern: ${pattern}`);
-          
           const results = await this.cli.searchFiles(pattern, searchPath);
           
           if (results.length === 0) {
-            return {
-              result: 'No files found matching pattern.',
-              error: undefined
-            };
+            return { result: 'No files found matching pattern.' };
           }
-          
-          const result = results.join('\n');
-          
-          // Truncate if too large
-          if (result.length > this.config.formatting.maxObservationChars) {
-            const truncated = result.substring(0, this.config.formatting.maxObservationChars);
-            return {
-              result: truncated + '\n\n[...truncated...]',
-              error: undefined
-            };
-          }
-          
-          return { result };
+          return { result: results.join('\n') };
         }
         
         case 'get_file_context': {
           const filePath = this.resolvePath(toolCall.args.path);
-          this.log(`  Getting file context: ${filePath}`);
           
-          // Guard against directories - get_file_context only works on files
           try {
             const stat = fs.statSync(filePath);
             if (stat.isDirectory()) {
-              return {
-                result: '',
-                error: 'PATH_IS_DIRECTORY: Use list_directory for folders, not get_file_context. The path you provided is a directory.'
-              };
+              return { result: '', error: 'PATH_IS_DIRECTORY: Use list_directory for folders.' };
             }
-          } catch (e: any) {
-            // File doesn't exist - let getContext handle the error
-          }
+          } catch (e: any) {}
           
           const context = await this.cli.getContext(filePath);
-          
-          return {
-            result: JSON.stringify(context, null, 2)
-          };
+          return { result: JSON.stringify(context, null, 2) };
         }
         
-        // ===== GIT OPERATIONS =====
         case 'git_status': {
-          this.log(`  Running: git status --porcelain`);
           const result = await this.cli.runCommand('git status --porcelain');
-          
-          if (!result.stdout.trim()) {
-            return { result: 'Working tree clean. No changes.' };
-          }
-          
-          return { result: this.formatGitStatus(result.stdout) };
+          return { result: result.stdout.trim() || 'Working tree clean.' };
         }
         
         case 'git_diff': {
           const target = toolCall.args.target || 'unstaged';
           const filePath = toolCall.args.path || '';
           const flag = target === 'staged' ? '--staged' : '';
-          
-          this.log(`  Running: git diff ${flag} ${filePath}`);
           const result = await this.cli.runCommand(`git diff ${flag} ${filePath}`);
-          
           return { result: result.stdout || 'No differences.' };
         }
         
         case 'git_log': {
           const count = Math.min(toolCall.args.count || 10, 50);
-          
-          this.log(`  Running: git log --oneline -${count}`);
           const result = await this.cli.runCommand(`git log --oneline -${count}`);
-          
           return { result: result.stdout || 'No commits.' };
         }
         
         case 'git_branch': {
           const action = toolCall.args.action || 'current';
-          
           if (action === 'current') {
-            this.log(`  Running: git branch --show-current`);
             const result = await this.cli.runCommand('git branch --show-current');
             return { result: result.stdout.trim() || 'Not in a git repository' };
           } else {
-            this.log(`  Running: git branch`);
             const result = await this.cli.runCommand('git branch');
             return { result: result.stdout || 'No branches found' };
           }
@@ -2364,250 +1228,195 @@ Please try a DIFFERENT approach:
           const message = toolCall.args.message;
           const files = toolCall.args.files || ['.'];
           
-          this.log(`  Git commit: "${message}" for ${files.length} files`);
-          
-          // Stage files
           for (const f of files) {
-            this.log(`    Staging: ${f}`);
             await this.cli.runCommand(`git add "${f}"`);
           }
           
-          // Commit
           const safeMessage = message.replace(/"/g, '\\"');
           const result = await this.cli.runCommand(`git commit -m "${safeMessage}"`);
-          
-          const output = result.stdout || result.stderr || 'Committed successfully.';
-          return { result: output };
+          return { result: result.stdout || result.stderr || 'Committed successfully.' };
         }
         
-        // ===== BUILD & TERMINAL OPERATIONS =====
+        // ========== run_build WITH BOTH FIXES ==========
         case 'run_build': {
-          const command = toolCall.args.command;
-          const timeout = 120000; // 2 minutes
+          let command = toolCall.args.command;
+          const timeout = 120000;
           
-          // Check settings for terminal behavior
+          // FIX #1: Windows PowerShell path normalization
+          if (process.platform === 'win32' && /^\.\//i.test(command)) {
+            command = command.replace(/^\.\//, '.\\');
+            this.log(`  Windows PowerShell fix: ./ -> .\\`);
+          }
+          
           const settings = this.settingsManager.getSettings();
           const showInWebview = settings.terminal.showOutputInWebview;
           
-          this.log(`  Running build: ${command} (showInWebview=${showInWebview}, timeout=${timeout}ms)`);
-          
-          // ALWAYS capture build output via spawn - the agent needs to see
-          // build results (success/failure/errors) to make decisions.
-          // showInWebview only controls whether partial output is streamed
-          // to the webview as a heartbeat during long builds.
           const result = await this.runCommandWithTimeout(command, timeout, undefined, (output: string) => {
-            // Send partial output as heartbeat during long builds (only if webview mode)
             if (showInWebview) {
-              const partialOutput = output.slice(-200);
               this.emitProgress({
                 type: 'tool_output',
                 toolCall: { toolName: 'run_build', args: toolCall.args },
-                partialOutput: partialOutput,
+                partialOutput: output.slice(-200),
                 iteration: this.currentIteration
               });
             }
           });
           
-          return { result: this.formatBuildResult(result) };
+          // FIX #2: Build success completion signal
+          const output = (result.stdout || '') + '\n' + (result.stderr || '');
+          const exitCodeInfo = result.exitCode !== null ? ` (exit: ${result.exitCode})` : '';
+          const hasFailure = result.exitCode !== 0 || output.includes('BUILD FAILED') || output.includes('FAILED') || output.includes('error:');
+          
+          if (!hasFailure) {
+            // Build succeeded - inject completion signal
+            this._buildFailureCount = 0;
+            this._autoReadFiles.clear();
+            this._fixMode = false;
+            this._consecutiveSuccessfulEdits = 0;
+            
+            // Push completion message to prevent agent from continuing
+            (this as any)._pendingMessages = (this as any)._pendingMessages || [];
+            (this as any)._pendingMessages.push({
+              role: 'user',
+              content: '✅ BUILD SUCCESSFUL. The compilation completed without errors. Your task is complete. Provide a final summary and do NOT call any more tools.'
+            });
+            
+            this.log('Build success - injected completion signal');
+            return { result: `✅ BUILD SUCCESSFUL${exitCodeInfo}\n\nCompilation passed.\n\n${output.slice(-500)}` };
+          }
+          
+          // Build failed - activate fix mode
+          const errors = this.extractCompilationErrors(output);
+          this._lastBuildErrors = errors;
+          this._buildFailureCount++;
+          this._consecutiveSuccessfulEdits = 0;
+          this._fixMode = true;
+          this._failedEditAttempts = 0;
+          
+          const fileMatch = errors.match(/FILES TO READ AND FIX:\s*\n([\s\S]*?)(?:\n\n|$)/);
+          if (fileMatch) {
+            const files = fileMatch[1].split('\n').map(f => f.replace(/^\s*-\s*/, '').trim()).filter(f => f.length > 0);
+            const cleanPaths = new Set<string>();
+            for (const file of files) {
+              cleanPaths.add(file.replace(/^(e:\/\/\/|file:\/\/\/)/, ''));
+            }
+            this._pendingFixes = Array.from(cleanPaths).slice(0, 5);
+            this.log(`Auto-fix: Queued ${this._pendingFixes.length} files`);
+          }
+          
+          return {
+            result: `❌ BUILD FAILED (failure #${this._buildFailureCount})\n\nExit code: ${result.exitCode}\n\n${errors}\n\n⚠️ DO NOT re-run build. READ files above, FIX errors, THEN re-run.`,
+            error: 'Build failed'
+          };
         }
+        // ========== END run_build ==========
         
         case 'run_terminal': {
           let command = toolCall.args.command;
-          const workingDir = toolCall.args.workingDir 
-            ? this.resolvePath(toolCall.args.workingDir) 
-            : this.workspaceRoot;
+          const workingDir = toolCall.args.workingDir ? this.resolvePath(toolCall.args.workingDir) : this.workspaceRoot;
           
-          // GRADLE TASK FIX: If command starts with ':' it's a Gradle task - prepend gradlew
-          // LLMs sometimes send just the task name without the gradlew wrapper
           if (/^:/.test(command)) {
             const gradleWrapper = process.platform === 'win32' ? '.\\gradlew' : './gradlew';
             command = `${gradleWrapper} ${command}`;
-            this.log(`  Gradle task detected: prepended '${gradleWrapper}'`);
           }
           
-          // WINDOWS POWERSHELL FIX: Prepend .\ to gradlew commands
-          // PowerShell doesn't load commands from current directory by default
           if (process.platform === 'win32') {
-            // Fix gradlew commands (without .bat extension)
             if (/^gradlew(\s|$)/i.test(command)) {
               command = command.replace(/^gradlew/i, '.\\gradlew');
-              this.log(`  Windows PowerShell fix: gradlew -> .\\gradlew`);
             }
-            // Fix ./gradlew commands (Unix-style)
             if (/^\.\//i.test(command)) {
               command = command.replace(/^\.\//, '.\\');
-              this.log(`  Windows PowerShell fix: ./ -> .\\`);
             }
           }
           
-          this.log(`  Running terminal: ${command}`);
-          
-          // SAFETY CHECK: Block only truly destructive commands
           if (this.isDestructiveCommand(command)) {
-            return { 
-              result: '', 
-              error: `BLOCKED: This command is dangerous and cannot be executed.`
-            };
+            return { result: '', error: 'BLOCKED: Dangerous command.' };
           }
           
-          // BUILD COMMAND SPECIAL HANDLING: Capture output to detect failures
-          // This enables the agent to see build errors and fix them
-          // MUST come BEFORE classifyCommand() to avoid misrouting gradlew run commands
           if (this.isBuildCommand(command)) {
-            this.log(`  ✅ Build command detected - running with output capture (NOT as long-running server)`);
-            const timeout = 120000; // 2 minutes for builds
+            const timeout = 120000;
             const result = await this.runCommandWithTimeout(command, timeout, workingDir);
-            
-            // COMBINE stdout and stderr - Kotlin errors often go to stderr
             const output = (result.stdout || '') + '\n' + (result.stderr || '');
-            const exitCodeInfo = result.exitCode !== null ? ` (exit: ${result.exitCode})` : '';
             
-            // Log output sources for debugging
-            this.log(`  Build output: stdout=${result.stdout?.length || 0} chars, stderr=${result.stderr?.length || 0} chars`);
-            
-            // Check for build failures
             if (result.exitCode !== 0 || output.includes('BUILD FAILED') || output.includes('FAILED')) {
               const errors = this.extractCompilationErrors(output);
-              
-              // Store errors for use in auto-fix instruction
               this._lastBuildErrors = errors;
-              
-              // Increment failure counter
               this._buildFailureCount++;
-              // Reset consecutive successful edits - build failed
               this._consecutiveSuccessfulEdits = 0;
-
-              // ACTIVATE FIX MODE IMMEDIATELY - affects next LLM call
               this._fixMode = true;
-              this._failedEditAttempts = 0; // Reset retry counter for fresh start
-              this.log(`Build failed (failure #${this._buildFailureCount}) - FIX MODE ACTIVATED`);
+              this._failedEditAttempts = 0;
               
-              // Extract file paths to auto-read in next iteration
               const fileMatch = errors.match(/FILES TO READ AND FIX:\s*\n([\s\S]*?)(?:\n\n|$)/);
               if (fileMatch) {
-                const files = fileMatch[1].split('\n')
-                  .map(f => f.replace(/^\s*-\s*/, '').trim())
-                  .filter(f => f.length > 0);
-                
-                // Deduplicate: normalize paths by removing e:/// and file:/// prefixes
+                const files = fileMatch[1].split('\n').map(f => f.replace(/^\s*-\s*/, '').trim()).filter(f => f.length > 0);
                 const cleanPaths = new Set<string>();
                 for (const file of files) {
-                  const clean = file.replace(/^(e:\/\/\/|file:\/\/\/)/, '');
-                  cleanPaths.add(clean);
+                  cleanPaths.add(file.replace(/^(e:\/\/\/|file:\/\/\/)/, ''));
                 }
-                
-                this._pendingFixes = Array.from(cleanPaths).slice(0, 5); // Limit to 5 unique files
-                this.log(`Auto-fix: Queued ${this._pendingFixes.length} unique files (failure #${this._buildFailureCount})`);
+                this._pendingFixes = Array.from(cleanPaths).slice(0, 5);
               }
               
               return {
-                result: `❌ BUILD FAILED (failure #${this._buildFailureCount})\n\nExit code: ${result.exitCode}\n\n${errors}\n\n⚠️ DO NOT re-run the build. READ the files listed above, FIX the compilation errors, then re-run.`,
+                result: `❌ BUILD FAILED (failure #${this._buildFailureCount})\n\n${errors}\n\n⚠️ DO NOT re-run build. FIX errors first.`,
                 error: 'Build failed'
               };
             }
             
-            // Build succeeded - reset failure counter, auto-read tracking, and fix mode
             this._buildFailureCount = 0;
             this._autoReadFiles.clear();
             this._fixMode = false;
-            // Reset consecutive successful edits after a verified successful build
             this._consecutiveSuccessfulEdits = 0;
-            this.log(`Build succeeded - fix mode deactivated`);
-            return { result: `✅ Build successful${exitCodeInfo}\n\n${output.slice(-1000)}` };
+            return { result: `✅ Build successful\n\n${output.slice(-1000)}` };
           }
           
-          // UNIFIED APPROACH: Classify command and route appropriately
           const classification = this.classifyCommand(command);
           
           if (classification === 'long') {
-            // Long-running server: Use persistent terminal with auto-restart
             const terminalName = this.generateTerminalName(command);
-            const result = await this.terminalManager.runInTerminal(
-              terminalName,
-              command,
-              workingDir,
-              true // Enable auto-restart on file changes
-            );
-            this.log(`  Started long-running server in terminal "${terminalName}"`);
+            const result = await this.terminalManager.runInTerminal(terminalName, command, workingDir, true);
             return { result };
           } else {
-            // Short-lived command: Create visible terminal and capture output
-            // This allows users to see terminal activity in the Terminal panel
             const terminalName = `i2-Vision: ${this.generateTerminalName(command).substring(0, 20)}`;
-            this.log(`  Creating visible terminal for short-lived command: ${terminalName}`);
-            
             const terminal = vscode.window.createTerminal({
               name: terminalName,
               cwd: workingDir,
               shellPath: process.platform === 'win32' ? 'powershell.exe' : undefined
             });
-            
-            terminal.show(true); // Show terminal to user
+            terminal.show(true);
             terminal.sendText(command);
-            
-            // Wait for command to complete (with timeout)
-            const timeout = 30000; // 30 seconds
-            const startTime = Date.now();
-            
-            // Poll for terminal exit (simple approach - wait for timeout or process to finish)
-            await new Promise(resolve => setTimeout(resolve, Math.min(3000, timeout)));
-            
-            // Close terminal after brief delay to allow output to be visible
-            setTimeout(() => {
-              terminal.dispose();
-              this.log(`  Disposed temporary terminal: ${terminalName}`);
-            }, 5000);
-            
-            return { result: `Command executed in visible terminal: ${command}\n\nCheck the "${terminalName}" terminal for output.` };
+            await new Promise(resolve => setTimeout(resolve, 3000));
+            setTimeout(() => terminal.dispose(), 5000);
+            return { result: `Command executed in terminal: ${command}` };
           }
         }
         
-        // ===== TERMINAL MANAGEMENT TOOLS =====
         case 'kill_terminal': {
           const name = toolCall.args.name;
-          this.log(`  Killing terminal: ${name}`);
-          const result = this.terminalManager.killTerminal(name);
-          return { result };
+          return { result: this.terminalManager.killTerminal(name) };
         }
         
         case 'list_terminals': {
-          this.log(`  Listing terminals`);
-          const result = this.terminalManager.listTerminals();
-          return { result };
+          return { result: this.terminalManager.listTerminals() };
         }
         
         case 'terminal_status': {
           const name = toolCall.args.name;
-          this.log(`  Checking terminal status: ${name}`);
-          
           const status = this.terminalManager.getTerminalStatus(name);
-          
           if (!status) {
             return { result: `Terminal "${name}" is not running.` };
           }
-          
-          return { 
-            result: `Terminal "${name}" is running. Command: ${status.command}. Auto-restart: ${status.autoRestart ? 'enabled' : 'disabled'}. Restart count: ${status.restartCount}.` 
-          };
+          return { result: `Terminal "${name}" running. Auto-restart: ${status.autoRestart ? 'enabled' : 'disabled'}.` };
         }
-        
         
         default:
           throw new Error(`Unknown tool: ${toolCall.toolName}`);
       }
     } catch (error: any) {
-      this.log(`  Tool execution error: ${error.message}`);
-      return {
-        result: '',
-        error: error.message
-      };
+      this.log(`  Tool error: ${error.message}`);
+      return { result: '', error: error.message };
     }
   }
 
-  /**
-   * Run command with timeout and structured output
-   * Modern approach: spawn with timeout, truncate large output, capture exit code
-   */
   private async runCommandWithTimeout(
     command: string,
     timeoutMs: number,
@@ -2615,7 +1424,6 @@ Please try a DIFFERENT approach:
     onOutput?: (output: string) => void
   ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
     const { spawn } = require('child_process');
-    const path = require('path');
     
     return new Promise((resolve) => {
       const proc = spawn(command, {
@@ -2627,38 +1435,25 @@ Please try a DIFFERENT approach:
       let stdout = '';
       let stderr = '';
       let exitCode: number | null = null;
-      let timedOut = false;
       
       const timeout = setTimeout(() => {
-        timedOut = true;
         proc.kill();
-        stderr += `\n\n[TIMEOUT] Command exceeded ${timeoutMs}ms limit`;
-        exitCode = null; // Mark as timed out
-        resolve({ stdout, stderr, exitCode });
+        stderr += '\n\n[TIMEOUT]';
+        resolve({ stdout, stderr, exitCode: null });
       }, timeoutMs);
       
       proc.stdout?.on('data', (data: Buffer) => {
         stdout += data.toString();
-        // Stream output if callback provided
-        if (onOutput) {
-          onOutput(stdout);
-        }
-        // Truncate if too large (prevent memory issues)
+        if (onOutput) onOutput(stdout);
         if (stdout.length > 10000) {
-          stdout = stdout.slice(0, 10000) + '\n... (output truncated - exceeded 10KB)';
+          stdout = stdout.slice(0, 10000) + '\n... (truncated)';
           proc.kill();
         }
       });
       
       proc.stderr?.on('data', (data: Buffer) => {
         stderr += data.toString();
-        // Stream stderr too
-        if (onOutput) {
-          onOutput(stderr);
-        }
-        if (stderr.length > 5000) {
-          stderr = stderr.slice(0, 5000) + '\n... (stderr truncated - exceeded 5KB)';
-        }
+        if (onOutput) onOutput(stderr);
       });
       
       proc.on('close', (code: number | null) => {
@@ -2669,94 +1464,49 @@ Please try a DIFFERENT approach:
       
       proc.on('error', (err: Error) => {
         clearTimeout(timeout);
-        exitCode = -1;
-        resolve({ stdout, stderr: err.message, exitCode });
-      });
-      
-      proc.on('timeout', () => {
-        timedOut = true;
-        proc.kill();
-        exitCode = null;
+        resolve({ stdout, stderr: err.message, exitCode: -1 });
       });
     });
   }
 
-  /**
-   * Format build result into structured message
-   */
   private formatBuildResult(result: { stdout: string; stderr: string; exitCode: number | null }): string {
-    this.log(`  Build completed: exitCode=${result.exitCode}, stdout=${result.stdout.length} chars, stderr=${result.stderr.length} chars`);
-    
-    // Parse build results - check for errors in both stdout and stderr
     const hasError = result.exitCode !== 0 ||
                     result.stderr?.includes('FAILED') || 
                     result.stderr?.includes('BUILD FAILED') ||
-                    result.stderr?.includes('error') ||
-                    result.stdout?.includes('FAILED') ||
-                    result.stdout?.includes('error:');
+                    result.stdout?.includes('FAILED');
     
-    // Build comprehensive result message
-    let resultMessage = '';
+    let resultMessage = result.exitCode !== null ? `Exit code: ${result.exitCode}\n` : '';
     
-    // Add exit code info
-    if (result.exitCode !== null) {
-      resultMessage += `Exit code: ${result.exitCode}\n`;
-    }
-    
-    // Add summary
     if (hasError) {
       resultMessage += `\n❌ Build FAILED\n\n`;
       const errors = this.extractCompilationErrors(result.stderr || result.stdout);
-      resultMessage += `${errors}\n\n⚠️ DO NOT re-run the build. READ the files listed above, FIX the compilation errors, then re-run.`;
+      resultMessage += `${errors}\n\n⚠️ DO NOT re-run build. FIX errors first.`;
     } else {
       resultMessage += `\n✅ Build successful\n`;
-    }
-    
-    // Add output (even if empty, to show agent something was run)
-    const stdoutContent = result.stdout?.trim();
-    const stderrContent = result.stderr?.trim();
-    
-    if (stdoutContent || stderrContent) {
-      resultMessage += `\n\n--- Build Output ---\n`;
-      if (stdoutContent) {
-        resultMessage += `STDOUT:\n${stdoutContent.slice(-2000)}\n`;
+      if (result.stdout?.trim() || result.stderr?.trim()) {
+        resultMessage += `\n--- Output ---\n${(result.stdout || result.stderr || '').slice(-2000)}`;
+      } else {
+        resultMessage += `\n⚠️ No output (likely cached)\n`;
       }
-      if (stderrContent && !hasError) {
-        resultMessage += `STDERR:\n${stderrContent.slice(-1000)}\n`;
-      }
-    } else {
-      resultMessage += `\n⚠️ Build produced no output (likely cached/UP-TO-DATE)\n`;
-      resultMessage += `This usually means Gradle found cached results and skipped compilation.\n`;
-      resultMessage += `To force a rebuild, run: ./gradlew clean build\n`;
     }
     
     return resultMessage;
   }
 
-  /**
-   * Format git status output into structured sections
-   */
   private formatGitStatus(output: string): string {
     if (!output.trim()) return 'No changes.';
-    
     const lines = output.trim().split('\n');
     const staged = lines.filter(l => /^[MADRC]/.test(l.charAt(0)));
     const unstaged = lines.filter(l => /^.[MADRC]/.test(l));
     const untracked = lines.filter(l => l.startsWith('??'));
     
     let result = '';
-    if (staged.length) result += `**Staged changes:**\n${staged.map(l => '  ' + l).join('\n')}\n\n`;
-    if (unstaged.length) result += `**Unstaged changes:**\n${unstaged.map(l => '  ' + l).join('\n')}\n\n`;
-    if (untracked.length) result += `**Untracked files:**\n${untracked.map(l => '  ' + l).join('\n')}`;
-    
+    if (staged.length) result += `**Staged:**\n${staged.map(l => '  ' + l).join('\n')}\n\n`;
+    if (unstaged.length) result += `**Unstaged:**\n${unstaged.map(l => '  ' + l).join('\n')}\n\n`;
+    if (untracked.length) result += `**Untracked:**\n${untracked.map(l => '  ' + l).join('\n')}`;
     return result || output;
   }
 
-  /**
-   * Extract build errors from output
-   * Parses Kotlin/Java compiler errors with file paths and line numbers
-   * Searches FULL output (not just first 500 chars) for error patterns
-   */
   private extractCompilationErrors(output: string): string {
     if (!output) return 'No error output';
     
@@ -2764,90 +1514,39 @@ Please try a DIFFERENT approach:
     const lines = output.split('\n');
     const mentionedFiles = new Set<string>();
     
-    // Log first 2000 chars for debugging (increased from 500)
-    this.log(`Extracting errors from full output (${output.length} chars)`);
-    this.log(`Output preview (first 2000 chars):\n${output.substring(0, 2000)}`);
-    
-    // ===== PASS 1: Find all Kotlin compiler errors (e: file:///...) =====
-    // This is the PRIMARY pattern for Kotlin compilation errors
     const kotlinErrorPattern = /e:\s*file:\/\/\/?([a-zA-Z]:[\\/].+?):(\d+):(\d+)\s+(.+)/g;
     let match;
     while ((match = kotlinErrorPattern.exec(output)) !== null) {
       const [, filePath, lineNum, col, message] = match;
-      // Keep full absolute path for Windows files
       const normalizedPath = filePath.replace(/\\/g, '/');
       mentionedFiles.add(normalizedPath);
       errors.push(`${normalizedPath}:${lineNum}:${col} ${message}`);
-      this.log(`Found Kotlin error: ${normalizedPath}:${lineNum}:${col}`);
     }
     
-    // ===== PASS 2: Alternative Kotlin format (e: /path/to/File.kt:line:col) =====
-    const kotlinErrorPattern2 = /e:\s+([a-zA-Z]:[\\/].+?\.(kt|java|kts)):(\d+):(\d+)\s+(.+)/g;
-    while ((match = kotlinErrorPattern2.exec(output)) !== null) {
-      const [, filePath, , lineNum, col, message] = match;
-      const relativePath = filePath.replace(/^[a-zA-Z]:/, '').replace(/\\/g, '/');
-      mentionedFiles.add(relativePath);
-      errors.push(`${relativePath}:${lineNum}:${col} ${message}`);
-      this.log(`Found Kotlin error (alt format): ${relativePath}:${lineNum}:${col}`);
-    }
-    
-    // ===== PASS 3: Search for .kt file errors WITHOUT e: prefix =====
-    // Some Gradle outputs show: path/to/File.kt:line: error message
-    // EXCLUDE lines with file:/// to avoid double-matching PASS 1 errors
-    const ktFilePattern = /([a-zA-Z]:[\\/].+?\.kt):(\d+):\s*(.+)/g;
-    while ((match = ktFilePattern.exec(output)) !== null) {
-      const fullMatch = match[0];
-      // Skip if this is part of a file:/// URL (already handled by PASS 1)
-      if (output.substring(Math.max(0, match.index - 20), match.index).includes('file:///')) {
-        continue;
-      }
-      const [, filePath, lineNum, message] = match;
-      const normalizedPath = filePath.replace(/\\/g, '/');
-      mentionedFiles.add(normalizedPath);
-      errors.push(`${normalizedPath}:${lineNum} ${message}`);
-      this.log(`Found .kt file error: ${normalizedPath}:${lineNum}`);
-    }
-    
-    // ===== PASS 4: Search for "Unresolved reference" errors (common Kotlin errors) =====
     const unresolvedPattern = /Unresolved reference[^\n]+/g;
     const unresolvedErrors = output.match(unresolvedPattern);
     if (unresolvedErrors) {
-      unresolvedErrors.forEach(err => {
-        errors.push(err.trim());
-        this.log(`Found Unresolved reference: ${err.substring(0, 80)}`);
-      });
+      unresolvedErrors.forEach(err => errors.push(err.trim()));
     }
     
-    // ===== PASS 5: Search for other common Kotlin error keywords =====
     const keywordPatterns = [
       /Type mismatch[^\n]+/g,
       /is not abstract[^\n]+/g,
       /must implement[^\n]+/g,
       /cannot find symbol[^\n]+/g,
-      /package does not exist[^\n]+/g,
-      /incompatible types[^\n]+/g,
-      /Overload resolution ambiguity[^\n]+/g,
-      /Conflicting overloads[^\n]+/g,
-      /Modifier '.+' is incompatible[^\n]+/g
+      /Overload resolution[^\n]+/g,
+      /Conflicting overloads[^\n]+/g
     ];
     
     for (const pattern of keywordPatterns) {
       const matches = output.match(pattern);
-      if (matches) {
-        matches.forEach(err => {
-          errors.push(err.trim());
-          this.log(`Found keyword error: ${err.substring(0, 80)}`);
-        });
-      }
+      if (matches) matches.forEach(err => errors.push(err.trim()));
     }
     
-    // ===== PASS 6: Gradle task failures - look for FAILED with context =====
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
-      
       if (line.includes('FAILED') && !line.includes('BUILD FAILED')) {
         const contextLines = [];
-        // Look at current line and next 3 lines for error details
         for (let j = i; j < Math.min(i + 4, lines.length); j++) {
           const contextLine = lines[j].trim();
           if (contextLine && !contextLine.startsWith('> Task') && contextLine.length > 10) {
@@ -2856,172 +1555,92 @@ Please try a DIFFERENT approach:
         }
         if (contextLines.length > 0) {
           errors.push(contextLines.slice(0, 3).join(' '));
-          this.log(`Found Gradle FAILED context: ${contextLines[0]}`);
         }
       }
     }
     
-    // ===== Build result string =====
     let result = '';
-    
     if (mentionedFiles.size > 0) {
-      const fileList = Array.from(mentionedFiles).slice(0, 5).join('\n  - ');
-      result += `FILES TO READ AND FIX:\n  - ${fileList}\n\n`;
+      result += `FILES TO READ AND FIX:\n  - ${Array.from(mentionedFiles).slice(0, 5).join('\n  - ')}\n\n`;
     }
     
     if (errors.length > 0) {
-      // Remove duplicates while preserving order
-      const uniqueErrors = [...new Set(errors)];
-      result += `COMPILER ERRORS:\n${uniqueErrors.slice(0, 15).join('\n')}`;
+      result += `COMPILER ERRORS:\n${[...new Set(errors)].slice(0, 15).join('\n')}`;
     } else {
-      // No structured errors found - search for any lines with "e: " (Kotlin error prefix)
       const eLines = lines.filter(l => l.trim().startsWith('e: '));
       if (eLines.length > 0) {
         result += `COMPILER ERRORS:\n${eLines.slice(0, 15).join('\n')}`;
       } else {
-        // Last resort - show last 1500 chars of output
-        result = 'No specific compilation errors found in output.\n\n';
-        result += `Build output (last 1500 chars):\n${output.slice(-1500)}`;
+        result = `Build output (last 1500 chars):\n${output.slice(-1500)}`;
       }
     }
     
-    this.log(`Extracted ${errors.length} errors from ${mentionedFiles.size} files`);
     return result;
   }
 
-  /**
-   * Check if command is destructive/dangerous (should be blocked)
-   * Only blocks truly dangerous commands, not server/start commands
-   */
   private isDestructiveCommand(command: string): boolean {
-    const blocked = AgentBridge.BLOCKED_COMMAND_PATTERNS;
-    return blocked.some(b => command.includes(b));
+    return AgentBridge.BLOCKED_COMMAND_PATTERNS.some(b => command.includes(b));
   }
 
-  /**
-   * Check if command is a build command that should capture output
-   */
   private isBuildCommand(command: string): boolean {
-    // Long-running commands (run/serve/watch) should NOT be treated as builds
-    // even if they use build tools like gradlew
-    if (/\b(run|serve|server|start|watch)\b/i.test(command)) {
-      return false;
-    }
-    // Match build-oriented commands
+    if (/\b(run|serve|server|start|watch)\b/i.test(command)) return false;
     return /gradlew|gradle|mvn|mvnw|npm run build|make|tsc|yarn build/i.test(command);
   }
 
-  /**
-   * Classify command as short-lived or long-running
-   * Long-running commands use persistent terminals with auto-restart
-   */
   private classifyCommand(command: string): 'short' | 'long' {
     const cmdLower = command.toLowerCase();
-    
-    // Check against configured patterns
     for (const pattern of this.longRunningPatterns) {
-      if (cmdLower.includes(pattern.toLowerCase())) {
-        return 'long';
-      }
+      if (cmdLower.includes(pattern.toLowerCase())) return 'long';
     }
-    
-    // Additional heuristic: commands with watch/dev/run typically long-running
-    if (/\b(watch|dev|server|serve)\b/i.test(command)) {
-      return 'long';
-    }
-    
+    if (/\b(watch|dev|server|serve)\b/i.test(command)) return 'long';
     return 'short';
   }
 
-  /**
-   * Generate unique terminal name from command
-   */
   private generateTerminalName(command: string): string {
     return this.terminalManager.generateTerminalName(command);
   }
 
-  /**
-   * Resolve relative path to absolute
-   */
   private resolvePath(relativePath: string): string {
-    if (path.isAbsolute(relativePath)) {
-      return relativePath;
-    }
+    if (path.isAbsolute(relativePath)) return relativePath;
     return path.join(this.workspaceRoot, relativePath);
   }
 
-  /**
-   * Resolve import path to actual file path
-   * Handles relative imports and module resolution
-   */
   private resolveImportPath(importPath: string, currentFile: string): string | null {
-    // Remove quotes and extract path from import statement
     const match = importPath.match(/['"](.+?)['"]/);
     if (!match) return null;
     
     const importSpecifier = match[1];
+    if (!importSpecifier.startsWith('.') && !importSpecifier.startsWith('/')) return null;
     
-    // Skip external modules (no relative path)
-    if (!importSpecifier.startsWith('.') && !importSpecifier.startsWith('/')) {
-      return null; // External module, not a local file
-    }
-    
-    // Resolve relative to current file's directory
     const currentDir = path.dirname(currentFile);
     const resolvedPath = path.resolve(currentDir, importSpecifier);
     
-    // Try common extensions
     const extensions = ['', '.ts', '.tsx', '.js', '.jsx', '.kt', '.java'];
     for (const ext of extensions) {
       const candidate = resolvedPath + ext;
       try {
         fs.accessSync(candidate);
         return candidate;
-      } catch {
-        continue;
-      }
+      } catch { continue; }
     }
     
-    // Try index files
-    for (const ext of extensions) {
-      const candidate = path.join(resolvedPath, 'index' + ext);
-      try {
-        fs.accessSync(candidate);
-        return candidate;
-      } catch {
-        continue;
-      }
-    }
-    
-    return null; // Could not resolve
+    return null;
   }
 
-  /**
-   * Dispose resources - clean up terminal manager
-   */
   dispose(): void {
-    this.log('Disposing AgentBridge...');
     this.terminalManager.dispose();
-    this.log('AgentBridge disposed');
   }
 
-  /**
-   * Build system prompt from template
-   */
   private buildSystemPrompt(variables: Record<string, string>): string {
     let prompt = this.config.systemPromptTemplate;
-    
     for (const [key, value] of Object.entries(variables)) {
       prompt = prompt.replace(new RegExp(`\\$\\{${key}\\}`, 'g'), value);
     }
-    
-    // Append concise tool-calling instructions
     prompt += '\n\n--- RULES ---';
-    prompt += '\n• ALWAYS use tool calls to take action. Never describe plans.';
-    prompt += '\n• When build fails: READ the failing files, FIX the code, THEN re-run build.';
-    prompt += '\n• NEVER re-run build without fixing code first.';
+    prompt += '\n• ALWAYS use tool calls. Never describe plans.';
+    prompt += '\n• When build fails: READ failing files, FIX code, THEN re-run build.';
+    prompt += '\n• NEVER re-run build without fixing first.';
     prompt += '\n• Paths: relative to workspace root, use forward slashes (/).';
-    
     return prompt;
   }
 }

@@ -1040,14 +1040,15 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           if (process.platform === 'win32') {
             if (/^gradlew(\s|$)/i.test(command)) command = command.replace(/^gradlew/i, '.\\gradlew');
             if (/^\.\//i.test(command)) command = command.replace(/^\.\//, '.\\');
-            // Fix bash syntax for PowerShell: && -> ; (command chaining)
-            if (command.includes(' && ')) command = command.replace(/ && /g, '; ');
-            // Also handle cd "path" && pattern - just use the command part after &&
-            const cdMatch = command.match(/^cd\s+"?([^"]+)"?\s*&&\s*(.+)$/i);
+            
+            // FIRST: Handle cd "path" && command pattern - extract command, ignore cd (we use workingDir)
+            const cdMatch = command.match(/^cd\s+["']?([^"']+)["']?\s*&&\s*(.+)$/i);
             if (cdMatch) {
-              // Use workingDir instead of cd command
-              command = cdMatch[2];
+              command = cdMatch[2]; // Just use the actual command part
             }
+            
+            // THEN: Fix any remaining bash && to PowerShell ;
+            if (command.includes(' && ')) command = command.replace(/ && /g, '; ');
           }
           
           if (this.isDestructiveCommand(command)) return { result: '', error: 'BLOCKED: Dangerous command.' };

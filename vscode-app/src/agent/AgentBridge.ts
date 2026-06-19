@@ -11,19 +11,8 @@ import { AgentSettingsManager } from './AgentSettings';
 import { applyEditsToContent, EditOperation, formatEditFailure } from './ApplyEditsTool';
 
 export interface ContextProfile {
-  eager: {
-    currentFile?: boolean;
-    projectMetadata?: boolean;
-    gitStatus?: boolean;
-    gitDiff?: boolean;
-    relatedFiles?: boolean;
-    directoryStructure?: boolean;
-  };
-  lazy: {
-    discovery?: boolean;
-    fullContext?: boolean;
-    contractValidation?: boolean;
-  };
+  eager: { currentFile?: boolean; projectMetadata?: boolean; gitStatus?: boolean; gitDiff?: boolean; relatedFiles?: boolean; directoryStructure?: boolean };
+  lazy: { discovery?: boolean; fullContext?: boolean; contractValidation?: boolean };
 }
 
 export interface TaskContextProfile {
@@ -81,15 +70,7 @@ export interface ProgressEvent {
 }
 
 export type ProgressCallback = (event: ProgressEvent) => void;
-
-export interface AgentResponse {
-  finalText: string;
-  toolCalls: ToolCall[];
-  iterations: number;
-  durationMs: number;
-  success: boolean;
-  error?: string;
-}
+export interface AgentResponse { finalText: string; toolCalls: ToolCall[]; iterations: number; durationMs: number; success: boolean; error?: string; }
 
 export type AgentChunk = 
   | { type: 'thinking'; message: string; timestamp: number }
@@ -100,17 +81,8 @@ export type AgentChunk =
   | { type: 'iteration_complete'; iteration: number; timestamp: number }
   | { type: 'error'; error: string; timestamp: number };
 
-interface ToolCallHistory {
-  toolName: string;
-  argsSignature: string;
-  iteration: number;
-}
-
-interface AgentLoopOptions {
-  streaming: boolean;
-  onProgress?: ProgressCallback;
-  toolCallArgs?: Map<string, Record<string, any>>;
-}
+interface ToolCallHistory { toolName: string; argsSignature: string; iteration: number; }
+interface AgentLoopOptions { streaming: boolean; onProgress?: ProgressCallback; toolCallArgs?: Map<string, Record<string, any>>; }
 
 export class AgentBridge {
   private config: AgentConfig;
@@ -133,10 +105,11 @@ export class AgentBridge {
   private _fixMode: boolean = false;
   private _failedEditAttempts: number = 0;
   private _lastBuildErrors: string = '';
+  private _serverJustStarted: string | null = null; // Track recently started server terminal
 
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000;
   private static readonly MAX_LIST_FILES_RESULTS = 100;
-  private static readonly MAX_APPLY_EDITS = 50; // Cap edits per call to prevent absurd requests
+  private static readonly MAX_APPLY_EDITS = 50;
 
   private longRunningPatterns: string[] = [
     'run', 'serve', 'dev', 'start', 'watch', 'nodemon', 'vite', 'next dev',
@@ -376,7 +349,7 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'run_terminal',
-          description: 'Run a terminal command. FOR SERVERS: use gradlew :app:server:run. For short commands: any shell command.',
+          description: 'Run a terminal command. FOR SERVERS: use gradlew :app:server:run. IMPORTANT: Servers take 10-30 seconds to start. Do NOT check terminal_status immediately - wait 15+ seconds first.',
           parameters: {
             type: 'object',
             properties: {
@@ -411,7 +384,7 @@ export class AgentBridge {
         type: 'function',
         function: {
           name: 'terminal_status',
-          description: 'Check if a specific terminal is running',
+          description: 'Check if a specific terminal is running. IMPORTANT: Only use this 15+ seconds after starting a server - servers take time to start up.',
           parameters: {
             type: 'object',
             properties: { name: { type: 'string', description: 'Terminal name to check' } },
@@ -870,17 +843,12 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           return { result: `Successfully wrote ${toolCall.args.content.length} characters to ${filePath}` };
         }
         
-        // ========== apply_edits WITH MAX 50 EDITS CAP ==========
         case 'apply_edits': {
           const filePath = this.resolvePath(toolCall.args.path);
           const edits: EditOperation[] = toolCall.args.edits;
           
-          // FIX: Cap maximum edits per call
           if (edits.length > AgentBridge.MAX_APPLY_EDITS) {
-            return {
-              result: '',
-              error: `Too many edits (${edits.length}). Maximum ${AgentBridge.MAX_APPLY_EDITS} edits per call. For large changes, use write_file to replace the entire file instead.`
-            };
+            return { result: '', error: `Too many edits (${edits.length}). Maximum ${AgentBridge.MAX_APPLY_EDITS} edits per call. For large changes, use write_file to replace the entire file instead.` };
           }
           
           const currentContent = await this.cli.readFile(filePath);
@@ -922,7 +890,6 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           }
           return { result: resultMessage };
         }
-        // ========== END apply_edits ==========
         
         case 'search_files': {
           const pattern = toolCall.args.pattern;
@@ -981,7 +948,6 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           return { result: result.stdout || result.stderr || 'Committed successfully.' };
         }
         
-        // ========== run_build WITH FIXES ==========
         case 'run_build': {
           let command = toolCall.args.command;
           const timeout = 120000;
@@ -1033,7 +999,6 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           
           return { result: `❌ BUILD FAILED (failure #${this._buildFailureCount})\n\nExit code: ${result.exitCode}\n\n${errors}\n\n⚠️ DO NOT re-run build. READ files above, FIX errors, THEN re-run.`, error: 'Build failed' };
         }
-        // ========== END run_build ==========
         
         case 'run_terminal': {
           let command = toolCall.args.command;
@@ -1084,6 +1049,14 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           if (classification === 'long') {
             const terminalName = this.generateTerminalName(command);
             const result = await this.terminalManager.runInTerminal(terminalName, command, workingDir, true);
+            // Track that server was just started - don't check status immediately
+            this._serverJustStarted = terminalName;
+            // Inject guidance about waiting
+            (this as any)._pendingMessages = (this as any)._pendingMessages || [];
+            (this as any)._pendingMessages.push({ 
+              role: 'user', 
+              content: `Server starting in terminal "${terminalName}". **WAIT 15-30 seconds** before checking terminal_status - Gradle servers take time to start up. Do NOT check status immediately.` 
+            });
             return { result };
           } else {
             const terminalName = `i2-Vision: ${this.generateTerminalName(command).substring(0, 20)}`;
@@ -1097,11 +1070,21 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         }
         
         case 'kill_terminal': return { result: this.terminalManager.killTerminal(toolCall.args.name) };
+        
         case 'list_terminals': return { result: this.terminalManager.listTerminals() };
+        
         case 'terminal_status': {
-          const status = this.terminalManager.getTerminalStatus(toolCall.args.name);
-          if (!status) return { result: `Terminal "${toolCall.args.name}" is not running.` };
-          return { result: `Terminal "${toolCall.args.name}" running. Auto-restart: ${status.autoRestart ? 'enabled' : 'disabled'}.` };
+          const name = toolCall.args.name;
+          // Check if this is checking a server we just started
+          if (this._serverJustStarted && name.includes(this._serverJustStarted)) {
+            return { 
+              result: `⚠️ You're checking terminal_status too soon! The server was just started and needs 15-30 seconds to initialize. Wait before checking again. Terminal "${name}" may show as "not running" during startup - this is normal.`,
+              error: 'CHECKING_TOO_SOON'
+            };
+          }
+          const status = this.terminalManager.getTerminalStatus(name);
+          if (!status) return { result: `Terminal "${name}" is not running.` };
+          return { result: `Terminal "${name}" running. Auto-restart: ${status.autoRestart ? 'enabled' : 'disabled'}.` };
         }
         
         default: throw new Error(`Unknown tool: ${toolCall.toolName}`);
@@ -1239,6 +1222,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
     prompt += '\n• apply_edits: MAX 50 edits per call. For large changes, use write_file instead.';
     prompt += '\n• When build fails: READ failing files, FIX code, THEN re-run compileKotlin.';
     prompt += '\n• NEVER re-run build without fixing first.';
+    prompt += '\n• SERVER STARTUP: After run_terminal starts a server, WAIT 15-30 seconds before checking terminal_status. Servers take time to start!';
     prompt += '\n• Paths: relative to workspace root, use forward slashes (/).';
     return prompt;
   }

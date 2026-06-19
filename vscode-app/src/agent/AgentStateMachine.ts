@@ -1051,7 +1051,22 @@ export class AgentStateMachine {
   
   /** Check for tool call loops */
   detectLoop(toolName: string, args: Record<string, any>, iteration: number): boolean {
+    // EXCLUDE polling/status-checking tools from loop detection
+    // These are legitimate repeated calls while waiting for state changes
+    const pollingTools = [
+      'terminal_status',
+      'get_terminal_output', 
+      'run_build',
+      'get_build_status',
+      'check_server',
+      'get_server_status',
+    ];
+    
     const normalizedToolName = toolName.toLowerCase().replace(/[_-]/g, '');
+    if (pollingTools.some(t => t.toLowerCase().replace(/[_-]/g, '') === normalizedToolName)) {
+      return false; // Don't flag polling as loops
+    }
+    
     const argsSignature = JSON.stringify(args);
     
     // Check recent calls - if iteration is high but we have no recent iterations, check all calls

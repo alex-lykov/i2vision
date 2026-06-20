@@ -1,28 +1,15 @@
 /**
  * AgentTabManager - Manages agent tabs in the VSCode webview
- * 
- * Implements unified timeline UX: thinking, tool execution, and streaming text
- * all appear inline in one chronological stream - not separate sections.
- * 
- * HISTORY MANAGEMENT:
- * - Auto-saves conversations after each assistant response (if enabled)
- * - Periodic auto-save every 5 minutes during active sessions
- * - Enforces conversation history limit with auto-pruning
- * - Saves on tab close as fallback
  */
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import * as fs from 'fs';
-import { AgentBridge, AgentChunk, ToolCall, AgentConfig } from './AgentBridge';
+import { AgentBridge, ToolCall } from './AgentBridge';
 import { LocalAgentProvider } from './LocalAgentProvider';
-import { LocalI2VisionAgent, VslfcLayer, getLayerName } from './LocalI2VisionAgent';
+import { LocalI2VisionAgent, VslfcLayer } from './LocalI2VisionAgent';
 import { ConversationHistoryManager, ChatMessage } from './ConversationHistoryManager';
 import { AgentSettingsManager } from './AgentSettings';
 
-/**
- * Tab state for tracking agent session
- */
 interface AgentTabState {
   tabId: string;
   agent: LocalI2VisionAgent;
@@ -32,12 +19,9 @@ interface AgentTabState {
   isActive: boolean;
   createdAt: number;
   lastActivityAt: number;
-  lastAutoSaveAt?: number; // Track last auto-save time
+  lastAutoSaveAt?: number;
 }
 
-/**
- * Manages agent tabs and their UI state
- */
 export class AgentTabManager {
   private context: vscode.ExtensionContext;
   private outputChannel: vscode.OutputChannel;
@@ -50,56 +34,33 @@ export class AgentTabManager {
   private currentAgentBridge: AgentBridge | null = null;
   private isProcessing: boolean = false;
   private cancelTokenSource: vscode.CancellationTokenSource | null = null;
-  
-  // AUTO-SAVE: Periodic save timer
   private autoSaveTimer: NodeJS.Timeout | null = null;
-  private readonly AUTO_SAVE_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+  private readonly AUTO_SAVE_INTERVAL_MS = 5 * 60 * 1000;
 
-  constructor(
-    context: vscode.ExtensionContext,
-    outputChannel: vscode.OutputChannel,
-    agentProvider: LocalAgentProvider
-  ) {
+  constructor(context: vscode.ExtensionContext, outputChannel: vscode.OutputChannel, agentProvider: LocalAgentProvider) {
     this.context = context;
     this.outputChannel = outputChannel;
     this.agentProvider = agentProvider;
     this.settingsManager = AgentSettingsManager.getInstance(context);
-    
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
     if (workspaceRoot) {
       this.historyManager = new ConversationHistoryManager(workspaceRoot);
     }
-    
     this.log('AgentTabManager initialized');
   }
 
-  /**
-   * Initialize the manager
-   */
   async initialize(): Promise<void> {
     await this.agentProvider.initialize();
     this.startAutoSaveTimer();
     this.log('AgentTabManager initialization complete');
   }
 
-  /**
-   * Start periodic auto-save timer
-   */
   private startAutoSaveTimer(): void {
-    if (this.autoSaveTimer) {
-      clearInterval(this.autoSaveTimer);
-    }
-    
-    this.autoSaveTimer = setInterval(() => {
-      this.autoSaveAllTabs();
-    }, this.AUTO_SAVE_INTERVAL_MS);
-    
-    this.log(`Auto-save timer started (interval: ${this.AUTO_SAVE_INTERVAL_MS / 1000}s)`);
+    if (this.autoSaveTimer) clearInterval(this.autoSaveTimer);
+    this.autoSaveTimer = setInterval(() => this.autoSaveAllTabs(), this.AUTO_SAVE_INTERVAL_MS);
+    this.log('Auto-save timer started (interval: ' + (this.AUTO_SAVE_INTERVAL_MS / 1000) + 's)');
   }
 
-  /**
-   * Stop periodic auto-save timer
-   */
   private stopAutoSaveTimer(): void {
     if (this.autoSaveTimer) {
       clearInterval(this.autoSaveTimer);
@@ -108,818 +69,352 @@ export class AgentTabManager {
     }
   }
 
-  /**
-   * Auto-save all active tabs (called by periodic timer)
-   */
   private async autoSaveAllTabs(): Promise<void> {
     const settings = this.settingsManager.getSettings();
-    if (!settings.agent.autoSaveConversation) {
-      return; // Auto-save disabled
-    }
-    
+    if (!settings.agent.autoSaveConversation) return;
     const now = Date.now();
     const savePromises: Promise<void>[] = [];
-    
     for (const [tabId, tabState] of this.tabs.entries()) {
-      // Only save if there's been activity since last save
-      const shouldSave = !tabState.lastAutoSaveAt || 
-                         (tabState.lastActivityAt > tabState.lastAutoSaveAt) ||
-                         (now - tabState.createdAt > 10 * 60 * 1000); // Or if session > 10 min
-      
+      const shouldSave = !tabState.lastAutoSaveAt || (tabState.lastActivityAt > tabState.lastAutoSaveAt) || (now - tabState.createdAt > 10 * 60 * 1000);
       if (shouldSave && tabState.history.length > 0) {
         savePromises.push(this.saveTabQuietly(tabId, tabState));
       }
     }
-    
     if (savePromises.length > 0) {
       await Promise.all(savePromises);
-      this.log(`Auto-saved ${savePromises.length} tab(s)`);
+      this.log('Auto-saved ' + savePromises.length + ' tab(s)');
     }
   }
 
-  /**
-   * Save a tab's conversation without throwing errors (for auto-save)
-   */
   private async saveTabQuietly(tabId: string, tabState: AgentTabState): Promise<void> {
     if (!this.historyManager) return;
-    
     try {
       await this.historyManager.save(tabId, tabState.history, tabState.layer);
       tabState.lastAutoSaveAt = Date.now();
-      this.log(`Auto-saved tab ${tabId} (${tabState.history.length} messages)`);
+      this.log('Auto-saved tab ' + tabId + ' (' + tabState.history.length + ' messages)');
     } catch (error: any) {
-      // Don't show error to user for background auto-save
-      this.log(`Auto-save failed for ${tabId}: ${error.message}`);
+      this.log('Auto-save failed for ' + tabId + ': ' + error.message);
     }
   }
 
-  /**
-   * Enforce conversation history limit by pruning oldest conversations
-   */
   private async enforceHistoryLimit(): Promise<void> {
     if (!this.historyManager) return;
-    
     const settings = this.settingsManager.getSettings();
     const limit = settings.agent.conversationHistoryLimit;
-    
     try {
       const conversations = await this.historyManager.list();
-      
-      if (conversations.length <= limit) {
-        return; // Within limit
-      }
-      
-      // Get metadata for all conversations to sort by date
-      const convWithMeta = await Promise.all(
-        conversations.map(async (id) => {
-          const saved = await this.historyManager!.load(id);
-          return { id, updatedAt: saved?.updatedAt || 0 };
-        })
-      );
-      
-      // Sort by last updated (oldest first)
+      if (conversations.length <= limit) return;
+      const convWithMeta = await Promise.all(conversations.map(async (id) => {
+        const saved = await this.historyManager!.load(id);
+        return { id, updatedAt: saved?.updatedAt || 0 };
+      }));
       convWithMeta.sort((a, b) => a.updatedAt - b.updatedAt);
-      
-      // Delete oldest conversations until we're at the limit
       const toDelete = convWithMeta.slice(0, convWithMeta.length - limit);
-      const deletePromises = toDelete.map(c => this.historyManager!.delete(c.id));
-      
-      await Promise.all(deletePromises);
-      
-      this.log(`Pruned ${toDelete.length} old conversation(s) (limit: ${limit})`);
+      await Promise.all(toDelete.map(c => this.historyManager!.delete(c.id)));
+      this.log('Pruned ' + toDelete.length + ' old conversation(s) (limit: ' + limit + ')');
     } catch (error: any) {
-      this.log(`Failed to enforce history limit: ${error.message}`);
+      this.log('Failed to enforce history limit: ' + error.message);
     }
   }
 
-  /**
-   * Log a message
-   */
   private log(message: string): void {
     const timestamp = new Date().toLocaleTimeString();
-    const formatted = `[${timestamp}] [AgentTabManager] ${message}`;
+    const formatted = '[' + timestamp + '] [AgentTabManager] ' + message;
     this.outputChannel.appendLine(formatted);
     console.log(formatted);
   }
 
-  /**
-   * Create a new agent tab for a specific layer
-   */
   async createTab(layer: string, conversationId?: string): Promise<string> {
-    this.log(`Creating ${layer} agent tab...`);
-    
+    this.log('Creating ' + layer + ' agent tab...');
     const layerEnum = layer.toUpperCase() as VslfcLayer;
     const agent = await this.agentProvider.createAgent(layerEnum);
-    const tabId = conversationId || `tab-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
-    
-    const tabState: AgentTabState = {
-      tabId,
-      agent,
-      layer,
-      history: [],
-      accumulatedToolCalls: [],
-      isActive: true,
-      createdAt: Date.now(),
-      lastActivityAt: Date.now(),
-      lastAutoSaveAt: undefined
-    };
-    
+    const tabId = conversationId || 'tab-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
+    const tabState: AgentTabState = { tabId, agent, layer, history: [], accumulatedToolCalls: [], isActive: true, createdAt: Date.now(), lastActivityAt: Date.now(), lastAutoSaveAt: undefined };
     this.tabs.set(tabId, tabState);
     this.activeTabId = tabId;
-    
     const config = agent.getConfig();
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
-    
-    this.currentAgentBridge = new AgentBridge(
-      config,
-      this.outputChannel,
-      this.context.extensionPath,
-      workspaceRoot,
-      this.settingsManager
-    );
+    this.currentAgentBridge = new AgentBridge(config, this.outputChannel, this.context.extensionPath, workspaceRoot, this.settingsManager);
     await this.currentAgentBridge.initialize();
-    
-    this.log(`Created ${layer} agent tab: ${tabId}`);
-    this.log(`   Agent ID: ${agent.id}`);
-    this.log(`   Provider: ${config.model.provider}, Model: ${config.model.id}`);
-    
+    this.log('Created ' + layer + ' agent tab: ' + tabId);
+    this.log('   Agent ID: ' + agent.id);
+    this.log('   Provider: ' + config.model.provider + ', Model: ' + config.model.id);
     this.showWebview();
-    
-    // Load existing conversation if resuming
-    if (conversationId && this.historyManager) {
-      await this.loadConversation(tabId);
-    }
-    
+    if (conversationId && this.historyManager) await this.loadConversation(tabId);
     return tabId;
   }
 
-  /**
-   * Load a saved conversation into the current tab
-   */
   private async loadConversation(tabId: string): Promise<void> {
-    if (!this.historyManager) {
-      this.log('History manager not available');
-      return;
-    }
-    
+    if (!this.historyManager) { this.log('History manager not available'); return; }
     const saved = await this.historyManager.load(tabId);
-    if (!saved) {
-      this.log(`No saved conversation found for ${tabId}`);
-      return;
-    }
-    
+    if (!saved) { this.log('No saved conversation found for ' + tabId); return; }
     const tabState = this.tabs.get(tabId);
-    if (!tabState) {
-      this.log(`Tab ${tabId} not found for loading conversation`);
-      return;
-    }
-    
-    // Restore history
+    if (!tabState) { this.log('Tab ' + tabId + ' not found for loading conversation'); return; }
     tabState.history = saved.messages;
     tabState.lastActivityAt = saved.updatedAt;
     tabState.lastAutoSaveAt = saved.updatedAt;
-    
-    this.log(`Loaded conversation with ${saved.messages.length} messages`);
-    
-    // Send messages to webview for display
+    this.log('Loaded conversation with ' + saved.messages.length + ' messages');
     for (const msg of saved.messages) {
-      this.sendToWebview({
-        type: msg.role === 'user' ? 'user_message' : 'restored_message',
-        content: msg.content,
-        toolCalls: msg.toolCalls,
-        timestamp: msg.timestamp
-      });
+      this.sendToWebview({ type: msg.role === 'user' ? 'user_message' : 'restored_message', content: msg.content, toolCalls: msg.toolCalls, timestamp: msg.timestamp });
     }
   }
 
-  /**
-   * Get the active tab ID
-   */
-  getActiveTabId(): string | null {
-    return this.activeTabId;
-  }
+  getActiveTabId(): string | null { return this.activeTabId; }
+  getTabState(tabId: string): AgentTabState | undefined { return this.tabs.get(tabId); }
+  clearConfigCache(): void { this.agentProvider.clearConfigCache(); this.log('Config cache cleared'); }
 
-  /**
-   * Get tab state by ID
-   */
-  getTabState(tabId: string): AgentTabState | undefined {
-    return this.tabs.get(tabId);
-  }
-
-  /**
-   * Clear config cache (delegates to provider)
-   */
-  clearConfigCache(): void {
-    this.agentProvider.clearConfigCache();
-    this.log('Config cache cleared');
-  }
-
-  /**
-   * Stop the current agent processing
-   */
   async stopAgent(): Promise<void> {
-    if (!this.isProcessing) {
-      this.log('No active processing to stop');
-      return;
-    }
-    
+    if (!this.isProcessing) { this.log('No active processing to stop'); return; }
     this.log('Stopping agent processing...');
-    
-    if (this.cancelTokenSource) {
-      this.cancelTokenSource.cancel();
-    }
-    
-    // Send stop signal to webview
-    this.sendToWebview({
-      type: 'stopped',
-      timestamp: Date.now()
-    });
-    
+    if (this.cancelTokenSource) this.cancelTokenSource.cancel();
+    this.sendToWebview({ type: 'stopped', timestamp: Date.now() });
     this.isProcessing = false;
     this.log('Agent stopped');
   }
-  
-  /**
-   * Process user input through the active agent with streaming
-   */
+
   async processUserInput(userInput: string, currentFile?: string): Promise<void> {
-    if (!this.activeTabId) {
-      vscode.window.showErrorMessage('No active agent tab. Create one first.');
-      return;
-    }
-    
-    if (this.isProcessing) {
-      vscode.window.showErrorMessage('Agent is already processing a request.');
-      return;
-    }
-    
+    if (!this.activeTabId) { vscode.window.showErrorMessage('No active agent tab. Create one first.'); return; }
+    if (this.isProcessing) { vscode.window.showErrorMessage('Agent is already processing a request.'); return; }
     const tabState = this.tabs.get(this.activeTabId);
-    if (!tabState) {
-      vscode.window.showErrorMessage('Active tab not found.');
-      return;
-    }
-    
-    if (!this.currentAgentBridge) {
-      vscode.window.showErrorMessage('Agent bridge not initialized.');
-      return;
-    }
-    
+    if (!tabState) { vscode.window.showErrorMessage('Active tab not found.'); return; }
+    if (!this.currentAgentBridge) { vscode.window.showErrorMessage('Agent bridge not initialized.'); return; }
     this.isProcessing = true;
     tabState.lastActivityAt = Date.now();
-    
-    // Get settings
     const settings = this.settingsManager.getSettings();
     const streamingEnabled = settings.streaming.enabled;
     const showThinking = settings.streaming.showThinkingIndicator;
-    
-    // Add user message to history
-    const userMessage: ChatMessage = {
-      role: 'user',
-      content: userInput,
-      timestamp: Date.now()
-    };
+    const userMessage: ChatMessage = { role: 'user', content: userInput, timestamp: Date.now() };
     tabState.history.push(userMessage);
-    
-    // Show user message in timeline
-    this.sendToWebview({
-      type: 'user_message',
-      content: userInput,
-      timestamp: Date.now()
-    });
-    
+    this.sendToWebview({ type: 'user_message', content: userInput, timestamp: Date.now() });
     try {
-      // Clear accumulated tool calls for new request
       tabState.accumulatedToolCalls = [];
-      
-      // Create cancel token for this request
       this.cancelTokenSource = new vscode.CancellationTokenSource();
-      
-      // Process with streaming - events will appear inline in timeline
       let responseText = '';
       let startTime = Date.now();
-      
-      // Show thinking indicator at start (if enabled)
-      if (showThinking) {
-        this.sendToWebview({
-          type: 'thinking',
-          message: 'Agent is thinking...',
-          timestamp: Date.now()
-        });
-      }
-      
-      // Use streaming or non-streaming based on settings
+      if (showThinking) this.sendToWebview({ type: 'thinking', message: 'Agent is thinking...', timestamp: Date.now() });
       const streamGenerator = this.currentAgentBridge.processStreaming(userInput, currentFile);
-      
       for await (const chunk of streamGenerator) {
-        // Check if cancelled
         if (this.cancelTokenSource.token.isCancellationRequested) {
           this.log('Processing cancelled by user');
-          this.sendToWebview({
-            type: 'stopped',
-            timestamp: Date.now()
-          });
+          this.sendToWebview({ type: 'stopped', timestamp: Date.now() });
           break;
         }
-        
         switch (chunk.type) {
           case 'tool_call_started':
-            // Show tool card inline as it starts
-            this.sendToWebview({
-              type: 'tool_start',
-              toolName: chunk.toolName,
-              args: chunk.args,
-              timestamp: chunk.timestamp
-            });
+            this.sendToWebview({ type: 'tool_start', toolName: chunk.toolName, args: chunk.args, timestamp: chunk.timestamp });
             break;
-            
           case 'tool_call_completed':
-            // Add to accumulated tool calls
-            const toolCall: ToolCall = {
-              toolName: chunk.toolName,
-              args: {},
-              result: chunk.result
-            };
+            const toolCall: ToolCall = { toolName: chunk.toolName, args: {}, result: chunk.result };
             tabState.accumulatedToolCalls.push(toolCall);
-            
-            // Update the same tool card in place
-            this.sendToWebview({
-              type: 'tool_complete',
-              toolName: chunk.toolName,
-              result: chunk.result,
-              timestamp: chunk.timestamp
-            });
+            this.sendToWebview({ type: 'tool_complete', toolName: chunk.toolName, result: chunk.result, timestamp: chunk.timestamp });
             break;
-            
           case 'text':
             responseText += chunk.text;
-            // Stream text incrementally to timeline (if streaming enabled)
-            if (streamingEnabled) {
-              this.sendToWebview({
-                type: 'streaming_text',
-                text: chunk.text,
-                timestamp: chunk.timestamp
-              });
-            }
+            if (streamingEnabled) this.sendToWebview({ type: 'streaming_text', text: chunk.text, timestamp: chunk.timestamp });
             break;
-            
           case 'done':
-            // Send token usage if available
-            if (chunk.tokenUsage) {
-              this.sendToWebview({
-                type: 'token_usage',
-                tokenUsage: chunk.tokenUsage,
-                contextLength: this.currentAgentBridge.getConfig().model.contextLength,
-                timestamp: chunk.timestamp
-              });
-            }
+            if (chunk.tokenUsage) this.sendToWebview({ type: 'token_usage', tokenUsage: chunk.tokenUsage, contextLength: this.currentAgentBridge.getConfig().model.contextLength, timestamp: chunk.timestamp });
             break;
-            
           case 'error':
-            vscode.window.showErrorMessage(`Agent error: ${chunk.error}`);
+            vscode.window.showErrorMessage('Agent error: ' + chunk.error);
             break;
-            
           case 'thinking':
-            // Send thinking indicator to webview
-            this.sendToWebview({
-              type: 'thinking',
-              message: chunk.message,
-              timestamp: chunk.timestamp
-            });
+            this.sendToWebview({ type: 'thinking', message: chunk.message, timestamp: chunk.timestamp });
             break;
         }
       }
-      
-      // Clean response text (only if not cancelled)
       if (!this.cancelTokenSource?.token.isCancellationRequested) {
         const cleanedResponse = this.cleanResponseText(responseText);
-        
-        // Add assistant response to history
-        const assistantMessage: ChatMessage = {
-          role: 'assistant',
-          content: cleanedResponse,
-          toolCalls: tabState.accumulatedToolCalls.map(tc => ({
-            toolName: tc.toolName,
-            args: tc.args,
-            result: tc.result
-          })),
-          timestamp: Date.now()
-        };
+        const assistantMessage: ChatMessage = { role: 'assistant', content: cleanedResponse, toolCalls: tabState.accumulatedToolCalls.map(tc => ({ toolName: tc.toolName, args: tc.args, result: tc.result })), timestamp: Date.now() };
         tabState.history.push(assistantMessage);
-        
-        // AUTO-SAVE: Save conversation after each assistant response (if enabled)
-        if (settings.agent.autoSaveConversation && this.historyManager) {
-          await this.saveTabQuietly(this.activeTabId!, tabState);
-        }
-        
-        // Finalize streaming text in timeline
+        if (settings.agent.autoSaveConversation && this.historyManager) await this.saveTabQuietly(this.activeTabId!, tabState);
         const durationMs = Date.now() - startTime;
-        this.sendToWebview({
-          type: 'assistant_response',
-          content: cleanedResponse,
-          durationMs,
-          timestamp: Date.now()
-        });
-        
-        this.log(`Complete: ${tabState.accumulatedToolCalls.length} tools, ${Date.now() - tabState.lastActivityAt}ms`);
+        this.sendToWebview({ type: 'assistant_response', content: cleanedResponse, durationMs, timestamp: Date.now() });
+        this.log('Complete: ' + tabState.accumulatedToolCalls.length + ' tools, ' + (Date.now() - tabState.lastActivityAt) + 'ms');
       }
-      
     } catch (error: any) {
-      // Only show error if not cancelled
       if (error.name !== 'CancellationError' && !this.cancelTokenSource?.token.isCancellationRequested) {
-        this.log(`Error processing input: ${error.message}`);
-        vscode.window.showErrorMessage(`Agent error: ${error.message}`);
-        
-        this.sendToWebview({
-          type: 'error',
-          error: error.message,
-          timestamp: Date.now()
-        });
+        this.log('Error processing input: ' + error.message);
+        vscode.window.showErrorMessage('Agent error: ' + error.message);
+        this.sendToWebview({ type: 'error', error: error.message, timestamp: Date.now() });
       }
     } finally {
       this.isProcessing = false;
-      if (this.cancelTokenSource) {
-        this.cancelTokenSource.dispose();
-        this.cancelTokenSource = null;
-      }
+      if (this.cancelTokenSource) { this.cancelTokenSource.dispose(); this.cancelTokenSource = null; }
     }
   }
 
-  /**
-   * Clean response text by removing reasoning headers, EOS markers, and tool calls
-   */
   private cleanResponseText(text: string): string {
     if (!text) return '';
-    
     text = text.replace(/reasoning:\s*[\s\S]*?(?=\n\n|EOS|[A-Z][a-z])/gi, '');
     text = text.replace(/^reasoning:.*$/gim, '');
     text = text.replace(/\bEOS\b\s*/g, '');
     text = text.replace(/tool_call:\s*\{[\s\S]*?\}(?=\n|$|tool_call:)/g, '');
-    
     const blocks = text.split(/\n\n+/).filter(b => b.trim().length > 20);
-    
-    if (blocks.length > 1) {
-      text = blocks.reduce((a, b) => a.length > b.length ? a : b).trim();
-    }
-    
+    if (blocks.length > 1) text = blocks.reduce((a, b) => a.length > b.length ? a : b).trim();
     return text.trim();
   }
 
-  /**
-   * Show the agent webview panel
-   */
   private showWebview(): void {
-    if (this.webviewPanel) {
-      this.webviewPanel.reveal(vscode.ViewColumn.One);
-      return;
-    }
-    
-    this.webviewPanel = vscode.window.createWebviewPanel(
-      'i2visionAgent',
-      'i2-Vision Agent',
-      vscode.ViewColumn.One,
-      {
-        enableScripts: true,
-        retainContextWhenHidden: true,
-        localResourceRoots: [
-          vscode.Uri.file(path.join(this.context.extensionPath, 'media'))
-        ]
-      }
-    );
-    
+    if (this.webviewPanel) { this.webviewPanel.reveal(vscode.ViewColumn.One); return; }
+    this.webviewPanel = vscode.window.createWebviewPanel('i2visionAgent', 'i2-Vision Agent', vscode.ViewColumn.One, { enableScripts: true, retainContextWhenHidden: true, localResourceRoots: [vscode.Uri.file(path.join(this.context.extensionPath, 'media'))] });
     this.webviewPanel.webview.html = this.getWebviewContent();
-    
     this.webviewPanel.webview.onDidReceiveMessage(async (message) => {
-      this.log(`Webview message received: ${message.type}`);
-      
+      this.log('Webview message received: ' + message.type);
       switch (message.type) {
         case 'user_input':
-          // Get current file from VSCode
           const currentFile = vscode.window.activeTextEditor?.document.uri.fsPath;
           const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-          const relativePath = currentFile && workspaceRoot 
-            ? path.relative(workspaceRoot, currentFile)
-            : undefined;
-          
+          const relativePath = currentFile && workspaceRoot ? path.relative(workspaceRoot, currentFile) : undefined;
           await this.processUserInput(message.content, relativePath);
           break;
-          
-        case 'apply_changes':
-          await this.handleApplyChanges(message.content);
-          break;
-          
-        case 'copy_response':
-          vscode.env.clipboard.writeText(message.content);
-          vscode.window.showInformationMessage('Response copied to clipboard');
-          break;
-          
-        case 'stop_agent':
-          await this.stopAgent();
-          break;
-          
-        case 'change_provider':
-          await this.changeProvider(message.provider);
-          break;
-          
-        case 'change_model':
-          await this.changeModel(message.model);
-          break;
-          
-        case 'fetch_models':
-          await this.fetchAndSendModels();
-          break;
-          
+        case 'apply_changes': await this.handleApplyChanges(message.content); break;
+        case 'copy_response': vscode.env.clipboard.writeText(message.content); vscode.window.showInformationMessage('Response copied to clipboard'); break;
+        case 'stop_agent': await this.stopAgent(); break;
+        case 'change_provider': await this.changeProvider(message.provider); break;
+        case 'change_model': await this.changeModel(message.model); break;
+        case 'fetch_models': await this.fetchAndSendModels(); break;
         case 'open_settings':
           try {
             this.log('Opening settings panel from webview...');
-            // Try both methods
             const success = await vscode.commands.executeCommand('i2vision.settings');
-            this.log(`Settings command executed, result: ${success}`);
+            this.log('Settings command executed, result: ' + success);
           } catch (error: any) {
-            this.log(`Error opening settings: ${error.message}`);
-            this.log(`Error stack: ${error.stack}`);
-            vscode.window.showErrorMessage(`Failed to open settings: ${error.message}`);
+            this.log('Error opening settings: ' + error.message);
+            vscode.window.showErrorMessage('Failed to open settings: ' + error.message);
           }
           break;
-          
-        case 'fetch_history':
-          await this.sendHistoryToWebview();
-          break;
-          
-        case 'resume_conversation':
-          await this.resumeConversationFromWebview(message.conversationId);
-          break;
-          
-        case 'delete_conversation':
-          await this.deleteConversationFromWebview(message.conversationId);
-          break;
-          
-        default:
-          this.log(`Unknown message type: ${message.type}`);
+        case 'fetch_history': await this.sendHistoryToWebview(); break;
+        case 'resume_conversation': await this.resumeConversationFromWebview(message.conversationId); break;
+        case 'delete_conversation': await this.deleteConversationFromWebview(message.conversationId); break;
+        default: this.log('Unknown message type: ' + message.type);
       }
     }, null, this.context.subscriptions);
-    
-    this.webviewPanel.onDidDispose(() => {
-      this.webviewPanel = null;
-      this.log('Webview panel disposed');
-    }, null, this.context.subscriptions);
+    this.webviewPanel.onDidDispose(() => { this.webviewPanel = null; this.log('Webview panel disposed'); }, null, this.context.subscriptions);
   }
 
-  /**
-   * Send conversation history list to webview
-   */
   private async sendHistoryToWebview(): Promise<void> {
-    if (!this.historyManager) {
-      this.sendToWebview({ type: 'history_list', conversations: [] });
-      return;
-    }
-    
+    if (!this.historyManager) { this.sendToWebview({ type: 'history_list', conversations: [] }); return; }
     try {
       const conversationIds = await this.historyManager.list();
-      const conversations = await Promise.all(
-        conversationIds.map(async (id) => {
-          const saved = await this.historyManager!.load(id);
-          return {
-            id,
-            layer: saved?.layer || 'unknown',
-            messageCount: saved?.messages.length || 0,
-            createdAt: saved?.createdAt || 0,
-            updatedAt: saved?.updatedAt || 0,
-            workspace: saved?.workspace || 'unknown'
-          };
-        })
-      );
-      
-      // Sort by updatedAt (most recent first)
+      const conversations = await Promise.all(conversationIds.map(async (id) => {
+        const saved = await this.historyManager!.load(id);
+        return { id, layer: saved?.layer || 'unknown', messageCount: saved?.messages.length || 0, createdAt: saved?.createdAt || 0, updatedAt: saved?.updatedAt || 0, workspace: saved?.workspace || 'unknown' };
+      }));
       conversations.sort((a, b) => b.updatedAt - a.updatedAt);
-      
       this.sendToWebview({ type: 'history_list', conversations });
     } catch (error: any) {
-      this.log(`Error fetching history: ${error.message}`);
+      this.log('Error fetching history: ' + error.message);
       this.sendToWebview({ type: 'history_list', conversations: [], error: error.message });
     }
   }
 
-  /**
-   * Resume a conversation from webview request
-   */
   private async resumeConversationFromWebview(conversationId: string): Promise<void> {
     try {
-      this.log(`Resuming conversation: ${conversationId}`);
+      this.log('Resuming conversation: ' + conversationId);
       await this.resumeConversation(conversationId);
       this.sendToWebview({ type: 'conversation_resumed', conversationId });
     } catch (error: any) {
-      this.log(`Error resuming conversation: ${error.message}`);
-      this.sendToWebview({ type: 'error', error: `Failed to resume conversation: ${error.message}` });
+      this.log('Error resuming conversation: ' + error.message);
+      this.sendToWebview({ type: 'error', error: 'Failed to resume conversation: ' + error.message });
     }
   }
 
-  /**
-   * Delete a conversation from webview request
-   */
   private async deleteConversationFromWebview(conversationId: string): Promise<void> {
     try {
-      if (!this.historyManager) {
-        throw new Error('History manager not available');
-      }
-      
+      if (!this.historyManager) throw new Error('History manager not available');
       await this.historyManager.delete(conversationId);
-      this.log(`Deleted conversation: ${conversationId}`);
-      
-      // Refresh history list
+      this.log('Deleted conversation: ' + conversationId);
       await this.sendHistoryToWebview();
-      
       this.sendToWebview({ type: 'conversation_deleted', conversationId });
     } catch (error: any) {
-      this.log(`Error deleting conversation: ${error.message}`);
-      this.sendToWebview({ type: 'error', error: `Failed to delete conversation: ${error.message}` });
+      this.log('Error deleting conversation: ' + error.message);
+      this.sendToWebview({ type: 'error', error: 'Failed to delete conversation: ' + error.message });
     }
   }
 
-  /**
-   * Change the provider for the active agent
-   */
   private async changeProvider(provider: string): Promise<void> {
-    if (!this.activeTabId) {
-      vscode.window.showErrorMessage('No active agent tab');
-      return;
-    }
-    
+    if (!this.activeTabId) { vscode.window.showErrorMessage('No active agent tab'); return; }
     const tabState = this.tabs.get(this.activeTabId);
-    if (!tabState) {
-      vscode.window.showErrorMessage('Active tab not found');
-      return;
-    }
-    
-    this.log(`Changing provider to ${provider} for ${tabState.layer} agent...`);
-    
+    if (!tabState) { vscode.window.showErrorMessage('Active tab not found'); return; }
+    this.log('Changing provider to ' + provider + ' for ' + tabState.layer + ' agent...');
     try {
       this.agentProvider.clearConfigCache();
       const agentConfig = this.agentProvider.getConfig(tabState.layer);
       agentConfig.model.provider = provider;
-      
-      // Set default model for provider
       const defaultModel = provider === 'deepseek' ? 'deepseek-chat' : 'llama3.2:3b';
       agentConfig.model.id = defaultModel;
-      
-      // Update agent config
-      await this.agentProvider.updateConfig(tabState.layer, {
-        provider: provider,
-        model: defaultModel
-      });
-      
-      this.log(`Provider changed to ${provider}`);
-      vscode.window.showInformationMessage(`Provider changed to ${provider}`);
-      
-      // Update webview with new provider
-      this.sendToWebview({
-        type: 'provider_changed',
-        provider: provider,
-        model: defaultModel
-      });
+      await this.agentProvider.updateConfig(tabState.layer, { provider, model: defaultModel });
+      this.log('Provider changed to ' + provider);
+      vscode.window.showInformationMessage('Provider changed to ' + provider);
+      this.sendToWebview({ type: 'provider_changed', provider, model: defaultModel });
     } catch (error: any) {
-      this.log(`Error changing provider: ${error.message}`);
-      vscode.window.showErrorMessage(`Failed to change provider: ${error.message}`);
+      this.log('Error changing provider: ' + error.message);
+      vscode.window.showErrorMessage('Failed to change provider: ' + error.message);
     }
   }
 
-  /**
-   * Change the model for the active agent
-   */
   private async changeModel(model: string): Promise<void> {
-    if (!this.activeTabId) {
-      vscode.window.showErrorMessage('No active agent tab');
-      return;
-    }
-    
+    if (!this.activeTabId) { vscode.window.showErrorMessage('No active agent tab'); return; }
     const tabState = this.tabs.get(this.activeTabId);
-    if (!tabState) {
-      vscode.window.showErrorMessage('Active tab not found');
-      return;
-    }
-    
-    this.log(`Changing model to ${model} for ${tabState.layer} agent...`);
-    
+    if (!tabState) { vscode.window.showErrorMessage('Active tab not found'); return; }
+    this.log('Changing model to ' + model + ' for ' + tabState.layer + ' agent...');
     try {
       const agentConfig = this.agentProvider.getConfig(tabState.layer);
       agentConfig.model.id = model;
-      
-      // Update agent config
-      await this.agentProvider.updateConfig(tabState.layer, {
-        provider: agentConfig.model.provider,
-        model: model
-      });
-      
-      this.log(`Model changed to ${model}`);
-      vscode.window.showInformationMessage(`Model changed to ${model}`);
-      
-      // Update webview with new model
-      this.sendToWebview({
-        type: 'model_changed',
-        model: model
-      });
+      await this.agentProvider.updateConfig(tabState.layer, { provider: agentConfig.model.provider, model });
+      this.log('Model changed to ' + model);
+      vscode.window.showInformationMessage('Model changed to ' + model);
+      this.sendToWebview({ type: 'model_changed', model });
     } catch (error: any) {
-      this.log(`Error changing model: ${error.message}`);
-      vscode.window.showErrorMessage(`Failed to change model: ${error.message}`);
+      this.log('Error changing model: ' + error.message);
+      vscode.window.showErrorMessage('Failed to change model: ' + error.message);
     }
   }
 
-  /**
-   * Fetch available models and send to webview
-   */
   private async fetchAndSendModels(): Promise<void> {
-    if (!this.activeTabId) {
-      return;
-    }
-    
+    if (!this.activeTabId) return;
     const tabState = this.tabs.get(this.activeTabId);
-    if (!tabState) {
-      return;
-    }
-    
+    if (!tabState) return;
     try {
       const agentConfig = this.agentProvider.getConfig(tabState.layer);
       const providerId = agentConfig.model.provider;
-      
-      // Fetch models from Ollama if using Ollama provider
       let models: string[] = [];
-      
-      if (providerId === 'ollama') {
-        models = await this.fetchOllamaModels();
-      } else if (providerId === 'deepseek') {
-        models = ['deepseek-chat', 'deepseek-coder'];
-      }
-      
-      this.sendToWebview({
-        type: 'models_list',
-        models: models,
-        currentModel: agentConfig.model.id,
-        currentProvider: providerId
-      });
+      if (providerId === 'ollama') models = await this.fetchOllamaModels();
+      else if (providerId === 'deepseek') models = ['deepseek-chat', 'deepseek-coder'];
+      this.sendToWebview({ type: 'models_list', models, currentModel: agentConfig.model.id, currentProvider: providerId });
     } catch (error: any) {
-      this.log(`Error fetching models: ${error.message}`);
-      this.sendToWebview({
-        type: 'models_list',
-        models: [],
-        currentModel: '',
-        currentProvider: '',
-        error: error.message
-      });
+      this.log('Error fetching models: ' + error.message);
+      this.sendToWebview({ type: 'models_list', models: [], currentModel: '', currentProvider: '', error: error.message });
     }
   }
 
-  /**
-   * Fetch available models from Ollama
-   */
   private async fetchOllamaModels(): Promise<string[]> {
     return new Promise<string[]>((resolve, reject) => {
-      const https = require('https');
       const http = require('http');
-      
-      const url = 'http://localhost:11434/api/tags';
-      const lib = http;
-      
-      const req = lib.get(url, (res: any) => {
+      const req = http.get('http://localhost:11434/api/tags', (res: any) => {
         let data = '';
         res.on('data', (chunk: string) => data += chunk);
         res.on('end', () => {
           try {
             const parsed = JSON.parse(data);
-            const modelNames = (parsed.models || []).map((m: any) => m.name);
-            resolve(modelNames);
-          } catch (e) {
-            reject(new Error('Failed to parse Ollama response'));
-          }
+            resolve((parsed.models || []).map((m: any) => m.name));
+          } catch (e) { reject(new Error('Failed to parse Ollama response')); }
         });
       });
-      
       req.on('error', (e: any) => reject(e));
-      req.setTimeout(5000, () => {
-        req.destroy();
-        reject(new Error('Ollama timeout'));
-      });
+      req.setTimeout(5000, () => { req.destroy(); reject(new Error('Ollama timeout')); });
     });
   }
 
-  /**
-   * Send message to webview
-   */
   private sendToWebview(message: any): void {
-    if (this.webviewPanel) {
-      this.webviewPanel.webview.postMessage(message);
-    }
+    if (this.webviewPanel) this.webviewPanel.webview.postMessage(message);
   }
 
-  /**
-   * Get webview HTML content - Unified Timeline UX with context meter and provider/model selectors
-   */
   private getWebviewContent(): string {
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || 'No workspace';
     const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name || 'Unknown';
-    
-    // Get current agent config for initial provider/model
     let currentProvider = 'ollama';
     let currentModel = 'llama3.2:3b';
-    
     if (this.activeTabId) {
       const tabState = this.tabs.get(this.activeTabId);
       if (tabState) {
@@ -928,1729 +423,336 @@ export class AgentTabManager {
         currentModel = config.model.id;
       }
     }
-    
-    // Get settings for terminal behavior and streaming
     const settings = this.settingsManager.getSettings();
     const streamingEnabled = settings.streaming.enabled;
     const showThinking = settings.streaming.showThinkingIndicator;
-    
-    // Escape workspace name for HTML (Node.js safe - no document)
-    const escapeHtmlStr = (text: string) => {
-      return text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-    };
-    
-    return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>i2-Vision Agent</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: var(--vscode-font-family);
-      font-size: var(--vscode-font-size);
-      color: var(--vscode-foreground);
-      background-color: var(--vscode-editor-background);
-      padding: 20px;
-      line-height: 1.6;
-    }
-    
-    /* Context bar at top */
-    .context-bar {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 10px 15px;
-      background-color: var(--vscode-editorWidget-background);
-      border: 1px solid var(--vscode-editorWidget-border);
-      border-radius: 6px;
-      margin-bottom: 15px;
-      font-size: 0.85em;
-      flex-wrap: wrap;
-      gap: 10px;
-    }
-    
-    .context-left {
-      display: flex;
-      gap: 20px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-    
-    .context-item {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      color: var(--vscode-descriptionForeground);
-    }
-    
-    /* Provider and Model selectors */
-    .provider-model-group {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-    
-    .selector-group {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    
-    .selector-group label {
-      font-weight: 600;
-      color: var(--vscode-foreground);
-      font-size: 0.9em;
-    }
-    
-    .selector-group select {
-      padding: 4px 8px;
-      border: 1px solid var(--vscode-input-border);
-      border-radius: 4px;
-      background: var(--vscode-input-background);
-      color: var(--vscode-input-foreground);
-      font-family: var(--vscode-font-family);
-      font-size: 0.85em;
-      cursor: pointer;
-      min-width: 120px;
-    }
-    
-    .selector-group select:hover {
-      border-color: var(--vscode-focusBorder);
-    }
-    
-    .selector-group select:focus {
-      outline: 2px solid var(--vscode-focusBorder);
-      outline-offset: -2px;
-    }
-    
-    /* Settings button */
-    .btn-settings {
-      padding: 4px 8px;
-      font-size: 1.2em;
-      background: transparent;
-      border: 1px solid var(--vscode-editorWidget-border);
-      border-radius: 4px;
-      cursor: pointer;
-      color: var(--vscode-foreground);
-      transition: all 0.2s ease;
-    }
-    
-    .btn-settings:hover {
-      background-color: var(--vscode-editor-selectionBackground);
-      border-color: var(--vscode-focusBorder);
-    }
-    
-    /* Token usage meter */
-    .token-meter {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    
-    .token-bar {
-      width: 150px;
-      height: 8px;
-      background-color: var(--vscode-editorWidget-border);
-      border-radius: 4px;
-      overflow: hidden;
-      position: relative;
-    }
-    
-    .token-fill {
-      height: 100%;
-      background: linear-gradient(90deg, 
-        var(--vscode-terminal-successBackground) 0%, 
-        var(--vscode-terminal-successBackground) 50%,
-        var(--vscode-terminal-ansiYellow) 75%,
-        var(--vscode-errorForeground) 100%);
-      transition: width 0.3s ease;
-    }
-    
-    .token-text {
-      min-width: 80px;
-      text-align: right;
-      color: var(--vscode-descriptionForeground);
-      font-size: 0.8em;
-    }
-    
-    /* Single timeline container */
-    .timeline {
-      max-width: 900px;
-      margin: 0 auto;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-    
-    /* User message */
-    .message.user {
-      background-color: var(--vscode-editor-inactiveSelectionBackground);
-      border-left: 4px solid var(--vscode-button-background);
-      padding: 12px 15px;
-      border-radius: 6px;
-      white-space: pre-wrap;
-    }
-    
-    /* Agent streaming text */
-    .message.agent {
-      background-color: var(--vscode-editor-selectionBackground);
-      border-left: 4px solid var(--vscode-editorLineNumber-foreground);
-      padding: 12px 15px;
-      border-radius: 6px;
-      white-space: pre-wrap;
-    }
-    
-    /* Restored message (from history) */
-    .message.restored {
-      background-color: var(--vscode-editorWidget-background);
-      border-left: 3px solid var(--vscode-descriptionForeground);
-      padding: 12px 15px;
-      border-radius: 6px;
-      white-space: pre-wrap;
-      opacity: 0.8;
-    }
-    
-    /* Stopped message */
-    .message.stopped {
-      background-color: var(--vscode-editorWidget-background);
-      border-left: 3px solid var(--vscode-descriptionForeground);
-      padding: 10px 15px;
-      border-radius: 6px;
-      font-style: italic;
-      color: var(--vscode-descriptionForeground);
-    }
-    
-    /* Tool card - inline in timeline */
-    .tool-card {
-      background-color: var(--vscode-editorWidget-background);
-      border: 1px solid var(--vscode-editorWidget-border);
-      border-radius: 6px;
-      padding: 10px 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      transition: all 0.2s ease;
-    }
-    
-    /* Thinking indicator */
-    .thinking-indicator {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 10px 12px;
-      background-color: var(--vscode-editor-selectionBackground);
-      border-left: 3px solid var(--vscode-progressBarBackground);
-      border-radius: 6px;
-      font-style: italic;
-      color: var(--vscode-descriptionForeground);
-    }
-    
-    .thinking-indicator .spinner {
-      width: 14px;
-      height: 14px;
-      border: 2px solid var(--vscode-progressBarBackground);
-      border-top-color: transparent;
-      border-radius: 50%;
-      animation: spin 1s linear infinite;
-    }
-    
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-    
-    /* Unified footer bar */
-    .message-footer {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 8px 12px;
-      background-color: var(--vscode-editorWidget-background);
-      border-radius: 4px;
-      margin-top: 10px;
-      font-size: 0.85em;
-    }
-    
-    .footer-left {
-      display: flex;
-      gap: 15px;
-      color: var(--vscode-descriptionForeground);
-    }
-    
-    .footer-left span {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-    }
-    
-    .footer-right {
-      display: flex;
-      gap: 8px;
-    }
-    
-    .tool-card.running {
-      border-left: 3px solid var(--vscode-progressBarBackground);
-    }
-    
-    .tool-card.done {
-      border-left: 3px solid var(--vscode-terminal-successBackground);
-    }
-    
-    .tool-card.error {
-      border-left: 3px solid var(--vscode-errorForeground);
-    }
-    
-    .tool-card-header {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-weight: 600;
-      font-size: 0.9em;
-    }
-    
-    .tool-card-status {
-      font-size: 1.1em;
-    }
-    
-    .tool-card-status.running {
-      animation: pulse 1s ease-in-out infinite;
-    }
-    
-    @keyframes pulse {
-      0%, 100% { opacity: 0.5; }
-      50% { opacity: 1; }
-    }
-    
-    .tool-card-content {
-      display: none;
-      flex-direction: column;
-      gap: 6px;
-      margin-top: 4px;
-    }
-    
-    .tool-card.expanded .tool-card-content {
-      display: flex;
-    }
-    
-    .tool-card-label {
-      font-weight: 600;
-      color: var(--vscode-descriptionForeground);
-      font-size: 0.8em;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-    }
-    
-    .tool-card-result {
-      background-color: var(--vscode-textCodeBlock-background);
-      padding: 8px;
-      border-radius: 4px;
-      font-family: var(--vscode-editor-font-family);
-      font-size: 0.85em;
-      max-height: 300px;
-      overflow-y: auto;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    
-    /* Response card (for streaming agent responses) */
-    .response-card {
-      background-color: var(--vscode-editorWidget-background);
-      border: 1px solid var(--vscode-editorWidget-border);
-      border-radius: 6px;
-      padding: 10px 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-      transition: all 0.2s ease;
-    }
-    
-    .response-card.streaming {
-      border-left: 3px solid var(--vscode-progressBarBackground);
-    }
-    
-    .response-card.done {
-      border-left: 3px solid var(--vscode-testing-iconPassed, #73c991);
-    }
-    
-    .response-card-header {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 0.9em;
-      font-weight: 600;
-      color: var(--vscode-foreground);
-    }
-    
-    .response-card-icon {
-      font-size: 1.1em;
-    }
-    
-    .response-card-title {
-      flex: 1;
-    }
-    
-    .response-card-status {
-      font-size: 0.8em;
-    }
-    
-    .response-card-status.streaming {
-      color: var(--vscode-progressBarBackground);
-      animation: pulse 1.5s ease-in-out infinite;
-    }
-    
-    .response-card-status.done {
-      color: var(--vscode-testing-iconPassed, #73c991);
-    }
-    
-    .response-card-body {
-      background-color: var(--vscode-textCodeBlock-background);
-      padding: 10px 12px;
-      border-radius: 4px;
-      font-family: var(--vscode-editor-font-family);
-      font-size: 0.9em;
-      white-space: pre-wrap;
-      word-break: break-word;
-      line-height: 1.5;
-      max-height: 500px;
-      overflow-y: auto;
-    }
-    
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
-    }
-    
-    /* Input area */
-    .input-container {
-      margin-top: 30px;
-      padding-top: 20px;
-      border-top: 1px solid var(--vscode-editorWidget-border);
-      max-width: 900px;
-      margin-left: auto;
-      margin-right: auto;
-    }
-    
-    .input-box {
-      width: 100%;
-      padding: 12px;
-      border: 1px solid var(--vscode-editorWidget-border);
-      border-radius: 6px;
-      background-color: var(--vscode-input-background);
-      color: var(--vscode-input-foreground);
-      font-family: var(--vscode-font-family);
-      font-size: var(--vscode-font-size);
-      resize: vertical;
-      min-height: 80px;
-    }
-    
-    .input-box:focus {
-      outline: 2px solid var(--vscode-focusBorder);
-      outline-offset: -2px;
-    }
-    
-    .button-row {
-      margin-top: 10px;
-      display: flex;
-      gap: 8px;
-      align-items: center;
-    }
-    
-    /* Combined Send/Stop button */
-    .btn-action {
-      padding: 6px 16px;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      font-family: var(--vscode-font-family);
-      font-size: 0.9em;
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      font-weight: 500;
-      min-width: 100px;
-      justify-content: center;
-      transition: all 0.2s ease;
-    }
-    
-    /* Send state (default) */
-    .btn-action.send {
-      background-color: var(--vscode-button-background);
-      color: var(--vscode-button-foreground);
-    }
-    
-    .btn-action.send:hover {
-      background-color: var(--vscode-button-hoverBackground);
-    }
-    
-    /* Stop state (during processing) */
-    .btn-action.stop {
-      background-color: var(--vscode-errorForeground);
-      color: white;
-      animation: pulse-stop 2s ease-in-out infinite;
-    }
-    
-    .btn-action.stop:hover {
-      opacity: 0.9;
-    }
-    
-    @keyframes pulse-stop {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.4); }
-      50% { box-shadow: 0 0 0 8px rgba(255, 0, 0, 0); }
-    }
-    
-    /* Base button class */
-    .btn {
-      padding: 6px 12px;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
-      font-family: var(--vscode-font-family);
-      font-size: 0.85em;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-    
-    /* Secondary button (Clear) */
-    .btn-secondary {
-      background-color: var(--vscode-button-secondaryBackground);
-      color: var(--vscode-button-secondaryForeground);
-    }
-    
-    .btn-secondary:hover {
-      opacity: 0.9;
-    }
-    
-    /* Error message */
-    .message.error {
-      background-color: var(--vscode-inputValidation-errorBackground);
-      border-left: 4px solid var(--vscode-errorForeground);
-      padding: 12px 15px;
-      border-radius: 6px;
-      color: var(--vscode-errorForeground);
-    }
-    
-    /* Collapsible tool card */
-    .tool-card-header {
-      cursor: pointer;
-      user-select: none;
-    }
-    
-    .tool-card-header:hover {
-      opacity: 0.9;
-    }
-    
-    .toggle-icon {
-      margin-left: auto;
-      transition: transform 0.2s;
-    }
-    
-    .tool-card.expanded .toggle-icon {
-      transform: rotate(90deg);
-    }
-    
-    /* Collapsed tool card */
-    .tool-card.collapsed .tool-card-content {
-      display: none;
-    }
-    
-    .tool-card.collapsed .toggle-icon {
-      transform: rotate(0deg);
-    }
-    /* Diff Card Styles */
-    .diff-card {
-      border: 1px solid var(--vscode-editorWidget-border, #333);
-      border-radius: 6px;
-      overflow: hidden;
-      font-family: var(--vscode-editor-font-family, 'Consolas', monospace);
-      font-size: var(--vscode-editor-font-size, 13px);
-      background: var(--vscode-editor-background, #1e1e1e);
-      color: var(--vscode-editor-foreground, #d4d4d4);
-      margin-top: 6px;
-    }
+    const escapeHtmlStr = (text: string) => text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+    const selectedProvider = currentProvider === 'ollama' ? 'selected' : '';
+    const selectedProviderDeepSeek = currentProvider === 'deepseek' ? 'selected' : '';
 
-    .diff-card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding: 8px 12px;
-      background: var(--vscode-editorWidget-background, #252526);
-      border-bottom: 1px solid var(--vscode-editorWidget-border, #333);
-    }
-
-    .diff-header-left {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    }
-
-    .diff-icon {
-      font-size: 1.1em;
-    }
-
-    .diff-source {
-      font-weight: 600;
-      color: var(--vscode-foreground, #d4d4d4);
-    }
-
-    .diff-header-right {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      font-size: 0.85em;
-    }
-
-    .diff-file-count {
-      color: var(--vscode-descriptionForeground, #888);
-    }
-
-    .diff-additions {
-      color: #4ec9b0;
-      font-weight: 600;
-    }
-
-    .diff-deletions {
-      color: #f44747;
-      font-weight: 600;
-    }
-
-    .diff-stats-bar {
-      display: flex;
-      height: 6px;
-      background: var(--vscode-editorWidget-border, #333);
-    }
-
-    .diff-stats-additions {
-      background: #4ec9b0;
-      color: transparent;
-      font-size: 0;
-      min-width: 2px;
-    }
-
-    .diff-stats-deletions {
-      background: #f44747;
-      color: transparent;
-      font-size: 0;
-      min-width: 2px;
-    }
-
-    .diff-files {
-      max-height: 600px;
-      overflow-y: auto;
-    }
-
-    .diff-file-section {
-      border-bottom: 1px solid var(--vscode-editorWidget-border, #333);
-    }
-
-    .diff-file-section:last-child {
-      border-bottom: none;
-    }
-
-    .diff-file-header {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px 12px;
-      background: var(--vscode-editorWidget-background, #252526);
-      cursor: pointer;
-      user-select: none;
-    }
-
-    .diff-file-header:hover {
-      background: var(--vscode-list-hoverBackground, #2a2d2e);
-    }
-
-    .diff-file-toggle {
-      font-size: 0.7em;
-      color: var(--vscode-descriptionForeground, #888);
-      width: 12px;
-    }
-
-    .diff-file-icon {
-      font-size: 0.9em;
-    }
-
-    .diff-file-path {
-      flex: 1;
-      font-family: var(--vscode-editor-font-family, monospace);
-      font-size: 0.9em;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .diff-file-badge {
-      font-size: 0.7em;
-      padding: 1px 6px;
-      border-radius: 3px;
-      font-weight: 600;
-      text-transform: uppercase;
-    }
-
-    .diff-file-added .diff-file-badge {
-      background: rgba(78, 201, 176, 0.2);
-      color: #4ec9b0;
-    }
-
-    .diff-file-removed .diff-file-badge {
-      background: rgba(244, 71, 71, 0.2);
-      color: #f44747;
-    }
-
-    .diff-file-modified .diff-file-badge {
-      background: rgba(220, 200, 100, 0.2);
-      color: #dcc864;
-    }
-
-    .diff-file-renamed .diff-file-badge {
-      background: rgba(100, 150, 220, 0.2);
-      color: #6496dc;
-    }
-
-    .diff-file-stats {
-      display: flex;
-      gap: 8px;
-      font-size: 0.8em;
-    }
-
-    .diff-add-count {
-      color: #4ec9b0;
-    }
-
-    .diff-del-count {
-      color: #f44747;
-    }
-
-    .diff-file-content {
-      overflow-x: auto;
-    }
-
-    .diff-binary-notice {
-      padding: 12px;
-      text-align: center;
-      color: var(--vscode-descriptionForeground, #888);
-      font-style: italic;
-    }
-
-    .diff-hunk {
-      border-top: 1px solid var(--vscode-editorWidget-border, #333);
-    }
-
-    .diff-hunk-header {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      padding: 4px 12px;
-      background: rgba(100, 150, 220, 0.08);
-      cursor: pointer;
-      user-select: none;
-      font-size: 0.85em;
-    }
-
-    .diff-hunk-header:hover {
-      background: rgba(100, 150, 220, 0.15);
-    }
-
-    .diff-hunk-toggle {
-      font-size: 0.7em;
-      color: var(--vscode-descriptionForeground, #888);
-    }
-
-    .diff-hunk-info {
-      color: rgba(100, 150, 220, 0.8);
-      font-size: 0.85em;
-    }
-
-    .diff-hunk-content {
-      overflow-x: auto;
-    }
-
-    .diff-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-family: var(--vscode-editor-font-family, monospace);
-      font-size: var(--vscode-editor-font-size, 13px);
-      line-height: 1.4;
-    }
-
-    .diff-line-num {
-      width: 50px;
-      min-width: 50px;
-      padding: 0 8px;
-      text-align: right;
-      color: var(--vscode-descriptionForeground, #858585);
-      background: var(--vscode-editorGutter-background, #1e1e1e);
-      user-select: none;
-      font-size: 0.85em;
-      vertical-align: top;
-    }
-
-    .diff-line-prefix {
-      width: 15px;
-      min-width: 15px;
-      padding: 0 4px;
-      text-align: center;
-      color: var(--vscode-descriptionForeground, #858585);
-      user-select: none;
-      font-size: 0.85em;
-      vertical-align: top;
-    }
-
-    .diff-line-content {
-      padding: 0 8px;
-      white-space: pre-wrap;
-      word-break: break-all;
-      vertical-align: top;
-    }
-
-    .diff-line-added {
-      background: rgba(78, 201, 176, 0.12);
-    }
-
-    .diff-line-added .diff-line-prefix {
-      color: #4ec9b0;
-    }
-
-    .diff-line-added .diff-line-content {
-      color: #b5cea8;
-    }
-
-    .diff-line-removed {
-      background: rgba(244, 71, 71, 0.12);
-    }
-
-    .diff-line-removed .diff-line-prefix {
-      color: #f44747;
-    }
-
-    .diff-line-removed .diff-line-content {
-      color: #ce9178;
-    }
-
-    .diff-line-context {
-      background: transparent;
-    }
-
-    .diff-truncation-notice {
-      padding: 8px 12px;
-      text-align: center;
-      color: var(--vscode-descriptionForeground, #888);
-      font-size: 0.85em;
-      background: var(--vscode-editorWidget-background, #252526);
-    }
-
-    .diff-expand-btn {
-      background: var(--vscode-button-background, #0e639c);
-      color: var(--vscode-button-foreground, #fff);
-      border: none;
-      padding: 2px 10px;
-      border-radius: 3px;
-      cursor: pointer;
-      font-size: 0.85em;
-      margin-left: 8px;
-    }
-
-    .diff-expand-btn:hover {
-      background: var(--vscode-button-hoverBackground, #1177bb);
-    }
-
-    .diff-empty {
-      padding: 20px;
-      text-align: center;
-      color: var(--vscode-descriptionForeground, #888);
-      font-style: italic;
-    }
-    
-    /* ===== HISTORY SIDEBAR ===== */
-    .history-sidebar {
-      position: fixed;
-      right: 0;
-      top: 0;
-      bottom: 0;
-      width: 300px;
-      background: var(--vscode-sideBar-background, #252526);
-      border-left: 1px solid var(--vscode-sideBar-border, #333);
-      transform: translateX(100%);
-      transition: transform 0.2s ease;
-      z-index: 100;
-      display: flex;
-      flex-direction: column;
-      box-shadow: -2px 0 8px rgba(0,0,0,0.3);
-    }
-    
-    .history-sidebar.visible {
-      transform: translateX(0);
-    }
-    
-    .history-header {
-      padding: 12px;
-      border-bottom: 1px solid var(--vscode-sideBar-border, #333);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      background: var(--vscode-sideBarSectionHeader-background, #252526);
-    }
-    
-    .history-title {
-      font-weight: 600;
-      font-size: 0.9em;
-      color: var(--vscode-sideBarSectionHeader-foreground, #d4d4d4);
-    }
-    
-    .history-list {
-      flex: 1;
-      overflow-y: auto;
-      padding: 8px;
-    }
-    
-    .history-item {
-      padding: 10px;
-      margin-bottom: 8px;
-      background: var(--vscode-list-item-background, #2d2d2d);
-      border-radius: 4px;
-      cursor: pointer;
-      border: 1px solid transparent;
-      transition: all 0.2s ease;
-    }
-    
-    .history-item:hover {
-      border-color: var(--vscode-focusBorder, #007fd4);
-      background: var(--vscode-list-hoverBackground, #2a2d2e);
-    }
-    
-    .history-item-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      margin-bottom: 6px;
-    }
-    
-    .history-item-layer {
-      font-size: 0.7em;
-      text-transform: uppercase;
-      padding: 2px 6px;
-      border-radius: 3px;
-      background: var(--vscode-badge-background, #007fd4);
-      color: var(--vscode-badge-foreground, #ffffff);
-      font-weight: 600;
-    }
-    
-    .history-item-time {
-      font-size: 0.7em;
-      color: var(--vscode-descriptionForeground, #888);
-    }
-    
-    .history-item-meta {
-      font-size: 0.75em;
-      color: var(--vscode-descriptionForeground, #888);
-      margin-bottom: 6px;
-    }
-    
-    .history-item-actions {
-      display: flex;
-      gap: 6px;
-    }
-    
-    .history-item-actions .btn {
-      flex: 1;
-      justify-content: center;
-      font-size: 0.75em;
-      padding: 4px 8px;
-    }
-    
-    .history-empty {
-      text-align: center;
-      padding: 30px 20px;
-      color: var(--vscode-descriptionForeground, #888);
-      font-style: italic;
-      font-size: 0.85em;
-    }
-    
-    .history-refresh-btn {
-      background: transparent;
-      border: none;
-      color: var(--vscode-foreground, #d4d4d4);
-      cursor: pointer;
-      font-size: 1.1em;
-      padding: 4px;
-      border-radius: 4px;
-    }
-    
-    .history-refresh-btn:hover {
-      background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1));
-    }
-  </style>
-</head>
-<body>
-  <!-- Context bar with workspace, provider/model selectors, and token usage -->
-  <div class="context-bar">
-    <div class="context-left">
-      <div class="context-item">
-        <span>📁</span>
-        <span id="workspaceName">${escapeHtmlStr(workspaceName)}</span>
-      </div>
-      <div class="context-item">
-        <span>📄</span>
-        <span id="currentFile">None</span>
-      </div>
-    </div>
-    
-    <!-- Provider and Model Selectors -->
-    <div class="provider-model-group">
-      <div class="selector-group">
-        <label for="providerSelect">Provider:</label>
-        <select id="providerSelect" onchange="onProviderChange()">
-          <option value="ollama" ${currentProvider === 'ollama' ? 'selected' : ''}>Ollama (Local + Cloud)</option>
-          <option value="deepseek" ${currentProvider === 'deepseek' ? 'selected' : ''}>DeepSeek Direct (Cloud)</option>
-        </select>
-      </div>
-      <div class="selector-group">
-        <label for="modelSelect">Model:</label>
-        <select id="modelSelect" onchange="onModelChange()" style="min-width: 200px;">
-          <option value="${currentModel}" selected>${currentModel}</option>
-        </select>
-      </div>
-    </div>
-    
-    <div class="token-meter">
-      <span style="color: var(--vscode-descriptionForeground); font-size: 0.8em;">Context:</span>
-      <div class="token-bar">
-        <div class="token-fill" id="tokenFill" style="width: 0%"></div>
-      </div>
-      <span class="token-text" id="tokenText">0 / 0 tokens</span>
-    </div>
-    
-    <!-- Settings & History Buttons -->
-    <div style="display: flex; align-items: center; gap: 8px; margin-left: 15px;">
-      <button class="btn-settings" onclick="toggleHistorySidebar()" title="Conversation History (📂)" style="padding: 4px 8px; font-size: 1.2em; background: transparent; border: 1px solid var(--vscode-editorWidget-border); border-radius: 4px; cursor: pointer; color: var(--vscode-foreground);">
-        📂
-      </button>
-      <button class="btn-settings" onclick="openSettings()" title="Agent Settings (⚙)" style="padding: 4px 8px; font-size: 1.2em; background: transparent; border: 1px solid var(--vscode-editorWidget-border); border-radius: 4px; cursor: pointer; color: var(--vscode-foreground);">
-        ⚙
-      </button>
-    </div>
-  </div>
-  
-  <!-- Single timeline container - everything appends here in order -->
-  <div class="timeline" id="timeline">
-    <div class="message agent">
-      🤖 Hello! I'm your i2-Vision coding agent. I can help you with:
-      
-      ✓ Reading and analyzing code files
-      ✓ Searching for patterns in your codebase
-      ✓ Running builds and tests
-      ✓ Git operations (status, diff, log, commit)
-      ✓ Writing new files
-      
-      What would you like to work on?
-    </div>
-  </div>
-  
-  <div class="input-container">
-    <textarea 
-      class="input-box" 
-      id="userInput" 
-      placeholder="Ask me anything about your code..."
-      rows="3"
-    ></textarea>
-    <div class="button-row">
-      <button class="btn-action send" id="actionBtn">
-        <span id="actionIcon">▶</span>
-        <span id="actionText">Send</span>
-      </button>
-      <button class="btn btn-secondary" id="clearBtn">Clear</button>
-    </div>
-  </div>
-  
-  <!-- History Sidebar -->
-  <div class="history-sidebar" id="historySidebar">
-    <div class="history-header">
-      <span class="history-title">📂 Conversation History</span>
-      <div style="display: flex; gap: 6px; align-items: center;">
-        <button class="history-refresh-btn" onclick="refreshHistory()" title="Refresh">🔄</button>
-        <button class="btn btn-secondary" onclick="toggleHistorySidebar()" title="Close" style="padding: 4px 8px; font-size: 1em;">✕</button>
-      </div>
-    </div>
-    <div class="history-list" id="historyList">
-      <div class="history-empty">Loading...</div>
-    </div>
-  </div>
-  
-  <script>
-    const vscode = acquireVsCodeApi();
-    const timeline = document.getElementById('timeline');
-    const userInput = document.getElementById('userInput');
-    const actionBtn = document.getElementById('actionBtn');
-    const actionIcon = document.getElementById('actionIcon');
-    const actionText = document.getElementById('actionText');
-    const clearBtn = document.getElementById('clearBtn');
-    const tokenFill = document.getElementById('tokenFill');
-    const tokenText = document.getElementById('tokenText');
-    const currentFileEl = document.getElementById('currentFile');
-    const providerSelect = document.getElementById('providerSelect');
-    const modelSelect = document.getElementById('modelSelect');
-    
-    // Track current streaming element
-    let streamingElement = null;
-    let thinkingEl = null;
-    let isProcessing = false;
-    
-    // Settings from extension
-    const streamingEnabled = ${streamingEnabled};
-    const showThinkingSetting = ${showThinking};
-    
-    // History sidebar state
-    let historySidebarVisible = false;
-    
-    // Fetch models and history on load
-    window.addEventListener('load', () => {
-      vscode.postMessage({ type: 'fetch_models' });
-    });
-    
-    // Toggle history sidebar
-    function toggleHistorySidebar() {
-      historySidebarVisible = !historySidebarVisible;
-      const sidebar = document.getElementById('historySidebar');
-      if (historySidebarVisible) {
-        sidebar.classList.add('visible');
-        refreshHistory();
-      } else {
-        sidebar.classList.remove('visible');
-      }
-    }
-    
-    // Refresh history list
-    function refreshHistory() {
-      vscode.postMessage({ type: 'fetch_history' });
-    }
-    
-    // Render history list
-    function renderHistoryList(conversations) {
-      const list = document.getElementById('historyList');
-      
-      if (!conversations || conversations.length === 0) {
-        list.innerHTML = '<div class="history-empty">No saved conversations yet.<br/>Conversations are auto-saved as you chat.</div>';
-        return;
-      }
-      
-      list.innerHTML = conversations.map(conv => {
-        const date = new Date(conv.updatedAt);
-        const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-        
-        return '<div class="history-item" data-id="' + conv.id + '">' +
-          '<div class="history-item-header">' +
-            '<span class="history-item-layer">' + escapeHtml(conv.layer) + '</span>' +
-            '<span class="history-item-time">' + timeStr + '</span>' +
-          '</div>' +
-          '<div class="history-item-meta">' +
-            '💬 ' + conv.messageCount + ' messages • 📁 ' + escapeHtml(conv.workspace) +
-          '</div>' +
-          '<div class="history-item-actions">' +
-            '<button class="btn btn-secondary" onclick="resumeConversation(\'' + conv.id + '\')" style="flex:1;">📂 Resume</button>' +
-            '<button class="btn btn-secondary" onclick="deleteConversation(\'' + conv.id + '\')" title="Delete" style="min-width:36px;">🗑</button>' +
-          '</div>' +
-        '</div>';
-      }).join('');
-    }
-    
-    // Resume conversation
-    function resumeConversation(conversationId) {
-      if (confirm('Resume this conversation? This will load the saved messages into your current session.')) {
-        vscode.postMessage({ type: 'resume_conversation', conversationId });
-      }
-    }
-    
-    // Delete conversation
-    function deleteConversation(conversationId) {
-      if (confirm('Delete this conversation permanently? This action cannot be undone.')) {
-        vscode.postMessage({ type: 'delete_conversation', conversationId });
-      }
-    }
-    
-    // Send message on button click
-    actionBtn.addEventListener('click', () => {
-      if (isProcessing) {
-        // Stop agent
-        vscode.postMessage({ type: 'stop_agent' });
-      } else {
-        // Send message
-        const content = userInput.value.trim();
-        if (content) {
-          vscode.postMessage({ type: 'user_input', content });
-          userInput.value = '';
-        }
-      }
-    });
-    
-    // Send on Enter (Shift+Enter for new line)
-    userInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        actionBtn.click();
-      }
-    });
-    
-    // Clear timeline
-    clearBtn.addEventListener('click', () => {
-      timeline.innerHTML = '';
-      streamingElement = null;
-      thinkingEl = null;
-      setProcessingState(false);
-    });
-    
-    // Provider change handler
-    function onProviderChange() {
-      const provider = providerSelect.value;
-      vscode.postMessage({ type: 'change_provider', provider: provider });
-    }
-    
-    // Model change handler
-    function onModelChange() {
-      const model = modelSelect.value;
-      vscode.postMessage({ type: 'change_model', model: model });
-    }
-    
-    // Open settings
-    function openSettings() {
-      vscode.postMessage({ type: 'open_settings' });
-    }
-    
-    // Handle messages from extension - all events append to timeline in order
-    window.addEventListener('message', (event) => {
-      const message = event.data;
-      
-      switch (message.type) {
-        case 'user_message':
-          appendUserMessage(message.content);
-          break;
-          
-        case 'restored_message':
-          appendRestoredMessage(message.content, message.toolCalls, message.timestamp);
-          break;
-          
-        case 'thinking':
-          showThinkingIndicator(message.message);
-          break;
-          
-        case 'thinking_update':
-          updateThinkingIndicator(message.message);
-          break;
-          
-        case 'tool_start':
-          appendToolCard(message.toolName, message.args);
-          collapseAllToolCardsExceptLast();
-          break;
-          
-        case 'tool_complete':
-          updateToolCard(message.toolName, message.result);
-          collapseAllToolCardsExceptLast();
-          break;
-          
-        case 'streaming_text':
-          appendStreamingText(message.text);
-          break;
-          
-        case 'assistant_response':
-          // If streaming was disabled, no streamingElement exists yet - create one with full content
-          if (!streamingElement && message.content) {
-            appendStreamingText(message.content);
-          }
-          finalizeStreamingText(message.durationMs);
-          setProcessingState(false);
-          break;
-          
-        case 'token_usage':
-          updateTokenMeter(message.tokenUsage, message.contextLength);
-          break;
-          
-        case 'error':
-          appendErrorMessage(message.error);
-          setProcessingState(false);
-          break;
-          
-        case 'stopped':
-          hideThinkingIndicator();
-          setProcessingState(false);
-          appendStoppedMessage();
-          break;
-          
-        case 'provider_changed':
-          // Update provider dropdown
-          providerSelect.value = message.provider;
-          // Fetch models for new provider
-          vscode.postMessage({ type: 'fetch_models' });
-          break;
-          
-        case 'model_changed':
-          // Update model dropdown
-          modelSelect.value = message.model;
-          break;
-          
-        case 'models_list':
-          // Populate model dropdown
-          populateModelDropdown(message.models, message.currentModel, message.currentProvider);
-          break;
-          
-        case 'history_list':
-          // Update history sidebar
-          renderHistoryList(message.conversations);
-          break;
-          
-        case 'conversation_resumed':
-          // Show success message and close sidebar
-          const toast = document.createElement('div');
-          toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--vscode-notifications-background);color:var(--vscode-notifications-foreground);padding:10px 20px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.3);z-index:1000;font-size:0.9em;';
-          toast.textContent = '✓ Conversation resumed';
-          document.body.appendChild(toast);
-          setTimeout(() => toast.remove(), 2000);
-          toggleHistorySidebar();
-          break;
-          
-        case 'conversation_deleted':
-          // Show deletion confirmation
-          const delToast = document.createElement('div');
-          delToast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--vscode-notifications-background);color:var(--vscode-notifications-foreground);padding:10px 20px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.3);z-index:1000;font-size:0.9em;';
-          delToast.textContent = '✓ Conversation deleted';
-          document.body.appendChild(delToast);
-          setTimeout(() => delToast.remove(), 2000);
-          break;
-      }
-      
-      scrollToBottom();
-    });
-    
-    function populateModelDropdown(models, currentModel, currentProvider) {
-      modelSelect.innerHTML = '';
-      
-      if (models && models.length > 0) {
-        models.forEach(model => {
-          const option = document.createElement('option');
-          option.value = model;
-          option.textContent = model;
-          if (model === currentModel) {
-            option.selected = true;
-          }
-          modelSelect.appendChild(option);
-        });
-      } else {
-        // Show current model even if fetch failed
-        const option = document.createElement('option');
-        option.value = currentModel;
-        option.textContent = currentModel;
-        option.selected = true;
-        modelSelect.appendChild(option);
-      }
-    }
-    
-    function appendUserMessage(content) {
-      const div = document.createElement('div');
-      div.className = 'message user';
-      div.textContent = content;
-      timeline.appendChild(div);
-    }
-    
-    function appendRestoredMessage(content, toolCalls, timestamp) {
-      const div = document.createElement('div');
-      div.className = 'message restored';
-      div.textContent = content;
-      
-      // Add timestamp
-      const date = new Date(timestamp);
-      const timeStr = date.toLocaleTimeString();
-      div.title = 'Restored from history 📂 ' + timeStr;
-      
-      timeline.appendChild(div);
-      
-      // Restore tool cards if present
-      if (toolCalls && toolCalls.length > 0) {
-        toolCalls.forEach(tc => {
-          const card = document.createElement('div');
-          card.className = 'tool-card done collapsed';
-          const cardId = 'tool-' + Date.now();
-          card.id = cardId;
-          let resultHtml = '';
-          if (tc.result) {
-            resultHtml = '<div class="tool-card-label">Result</div><div class="tool-card-result">' + escapeHtml(tc.result.substring(0, 500)) + (tc.result.length > 500 ? '...' : '') + '</div>';
-          }
-          card.innerHTML = '<div class="tool-card-header" onclick="toggleToolCard(\\'' + cardId + '\\')">' +
-            '<span class="tool-card-status">✓</span>' +
-            '<span>' + escapeHtml(tc.toolName) + '</span>' +
-            '<span class="toggle-icon">▶</span>' +
-          '</div>' +
-          '<div class="tool-card-content">' + resultHtml + '</div>';
-          timeline.appendChild(card);
-        });
-      }
-    }
-    
-    function showThinkingIndicator(message) {
-      // Check if thinking indicator is enabled
-      if (!showThinkingSetting) {
-        return;
-      }
-      
-      // Remove any existing thinking indicator
-      if (thinkingEl) {
-        thinkingEl.remove();
-      }
-      
-      thinkingEl = document.createElement('div');
-      thinkingEl.className = 'thinking-indicator';
-      thinkingEl.innerHTML = '<div class="spinner"></div><span>' + message + '</span>';
-      timeline.appendChild(thinkingEl);
-      setProcessingState(true);
-    }
-    
-    function updateThinkingIndicator(message) {
-      // Move thinking indicator to the end (latest position)
-      if (thinkingEl) {
-        thinkingEl.remove();
-      }
-      
-      thinkingEl = document.createElement('div');
-      thinkingEl.className = 'thinking-indicator';
-      thinkingEl.innerHTML = '<div class="spinner"></div><span>' + message + '</span>';
-      timeline.appendChild(thinkingEl);
-    }
-    
-    function hideThinkingIndicator() {
-      if (thinkingEl) {
-        thinkingEl.remove();
-        thinkingEl = null;
-      }
-    }
-    
-    function appendToolCard(toolName, args) {
-      // Finalize any active streaming element before adding a tool card
-      // so text from the next iteration appears below this tool card
-      if (streamingElement) {
-        const statusEl = streamingElement.querySelector('.response-card-status');
-        if (statusEl) {
-          statusEl.className = 'response-card-status done';
-          statusEl.textContent = '✓ Done';
-        }
-        streamingElement.className = 'response-card done';
-        streamingElement = null;
-      }
-
-      const cardId = 'tool-' + Date.now();
-      const card = document.createElement('div');
-      card.className = 'tool-card running expanded';
-      card.id = cardId;
-      card.dataset.toolName = toolName;
-      
-      let argsHtml = '';
-      if (args && Object.keys(args).length > 0) {
-        argsHtml = '<div class="tool-card-label">Arguments</div><div class="tool-card-result">' + escapeHtml(JSON.stringify(args, null, 2)) + '</div>';
-      }
-      
-      card.innerHTML = '<div class="tool-card-header" onclick="toggleToolCard(\\'' + cardId + '\\')">' +
-        '<span class="tool-card-status running">⏳</span>' +
-        '<span>🔧 ' + escapeHtml(toolName) + '</span>' +
-        '<span class="toggle-icon">▶</span>' +
-      '</div>' +
-      '<div class="tool-card-content">' + argsHtml + '</div>';
-      
-      timeline.appendChild(card);
-    }
-    
-    function updateToolCard(toolName, result) {
-      // Find the most recent tool card with this name
-      const cards = timeline.querySelectorAll('.tool-card.running');
-      let targetCard = null;
-      
-      for (let i = cards.length - 1; i >= 0; i--) {
-        if (cards[i].dataset.toolName === toolName) {
-          targetCard = cards[i];
-          break;
-        }
-      }
-      
-      if (targetCard) {
-        // Update status - remove running state, no checkmark
-        targetCard.classList.remove('running');
-        targetCard.classList.add('done');
-        
-        // Remove the spinner, keep tool icon only
-        const statusEl = targetCard.querySelector('.tool-card-status');
-        if (statusEl) {
-          statusEl.textContent = '';
-          statusEl.classList.remove('running');
-        }
-        
-        // Add result section
-        const contentDiv = targetCard.querySelector('.tool-card-content');
-        if (contentDiv && result) {
-          const resultHtml = '<div class="tool-card-label" style="margin-top: 8px;">Result</div>' +
-            '<div class="tool-card-result">' + escapeHtml(result.substring(0, 3000)) + (result.length > 3000 ? '...' : '') + '</div>';
-          contentDiv.insertAdjacentHTML('beforeend', resultHtml);
-        }
-      }
-    }
-    
-    function appendStreamingText(text) {
-      if (!streamingElement) {
-        // Create a response card similar to tool cards
-        streamingElement = document.createElement('div');
-        streamingElement.className = 'response-card streaming';
-        streamingElement.innerHTML = '<div class="response-card-header">' +
-          '<span class="response-card-icon">💬</span>' +
-          '<span class="response-card-title">Response</span>' +
-          '<span class="response-card-status streaming">⏳ Streaming...</span>' +
-        '</div>' +
-        '<div class="response-card-body"></div>';
-        timeline.appendChild(streamingElement);
-        scrollToBottom();
-      }
-      const body = streamingElement.querySelector('.response-card-body');
-      if (body) {
-        body.textContent += text;
-        scrollToBottom();
-      }
-    }
-    
-    function finalizeStreamingText(durationMs) {
-      // Hide thinking indicator
-      hideThinkingIndicator();
-      
-      // Find the target element: either the active streaming element
-      // or the last response card (if streaming was finalized by a tool call)
-      let targetElement = streamingElement;
-      if (!targetElement) {
-        const responseCards = timeline.querySelectorAll('.response-card');
-        if (responseCards.length > 0) {
-          targetElement = responseCards[responseCards.length - 1];
-        }
-      }
-      
-      // Finalize the response card
-      if (targetElement) {
-        // Remove streaming status indicator
-        const statusEl = targetElement.querySelector('.response-card-status');
-        if (statusEl) {
-          statusEl.className = 'response-card-status done';
-          statusEl.textContent = '✓ Done';
-        }
-        targetElement.className = 'response-card done';
-        
-        // Add unified footer bar with timing + actions
-        const footer = document.createElement('div');
-        footer.className = 'message-footer';
-        const durationStr = durationMs ? (durationMs / 1000).toFixed(1) : '?';
-        footer.innerHTML = '<div class="footer-left">' +
-          '<span>⏱ ' + durationStr + 's</span>' +
-        '</div>' +
-        '<div class="footer-right">' +
-          '<button class="btn btn-secondary" onclick="copyResponse()" style="padding: 4px 8px; font-size: 0.85em;">📋 Copy</button>' +
-          '<button class="btn btn-secondary" onclick="applyChanges()" style="padding: 4px 8px; font-size: 0.85em;">✓ Apply</button>' +
-        '</div>';
-        targetElement.appendChild(footer);
-        
-        streamingElement = null;
-      }
-    }
-    
-    function updateTokenMeter(tokenUsage, contextLength) {
-      const total = tokenUsage.prompt + tokenUsage.completion;
-      const percentage = Math.min((total / contextLength) * 100, 100);
-      
-      tokenFill.style.width = percentage + '%';
-      tokenText.textContent = total.toLocaleString() + ' / ' + contextLength.toLocaleString() + ' tokens (' + percentage.toFixed(1) + '%)';
-      
-      // Change color based on usage
-      if (percentage > 80) {
-        tokenFill.style.background = 'var(--vscode-errorForeground)';
-      } else if (percentage > 60) {
-        tokenFill.style.background = 'var(--vscode-terminal-ansiYellow)';
-      } else {
-        tokenFill.style.background = 'var(--vscode-terminal-successBackground)';
-      }
-    }
-    
-    function appendErrorMessage(error) {
-      const div = document.createElement('div');
-      div.className = 'message error';
-      div.textContent = '❌ Error: ' + error;
-      timeline.appendChild(div);
-    }
-    
-    function appendStoppedMessage() {
-      const div = document.createElement('div');
-      div.className = 'message stopped';
-      div.textContent = '⏹ Processing stopped by user.';
-      timeline.appendChild(div);
-    }
-    
-    function toggleToolCard(cardId) {
-      const card = document.getElementById(cardId);
-      if (card) {
-        card.classList.toggle('expanded');
-        card.classList.toggle('collapsed');
-      }
-    }
-    
-    function collapseAllToolCardsExceptLast() {
-      // Collapse all completed tool cards except the most recent one
-      const cards = timeline.querySelectorAll('.tool-card.done');
-      cards.forEach((card, index) => {
-        if (index < cards.length - 1) {
-          card.classList.add('collapsed');
-          card.classList.remove('expanded');
-        } else {
-          card.classList.remove('collapsed');
-          card.classList.add('expanded');
-        }
-      });
-    }
-    
-    function scrollToBottom() {
-      timeline.scrollTop = timeline.scrollHeight;
-    }
-    
-    function escapeHtml(text) {
-      if (!text) return '';
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
-    }
-    
-    function copyResponse() {
-      const lastAgentMessage = timeline.querySelector('.message.agent:last-child');
-      if (lastAgentMessage) {
-        const content = lastAgentMessage.childNodes[0]?.textContent || '';
-        vscode.postMessage({ type: 'copy_response', content });
-      }
-    }
-    
-    function applyChanges() {
-      vscode.postMessage({ type: 'apply_changes' });
-    }
-    
-    function setProcessingState(processing) {
-      isProcessing = processing;
-      
-      if (processing) {
-        // Change to Stop state
-        actionBtn.classList.remove('send');
-        actionBtn.classList.add('stop');
-        actionIcon.textContent = '⏹';
-        actionText.textContent = 'Stop';
-        userInput.disabled = true;
-        userInput.style.opacity = '0.5';
-      } else {
-        // Change to Send state
-        actionBtn.classList.remove('stop');
-        actionBtn.classList.add('send');
-        actionIcon.textContent = '▶';
-        actionText.textContent = 'Send';
-        userInput.disabled = false;
-        userInput.style.opacity = '1';
-      }
-    }
-  </script>
-</body>
-</html>`;
+    // Build HTML using string concatenation to avoid template literal escaping issues
+    return '<!DOCTYPE html>\n' +
+'<html lang="en">\n' +
+'<head>\n' +
+'  <meta charset="UTF-8">\n' +
+'  <meta name="viewport" content="width=device-width, initial-scale=1.0">\n' +
+'  <title>i2-Vision Agent</title>\n' +
+'  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codicons/0.0.36/codicon.min.css" />\n' +
+'  <style>\n' +
+'    * { box-sizing: border-box; margin: 0; padding: 0; }\n' +
+'    body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); color: var(--vscode-foreground); background-color: var(--vscode-editor-background); padding: 0; line-height: 1.6; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }\n' +
+'    .top-panel { flex: 0 0 auto; padding: 12px 16px; background-color: var(--vscode-editorWidget-background); border-bottom: 1px solid var(--vscode-editorWidget-border); display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; }\n' +
+'    .top-left { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }\n' +
+'    .workspace-info { display: flex; align-items: center; gap: 8px; font-size: 0.85em; color: var(--vscode-descriptionForeground); }\n' +
+'    .workspace-info .codicon { font-size: 1.1em; }\n' +
+'    .provider-model-group { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }\n' +
+'    .selector-group { display: flex; align-items: center; gap: 6px; }\n' +
+'    .selector-group label { font-weight: 600; color: var(--vscode-foreground); font-size: 0.85em; }\n' +
+'    .selector-group select { padding: 4px 8px; border: 1px solid var(--vscode-input-border); border-radius: 4px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); font-family: var(--vscode-font-family); font-size: 0.85em; cursor: pointer; min-width: 120px; }\n' +
+'    .selector-group select:hover { border-color: var(--vscode-focusBorder); }\n' +
+'    .selector-group select:focus { outline: 2px solid var(--vscode-focusBorder); outline-offset: -2px; }\n' +
+'    .token-meter { display: flex; align-items: center; gap: 8px; font-size: 0.8em; color: var(--vscode-descriptionForeground); }\n' +
+'    .token-bar { width: 120px; height: 6px; background-color: var(--vscode-editorWidget-border); border-radius: 3px; overflow: hidden; }\n' +
+'    .token-fill { height: 100%; background: linear-gradient(90deg, var(--vscode-terminal-successBackground) 0%, var(--vscode-terminal-successBackground) 50%, var(--vscode-terminal-ansiYellow) 75%, var(--vscode-errorForeground) 100%); transition: width 0.3s ease; }\n' +
+'    .top-right { display: flex; gap: 8px; align-items: center; }\n' +
+'    .btn-icon { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; background: transparent; border: 1px solid var(--vscode-editorWidget-border); border-radius: 4px; cursor: pointer; color: var(--vscode-foreground); transition: all 0.2s ease; }\n' +
+'    .btn-icon:hover { background-color: var(--vscode-editor-selectionBackground); border-color: var(--vscode-focusBorder); }\n' +
+'    .btn-icon .codicon { font-size: 1.2em; }\n' +
+'    .center-panel { flex: 1 1 auto; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }\n' +
+'    .timeline { max-width: 900px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; gap: 12px; }\n' +
+'    .message { padding: 12px 15px; border-radius: 6px; white-space: pre-wrap; border-left: 4px solid; }\n' +
+'    .message.user { background-color: var(--vscode-editor-inactiveSelectionBackground); border-left-color: var(--vscode-button-background); }\n' +
+'    .message.agent { background-color: var(--vscode-editor-selectionBackground); border-left-color: var(--vscode-editorLineNumber-foreground); }\n' +
+'    .message.restored { background-color: var(--vscode-editorWidget-background); border-left-color: var(--vscode-descriptionForeground); opacity: 0.8; }\n' +
+'    .message.stopped { background-color: var(--vscode-editorWidget-background); border-left-color: var(--vscode-descriptionForeground); font-style: italic; color: var(--vscode-descriptionForeground); }\n' +
+'    .message.error { background-color: var(--vscode-inputValidation-errorBackground); border-left-color: var(--vscode-errorForeground); color: var(--vscode-errorForeground); }\n' +
+'    .thinking-indicator { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background-color: var(--vscode-editor-selectionBackground); border-left: 3px solid var(--vscode-progressBarBackground); border-radius: 6px; font-style: italic; color: var(--vscode-descriptionForeground); }\n' +
+'    .thinking-indicator .codicon-loading { animation: spin 1s linear infinite; }\n' +
+'    @keyframes spin { to { transform: rotate(360deg); } }\n' +
+'    .tool-card { background-color: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-editorWidget-border); border-radius: 6px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; transition: all 0.2s ease; }\n' +
+'    .tool-card.running { border-left: 3px solid var(--vscode-progressBarBackground); }\n' +
+'    .tool-card.done { border-left: 3px solid var(--vscode-terminal-successBackground); }\n' +
+'    .tool-card.error { border-left: 3px solid var(--vscode-errorForeground); }\n' +
+'    .tool-card-header { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 0.9em; cursor: pointer; user-select: none; }\n' +
+'    .tool-card-header:hover { opacity: 0.9; }\n' +
+'    .tool-card-status .codicon { font-size: 1.1em; }\n' +
+'    .tool-card-status.running .codicon { animation: pulse 1s ease-in-out infinite; }\n' +
+'    @keyframes pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }\n' +
+'    .tool-card-content { display: none; flex-direction: column; gap: 6px; margin-top: 4px; }\n' +
+'    .tool-card.expanded .tool-card-content { display: flex; }\n' +
+'    .toggle-icon { margin-left: auto; transition: transform 0.2s; }\n' +
+'    .tool-card.expanded .toggle-icon { transform: rotate(90deg); }\n' +
+'    .tool-card-label { font-weight: 600; color: var(--vscode-descriptionForeground); font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.5px; }\n' +
+'    .tool-card-result { background-color: var(--vscode-textCodeBlock-background); padding: 8px; border-radius: 4px; font-family: var(--vscode-editor-font-family); font-size: 0.85em; max-height: 300px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }\n' +
+'    .response-card { background-color: var(--vscode-editorWidget-background); border: 1px solid var(--vscode-editorWidget-border); border-radius: 6px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }\n' +
+'    .response-card.streaming { border-left: 3px solid var(--vscode-progressBarBackground); }\n' +
+'    .response-card.done { border-left: 3px solid #73c991; }\n' +
+'    .response-card-header { display: flex; align-items: center; gap: 8px; font-size: 0.9em; font-weight: 600; color: var(--vscode-foreground); }\n' +
+'    .response-card-status { font-size: 0.8em; margin-left: auto; }\n' +
+'    .response-card-status.streaming { color: var(--vscode-progressBarBackground); }\n' +
+'    .response-card-status.done { color: #73c991; }\n' +
+'    .response-card-body { background-color: var(--vscode-textCodeBlock-background); padding: 10px 12px; border-radius: 4px; font-family: var(--vscode-editor-font-family); font-size: 0.9em; white-space: pre-wrap; word-break: break-word; line-height: 1.5; max-height: 500px; overflow-y: auto; }\n' +
+'    .message-footer { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; background-color: var(--vscode-editorWidget-background); border-radius: 4px; margin-top: 10px; font-size: 0.85em; }\n' +
+'    .footer-left { display: flex; gap: 15px; color: var(--vscode-descriptionForeground); }\n' +
+'    .footer-right { display: flex; gap: 8px; }\n' +
+'    .footer-panel { flex: 0 0 auto; padding: 16px; background-color: var(--vscode-editorWidget-background); border-top: 1px solid var(--vscode-editorWidget-border); }\n' +
+'    .input-container { max-width: 900px; margin: 0 auto; }\n' +
+'    .input-box { width: 100%; padding: 12px; border: 1px solid var(--vscode-editorWidget-border); border-radius: 6px; background-color: var(--vscode-input-background); color: var(--vscode-input-foreground); font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); resize: vertical; min-height: 80px; }\n' +
+'    .input-box:focus { outline: 2px solid var(--vscode-focusBorder); outline-offset: -2px; }\n' +
+'    .button-row { margin-top: 10px; display: flex; gap: 8px; align-items: center; }\n' +
+'    .btn-action { padding: 8px 20px; border: none; border-radius: 4px; cursor: pointer; font-family: var(--vscode-font-family); font-size: 0.9em; display: inline-flex; align-items: center; gap: 8px; font-weight: 500; transition: all 0.2s ease; }\n' +
+'    .btn-action.send { background-color: var(--vscode-button-background); color: var(--vscode-button-foreground); }\n' +
+'    .btn-action.send:hover { background-color: var(--vscode-button-hoverBackground); }\n' +
+'    .btn-action.stop { background-color: var(--vscode-errorForeground); color: white; }\n' +
+'    .btn-action.stop:hover { opacity: 0.9; }\n' +
+'    .btn-secondary { padding: 8px 16px; border: 1px solid var(--vscode-button-secondaryBackground); border-radius: 4px; background-color: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); cursor: pointer; font-family: var(--vscode-font-family); font-size: 0.9em; display: inline-flex; align-items: center; gap: 6px; transition: all 0.2s ease; }\n' +
+'    .btn-secondary:hover { opacity: 0.9; }\n' +
+'    .history-sidebar { position: fixed; right: 0; top: 0; bottom: 0; width: 320px; background: var(--vscode-sideBar-background, #252526); border-left: 1px solid var(--vscode-sideBar-border, #333); transform: translateX(100%); transition: transform 0.2s ease; z-index: 100; display: flex; flex-direction: column; box-shadow: -2px 0 8px rgba(0,0,0,0.3); }\n' +
+'    .history-sidebar.visible { transform: translateX(0); }\n' +
+'    .history-header { padding: 12px; border-bottom: 1px solid var(--vscode-sideBar-border, #333); display: flex; justify-content: space-between; align-items: center; background: var(--vscode-sideBarSectionHeader-background, #252526); }\n' +
+'    .history-title { font-weight: 600; font-size: 0.9em; color: var(--vscode-sideBarSectionHeader-foreground, #d4d4d4); display: flex; align-items: center; gap: 8px; }\n' +
+'    .history-list { flex: 1; overflow-y: auto; padding: 8px; }\n' +
+'    .history-item { padding: 10px; margin-bottom: 8px; background: var(--vscode-list-item-background, #2d2d2d); border-radius: 4px; cursor: pointer; border: 1px solid transparent; transition: all 0.2s ease; }\n' +
+'    .history-item:hover { border-color: var(--vscode-focusBorder, #007fd4); background: var(--vscode-list-hoverBackground, #2a2d2e); }\n' +
+'    .history-item-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }\n' +
+'    .history-item-layer { font-size: 0.7em; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; background: var(--vscode-badge-background, #007fd4); color: var(--vscode-badge-foreground, #ffffff); font-weight: 600; }\n' +
+'    .history-item-time { font-size: 0.7em; color: var(--vscode-descriptionForeground, #888); }\n' +
+'    .history-item-meta { font-size: 0.75em; color: var(--vscode-descriptionForeground, #888); margin-bottom: 6px; display: flex; gap: 8px; align-items: center; }\n' +
+'    .history-item-actions { display: flex; gap: 6px; }\n' +
+'    .history-item-actions .btn-secondary { flex: 1; justify-content: center; font-size: 0.75em; padding: 4px 8px; }\n' +
+'    .history-empty { text-align: center; padding: 30px 20px; color: var(--vscode-descriptionForeground, #888); font-style: italic; font-size: 0.85em; }\n' +
+'    .history-refresh-btn { background: transparent; border: none; color: var(--vscode-foreground, #d4d4d4); cursor: pointer; font-size: 1.1em; padding: 4px; border-radius: 4px; }\n' +
+'    .history-refresh-btn:hover { background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1)); }\n' +
+'  </style>\n' +
+'</head>\n' +
+'<body>\n' +
+'  <div class="top-panel">\n' +
+'    <div class="top-left">\n' +
+'      <div class="workspace-info"><span class="codicon codicon-folder"></span><span id="workspaceName">' + escapeHtmlStr(workspaceName) + '</span></div>\n' +
+'      <div class="workspace-info"><span class="codicon codicon-file"></span><span id="currentFile">None</span></div>\n' +
+'      <div class="provider-model-group">\n' +
+'        <div class="selector-group"><label for="providerSelect">Provider:</label><select id="providerSelect" onchange="onProviderChange()"><option value="ollama" ' + selectedProvider + '>Ollama</option><option value="deepseek" ' + selectedProviderDeepSeek + '>DeepSeek</option></select></div>\n' +
+'        <div class="selector-group"><label for="modelSelect">Model:</label><select id="modelSelect" onchange="onModelChange()" style="min-width: 180px;"><option value="' + escapeHtmlStr(currentModel) + '" selected>' + escapeHtmlStr(currentModel) + '</option></select></div>\n' +
+'      </div>\n' +
+'    </div>\n' +
+'    <div class="top-right">\n' +
+'      <div class="token-meter"><span class="codicon codicon-database"></span><div class="token-bar"><div class="token-fill" id="tokenFill" style="width: 0%"></div></div><span id="tokenText">0 / 0</span></div>\n' +
+'      <button class="btn-icon" onclick="toggleHistorySidebar()" title="Conversation History"><span class="codicon codicon-comment-discussion"></span></button>\n' +
+'      <button class="btn-icon" onclick="openSettings()" title="Settings"><span class="codicon codicon-gear"></span></button>\n' +
+'    </div>\n' +
+'  </div>\n' +
+'  <div class="center-panel">\n' +
+'    <div class="timeline" id="timeline">\n' +
+'      <div class="message agent"><span class="codicon codicon-robot" style="margin-right: 8px;"></span>Hello! I am your i2-Vision coding agent. What would you like to work on?</div>\n' +
+'    </div>\n' +
+'  </div>\n' +
+'  <div class="footer-panel">\n' +
+'    <div class="input-container">\n' +
+'      <textarea class="input-box" id="userInput" placeholder="Ask me anything about your code..." rows="3"></textarea>\n' +
+'      <div class="button-row">\n' +
+'        <button class="btn-action send" id="actionBtn"><span class="codicon codicon-play" id="actionIcon"></span><span id="actionText">Send</span></button>\n' +
+'        <button class="btn-secondary" id="clearBtn"><span class="codicon codicon-clear-all"></span>Clear</button>\n' +
+'      </div>\n' +
+'    </div>\n' +
+'  </div>\n' +
+'  <div class="history-sidebar" id="historySidebar">\n' +
+'    <div class="history-header">\n' +
+'      <span class="history-title"><span class="codicon codicon-comment-discussion"></span>Conversation History</span>\n' +
+'      <div style="display: flex; gap: 6px; align-items: center;">\n' +
+'        <button class="history-refresh-btn" onclick="refreshHistory()" title="Refresh"><span class="codicon codicon-refresh"></span></button>\n' +
+'        <button class="btn-icon" onclick="toggleHistorySidebar()" title="Close"><span class="codicon codicon-close"></span></button>\n' +
+'      </div>\n' +
+'    </div>\n' +
+'    <div class="history-list" id="historyList"><div class="history-empty">Loading...</div></div>\n' +
+'  </div>\n' +
+'  <script>\n' +
+'    const vscode = acquireVsCodeApi();\n' +
+'    const timeline = document.getElementById("timeline");\n' +
+'    const userInput = document.getElementById("userInput");\n' +
+'    const actionBtn = document.getElementById("actionBtn");\n' +
+'    const actionIcon = document.getElementById("actionIcon");\n' +
+'    const actionText = document.getElementById("actionText");\n' +
+'    const clearBtn = document.getElementById("clearBtn");\n' +
+'    const tokenFill = document.getElementById("tokenFill");\n' +
+'    const tokenText = document.getElementById("tokenText");\n' +
+'    const providerSelect = document.getElementById("providerSelect");\n' +
+'    const modelSelect = document.getElementById("modelSelect");\n' +
+'    let streamingElement = null;\n' +
+'    let thinkingEl = null;\n' +
+'    let isProcessing = false;\n' +
+'    const streamingEnabled = ' + streamingEnabled + ';\n' +
+'    const showThinkingSetting = ' + showThinking + ';\n' +
+'    let historySidebarVisible = false;\n' +
+'    window.addEventListener("load", function() { vscode.postMessage({ type: "fetch_models" }); });\n' +
+'    function toggleHistorySidebar() { historySidebarVisible = !historySidebarVisible; const sidebar = document.getElementById("historySidebar"); if (historySidebarVisible) { sidebar.classList.add("visible"); refreshHistory(); } else { sidebar.classList.remove("visible"); } }\n' +
+'    function refreshHistory() { vscode.postMessage({ type: "fetch_history" }); }\n' +
+'    function renderHistoryList(conversations) {\n' +
+'      const list = document.getElementById("historyList");\n' +
+'      if (!conversations || conversations.length === 0) { list.innerHTML = "<div class=\\"history-empty\\">No saved conversations yet.</div>"; return; }\n' +
+'      list.innerHTML = conversations.map(function(conv) {\n' +
+'        const date = new Date(conv.updatedAt);\n' +
+'        const timeStr = date.toLocaleDateString() + " " + date.toLocaleTimeString([], {hour: "2-digit", minute:"2-digit"});\n' +
+'        return "<div class=\\"history-item\\" data-id=\\"" + conv.id + "\\">" +\n' +
+'          "<div class=\\"history-item-header\\"><span class=\\"history-item-layer\\">" + escapeHtml(conv.layer) + "</span><span class=\\"history-item-time\\">" + timeStr + "</span></div>" +\n' +
+'          "<div class=\\"history-item-meta\\"><span><span class=\\"codicon codicon-comment\\"></span> " + conv.messageCount + " msgs</span><span><span class=\\"codicon codicon-folder\\"></span> " + escapeHtml(conv.workspace) + "</span></div>" +\n' +
+'          "<div class=\\"history-item-actions\\"><button class=\\"btn-secondary\\" onclick=\\"resumeConversation(" + JSON.stringify(conv.id) + ")\\" style=\\"flex:1;\\"><span class=\\"codicon codicon-reply\\"></span> Resume</button><button class=\\"btn-secondary\\" onclick=\\"deleteConversation(" + JSON.stringify(conv.id) + ")\\" title=\\"Delete\\"><span class=\\"codicon codicon-trash\\"></span></button></div>" +\n' +
+'        "</div>";\n' +
+'      }).join("");\n' +
+'    }\n' +
+'    function resumeConversation(conversationId) { if (confirm("Resume this conversation?")) { vscode.postMessage({ type: "resume_conversation", conversationId: conversationId }); } }\n' +
+'    function deleteConversation(conversationId) { if (confirm("Delete this conversation permanently?")) { vscode.postMessage({ type: "delete_conversation", conversationId: conversationId }); } }\n' +
+'    actionBtn.addEventListener("click", function() { if (isProcessing) { vscode.postMessage({ type: "stop_agent" }); } else { const content = userInput.value.trim(); if (content) { vscode.postMessage({ type: "user_input", content: content }); userInput.value = ""; } } });\n' +
+'    userInput.addEventListener("keydown", function(e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); actionBtn.click(); } });\n' +
+'    clearBtn.addEventListener("click", function() { timeline.innerHTML = ""; streamingElement = null; thinkingEl = null; setProcessingState(false); });\n' +
+'    function onProviderChange() { const provider = providerSelect.value; vscode.postMessage({ type: "change_provider", provider: provider }); }\n' +
+'    function onModelChange() { const model = modelSelect.value; vscode.postMessage({ type: "change_model", model: model }); }\n' +
+'    function openSettings() { vscode.postMessage({ type: "open_settings" }); }\n' +
+'    window.addEventListener("message", function(event) {\n' +
+'      const message = event.data;\n' +
+'      switch (message.type) {\n' +
+'        case "user_message": appendUserMessage(message.content); break;\n' +
+'        case "restored_message": appendRestoredMessage(message.content, message.toolCalls, message.timestamp); break;\n' +
+'        case "thinking": showThinkingIndicator(message.message); break;\n' +
+'        case "thinking_update": updateThinkingIndicator(message.message); break;\n' +
+'        case "tool_start": appendToolCard(message.toolName, message.args); collapseAllToolCardsExceptLast(); break;\n' +
+'        case "tool_complete": updateToolCard(message.toolName, message.result); collapseAllToolCardsExceptLast(); break;\n' +
+'        case "streaming_text": appendStreamingText(message.text); break;\n' +
+'        case "assistant_response": if (!streamingElement && message.content) { appendStreamingText(message.content); } finalizeStreamingText(message.durationMs); setProcessingState(false); break;\n' +
+'        case "token_usage": updateTokenMeter(message.tokenUsage, message.contextLength); break;\n' +
+'        case "error": appendErrorMessage(message.error); setProcessingState(false); break;\n' +
+'        case "stopped": hideThinkingIndicator(); setProcessingState(false); appendStoppedMessage(); break;\n' +
+'        case "provider_changed": providerSelect.value = message.provider; vscode.postMessage({ type: "fetch_models" }); break;\n' +
+'        case "model_changed": modelSelect.value = message.model; break;\n' +
+'        case "models_list": populateModelDropdown(message.models, message.currentModel, message.currentProvider); break;\n' +
+'        case "history_list": renderHistoryList(message.conversations); break;\n' +
+'        case "conversation_resumed": showToast("Conversation resumed"); toggleHistorySidebar(); break;\n' +
+'        case "conversation_deleted": showToast("Conversation deleted"); break;\n' +
+'      }\n' +
+'      scrollToBottom();\n' +
+'    });\n' +
+'    function populateModelDropdown(models, currentModel, currentProvider) {\n' +
+'      modelSelect.innerHTML = "";\n' +
+'      if (models && models.length > 0) {\n' +
+'        models.forEach(function(model) { const option = document.createElement("option"); option.value = model; option.textContent = model; if (model === currentModel) option.selected = true; modelSelect.appendChild(option); });\n' +
+'      } else { const option = document.createElement("option"); option.value = currentModel; option.textContent = currentModel; option.selected = true; modelSelect.appendChild(option); }\n' +
+'    }\n' +
+'    function appendUserMessage(content) { const div = document.createElement("div"); div.className = "message user"; div.textContent = content; timeline.appendChild(div); }\n' +
+'    function appendRestoredMessage(content, toolCalls, timestamp) {\n' +
+'      const div = document.createElement("div"); div.className = "message restored"; div.textContent = content; timeline.appendChild(div);\n' +
+'      if (toolCalls && toolCalls.length > 0) {\n' +
+'        toolCalls.forEach(function(tc) {\n' +
+'          const card = document.createElement("div"); card.className = "tool-card done collapsed"; const cardId = "tool-" + Date.now(); card.id = cardId;\n' +
+'          let resultHtml = tc.result ? "<div class=\\"tool-card-label\\">Result</div><div class=\\"tool-card-result\\">" + escapeHtml(tc.result.substring(0, 500)) + "</div>" : "";\n' +
+'          card.innerHTML = "<div class=\\"tool-card-header\\" onclick=\\"toggleToolCard(" + JSON.stringify(cardId) + ")\\"><span class=\\"tool-card-status\\"><span class=\\"codicon codicon-check\\"></span></span><span>" + escapeHtml(tc.toolName) + "</span><span class=\\"toggle-icon\\"><span class=\\"codicon codicon-chevron-right\\"></span></span></div><div class=\\"tool-card-content\\">" + resultHtml + "</div>";\n' +
+'          timeline.appendChild(card);\n' +
+'        });\n' +
+'      }\n' +
+'    }\n' +
+'    function showThinkingIndicator(message) { if (!showThinkingSetting) return; if (thinkingEl) thinkingEl.remove(); thinkingEl = document.createElement("div"); thinkingEl.className = "thinking-indicator"; thinkingEl.innerHTML = "<span class=\\"codicon codicon-loading\\"></span><span>" + message + "</span>"; timeline.appendChild(thinkingEl); setProcessingState(true); }\n' +
+'    function updateThinkingIndicator(message) { if (thinkingEl) thinkingEl.remove(); thinkingEl = document.createElement("div"); thinkingEl.className = "thinking-indicator"; thinkingEl.innerHTML = "<span class=\\"codicon codicon-loading\\"></span><span>" + message + "</span>"; timeline.appendChild(thinkingEl); }\n' +
+'    function hideThinkingIndicator() { if (thinkingEl) { thinkingEl.remove(); thinkingEl = null; } }\n' +
+'    function appendToolCard(toolName, args) {\n' +
+'      if (streamingElement) { const statusEl = streamingElement.querySelector(".response-card-status"); if (statusEl) { statusEl.className = "response-card-status done"; statusEl.innerHTML = "<span class=\\"codicon codicon-check\\"></span> Done"; } streamingElement.className = "response-card done"; streamingElement = null; }\n' +
+'      const cardId = "tool-" + Date.now(); const card = document.createElement("div"); card.className = "tool-card running expanded"; card.id = cardId; card.dataset.toolName = toolName;\n' +
+'      let argsHtml = (args && Object.keys(args).length > 0) ? "<div class=\\"tool-card-label\\">Arguments</div><div class=\\"tool-card-result\\">" + escapeHtml(JSON.stringify(args, null, 2)) + "</div>" : "";\n' +
+'      card.innerHTML = "<div class=\\"tool-card-header\\" onclick=\\"toggleToolCard(" + JSON.stringify(cardId) + ")\\"><span class=\\"tool-card-status running\\"><span class=\\"codicon codicon-loading\\"></span></span><span><span class=\\"codicon codicon-wrench\\"></span> " + escapeHtml(toolName) + "</span><span class=\\"toggle-icon\\"><span class=\\"codicon codicon-chevron-right\\"></span></span></div><div class=\\"tool-card-content\\">" + argsHtml + "</div>";\n' +
+'      timeline.appendChild(card);\n' +
+'    }\n' +
+'    function updateToolCard(toolName, result) {\n' +
+'      const cards = timeline.querySelectorAll(".tool-card.running"); let targetCard = null;\n' +
+'      for (let i = cards.length - 1; i >= 0; i--) { if (cards[i].dataset.toolName === toolName) { targetCard = cards[i]; break; } }\n' +
+'      if (targetCard) {\n' +
+'        targetCard.classList.remove("running"); targetCard.classList.add("done");\n' +
+'        const statusEl = targetCard.querySelector(".tool-card-status"); if (statusEl) { statusEl.className = "tool-card-status"; statusEl.innerHTML = "<span class=\\"codicon codicon-check\\"></span>"; }\n' +
+'        const contentDiv = targetCard.querySelector(".tool-card-content");\n' +
+'        if (contentDiv && result) { const resultHtml = "<div class=\\"tool-card-label\\" style=\\"margin-top: 8px;\\">Result</div><div class=\\"tool-card-result\\">" + escapeHtml(result.substring(0, 3000)) + "</div>"; contentDiv.insertAdjacentHTML("beforeend", resultHtml); }\n' +
+'      }\n' +
+'    }\n' +
+'    function appendStreamingText(text) {\n' +
+'      if (!streamingElement) {\n' +
+'        streamingElement = document.createElement("div"); streamingElement.className = "response-card streaming";\n' +
+'        streamingElement.innerHTML = "<div class=\\"response-card-header\\"><span class=\\"codicon codicon-comment\\"></span><span class=\\"response-card-title\\">Response</span><span class=\\"response-card-status streaming\\"><span class=\\"codicon codicon-loading\\"></span> Streaming...</span></div><div class=\\"response-card-body\\"></div>";\n' +
+'        timeline.appendChild(streamingElement); scrollToBottom();\n' +
+'      }\n' +
+'      const body = streamingElement.querySelector(".response-card-body"); if (body) { body.textContent += text; scrollToBottom(); }\n' +
+'    }\n' +
+'    function finalizeStreamingText(durationMs) {\n' +
+'      hideThinkingIndicator(); let targetElement = streamingElement;\n' +
+'      if (!targetElement) { const responseCards = timeline.querySelectorAll(".response-card"); if (responseCards.length > 0) targetElement = responseCards[responseCards.length - 1]; }\n' +
+'      if (targetElement) {\n' +
+'        const statusEl = targetElement.querySelector(".response-card-status"); if (statusEl) { statusEl.className = "response-card-status done"; statusEl.innerHTML = "<span class=\\"codicon codicon-check\\"></span> Done"; }\n' +
+'        targetElement.className = "response-card done";\n' +
+'        const footer = document.createElement("div"); footer.className = "message-footer";\n' +
+'        const durationStr = durationMs ? (durationMs / 1000).toFixed(1) : "?";\n' +
+'        footer.innerHTML = "<div class=\\"footer-left\\"><span><span class=\\"codicon codicon-clock\\"></span> " + durationStr + "s</span></div><div class=\\"footer-right\\"><button class=\\"btn-secondary\\" onclick=\\"copyResponse()\\" style=\\"padding: 4px 8px; font-size: 0.85em;\\"><span class=\\"codicon codicon-copy\\"></span> Copy</button><button class=\\"btn-secondary\\" onclick=\\"applyChanges()\\" style=\\"padding: 4px 8px; font-size: 0.85em;\\"><span class=\\"codicon codicon-check\\"></span> Apply</button></div>";\n' +
+'        targetElement.appendChild(footer); streamingElement = null;\n' +
+'      }\n' +
+'    }\n' +
+'    function updateTokenMeter(tokenUsage, contextLength) {\n' +
+'      const total = tokenUsage.prompt + tokenUsage.completion; const percentage = Math.min((total / contextLength) * 100, 100);\n' +
+'      tokenFill.style.width = percentage + "%"; tokenText.textContent = total.toLocaleString() + " / " + contextLength.toLocaleString();\n' +
+'      if (percentage > 80) tokenFill.style.background = "var(--vscode-errorForeground)"; else if (percentage > 60) tokenFill.style.background = "var(--vscode-terminal-ansiYellow)"; else tokenFill.style.background = "var(--vscode-terminal-successBackground)";\n' +
+'    }\n' +
+'    function appendErrorMessage(error) { const div = document.createElement("div"); div.className = "message error"; div.innerHTML = "<span class=\\"codicon codicon-error\\" style=\\"margin-right: 8px;\\"></span>Error: " + error; timeline.appendChild(div); }\n' +
+'    function appendStoppedMessage() { const div = document.createElement("div"); div.className = "message stopped"; div.innerHTML = "<span class=\\"codicon codicon-debug-stop\\" style=\\"margin-right: 8px;\\"></span>Processing stopped by user."; timeline.appendChild(div); }\n' +
+'    function toggleToolCard(cardId) { const card = document.getElementById(cardId); if (card) card.classList.toggle("expanded"); }\n' +
+'    function collapseAllToolCardsExceptLast() { const cards = timeline.querySelectorAll(".tool-card.done"); cards.forEach(function(card, index) { if (index < cards.length - 1) card.classList.add("collapsed"); else card.classList.remove("collapsed"); }); }\n' +
+'    function scrollToBottom() { timeline.scrollTop = timeline.scrollHeight; }\n' +
+'    function escapeHtml(text) { if (!text) return ""; const div = document.createElement("div"); div.textContent = text; return div.innerHTML; }\n' +
+'    function copyResponse() { const lastAgentMessage = timeline.querySelector(".message.agent:last-child"); if (lastAgentMessage) { const content = lastAgentMessage.childNodes[0]?.textContent || ""; vscode.postMessage({ type: "copy_response", content: content }); } }\n' +
+'    function applyChanges() { vscode.postMessage({ type: "apply_changes" }); }\n' +
+'    function setProcessingState(processing) {\n' +
+'      isProcessing = processing;\n' +
+'      if (processing) { actionBtn.classList.remove("send"); actionBtn.classList.add("stop"); actionIcon.className = "codicon codicon-debug-stop"; actionText.textContent = "Stop"; userInput.disabled = true; userInput.style.opacity = "0.5"; }\n' +
+'      else { actionBtn.classList.remove("stop"); actionBtn.classList.add("send"); actionIcon.className = "codicon codicon-play"; actionText.textContent = "Send"; userInput.disabled = false; userInput.style.opacity = "1"; }\n' +
+'    }\n' +
+'    function showToast(message) { const toast = document.createElement("div"); toast.style.cssText = "position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--vscode-notifications-background);color:var(--vscode-notifications-foreground);padding:10px 20px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.3);z-index:1000;font-size:0.9em;display:flex;align-items:center;gap:8px;"; toast.innerHTML = "<span class=\\"codicon codicon-check\\"></span>" + message; document.body.appendChild(toast); setTimeout(function() { toast.remove(); }, 2000); }\n' +
+'  </script>\n' +
+'</body>\n' +
+'</html>';
   }
 
-  /**
-   * Handle apply changes action
-   */
   private async handleApplyChanges(content: string): Promise<void> {
     vscode.window.showInformationMessage('Apply changes not yet implemented');
   }
 
-  /**
-   * Close a tab and save its conversation history
-   */
   async closeTab(tabId: string): Promise<void> {
     const tab = this.tabs.get(tabId);
     if (tab) {
-      // Save conversation history before closing (final save)
       if (this.historyManager && tab.history.length > 0) {
         await this.historyManager.save(tabId, tab.history, tab.layer);
-        this.log(`Saved conversation history for ${tabId} (${tab.history.length} messages)`);
+        this.log('Saved conversation history for ' + tabId + ' (' + tab.history.length + ' messages)');
       }
-      
-      // Clean up agent
       tab.agent.dispose();
       this.tabs.delete(tabId);
-      
-      if (this.activeTabId === tabId) {
-        this.activeTabId = null;
-      }
-      
-      this.log(`Closed tab ${tabId}`);
+      if (this.activeTabId === tabId) this.activeTabId = null;
+      this.log('Closed tab ' + tabId);
     }
   }
 
-  /**
-   * Resume a saved conversation
-   */
   async resumeConversation(conversationId: string): Promise<string> {
-    this.log(`Resuming conversation: ${conversationId}`);
-    
-    // Create new tab with the conversation ID
-    const tabId = await this.createTab('vision', conversationId);
-    
-    return tabId;
+    this.log('Resuming conversation: ' + conversationId);
+    return await this.createTab('vision', conversationId);
   }
 
-  /**
-   * List all saved conversations
-   */
   async listConversations(): Promise<string[]> {
-    if (!this.historyManager) {
-      return [];
-    }
+    if (!this.historyManager) return [];
     return this.historyManager.list();
   }
 
-  /**
-   * Get all tabs
-   */
-  getAllTabs(): AgentTabState[] {
-    return Array.from(this.tabs.values());
-  }
+  getAllTabs(): AgentTabState[] { return Array.from(this.tabs.values()); }
 
-  /**
-   * Dispose of the manager
-   */
   async dispose(): Promise<void> {
-    // Stop auto-save timer
     this.stopAutoSaveTimer();
-    
-    if (this.webviewPanel) {
-      this.webviewPanel.dispose();
-    }
-    
-    // Dispose the current agent bridge (cleans up terminal manager)
-    if (this.currentAgentBridge) {
-      this.currentAgentBridge.dispose();
-      this.currentAgentBridge = null;
-    }
-    
-    // Save and dispose all tabs
+    if (this.webviewPanel) this.webviewPanel.dispose();
+    if (this.currentAgentBridge) { this.currentAgentBridge.dispose(); this.currentAgentBridge = null; }
     const savePromises = Array.from(this.tabs.entries()).map(async ([tabId, tabState]) => {
-      if (this.historyManager && tabState.history.length > 0) {
-        await this.historyManager.save(tabId, tabState.history, tabState.layer);
-      }
+      if (this.historyManager && tabState.history.length > 0) await this.historyManager.save(tabId, tabState.history, tabState.layer);
       tabState.agent.dispose();
     });
-    
     this.tabs.clear();
     this.log('AgentTabManager disposed');
-    
     await Promise.all(savePromises);
-    
-    // Enforce history limit after saving all tabs
     await this.enforceHistoryLimit();
   }
 }

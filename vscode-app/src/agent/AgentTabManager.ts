@@ -2274,16 +2274,18 @@ export class AgentTabManager {
         toolCalls.forEach(tc => {
           const card = document.createElement('div');
           card.className = 'tool-card done collapsed';
-          card.innerHTML = \`
-            <div class="tool-card-header" onclick="toggleToolCard('\${card.id}')">
-              <span class="tool-card-status">✓</span>
-              <span>\${escapeHtml(tc.toolName)}</span>
-              <span class="toggle-icon">▶</span>
-            </div>
-            <div class="tool-card-content">
-              \${tc.result ? \`<div class="tool-card-label">Result</div><div class="tool-card-result">\${escapeHtml(tc.result.substring(0, 500))}\${tc.result.length > 500 ? '...' : ''}</div>\` : ''}
-            </div>
-          \`;
+          const cardId = 'tool-' + Date.now();
+          card.id = cardId;
+          let resultHtml = '';
+          if (tc.result) {
+            resultHtml = '<div class="tool-card-label">Result</div><div class="tool-card-result">' + escapeHtml(tc.result.substring(0, 500)) + (tc.result.length > 500 ? '...' : '') + '</div>';
+          }
+          card.innerHTML = '<div class="tool-card-header" onclick="toggleToolCard(\\'' + cardId + '\\')">' +
+            '<span class="tool-card-status">✓</span>' +
+            '<span>' + escapeHtml(tc.toolName) + '</span>' +
+            '<span class="toggle-icon">▶</span>' +
+          '</div>' +
+          '<div class="tool-card-content">' + resultHtml + '</div>';
           timeline.appendChild(card);
         });
       }
@@ -2302,10 +2304,7 @@ export class AgentTabManager {
       
       thinkingEl = document.createElement('div');
       thinkingEl.className = 'thinking-indicator';
-      thinkingEl.innerHTML = \`
-        <div class="spinner"></div>
-        <span>\${message}</span>
-      \`;
+      thinkingEl.innerHTML = '<div class="spinner"></div><span>' + message + '</span>';
       timeline.appendChild(thinkingEl);
       setProcessingState(true);
     }
@@ -2318,10 +2317,7 @@ export class AgentTabManager {
       
       thinkingEl = document.createElement('div');
       thinkingEl.className = 'thinking-indicator';
-      thinkingEl.innerHTML = \`
-        <div class="spinner"></div>
-        <span>\${message}</span>
-      \`;
+      thinkingEl.innerHTML = '<div class="spinner"></div><span>' + message + '</span>';
       timeline.appendChild(thinkingEl);
     }
     
@@ -2353,22 +2349,15 @@ export class AgentTabManager {
       
       let argsHtml = '';
       if (args && Object.keys(args).length > 0) {
-        argsHtml = \`
-          <div class="tool-card-label">Arguments</div>
-          <div class="tool-card-result">\${escapeHtml(JSON.stringify(args, null, 2))}</div>
-        \`;
+        argsHtml = '<div class="tool-card-label">Arguments</div><div class="tool-card-result">' + escapeHtml(JSON.stringify(args, null, 2)) + '</div>';
       }
       
-      card.innerHTML = \`
-        <div class="tool-card-header" onclick="toggleToolCard('\${cardId}')">
-          <span class="tool-card-status running">⏳</span>
-          <span>🔧 \${escapeHtml(toolName)}</span>
-          <span class="toggle-icon">▶</span>
-        </div>
-        <div class="tool-card-content">
-          \${argsHtml}
-        </div>
-      \`;
+      card.innerHTML = '<div class="tool-card-header" onclick="toggleToolCard(\\'' + cardId + '\\')">' +
+        '<span class="tool-card-status running">⏳</span>' +
+        '<span>🔧 ' + escapeHtml(toolName) + '</span>' +
+        '<span class="toggle-icon">▶</span>' +
+      '</div>' +
+      '<div class="tool-card-content">' + argsHtml + '</div>';
       
       timeline.appendChild(card);
     }
@@ -2400,10 +2389,8 @@ export class AgentTabManager {
         // Add result section
         const contentDiv = targetCard.querySelector('.tool-card-content');
         if (contentDiv && result) {
-          const resultHtml = \`
-            <div class="tool-card-label" style="margin-top: 8px;">Result</div>
-            <div class="tool-card-result">\${escapeHtml(result.substring(0, 3000))}\${result.length > 3000 ? '...' : ''}</div>
-          \`;
+          const resultHtml = '<div class="tool-card-label" style="margin-top: 8px;">Result</div>' +
+            '<div class="tool-card-result">' + escapeHtml(result.substring(0, 3000)) + (result.length > 3000 ? '...' : '') + '</div>';
           contentDiv.insertAdjacentHTML('beforeend', resultHtml);
         }
       }
@@ -2414,14 +2401,12 @@ export class AgentTabManager {
         // Create a response card similar to tool cards
         streamingElement = document.createElement('div');
         streamingElement.className = 'response-card streaming';
-        streamingElement.innerHTML = \`
-          <div class="response-card-header">
-            <span class="response-card-icon">💬</span>
-            <span class="response-card-title">Response</span>
-            <span class="response-card-status streaming">⏳ Streaming...</span>
-          </div>
-          <div class="response-card-body"></div>
-        \`;
+        streamingElement.innerHTML = '<div class="response-card-header">' +
+          '<span class="response-card-icon">💬</span>' +
+          '<span class="response-card-title">Response</span>' +
+          '<span class="response-card-status streaming">⏳ Streaming...</span>' +
+        '</div>' +
+        '<div class="response-card-body"></div>';
         timeline.appendChild(streamingElement);
         scrollToBottom();
       }
@@ -2459,15 +2444,14 @@ export class AgentTabManager {
         // Add unified footer bar with timing + actions
         const footer = document.createElement('div');
         footer.className = 'message-footer';
-        footer.innerHTML = \`
-          <div class="footer-left">
-            <span>⏱ \${durationMs ? (durationMs / 1000).toFixed(1) : '?'}s</span>
-          </div>
-          <div class="footer-right">
-            <button class="btn btn-secondary" onclick="copyResponse()" style="padding: 4px 8px; font-size: 0.85em;">📋 Copy</button>
-            <button class="btn btn-secondary" onclick="applyChanges()" style="padding: 4px 8px; font-size: 0.85em;">✓ Apply</button>
-          </div>
-        \`;
+        const durationStr = durationMs ? (durationMs / 1000).toFixed(1) : '?';
+        footer.innerHTML = '<div class="footer-left">' +
+          '<span>⏱ ' + durationStr + 's</span>' +
+        '</div>' +
+        '<div class="footer-right">' +
+          '<button class="btn btn-secondary" onclick="copyResponse()" style="padding: 4px 8px; font-size: 0.85em;">📋 Copy</button>' +
+          '<button class="btn btn-secondary" onclick="applyChanges()" style="padding: 4px 8px; font-size: 0.85em;">✓ Apply</button>' +
+        '</div>';
         targetElement.appendChild(footer);
         
         streamingElement = null;
@@ -2479,7 +2463,7 @@ export class AgentTabManager {
       const percentage = Math.min((total / contextLength) * 100, 100);
       
       tokenFill.style.width = percentage + '%';
-      tokenText.textContent = \`\${total.toLocaleString()} / \${contextLength.toLocaleString()} tokens (\${percentage.toFixed(1)}%)\`;
+      tokenText.textContent = total.toLocaleString() + ' / ' + contextLength.toLocaleString() + ' tokens (' + percentage.toFixed(1) + '%)';
       
       // Change color based on usage
       if (percentage > 80) {

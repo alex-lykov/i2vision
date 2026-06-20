@@ -641,6 +641,18 @@ export class AgentTabManager {
           }
           break;
           
+        case 'fetch_history':
+          await this.sendHistoryToWebview();
+          break;
+          
+        case 'resume_conversation':
+          await this.resumeConversationFromWebview(message.conversationId);
+          break;
+          
+        case 'delete_conversation':
+          await this.deleteConversationFromWebview(message.conversationId);
+          break;
+          
         default:
           this.log(`Unknown message type: ${message.type}`);
       }
@@ -650,6 +662,77 @@ export class AgentTabManager {
       this.webviewPanel = null;
       this.log('Webview panel disposed');
     }, null, this.context.subscriptions);
+  }
+
+  /**
+   * Send conversation history list to webview
+   */
+  private async sendHistoryToWebview(): Promise<void> {
+    if (!this.historyManager) {
+      this.sendToWebview({ type: 'history_list', conversations: [] });
+      return;
+    }
+    
+    try {
+      const conversationIds = await this.historyManager.list();
+      const conversations = await Promise.all(
+        conversationIds.map(async (id) => {
+          const saved = await this.historyManager!.load(id);
+          return {
+            id,
+            layer: saved?.layer || 'unknown',
+            messageCount: saved?.messages.length || 0,
+            createdAt: saved?.createdAt || 0,
+            updatedAt: saved?.updatedAt || 0,
+            workspace: saved?.workspace || 'unknown'
+          };
+        })
+      );
+      
+      // Sort by updatedAt (most recent first)
+      conversations.sort((a, b) => b.updatedAt - a.updatedAt);
+      
+      this.sendToWebview({ type: 'history_list', conversations });
+    } catch (error: any) {
+      this.log(`Error fetching history: ${error.message}`);
+      this.sendToWebview({ type: 'history_list', conversations: [], error: error.message });
+    }
+  }
+
+  /**
+   * Resume a conversation from webview request
+   */
+  private async resumeConversationFromWebview(conversationId: string): Promise<void> {
+    try {
+      this.log(`Resuming conversation: ${conversationId}`);
+      await this.resumeConversation(conversationId);
+      this.sendToWebview({ type: 'conversation_resumed', conversationId });
+    } catch (error: any) {
+      this.log(`Error resuming conversation: ${error.message}`);
+      this.sendToWebview({ type: 'error', error: `Failed to resume conversation: ${error.message}` });
+    }
+  }
+
+  /**
+   * Delete a conversation from webview request
+   */
+  private async deleteConversationFromWebview(conversationId: string): Promise<void> {
+    try {
+      if (!this.historyManager) {
+        throw new Error('History manager not available');
+      }
+      
+      await this.historyManager.delete(conversationId);
+      this.log(`Deleted conversation: ${conversationId}`);
+      
+      // Refresh history list
+      await this.sendHistoryToWebview();
+      
+      this.sendToWebview({ type: 'conversation_deleted', conversationId });
+    } catch (error: any) {
+      this.log(`Error deleting conversation: ${error.message}`);
+      this.sendToWebview({ type: 'error', error: `Failed to delete conversation: ${error.message}` });
+    }
   }
 
   /**

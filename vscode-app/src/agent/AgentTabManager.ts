@@ -1768,6 +1768,125 @@ export class AgentTabManager {
       color: var(--vscode-descriptionForeground, #888);
       font-style: italic;
     }
+    
+    /* ===== HISTORY SIDEBAR ===== */
+    .history-sidebar {
+      position: fixed;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      width: 300px;
+      background: var(--vscode-sideBar-background, #252526);
+      border-left: 1px solid var(--vscode-sideBar-border, #333);
+      transform: translateX(100%);
+      transition: transform 0.2s ease;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      box-shadow: -2px 0 8px rgba(0,0,0,0.3);
+    }
+    
+    .history-sidebar.visible {
+      transform: translateX(0);
+    }
+    
+    .history-header {
+      padding: 12px;
+      border-bottom: 1px solid var(--vscode-sideBar-border, #333);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--vscode-sideBarSectionHeader-background, #252526);
+    }
+    
+    .history-title {
+      font-weight: 600;
+      font-size: 0.9em;
+      color: var(--vscode-sideBarSectionHeader-foreground, #d4d4d4);
+    }
+    
+    .history-list {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px;
+    }
+    
+    .history-item {
+      padding: 10px;
+      margin-bottom: 8px;
+      background: var(--vscode-list-item-background, #2d2d2d);
+      border-radius: 4px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.2s ease;
+    }
+    
+    .history-item:hover {
+      border-color: var(--vscode-focusBorder, #007fd4);
+      background: var(--vscode-list-hoverBackground, #2a2d2e);
+    }
+    
+    .history-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 6px;
+    }
+    
+    .history-item-layer {
+      font-size: 0.7em;
+      text-transform: uppercase;
+      padding: 2px 6px;
+      border-radius: 3px;
+      background: var(--vscode-badge-background, #007fd4);
+      color: var(--vscode-badge-foreground, #ffffff);
+      font-weight: 600;
+    }
+    
+    .history-item-time {
+      font-size: 0.7em;
+      color: var(--vscode-descriptionForeground, #888);
+    }
+    
+    .history-item-meta {
+      font-size: 0.75em;
+      color: var(--vscode-descriptionForeground, #888);
+      margin-bottom: 6px;
+    }
+    
+    .history-item-actions {
+      display: flex;
+      gap: 6px;
+    }
+    
+    .history-item-actions .btn {
+      flex: 1;
+      justify-content: center;
+      font-size: 0.75em;
+      padding: 4px 8px;
+    }
+    
+    .history-empty {
+      text-align: center;
+      padding: 30px 20px;
+      color: var(--vscode-descriptionForeground, #888);
+      font-style: italic;
+      font-size: 0.85em;
+    }
+    
+    .history-refresh-btn {
+      background: transparent;
+      border: none;
+      color: var(--vscode-foreground, #d4d4d4);
+      cursor: pointer;
+      font-size: 1.1em;
+      padding: 4px;
+      border-radius: 4px;
+    }
+    
+    .history-refresh-btn:hover {
+      background: var(--vscode-toolbar-hoverBackground, rgba(255,255,255,0.1));
+    }
   </style>
 </head>
 <body>
@@ -1809,9 +1928,12 @@ export class AgentTabManager {
       <span class="token-text" id="tokenText">0 / 0 tokens</span>
     </div>
     
-    <!-- Settings Button -->
-    <div style="margin-left: 15px;">
-      <button class="btn-settings" onclick="openSettings()" title="Agent Settings" style="padding: 4px 8px; font-size: 1.2em; background: transparent; border: 1px solid var(--vscode-editorWidget-border); border-radius: 4px; cursor: pointer; color: var(--vscode-foreground);">
+    <!-- Settings & History Buttons -->
+    <div style="display: flex; align-items: center; gap: 8px; margin-left: 15px;">
+      <button class="btn-settings" onclick="toggleHistorySidebar()" title="Conversation History (📂)" style="padding: 4px 8px; font-size: 1.2em; background: transparent; border: 1px solid var(--vscode-editorWidget-border); border-radius: 4px; cursor: pointer; color: var(--vscode-foreground);">
+        📂
+      </button>
+      <button class="btn-settings" onclick="openSettings()" title="Agent Settings (⚙)" style="padding: 4px 8px; font-size: 1.2em; background: transparent; border: 1px solid var(--vscode-editorWidget-border); border-radius: 4px; cursor: pointer; color: var(--vscode-foreground);">
         ⚙
       </button>
     </div>
@@ -1848,6 +1970,20 @@ export class AgentTabManager {
     </div>
   </div>
   
+  <!-- History Sidebar -->
+  <div class="history-sidebar" id="historySidebar">
+    <div class="history-header">
+      <span class="history-title">📂 Conversation History</span>
+      <div style="display: flex; gap: 6px; align-items: center;">
+        <button class="history-refresh-btn" onclick="refreshHistory()" title="Refresh">🔄</button>
+        <button class="btn btn-secondary" onclick="toggleHistorySidebar()" title="Close" style="padding: 4px 8px; font-size: 1em;">✕</button>
+      </div>
+    </div>
+    <div class="history-list" id="historyList">
+      <div class="history-empty">Loading...</div>
+    </div>
+  </div>
+  
   <script>
     const vscode = acquireVsCodeApi();
     const timeline = document.getElementById('timeline');
@@ -1871,10 +2007,73 @@ export class AgentTabManager {
     const streamingEnabled = ${streamingEnabled};
     const showThinkingSetting = ${showThinking};
     
-    // Fetch models on load
+    // History sidebar state
+    let historySidebarVisible = false;
+    
+    // Fetch models and history on load
     window.addEventListener('load', () => {
       vscode.postMessage({ type: 'fetch_models' });
     });
+    
+    // Toggle history sidebar
+    function toggleHistorySidebar() {
+      historySidebarVisible = !historySidebarVisible;
+      const sidebar = document.getElementById('historySidebar');
+      if (historySidebarVisible) {
+        sidebar.classList.add('visible');
+        refreshHistory();
+      } else {
+        sidebar.classList.remove('visible');
+      }
+    }
+    
+    // Refresh history list
+    function refreshHistory() {
+      vscode.postMessage({ type: 'fetch_history' });
+    }
+    
+    // Render history list
+    function renderHistoryList(conversations) {
+      const list = document.getElementById('historyList');
+      
+      if (!conversations || conversations.length === 0) {
+        list.innerHTML = '<div class="history-empty">No saved conversations yet.<br/>Conversations are auto-saved as you chat.</div>';
+        return;
+      }
+      
+      list.innerHTML = conversations.map(conv => {
+        const date = new Date(conv.updatedAt);
+        const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+        
+        return '<div class="history-item" data-id="' + conv.id + '">' +
+          '<div class="history-item-header">' +
+            '<span class="history-item-layer">' + escapeHtml(conv.layer) + '</span>' +
+            '<span class="history-item-time">' + timeStr + '</span>' +
+          '</div>' +
+          '<div class="history-item-meta">' +
+            '💬 ' + conv.messageCount + ' messages • 📁 ' + escapeHtml(conv.workspace) +
+          '</div>' +
+          '<div class="history-item-actions">' +
+            '<button class="btn btn-secondary" onclick="resumeConversation(\'' + conv.id + '\')" style="flex:1;">📂 Resume</button>' +
+            '<button class="btn btn-secondary" onclick="deleteConversation(\'' + conv.id + '\')" title="Delete" style="min-width:36px;">🗑</button>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+    }
+    
+    // Resume conversation
+    function resumeConversation(conversationId) {
+      if (confirm('Resume this conversation? This will load the saved messages into your current session.')) {
+        vscode.postMessage({ type: 'resume_conversation', conversationId });
+      }
+    }
+    
+    // Delete conversation
+    function deleteConversation(conversationId) {
+      if (confirm('Delete this conversation permanently? This action cannot be undone.')) {
+        vscode.postMessage({ type: 'delete_conversation', conversationId });
+      }
+    }
     
     // Send message on button click
     actionBtn.addEventListener('click', () => {
@@ -1998,6 +2197,30 @@ export class AgentTabManager {
         case 'models_list':
           // Populate model dropdown
           populateModelDropdown(message.models, message.currentModel, message.currentProvider);
+          break;
+          
+        case 'history_list':
+          // Update history sidebar
+          renderHistoryList(message.conversations);
+          break;
+          
+        case 'conversation_resumed':
+          // Show success message and close sidebar
+          const toast = document.createElement('div');
+          toast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--vscode-notifications-background);color:var(--vscode-notifications-foreground);padding:10px 20px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.3);z-index:1000;font-size:0.9em;';
+          toast.textContent = '✓ Conversation resumed';
+          document.body.appendChild(toast);
+          setTimeout(() => toast.remove(), 2000);
+          toggleHistorySidebar();
+          break;
+          
+        case 'conversation_deleted':
+          // Show deletion confirmation
+          const delToast = document.createElement('div');
+          delToast.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--vscode-notifications-background);color:var(--vscode-notifications-foreground);padding:10px 20px;border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.3);z-index:1000;font-size:0.9em;';
+          delToast.textContent = '✓ Conversation deleted';
+          document.body.appendChild(delToast);
+          setTimeout(() => delToast.remove(), 2000);
           break;
       }
       

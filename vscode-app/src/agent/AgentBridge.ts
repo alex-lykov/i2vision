@@ -509,8 +509,21 @@ export class AgentBridge {
 
   private extractReasoning(text: string): string {
     if (!text) return '';
-    const match = text.match(/reasoning:\s*([\s\S]*?)(?=tool_call:|EOS|$)/i);
-    return match ? match[1].trim() : '';
+    // Try multiple patterns to extract reasoning/thinking content
+    const patterns = [
+      /reasoning:\s*([\s\S]*?)(?=tool_call:|EOS|$)/i,
+      /thinking:\s*([\s\S]*?)(?=tool_call:|EOS|$)/i,
+      /plan:\s*([\s\S]*?)(?=tool_call:|EOS|$)/i,
+      /<thinking>([\s\S]*?)<\/thinking>/i,
+      /<reasoning>([\s\S]*?)<\/reasoning>/i
+    ];
+    for (const pattern of patterns) {
+      const match = text.match(pattern);
+      if (match && match[1].trim()) {
+        return match[1].trim();
+      }
+    }
+    return '';
   }
 
   private extractFinalResponse(text: string): string {

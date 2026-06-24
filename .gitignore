@@ -85,3 +85,6 @@ backlog/
 # Dependencies
 node_modules/
 **/node_modules/
+
+# ProxyAI checkpoints
+.proxyai/

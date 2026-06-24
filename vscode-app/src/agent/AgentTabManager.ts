@@ -139,12 +139,16 @@ export class AgentTabManager {
     this.log('Created ' + layer + ' agent tab: ' + tabId);
     this.log('   Agent ID: ' + agent.id);
     this.log('   Provider: ' + config.model.provider + ', Model: ' + config.model.id);
-    this.showWebview();
-    if (conversationId && this.historyManager) await this.loadConversation(tabId);
+    if (conversationId && this.historyManager) {
+      await this.loadConversationData(tabId);
+      this.showWebview(true);
+    } else {
+      this.showWebview(false);
+    }
     return tabId;
   }
 
-  private async loadConversation(tabId: string): Promise<void> {
+  private async loadConversationData(tabId: string): Promise<void> {
     if (!this.historyManager) { this.log('History manager not available'); return; }
     const saved = await this.historyManager.load(tabId);
     if (!saved) { this.log('No saved conversation found for ' + tabId); return; }
@@ -153,9 +157,15 @@ export class AgentTabManager {
     tabState.history = saved.messages;
     tabState.lastActivityAt = saved.updatedAt;
     tabState.lastAutoSaveAt = saved.updatedAt;
-    this.log('Loaded conversation with ' + saved.messages.length + ' messages');
-    for (const msg of saved.messages) {
-      this.sendToWebview({ type: msg.role === 'user' ? 'user_message' : 'restored_message', content: msg.content, toolCalls: msg.toolCalls, timestamp: msg.timestamp });
+    this.log('Loaded conversation data with ' + saved.messages.length + ' messages');
+  }
+
+  private async sendLoadedConversation(tabId: string): Promise<void> {
+    const tabState = this.tabs.get(tabId);
+    if (!tabState || tabState.history.length === 0) return;
+    this.log('Sending loaded conversation with ' + tabState.history.length + ' messages to webview');
+    for (const msg of tabState.history) {
+      this.sendToWebview({ command: msg.role === 'user' ? 'user_message' : 'restored_message', content: msg.content, toolCalls: msg.toolCalls, timestamp: msg.timestamp });
     }
   }
 
@@ -167,7 +177,7 @@ export class AgentTabManager {
     if (!this.isProcessing) { this.log('No active processing to stop'); return; }
     this.log('Stopping agent processing...');
     if (this.cancelTokenSource) this.cancelTokenSource.cancel();
-    this.sendToWebview({ type: 'stopped', timestamp: Date.now() });
+    this.sendToWebview({ command: 'stopped', timestamp: Date.now() });
     this.isProcessing = false;
     this.log('Agent stopped');
   }
@@ -185,41 +195,41 @@ export class AgentTabManager {
     const showThinking = settings.streaming.showThinkingIndicator;
     const userMessage: ChatMessage = { role: 'user', content: userInput, timestamp: Date.now() };
     tabState.history.push(userMessage);
-    this.sendToWebview({ type: 'user_message', content: userInput, timestamp: Date.now() });
+    this.sendToWebview({ command: 'user_message', content: userInput, timestamp: Date.now() });
     try {
       tabState.accumulatedToolCalls = [];
       this.cancelTokenSource = new vscode.CancellationTokenSource();
       let responseText = '';
       let startTime = Date.now();
-      if (showThinking) this.sendToWebview({ type: 'thinking', message: 'Agent is thinking...', timestamp: Date.now() });
+      if (showThinking) this.sendToWebview({ command: 'thinking', message: 'Agent is thinking...', timestamp: Date.now() });
       const streamGenerator = this.currentAgentBridge.processStreaming(userInput, currentFile);
       for await (const chunk of streamGenerator) {
         if (this.cancelTokenSource.token.isCancellationRequested) {
           this.log('Processing cancelled by user');
-          this.sendToWebview({ type: 'stopped', timestamp: Date.now() });
+          this.sendToWebview({ command: 'stopped', timestamp: Date.now() });
           break;
         }
         switch (chunk.type) {
           case 'tool_call_started':
-            this.sendToWebview({ type: 'tool_start', toolName: chunk.toolName, args: chunk.args, timestamp: chunk.timestamp });
+            this.sendToWebview({ command: 'tool_start', toolName: chunk.toolName, args: chunk.args, timestamp: chunk.timestamp });
             break;
           case 'tool_call_completed':
             const toolCall: ToolCall = { toolName: chunk.toolName, args: {}, result: chunk.result };
             tabState.accumulatedToolCalls.push(toolCall);
-            this.sendToWebview({ type: 'tool_complete', toolName: chunk.toolName, result: chunk.result, timestamp: chunk.timestamp });
+            this.sendToWebview({ command: 'tool_complete', toolName: chunk.toolName, result: chunk.result, timestamp: chunk.timestamp });
             break;
           case 'text':
             responseText += chunk.text;
-            if (streamingEnabled) this.sendToWebview({ type: 'streaming_text', text: chunk.text, timestamp: chunk.timestamp });
+            if (streamingEnabled) this.sendToWebview({ command: 'streaming_text', text: chunk.text, timestamp: chunk.timestamp });
             break;
           case 'done':
-            if (chunk.tokenUsage) this.sendToWebview({ type: 'token_usage', tokenUsage: chunk.tokenUsage, contextLength: this.currentAgentBridge.getConfig().model.contextLength, timestamp: chunk.timestamp });
+            if (chunk.tokenUsage) this.sendToWebview({ command: 'token_usage', tokenUsage: chunk.tokenUsage, contextLength: this.currentAgentBridge.getConfig().model.contextLength, timestamp: chunk.timestamp });
             break;
           case 'error':
             vscode.window.showErrorMessage('Agent error: ' + chunk.error);
             break;
           case 'thinking':
-            this.sendToWebview({ type: 'thinking', message: chunk.message, timestamp: chunk.timestamp });
+            this.sendToWebview({ command: 'thinking', message: chunk.message, timestamp: chunk.timestamp });
             break;
         }
       }
@@ -229,14 +239,14 @@ export class AgentTabManager {
         tabState.history.push(assistantMessage);
         if (settings.agent.autoSaveConversation && this.historyManager) await this.saveTabQuietly(this.activeTabId!, tabState);
         const durationMs = Date.now() - startTime;
-        this.sendToWebview({ type: 'assistant_response', content: cleanedResponse, durationMs, timestamp: Date.now() });
+        this.sendToWebview({ command: 'assistant_response', content: cleanedResponse, durationMs, timestamp: Date.now() });
         this.log('Complete: ' + tabState.accumulatedToolCalls.length + ' tools, ' + (Date.now() - tabState.lastActivityAt) + 'ms');
       }
     } catch (error: any) {
       if (error.name !== 'CancellationError' && !this.cancelTokenSource?.token.isCancellationRequested) {
         this.log('Error processing input: ' + error.message);
         vscode.window.showErrorMessage('Agent error: ' + error.message);
-        this.sendToWebview({ type: 'error', error: error.message, timestamp: Date.now() });
+        this.sendToWebview({ command: 'error', error: error.message, timestamp: Date.now() });
       }
     } finally {
       this.isProcessing = false;
@@ -255,10 +265,13 @@ export class AgentTabManager {
     return text.trim();
   }
 
-  private showWebview(): void {
+  private showWebview(loadConversation: boolean = false): void {
     if (this.webviewPanel) {
       this.webviewPanel.webview.html = this.getWebviewContent();
       this.webviewPanel.reveal(vscode.ViewColumn.One);
+      if (loadConversation && this.activeTabId) {
+        setTimeout(() => { if (this.activeTabId) this.sendLoadedConversation(this.activeTabId); }, 500);
+      }
       return;
     }
     this.webviewPanel = vscode.window.createWebviewPanel('i2visionAgent', 'i2-Vision Agent', vscode.ViewColumn.One, {
@@ -267,9 +280,12 @@ export class AgentTabManager {
       localResourceRoots: [vscode.Uri.file(path.join(this.context.extensionPath, 'media'))]
     });
     this.webviewPanel.webview.html = this.getWebviewContent();
+    if (loadConversation && this.activeTabId) {
+      setTimeout(() => { if (this.activeTabId) this.sendLoadedConversation(this.activeTabId); }, 500);
+    }
     this.webviewPanel.webview.onDidReceiveMessage(async (message) => {
-      this.log('Webview message received: ' + message.type);
-      switch (message.type) {
+      this.log('Webview message received: ' + message.command);
+      switch (message.command) {
         case 'user_input':
           const currentFile = vscode.window.activeTextEditor?.document.uri.fsPath;
           const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -295,14 +311,14 @@ export class AgentTabManager {
         case 'fetch_history': await this.sendHistoryToWebview(); break;
         case 'resume_conversation': await this.resumeConversationFromWebview(message.conversationId); break;
         case 'delete_conversation': await this.deleteConversationFromWebview(message.conversationId); break;
-        default: this.log('Unknown message type: ' + message.type);
+        default: this.log('Unknown message command: ' + message.command);
       }
     }, null, this.context.subscriptions);
     this.webviewPanel.onDidDispose(() => { this.webviewPanel = null; this.log('Webview panel disposed'); }, null, this.context.subscriptions);
   }
 
   private async sendHistoryToWebview(): Promise<void> {
-    if (!this.historyManager) { this.sendToWebview({ type: 'history_list', conversations: [] }); return; }
+    if (!this.historyManager) { this.sendToWebview({ command: 'history_list', conversations: [] }); return; }
     try {
       const conversationIds = await this.historyManager.list();
       const conversations = await Promise.all(conversationIds.map(async (id) => {
@@ -310,21 +326,28 @@ export class AgentTabManager {
         return { id, layer: saved?.layer || 'unknown', messageCount: saved?.messages.length || 0, createdAt: saved?.createdAt || 0, updatedAt: saved?.updatedAt || 0, workspace: saved?.workspace || 'unknown' };
       }));
       conversations.sort((a, b) => b.updatedAt - a.updatedAt);
-      this.sendToWebview({ type: 'history_list', conversations });
+      this.sendToWebview({ command: 'history_list', conversations });
     } catch (error: any) {
       this.log('Error fetching history: ' + error.message);
-      this.sendToWebview({ type: 'history_list', conversations: [], error: error.message });
+      this.sendToWebview({ command: 'history_list', conversations: [], error: error.message });
     }
   }
 
   private async resumeConversationFromWebview(conversationId: string): Promise<void> {
     try {
       this.log('Resuming conversation: ' + conversationId);
+      // Clear current webview first
+      this.sendToWebview({ command: 'clear_conversation' });
+      // Close current tab if exists
+      if (this.activeTabId) {
+        await this.closeTab(this.activeTabId);
+      }
+      // Create new tab with saved conversation
       await this.resumeConversation(conversationId);
-      this.sendToWebview({ type: 'conversation_resumed', conversationId });
+      this.sendToWebview({ command: 'conversation_resumed', conversationId });
     } catch (error: any) {
       this.log('Error resuming conversation: ' + error.message);
-      this.sendToWebview({ type: 'error', error: 'Failed to resume conversation: ' + error.message });
+      this.sendToWebview({ command: 'error', error: 'Failed to resume conversation: ' + error.message });
     }
   }
 
@@ -334,10 +357,10 @@ export class AgentTabManager {
       await this.historyManager.delete(conversationId);
       this.log('Deleted conversation: ' + conversationId);
       await this.sendHistoryToWebview();
-      this.sendToWebview({ type: 'conversation_deleted', conversationId });
+      this.sendToWebview({ command: 'conversation_deleted', conversationId });
     } catch (error: any) {
       this.log('Error deleting conversation: ' + error.message);
-      this.sendToWebview({ type: 'error', error: 'Failed to delete conversation: ' + error.message });
+      this.sendToWebview({ command: 'error', error: 'Failed to delete conversation: ' + error.message });
     }
   }
 
@@ -355,7 +378,7 @@ export class AgentTabManager {
       await this.agentProvider.updateConfig(tabState.layer, { provider, model: defaultModel });
       this.log('Provider changed to ' + provider);
       vscode.window.showInformationMessage('Provider changed to ' + provider);
-      this.sendToWebview({ type: 'provider_changed', provider, model: defaultModel });
+      this.sendToWebview({ command: 'provider_changed', provider, model: defaultModel });
     } catch (error: any) {
       this.log('Error changing provider: ' + error.message);
       vscode.window.showErrorMessage('Failed to change provider: ' + error.message);
@@ -373,7 +396,7 @@ export class AgentTabManager {
       await this.agentProvider.updateConfig(tabState.layer, { provider: agentConfig.model.provider, model });
       this.log('Model changed to ' + model);
       vscode.window.showInformationMessage('Model changed to ' + model);
-      this.sendToWebview({ type: 'model_changed', model });
+      this.sendToWebview({ command: 'model_changed', model });
     } catch (error: any) {
       this.log('Error changing model: ' + error.message);
       vscode.window.showErrorMessage('Failed to change model: ' + error.message);
@@ -390,10 +413,10 @@ export class AgentTabManager {
       let models: string[] = [];
       if (providerId === 'ollama') models = await this.fetchOllamaModels();
       else if (providerId === 'deepseek') models = ['deepseek-chat', 'deepseek-coder'];
-      this.sendToWebview({ type: 'models_list', models, currentModel: agentConfig.model.id, currentProvider: providerId });
+      this.sendToWebview({ command: 'models_list', models, currentModel: agentConfig.model.id, currentProvider: providerId });
     } catch (error: any) {
       this.log('Error fetching models: ' + error.message);
-      this.sendToWebview({ type: 'models_list', models: [], currentModel: '', currentProvider: '', error: error.message });
+      this.sendToWebview({ command: 'models_list', models: [], currentModel: '', currentProvider: '', error: error.message });
     }
   }
 

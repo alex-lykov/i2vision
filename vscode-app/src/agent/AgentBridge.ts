@@ -100,6 +100,7 @@ export interface AgentResponse { finalText: string; toolCalls: ToolCall[]; itera
 
 export type AgentChunk = 
   | { type: 'thinking'; message: string; timestamp: number }
+  | { type: 'reasoning'; reasoning: string; timestamp: number }
   | { type: 'tool_call_started'; toolName: string; args: Record<string, any>; timestamp: number }
   | { type: 'tool_call_completed'; toolName: string; result: string; timestamp: number }
   | { type: 'text'; text: string; timestamp: number }
@@ -506,6 +507,12 @@ export class AgentBridge {
     return allTools;
   }
 
+  private extractReasoning(text: string): string {
+    if (!text) return '';
+    const match = text.match(/reasoning:\s*([\s\S]*?)(?=tool_call:|EOS|$)/i);
+    return match ? match[1].trim() : '';
+  }
+
   private extractFinalResponse(text: string): string {
     if (!text) return '';
     text = text.replace(/reasoning:\s*/gi, '');
@@ -767,17 +774,24 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           streamingToolCalls = nonStreamResponse.toolCalls.map(tc => ({ id: tc.id, name: tc.name, arguments: tc.arguments }));
         } else {
           const streamResponse = rawResponse as AsyncGenerator<LLMChunk>;
+          let reasoningCaptured = false;
           for await (const chunk of streamResponse) {
             if (chunk.text) {
               responseText += chunk.text;
               textBuffer.push(chunk.text);
               
-              if (!toolCallDetected) {
+              // Capture reasoning before tool calls
+              if (!reasoningCaptured && !toolCallDetected) {
                 streamBuffer += chunk.text;
                 const toolCallIdx = streamBuffer.indexOf('tool_call:');
                 if (toolCallIdx !== -1) {
                   toolCallDetected = true;
                   const beforeToolCall = streamBuffer.substring(0, toolCallIdx).trim();
+                  // Extract and emit reasoning
+                  const reasoningText = this.extractReasoning('reasoning: ' + beforeToolCall);
+                  if (reasoningText) {
+                    yield { type: 'reasoning', reasoning: reasoningText, timestamp: Date.now() };
+                  }
                   if (beforeToolCall) {
                     textAlreadyStreamed = true;
                     yield { type: 'text', text: beforeToolCall, timestamp: Date.now() };

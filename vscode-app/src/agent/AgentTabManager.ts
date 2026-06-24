@@ -246,6 +246,9 @@ export class AgentTabManager {
           break;
         }
         switch (chunk.type) {
+          case 'reasoning':
+            this.sendToWebview({ command: 'reasoning', reasoning: chunk.reasoning, timestamp: chunk.timestamp });
+            break;
           case 'tool_call_started':
             this.sendToWebview({ command: 'tool_start', toolName: chunk.toolName, args: chunk.args, timestamp: chunk.timestamp });
             break;

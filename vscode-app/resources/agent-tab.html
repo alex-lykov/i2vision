@@ -35,20 +35,25 @@
     .message.error{background-color:var(--vscode-inputValidation-errorBackground);border-left-color:var(--vscode-errorForeground);color:var(--vscode-errorForeground)}
     .thinking-indicator{display:flex;align-items:center;gap:10px;padding:10px 12px;background-color:var(--vscode-editor-selectionBackground);border-left:3px solid var(--vscode-progressBarBackground);border-radius:6px;font-style:italic;color:var(--vscode-descriptionForeground)}
     .thinking-indicator .codicon-loading{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
-    .tool-card{background-color:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:8px;transition:all 0.2s ease}
+    .reasoning-card{background-color:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:10px 12px;margin-bottom:8px;border-left:3px solid var(--vscode-descriptionForeground);transition:all 0.2s ease}
+    .reasoning-card-header{display:flex;align-items:center;gap:8px;font-weight:600;font-size:0.85em;color:var(--vscode-descriptionForeground);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px}
+    .reasoning-card-content{font-size:0.9em;line-height:1.5;color:var(--vscode-foreground);white-space:pre-wrap}
+    .tool-card{background-color:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:8px 10px;display:flex;flex-direction:column;gap:6px;transition:all 0.2s ease}
+    .tool-card-group{display:flex;flex-direction:column;gap:4px;margin:8px 0;padding:8px;background:var(--vscode-editor-selectionBackground);border-radius:6px}
+    .tool-card-group-header{display:flex;align-items:center;gap:8px;font-weight:600;font-size:0.8em;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.5px}
     .tool-card.running{border-left:3px solid var(--vscode-progressBarBackground)}
     .tool-card.done{border-left:3px solid var(--vscode-terminal-successBackground)}
     .tool-card.error{border-left:3px solid var(--vscode-errorForeground)}
-    .tool-card-header{display:flex;align-items:center;gap:8px;font-weight:600;font-size:0.9em;cursor:pointer;user-select:none}
+    .tool-card-header{display:flex;align-items:center;gap:8px;font-weight:600;font-size:0.85em;cursor:pointer;user-select:none}
     .tool-card-header:hover{opacity:0.9}
-    .tool-card-status .codicon{font-size:1.1em}
+    .tool-card-status .codicon{font-size:1em}
     .tool-card-status.running .codicon{animation:pulse 1s ease-in-out infinite}@keyframes pulse{0%,100%{opacity:0.5}50%{opacity:1}}
-    .tool-card-content{display:none;flex-direction:column;gap:6px;margin-top:4px}
+    .tool-card-content{display:none;flex-direction:column;gap:4px;margin-top:2px}
     .tool-card.expanded .tool-card-content{display:flex}
     .toggle-icon{margin-left:auto;transition:transform 0.2s}
     .tool-card.expanded .toggle-icon{transform:rotate(90deg)}
-    .tool-card-label{font-weight:600;color:var(--vscode-descriptionForeground);font-size:0.8em;text-transform:uppercase;letter-spacing:0.5px}
-    .tool-card-result{background-color:var(--vscode-textCodeBlock-background);padding:8px;border-radius:4px;font-family:var(--vscode-editor-font-family);font-size:0.85em;max-height:300px;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
+    .tool-card-label{font-weight:600;color:var(--vscode-descriptionForeground);font-size:0.75em;text-transform:uppercase;letter-spacing:0.5px}
+    .tool-card-result{background-color:var(--vscode-textCodeBlock-background);padding:6px;border-radius:4px;font-family:var(--vscode-editor-font-family);font-size:0.8em;max-height:200px;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
     .response-card{background-color:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
     .response-card.streaming{border-left:3px solid var(--vscode-progressBarBackground)}
     .response-card.done{border-left:3px solid #73c991}
@@ -328,6 +333,7 @@
         case 'restored_message': appendRestoredMessage(message.content, message.toolCalls, message.timestamp); break;
         case 'thinking': showThinkingIndicator(message.message); break;
         case 'thinking_update': updateThinkingIndicator(message.message); break;
+        case 'reasoning': appendReasoningCard(message.reasoning); break;
         case 'tool_start': appendToolCard(message.toolName, message.args); collapseAllToolCardsExceptLast(); break;
         case 'tool_complete': updateToolCard(message.toolName, message.result); collapseAllToolCardsExceptLast(); break;
         case 'streaming_text': appendStreamingText(message.text); break;
@@ -394,6 +400,15 @@
       div.textContent = content;
       timeline.appendChild(div);
     }
+
+    function appendReasoningCard(reasoning) {
+      const card = document.createElement('div');
+      card.className = 'reasoning-card';
+      card.innerHTML = '<div class="reasoning-card-header"><span class="codicon codicon-lightbulb"></span>Reasoning</div>' +
+        '<div class="reasoning-card-content">' + escapeHtml(reasoning) + '</div>';
+      timeline.appendChild(card);
+      scrollToBottom();
+    }
     
     function appendRestoredMessage(content, toolCalls, timestamp) {
       const div = document.createElement('div');
@@ -451,18 +466,18 @@
       }
       const cardId = 'tool-' + Date.now();
       const card = document.createElement('div');
-      card.className = 'tool-card running expanded';
+      card.className = 'tool-card running';
       card.id = cardId;
       card.dataset.toolName = toolName;
-      let argsHtml = (args && Object.keys(args).length > 0) ? '<div class="tool-card-label">Arguments</div><div class="tool-card-result">' + escapeHtml(JSON.stringify(args, null, 2)) + '</div>' : '';
+      let argsHtml = (args && Object.keys(args).length > 0) ? '<div class="tool-card-content" style="display:block"><div class="tool-card-label">Args</div><div class="tool-card-result">' + escapeHtml(JSON.stringify(args, null, 2).substring(0, 200)) + '</div></div>' : '';
       card.innerHTML = '<div class="tool-card-header" onclick="toggleToolCard(\'' + cardId + '\')">' +
         '<span class="tool-card-status running"><span class="codicon codicon-loading"></span></span>' +
-        '<span><span class="codicon codicon-wrench"></span> ' + escapeHtml(toolName) + '</span>' +
+        '<span>' + escapeHtml(toolName) + '</span>' +
         '<span class="toggle-icon"><span class="codicon codicon-chevron-right"></span></span>' +
-        '</div><div class="tool-card-content">' + argsHtml + '</div>';
+        '</div>' + argsHtml;
       timeline.appendChild(card);
     }
-    
+
     function updateToolCard(toolName, result) {
       const cards = timeline.querySelectorAll('.tool-card.running');
       let targetCard = null;
@@ -482,8 +497,11 @@
         }
         const contentDiv = targetCard.querySelector('.tool-card-content');
         if (contentDiv && result) {
-          const resultHtml = '<div class="tool-card-label" style="margin-top:8px;">Result</div><div class="tool-card-result">' + escapeHtml(result.substring(0, 3000)) + '</div>';
-          contentDiv.insertAdjacentHTML('beforeend', resultHtml);
+          const resultLabel = contentDiv.querySelector('.tool-card-label');
+          if (resultLabel) resultLabel.textContent = 'Result';
+          else contentDiv.innerHTML += '<div class="tool-card-label">Result</div>';
+          const resultEl = contentDiv.querySelector('.tool-card-result');
+          if (resultEl) resultEl.textContent = result.substring(0, 2000);
         }
       }
     }

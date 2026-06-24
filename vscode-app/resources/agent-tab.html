@@ -38,23 +38,25 @@
     .reasoning-card{background-color:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:10px 12px;margin-bottom:8px;border-left:3px solid var(--vscode-descriptionForeground);transition:all 0.2s ease}
     .reasoning-card-header{display:flex;align-items:center;gap:8px;font-weight:600;font-size:0.85em;color:var(--vscode-descriptionForeground);margin-bottom:6px;text-transform:uppercase;letter-spacing:0.5px}
     .reasoning-card-content{font-size:0.9em;line-height:1.5;color:var(--vscode-foreground);white-space:pre-wrap}
-    .tool-card{background-color:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:6px 8px;display:flex;flex-direction:column;gap:4px;transition:all 0.2s ease}
-    .tool-card.collapsed .tool-card-content{display:none}
-    .tool-card-group{display:flex;flex-direction:column;gap:4px;margin:8px 0;padding:8px;background:var(--vscode-editor-selectionBackground);border-radius:6px}
-    .tool-card-group-header{display:flex;align-items:center;gap:8px;font-weight:600;font-size:0.8em;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.5px}
+    .tool-card{background-color:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:4px 6px;margin:4px 0;display:flex;flex-direction:column;gap:2px;transition:all 0.2s ease}
+    .tool-card-row{display:flex;align-items:center;gap:8px;font-size:0.85em}
+    .tool-card-icon{display:flex;align-items:center;justify-content:center;width:20px;height:20px;background:var(--vscode-badge-background);border-radius:3px;color:var(--vscode-badge-foreground);font-size:0.7em}
+    .tool-card-command{font-weight:600;color:var(--vscode-foreground);text-transform:capitalize;white-space:nowrap}
+    .tool-card-args{color:var(--vscode-descriptionForeground);font-size:0.8em;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .tool-card-options{display:flex;gap:4px;opacity:0;transition:opacity 0.2s}
+    .tool-card:hover .tool-card-options{opacity:1}
+    .tool-card-option{cursor:pointer;color:var(--vscode-descriptionForeground);font-size:0.75em;padding:2px 4px;border-radius:3px}
+    .tool-card-option:hover{background:var(--vscode-toolbar-hoverBackground);color:var(--vscode-foreground)}
+    .tool-card-content{display:none;flex-direction:column;gap:4px;margin-top:4px;padding:6px;background:var(--vscode-textCodeBlock-background);border-radius:4px;font-family:var(--vscode-editor-font-family);font-size:0.75em;max-height:150px;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
+    .tool-card.expanded .tool-card-content{display:flex}
     .tool-card.running{border-left:3px solid var(--vscode-progressBarBackground)}
     .tool-card.done{border-left:3px solid var(--vscode-terminal-successBackground)}
     .tool-card.error{border-left:3px solid var(--vscode-errorForeground)}
-    .tool-card-header{display:flex;align-items:center;gap:8px;font-weight:600;font-size:0.8em;cursor:pointer;user-select:none}
-    .tool-card-header:hover{opacity:0.9}
-    .tool-card-status .codicon{font-size:1em}
-    .tool-card-status.running .codicon{animation:pulse 1s ease-in-out infinite}@keyframes pulse{0%,100%{opacity:0.5}50%{opacity:1}}
-    .tool-card-content{display:flex;flex-direction:column;gap:4px;margin-top:2px}
-    .tool-card.expanded .tool-card-content{display:flex}
-    .toggle-icon{margin-left:auto;transition:transform 0.2s}
-    .tool-card.expanded .toggle-icon{transform:rotate(90deg)}
-    .tool-card-label{font-weight:600;color:var(--vscode-descriptionForeground);font-size:0.7em;text-transform:uppercase;letter-spacing:0.5px}
-    .tool-card-result{background-color:var(--vscode-textCodeBlock-background);padding:4px 6px;border-radius:4px;font-family:var(--vscode-editor-font-family);font-size:0.75em;max-height:120px;overflow-y:auto;white-space:pre-wrap;word-break:break-word;line-height:1.3}
+    .response-card{background:transparent;padding:8px 0;border-radius:0}
+    .response-card.streaming{border-left:none}
+    .response-card.done{border-left:none}
+    .response-card-header{display:none}
+    .response-card-body{background:transparent;padding:0;font-family:var(--vscode-font-family);font-size:0.9em;white-space:pre-wrap;word-break:break-word;line-height:1.5;max-height:none;overflow-y:visible}
     .response-card{background-color:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:6px;padding:10px 12px;display:flex;flex-direction:column;gap:8px}
     .response-card.streaming{border-left:3px solid var(--vscode-progressBarBackground)}
     .response-card.done{border-left:3px solid #73c991}
@@ -461,26 +463,57 @@
     
     function appendToolCard(toolName, args) {
       if (streamingElement) {
-        const statusEl = streamingElement.querySelector('.response-card-status');
-        if (statusEl) {
-          statusEl.className = 'response-card-status done';
-          statusEl.innerHTML = '<span class="codicon codicon-check"></span> Done';
-        }
-        streamingElement.className = 'response-card done';
         streamingElement = null;
       }
       const cardId = 'tool-' + Date.now();
       const card = document.createElement('div');
-      card.className = 'tool-card running collapsed';
+      card.className = 'tool-card running';
       card.id = cardId;
       card.dataset.toolName = toolName;
-      let argsHtml = (args && Object.keys(args).length > 0) ? '<div class="tool-card-content"><div class="tool-card-label">Args</div><div class="tool-card-result">' + escapeHtml(JSON.stringify(args, null, 2).substring(0, 150)) + '</div></div>' : '';
-      card.innerHTML = '<div class="tool-card-header" onclick="toggleToolCard(\'' + cardId + '\')">' +
-        '<span class="tool-card-status running"><span class="codicon codicon-loading"></span></span>' +
-        '<span>' + escapeHtml(toolName) + '</span>' +
-        '<span class="toggle-icon"><span class="codicon codicon-chevron-right"></span></span>' +
-        '</div>' + argsHtml;
+
+      // Get icon based on tool type
+      let icon = '📄';
+      if (toolName.includes('read')) icon = '📖';
+      else if (toolName.includes('write') || toolName.includes('apply')) icon = '✏️';
+      else if (toolName.includes('search')) icon = '🔍';
+      else if (toolName.includes('list')) icon = '📋';
+      else if (toolName.includes('run') || toolName.includes('terminal')) icon = '⚡';
+      else if (toolName.includes('build')) icon = '🔨';
+      else if (toolName.includes('git')) icon = '🌿';
+
+      // Extract first arg value for display
+      let argsText = '';
+      if (args) {
+        const values = Object.values(args);
+        if (values.length > 0) {
+          argsText = String(values[0]).split(/[\\/]/).pop() || String(values[0]);
+        }
+      }
+
+      // Check if args contain a file path for quick actions
+      const hasFilePath = args && (args.path || args.file);
+      const filePath = args?.path || args?.file || '';
+
+      card.innerHTML = '<div class="tool-card-row">' +
+        '<span class="tool-card-icon">' + icon + '</span>' +
+        '<span class="tool-card-command">' + escapeHtml(toolName.replace(/_/g, ' ')) + '</span>' +
+        '<span class="tool-card-args">' + escapeHtml(argsText) + '</span>' +
+        '<div class="tool-card-options">' +
+          (hasFilePath ? '<span class="tool-card-option" onclick="openFileInEditor(\'' + filePath + '\')" title="Open in editor">↗</span>' +
+                         '<span class="tool-card-option" onclick="openFileInNewWindow(\'' + filePath + '\')" title="Open in new window">⤢</span>' : '') +
+          '<span class="tool-card-option" onclick="toggleToolCard(\'' + cardId + '\')" title="Show details">⌄</span>' +
+        '</div>' +
+        '</div>' +
+        '<div class="tool-card-content"></div>';
       timeline.appendChild(card);
+    }
+
+    function openFileInEditor(filePath) {
+      vscode.postMessage({ command: 'open_file', filePath: filePath, viewColumn: 'active' });
+    }
+
+    function openFileInNewWindow(filePath) {
+      vscode.postMessage({ command: 'open_file', filePath: filePath, viewColumn: 'beside' });
     }
 
     function updateToolCard(toolName, result) {
@@ -495,18 +528,9 @@
       if (targetCard) {
         targetCard.classList.remove('running');
         targetCard.classList.add('done');
-        const statusEl = targetCard.querySelector('.tool-card-status');
-        if (statusEl) {
-          statusEl.className = 'tool-card-status';
-          statusEl.innerHTML = '<span class="codicon codicon-check"></span>';
-        }
         const contentDiv = targetCard.querySelector('.tool-card-content');
         if (contentDiv && result) {
-          const resultLabel = contentDiv.querySelector('.tool-card-label');
-          if (resultLabel) resultLabel.textContent = 'Result';
-          else contentDiv.innerHTML += '<div class="tool-card-label">Result</div>';
-          const resultEl = contentDiv.querySelector('.tool-card-result');
-          if (resultEl) resultEl.textContent = result.substring(0, 2000);
+          contentDiv.textContent = result.substring(0, 3000);
         }
       }
     }
@@ -515,11 +539,7 @@
       if (!streamingElement) {
         streamingElement = document.createElement('div');
         streamingElement.className = 'response-card streaming';
-        streamingElement.innerHTML = '<div class="response-card-header">' +
-          '<span class="codicon codicon-comment"></span>' +
-          '<span class="response-card-title">Response</span>' +
-          '<span class="response-card-status streaming"><span class="codicon codicon-loading"></span> Streaming...</span>' +
-          '</div><div class="response-card-body"></div>';
+        streamingElement.innerHTML = '<div class="response-card-body"></div>';
         timeline.appendChild(streamingElement);
         scrollToBottom();
       }
@@ -538,24 +558,9 @@
         if (responseCards.length > 0) targetElement = responseCards[responseCards.length - 1];
       }
       if (targetElement) {
-        const statusEl = targetElement.querySelector('.response-card-status');
-        if (statusEl) {
-          statusEl.className = 'response-card-status done';
-          statusEl.innerHTML = '<span class="codicon codicon-check"></span> Done';
-        }
         targetElement.className = 'response-card done';
-        const footer = document.createElement('div');
-        footer.className = 'message-footer';
-        const durationStr = durationMs ? (durationMs / 1000).toFixed(1) : '?';
-        footer.innerHTML = '<div class="footer-left">' +
-          '<span><span class="codicon codicon-clock"></span> ' + durationStr + 's</span>' +
-          '</div><div class="footer-right">' +
-          '<button class="btn-secondary" onclick="copyResponse()" style="padding:4px 8px;font-size:0.85em;"><span class="codicon codicon-copy"></span> Copy</button>' +
-          '<button class="btn-secondary" onclick="applyChanges()" style="padding:4px 8px;font-size:0.85em;"><span class="codicon codicon-check"></span> Apply</button>' +
-          '</div>';
-        targetElement.appendChild(footer);
-        streamingElement = null;
       }
+      streamingElement = null;
     }
     
     function updateTokenMeter(tokenUsage, contextLength) {

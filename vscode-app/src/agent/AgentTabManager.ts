@@ -347,6 +347,18 @@ export class AgentTabManager {
             vscode.window.showErrorMessage('Failed to open settings: ' + error.message);
           }
           break;
+        case 'open_file':
+          const viewColumn = message.viewColumn === 'beside' 
+            ? vscode.ViewColumn.Beside 
+            : vscode.ViewColumn.Active;
+          try {
+            const doc = await vscode.workspace.openTextDocument(message.filePath);
+            await vscode.window.showTextDocument(doc, viewColumn);
+          } catch (error: any) {
+            this.log('Error opening file: ' + error.message);
+            vscode.window.showErrorMessage('Failed to open file: ' + error.message);
+          }
+          break;
         case 'fetch_history': await this.sendHistoryToWebview(); break;
         case 'resume_conversation': await this.resumeConversationFromWebview(message.conversationId); break;
         case 'new_chat':

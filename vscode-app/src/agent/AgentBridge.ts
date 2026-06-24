@@ -153,6 +153,10 @@ export class AgentBridge {
   private _lastSearchPattern: string | null = null;
   private _lastSearchFiles: string[] = [];
   private _lastSearchIteration: number = 0;
+  
+  // Strategy rotation for repeated failures
+  private _triedStrategies: Set<string> = new Set();
+  private _strategyRotationCount: number = 0;
 
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000;
   private static readonly MAX_LIST_FILES_RESULTS = 100;
@@ -634,6 +638,8 @@ export class AgentBridge {
     this._lastSearchFiles = [];
     this._lastSearchIteration = 0;
     this._autoNudge = null;
+    this._triedStrategies = new Set<string>();
+    this._strategyRotationCount = 0;
 
     const toolCalls: ToolCall[] = [];
     const history: ToolCallHistory[] = [];
@@ -671,6 +677,40 @@ export class AgentBridge {
       // Check for stuck states
       if (this.stateMachine.isPlanLoopStuck()) {
         this.log('Plan loop detected - forcing tool usage');
+        this._strategyRotationCount++;
+        
+        // Strategy rotation on repeated failures
+        if (this._strategyRotationCount >= 2) {
+          const strategies = [
+            'Read the file and look for structural issues (mismatched brackets, missing imports, syntax errors)',
+            'List the directory and check if related files have changed',
+            'Run the build to see the full error output',
+            'Check git diff to see what changed recently',
+            'Search for similar patterns in other files that work correctly',
+            'Read the file from the beginning, not just the error area',
+            'Look at the imports and dependencies - something might be missing',
+            'Check if there are TypeScript/Kotlin type errors in the file'
+          ];
+          
+          const unusedStrategy = Array.from(strategies).find(s => !this._triedStrategies.has(s));
+          
+          if (unusedStrategy) {
+            this._triedStrategies.add(unusedStrategy);
+            this.log(`Strategy rotation: trying "${unusedStrategy}"`);
+            messages.push({
+              role: 'user',
+              content: `Your current approach isn't working. Try a different strategy: ${unusedStrategy}`
+            });
+            continue; // Skip to next iteration with new strategy
+          } else {
+            this.log('All strategies exhausted - asking user for guidance');
+            messages.push({
+              role: 'user',
+              content: 'Multiple approaches have failed. Please explain what you tried so far and ask the user for guidance on how to proceed.'
+            });
+            continue;
+          }
+        }
       }
       
       if (this.stateMachine.isBuildFixCycleStuck()) {

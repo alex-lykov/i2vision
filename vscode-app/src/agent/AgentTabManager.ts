@@ -53,7 +53,38 @@ export class AgentTabManager {
   async initialize(): Promise<void> {
     await this.agentProvider.initialize();
     this.startAutoSaveTimer();
+    await this.loadLastConversation();
     this.log('AgentTabManager initialization complete');
+  }
+
+  private async loadLastConversation(): Promise<void> {
+    if (!this.historyManager) return;
+    try {
+      const conversationIds = await this.historyManager.list();
+      if (conversationIds.length === 0) return;
+      
+      // Get the most recently updated conversation
+      const conversations = await Promise.all(conversationIds.map(async (id) => {
+        const saved = await this.historyManager!.load(id);
+        return { id, updatedAt: saved?.updatedAt || 0 };
+      }));
+      conversations.sort((a, b) => b.updatedAt - a.updatedAt);
+      
+      const lastConvId = conversations[0].id;
+      this.log('Auto-loading last conversation: ' + lastConvId);
+      
+      // Resume the last conversation
+      await this.resumeConversation(lastConvId);
+      
+      // Send loaded conversation to webview after delay
+      setTimeout(() => {
+        if (this.activeTabId) {
+          this.sendLoadedConversation(this.activeTabId);
+        }
+      }, 500);
+    } catch (error: any) {
+      this.log('Error loading last conversation: ' + error.message);
+    }
   }
 
   private startAutoSaveTimer(): void {

@@ -63,6 +63,9 @@
     .footer-panel{flex:0 0 auto;padding:16px;background-color:var(--vscode-editorWidget-background);border-top:1px solid var(--vscode-editorWidget-border)}
     .input-container{max-width:900px;margin:0 auto}
     .provider-model-row{display:flex;gap:16px;margin-bottom:10px;align-items:center;flex-wrap:wrap}
+    .token-meter{display:flex;align-items:center;gap:8px;font-size:0.75em;color:var(--vscode-descriptionForeground);margin-left:auto;}
+    .token-bar{width:100px;height:4px;background-color:var(--vscode-input-border);border-radius:2px;overflow:hidden}
+    .token-fill{height:100%;background:linear-gradient(90deg,var(--vscode-terminal-successBackground) 0%,var(--vscode-terminal-successBackground) 50%,var(--vscode-terminal-ansiYellow) 75%,var(--vscode-errorForeground) 100%);transition:width 0.3s ease}
     .input-box{width:100%;padding:12px;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;background-color:var(--vscode-input-background);color:var(--vscode-input-foreground);font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);resize:vertical;min-height:80px}
     .input-box:focus{outline:2px solid var(--vscode-focusBorder);outline-offset:-2px}
     .button-row{margin-top:10px;display:flex;gap:8px;align-items:center}
@@ -105,11 +108,6 @@
       <div class="header-item" id="conversationTitleItem" style="display:none;"><span class="codicon codicon-comment"></span><span id="conversationTitle"></span></div>
     </div>
     <div class="header-right">
-      <div class="token-meter">
-        <span class="codicon codicon-database"></span>
-        <div class="token-bar"><div class="token-fill" id="tokenFill" style="width:0%"></div></div>
-        <span id="tokenText">0 / 0</span>
-      </div>
       <div id="conversationIndicator" style="display:none;font-size:0.8em;color:var(--vscode-descriptionForeground);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
         <span class="codicon codicon-comment-discussion"></span><span id="conversationId"></span>
       </div>
@@ -142,6 +140,11 @@
           <select id="modelSelect" onchange="onModelChange()" style="min-width:180px;">
             <option value="{currentModel}" selected>{currentModel}</option>
           </select>
+        </div>
+        <div class="token-meter">
+          <span class="codicon codicon-database"></span>
+          <div class="token-bar"><div class="token-fill" id="tokenFill" style="width:0%"></div></div>
+          <span id="tokenText">0 / 0</span>
         </div>
       </div>
       <textarea class="input-box" id="userInput" placeholder="Ask me anything about your code..." rows="3"></textarea>

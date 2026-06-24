@@ -95,6 +95,7 @@
     <div class="header-left">
       <div class="header-item"><span class="codicon codicon-folder-active"></span><span id="workspaceName">{workspaceName}</span></div>
       <div class="header-item"><span class="codicon codicon-file"></span><span id="currentFile">None</span></div>
+      <div class="header-item"><span class="codicon codicon-git-branch"></span><span id="contextTitle">Context: {workspaceName}</span></div>
       <div class="provider-model-group">
         <div class="selector-group">
           <label for="providerSelect">Provider:</label>
@@ -232,22 +233,22 @@
         '</div>';
       }).join('');
       
-      list.querySelectorAll('.resume-btn').forEach(function(btn) {
-        btn.addEventListener('click', function(e) {
+      // Re-attach event listeners using delegation on the list container
+      list.onclick = function(e) {
+        const resumeBtn = e.target.closest('.resume-btn');
+        const deleteBtn = e.target.closest('.delete-btn');
+        if (resumeBtn) {
           e.stopPropagation();
-          const convId = this.getAttribute('data-conv-id');
+          const convId = resumeBtn.getAttribute('data-conv-id');
           console.log('Resume clicked:', convId);
           vscode.postMessage({ command: 'resume_conversation', conversationId: convId });
-        });
-      });
-      list.querySelectorAll('.delete-btn').forEach(function(btn) {
-        btn.addEventListener('click', function(e) {
+        } else if (deleteBtn) {
           e.stopPropagation();
-          const convId = this.getAttribute('data-conv-id');
+          const convId = deleteBtn.getAttribute('data-conv-id');
           console.log('Delete clicked:', convId);
           vscode.postMessage({ command: 'delete_conversation', conversationId: convId });
-        });
-      });
+        }
+      };
     }
     
     actionBtn.addEventListener('click', function() {

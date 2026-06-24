@@ -344,7 +344,13 @@ export class AgentTabManager {
       }
       // Create new tab with saved conversation
       await this.resumeConversation(conversationId);
-      this.sendToWebview({ command: 'conversation_resumed', conversationId });
+      // Send loaded conversation after a delay to ensure webview is ready
+      setTimeout(() => {
+        if (this.activeTabId) {
+          this.sendLoadedConversation(this.activeTabId);
+          this.sendToWebview({ command: 'conversation_resumed', conversationId });
+        }
+      }, 500);
     } catch (error: any) {
       this.log('Error resuming conversation: ' + error.message);
       this.sendToWebview({ command: 'error', error: 'Failed to resume conversation: ' + error.message });

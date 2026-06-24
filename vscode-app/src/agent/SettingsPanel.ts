@@ -94,6 +94,10 @@ export class SettingsPanel {
         case 'requestImportSettings':
           await this.handleRequestImportSettings();
           break;
+          
+        case 'closePanel':
+          this.dispose();
+          break;
       }
     }, null, this.disposables);
   }
@@ -192,36 +196,113 @@ export class SettingsPanel {
       font-size: var(--vscode-font-size);
       color: var(--vscode-foreground);
       background-color: var(--vscode-editor-background);
-      padding: 20px;
+      padding: 0;
       line-height: 1.6;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    
+    .settings-sidebar {
+      position: fixed;
+      right: 0;
+      top: 0;
+      bottom: 0;
+      width: 450px;
+      background: var(--vscode-sideBar-background);
+      border-left: 1px solid var(--vscode-sideBar-border);
+      transform: translateX(0);
+      transition: transform 0.2s ease;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      box-shadow: -2px 0 8px rgba(0,0,0,0.3);
+    }
+    
+    .settings-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--vscode-sideBar-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--vscode-sideBarSectionHeader-background);
+      flex: 0 0 auto;
+    }
+    
+    .settings-title {
+      font-weight: 600;
+      font-size: 0.95em;
+      color: var(--vscode-sideBarSectionHeader-foreground);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    
+    .settings-close-btn {
+      width: 28px;
+      height: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      cursor: pointer;
+      color: var(--vscode-foreground);
+      transition: all 0.2s ease;
+      font-size: 1.2em;
+    }
+    
+    .settings-close-btn:hover {
+      background: var(--vscode-toolbar-hoverBackground);
+      border-color: var(--vscode-input-border);
+    }
+    
+    .settings-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+    
+    .settings-footer {
+      padding: 12px 16px;
+      border-top: 1px solid var(--vscode-sideBar-border);
+      background: var(--vscode-sideBarSectionHeader-background);
+      flex: 0 0 auto;
     }
     
     h1 {
-      font-size: 1.5em;
-      margin-bottom: 20px;
+      font-size: 1.3em;
+      margin-bottom: 16px;
       padding-bottom: 10px;
       border-bottom: 1px solid var(--vscode-editorWidget-border);
     }
     
     h2 {
-      font-size: 1.2em;
-      margin: 20px 0 10px 0;
+      font-size: 1.1em;
+      margin: 16px 0 10px 0;
       color: var(--vscode-foreground);
+      font-weight: 600;
+    }
+    
+    h2:first-child {
+      margin-top: 0;
     }
     
     .section {
       background-color: var(--vscode-editorWidget-background);
       border: 1px solid var(--vscode-editorWidget-border);
       border-radius: 6px;
-      padding: 15px;
-      margin-bottom: 15px;
+      padding: 12px;
+      margin-bottom: 12px;
     }
     
     .setting-row {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      padding: 10px 0;
+      padding: 8px 0;
       border-bottom: 1px solid var(--vscode-editorWidget-border);
     }
     
@@ -234,31 +315,31 @@ export class SettingsPanel {
     }
     
     .setting-description {
-      font-size: 0.85em;
+      font-size: 0.8em;
       color: var(--vscode-descriptionForeground);
-      margin-top: 4px;
+      margin-top: 2px;
     }
     
     .setting-control {
-      flex: 0 0 200px;
+      flex: 0 0 180px;
     }
     
     input[type="text"],
     input[type="number"],
     select {
       width: 100%;
-      padding: 6px 10px;
+      padding: 5px 8px;
       border: 1px solid var(--vscode-input-border);
       border-radius: 4px;
       background-color: var(--vscode-input-background);
       color: var(--vscode-input-foreground);
       font-family: var(--vscode-font-family);
-      font-size: var(--vscode-font-size);
+      font-size: 0.85em;
     }
     
     input[type="checkbox"] {
-      width: 18px;
-      height: 18px;
+      width: 16px;
+      height: 16px;
       cursor: pointer;
     }
     
@@ -269,26 +350,24 @@ export class SettingsPanel {
     
     .range-value {
       text-align: right;
-      font-size: 0.85em;
+      font-size: 0.75em;
       color: var(--vscode-descriptionForeground);
-      margin-top: 4px;
+      margin-top: 2px;
     }
     
     .button-row {
       display: flex;
-      gap: 10px;
-      margin-top: 20px;
-      padding-top: 20px;
-      border-top: 1px solid var(--vscode-editorWidget-border);
+      gap: 8px;
+      justify-content: flex-end;
     }
     
     .btn {
-      padding: 8px 16px;
+      padding: 6px 14px;
       border: none;
       border-radius: 4px;
       cursor: pointer;
       font-family: var(--vscode-font-family);
-      font-size: 0.9em;
+      font-size: 0.85em;
       font-weight: 500;
       transition: all 0.2s ease;
     }
@@ -320,47 +399,45 @@ export class SettingsPanel {
       opacity: 0.9;
     }
     
-    .badge {
-      display: inline-block;
-      padding: 2px 6px;
-      border-radius: 3px;
-      font-size: 0.75em;
-      font-weight: 600;
-      margin-left: 8px;
-    }
-    
-    .badge-default {
-      background-color: var(--vscode-descriptionForeground);
-      color: white;
-    }
-    
     .toast {
       position: fixed;
       bottom: 20px;
-      right: 20px;
-      padding: 12px 20px;
-      background-color: var(--vscode-editorWidget-background);
-      border: 1px solid var(--vscode-editorWidget-border);
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 10px 20px;
+      background-color: var(--vscode-notifications-background);
+      color: var(--vscode-notifications-foreground);
       border-radius: 6px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
       z-index: 1000;
       animation: slideIn 0.3s ease;
+      font-size: 0.85em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
     
     @keyframes slideIn {
       from {
-        transform: translateX(100%);
+        transform: translateX(-50%) translateY(100%);
         opacity: 0;
       }
       to {
-        transform: translateX(0);
+        transform: translateX(-50%) translateY(0);
         opacity: 1;
       }
     }
   </style>
 </head>
 <body>
-  <h1>⚙️ i2-Vision Agent Settings</h1>
+  <div class="settings-sidebar">
+    <div class="settings-header">
+      <span class="settings-title">
+        <span>&#9881;</span> i2-Vision Agent Settings
+      </span>
+      <button class="settings-close-btn" onclick="closeSettings()" title="Close">&#10005;</button>
+    </div>
+    <div class="settings-content">
   
   <!-- Streaming Settings -->
   <div class="section">
@@ -744,12 +821,16 @@ export class SettingsPanel {
   </div>
   
   <!-- Action Buttons -->
-  <div class="button-row">
-    <button class="btn btn-primary" onclick="saveSettings()">💾 Save Settings</button>
-    <button class="btn btn-secondary" onclick="exportSettings()">📤 Export</button>
-    <button class="btn btn-secondary" onclick="importSettings()">📥 Import</button>
-    <button class="btn btn-danger" onclick="resetSettings()">🔄 Reset to Defaults</button>
   </div>
+  <div class="settings-footer">
+    <div class="button-row">
+      <button class="btn btn-primary" onclick="saveSettings()">💾 Save</button>
+      <button class="btn btn-secondary" onclick="exportSettings()">📤 Export</button>
+      <button class="btn btn-secondary" onclick="importSettings()">📥 Import</button>
+      <button class="btn btn-danger" onclick="resetSettings()">🔄 Reset</button>
+    </div>
+  </div>
+</div>
   
   <script>
     const vscode = acquireVsCodeApi();
@@ -836,6 +917,10 @@ export class SettingsPanel {
     
     function importSettings() {
       vscode.postMessage({ type: 'requestImportSettings' });
+    }
+    
+    function closeSettings() {
+      vscode.postMessage({ type: 'closePanel' });
     }
     
     function showToast(message) {

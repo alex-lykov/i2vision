@@ -165,6 +165,10 @@ export class AgentTabManager {
     const tabState = this.tabs.get(tabId);
     if (!tabState || tabState.history.length === 0) return;
     this.log('Sending loaded conversation with ' + tabState.history.length + ' messages to webview');
+    // Extract context title from first user message
+    const firstUserMessage = tabState.history.find(m => m.role === 'user');
+    const contextTitle = firstUserMessage?.content ? firstUserMessage.content.trim().split('\n')[0].substring(0, 50) : 'Untitled';
+    this.sendToWebview({ command: 'context_title', contextTitle });
     for (const msg of tabState.history) {
       this.sendToWebview({ command: msg.role === 'user' ? 'user_message' : 'restored_message', content: msg.content, toolCalls: msg.toolCalls, timestamp: msg.timestamp });
     }
@@ -311,6 +315,17 @@ export class AgentTabManager {
           break;
         case 'fetch_history': await this.sendHistoryToWebview(); break;
         case 'resume_conversation': await this.resumeConversationFromWebview(message.conversationId); break;
+        case 'confirm_delete':
+          const result = await vscode.window.showWarningMessage(
+            'Delete Conversation',
+            { modal: true, detail: 'Are you sure you want to delete this conversation? This action cannot be undone.' },
+            'Delete',
+            'Cancel'
+          );
+          if (result === 'Delete') {
+            await this.deleteConversationFromWebview(message.conversationId);
+          }
+          break;
         case 'delete_conversation': await this.deleteConversationFromWebview(message.conversationId); break;
         default: this.log('Unknown message command: ' + message.command);
       }
@@ -324,7 +339,15 @@ export class AgentTabManager {
       const conversationIds = await this.historyManager.list();
       const conversations = await Promise.all(conversationIds.map(async (id) => {
         const saved = await this.historyManager!.load(id);
-        return { id, layer: saved?.layer || 'unknown', messageCount: saved?.messages.length || 0, createdAt: saved?.createdAt || 0, updatedAt: saved?.updatedAt || 0, workspace: saved?.workspace || 'unknown' };
+        return { 
+          id, 
+          layer: saved?.layer || 'unknown', 
+          contextTitle: saved?.contextTitle || 'Untitled',
+          messageCount: saved?.messages.length || 0, 
+          createdAt: saved?.createdAt || 0, 
+          updatedAt: saved?.updatedAt || 0, 
+          workspace: saved?.workspace || 'unknown' 
+        };
       }));
       conversations.sort((a, b) => b.updatedAt - a.updatedAt);
       this.sendToWebview({ command: 'history_list', conversations });
@@ -345,11 +368,14 @@ export class AgentTabManager {
       }
       // Create new tab with saved conversation
       await this.resumeConversation(conversationId);
+      // Get context title from saved conversation
+      const saved = await this.historyManager?.load(conversationId);
+      const contextTitle = saved?.contextTitle || 'Untitled';
       // Send loaded conversation after a delay to ensure webview is ready
       setTimeout(() => {
         if (this.activeTabId) {
           this.sendLoadedConversation(this.activeTabId);
-          this.sendToWebview({ command: 'conversation_resumed', conversationId });
+          this.sendToWebview({ command: 'conversation_resumed', conversationId, contextTitle });
         }
       }, 500);
     } catch (error: any) {

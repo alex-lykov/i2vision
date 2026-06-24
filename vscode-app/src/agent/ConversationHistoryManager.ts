@@ -33,6 +33,7 @@ export interface SavedConversation {
   messages: ChatMessage[];
   createdAt: number;
   updatedAt: number;
+  contextTitle?: string;
 }
 
 /**
@@ -52,6 +53,7 @@ export class ConversationHistoryManager {
    * Save conversation to JSON file
    */
   async save(tabId: string, messages: ChatMessage[], layer: string): Promise<void> {
+    const contextTitle = this.extractContextTitle(messages);
     const filePath = path.join(this.storageDir, `${tabId}.json`);
     const data: SavedConversation = {
       id: tabId,
@@ -59,9 +61,22 @@ export class ConversationHistoryManager {
       layer,
       messages,
       createdAt: Date.now(),
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
+      contextTitle
     };
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+  }
+
+  /**
+   * Extract context title from first user message
+   */
+  private extractContextTitle(messages: ChatMessage[]): string {
+    const firstUserMessage = messages.find(m => m.role === 'user');
+    if (!firstUserMessage?.content) return 'Untitled';
+    const content = firstUserMessage.content.trim();
+    // Take first 50 characters or first line, whichever is shorter
+    const title = content.split('\n')[0].substring(0, 50);
+    return title.length > 50 ? title + '...' : title;
   }
 
   /**

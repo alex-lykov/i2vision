@@ -111,6 +111,7 @@
       <div id="conversationIndicator" style="display:none;font-size:0.8em;color:var(--vscode-descriptionForeground);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
         <span class="codicon codicon-comment-discussion"></span><span id="conversationId"></span>
       </div>
+      <button class="btn-icon" onclick="newChat()" title="New Chat">&#10133;</button>
       <button class="btn-icon" onclick="openSettings()" title="Settings (S)">&#9881;</button>
       <button class="btn-icon" onclick="toggleHistorySidebar()" title="History (H)">&#128196;</button>
     </div>
@@ -313,6 +314,10 @@
     
     function openSettings() {
       vscode.postMessage({ command: 'open_settings' });
+    }
+
+    function newChat() {
+      vscode.postMessage({ command: 'new_chat' });
     }
     
     window.addEventListener('message', function(event) {

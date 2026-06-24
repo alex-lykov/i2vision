@@ -346,6 +346,20 @@ export class AgentTabManager {
           break;
         case 'fetch_history': await this.sendHistoryToWebview(); break;
         case 'resume_conversation': await this.resumeConversationFromWebview(message.conversationId); break;
+        case 'new_chat':
+          const confirmNew = await vscode.window.showWarningMessage(
+            'Start New Chat',
+            { modal: true, detail: 'Starting a new chat will close the current conversation. Make sure it is saved.' },
+            'New Chat',
+            'Cancel'
+          );
+          if (confirmNew === 'New Chat') {
+            if (this.activeTabId) {
+              await this.closeTab(this.activeTabId);
+            }
+            await this.createTab('code');
+          }
+          break;
         case 'confirm_delete':
           const result = await vscode.window.showWarningMessage(
             'Delete Conversation',

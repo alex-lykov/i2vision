@@ -37,6 +37,52 @@
 - [x] Style success/error states with colored left border
 - [x] Enhanced tool call header layout with proper spacing
 
+### Phase 3: YAML Configuration System ✅
+**Priority:** High  
+**Estimated Effort:** 3 days  
+**Status:** COMPLETED
+
+- [x] Create `ToolConfigLoader` class for YAML parsing
+- [x] Define YAML schema (`ToolYamlConfig` interface)
+- [x] Implement YAML parser for `.vision-ai/tools.yaml`
+- [x] Add tool enable/disable per project (`disabled` list)
+- [x] Support custom tool definitions from YAML (`custom` array)
+- [x] Add tool timeout configuration (`overrides` section)
+- [x] Support layer-specific tool filtering (`layers` section)
+- [x] Implement hot-reload on file changes (FileSystemWatcher)
+- [x] Integrate `ToolConfigLoader` into `AgentBridge`
+- [x] Add `disabledTools` set to `ToolRegistry`
+- [x] Add `disableTool()` and `enableTool()` methods
+
+**Example YAML:**
+```yaml
+# .vision-ai/tools.yaml
+tools:
+  disabled:
+    - git_commit      # Disable for this project
+    - write_file      # Read-only mode
+  
+  custom:
+    - name: deploy_to_staging
+      description: Deploy the application to staging
+      command: "./deploy.sh staging"
+      timeout: 120000
+      category: terminal
+      requiresConfirmation: true
+  
+  overrides:
+    run_build:
+      timeoutMs: 180000
+    apply_edits:
+      requiresConfirmation: true
+
+layers:
+  VISION:
+    enabled: [read_file, list_directory, search_files]
+  CODE:
+    enabled: all
+```
+
 ---
 
 ## Pending Enhancements

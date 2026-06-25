@@ -9,6 +9,7 @@ import { ToolDefinition, ToolResult, ToolContext, ToolCall, VslfcLayer } from '.
  */
 export class ToolRegistry {
   private tools: Map<string, ToolDefinition> = new Map();
+  private disabledTools: Set<string> = new Set();
 
   /**
    * Register a single tool
@@ -30,11 +31,33 @@ export class ToolRegistry {
   }
 
   /**
+   * Disable a tool without removing it from registry
+   */
+  disableTool(toolName: string): void {
+    this.disabledTools.add(toolName);
+  }
+
+  /**
+   * Enable a previously disabled tool
+   */
+  enableTool(toolName: string): void {
+    this.disabledTools.delete(toolName);
+  }
+
+  /**
+   * Check if a tool is disabled
+   */
+  isToolDisabled(toolName: string): boolean {
+    return this.disabledTools.has(toolName);
+  }
+
+  /**
    * Get LLM tool definitions for all registered tools
    * Optionally filtered by VSLFC layer
    */
   getLLMTools(layer?: VslfcLayer): LLMTool[] {
     return Array.from(this.tools.values())
+      .filter(t => !this.disabledTools.has(t.name))
       .filter(t => !layer || !t.enabledPerLayer || t.enabledPerLayer.includes(layer))
       .map(t => {
         const params = t.parameters as any;

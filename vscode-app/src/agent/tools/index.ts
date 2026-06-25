@@ -14,9 +14,15 @@
  * 
  * // Execute a tool
  * const result = await registry.execute('read_file', { path: 'src/main.kt' }, context);
+ * 
+ * // Load YAML configuration
+ * const configLoader = new ToolConfigLoader(registry);
+ * await configLoader.loadConfig(workspaceRoot);
  * ```
  */
 
 export { ToolRegistry } from './ToolRegistry';
+export { ToolConfigLoader } from './ToolConfigLoader';
+export type { ToolYamlConfig, CustomToolConfig, ToolOverrideConfig, LayerToolConfig } from './ToolConfigLoader';
 export * from './ToolTypes';
 export * from './builtin';

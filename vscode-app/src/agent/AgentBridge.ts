@@ -34,6 +34,7 @@ import {
   terminalTools,
   editTools,
   buildTools,
+  ToolConfigLoader,
 } from './tools';
 
 export interface ContextProfile {
@@ -137,6 +138,9 @@ export class AgentBridge {
   // Tool Registry - declarative tool management
   private toolRegistry: ToolRegistry = new ToolRegistry();
   
+  // Tool Configuration Loader - YAML-based config
+  private toolConfigLoader?: ToolConfigLoader;
+  
   // STATE MACHINE: Single source of truth for all agent state
   private stateMachine: AgentStateMachine = new AgentStateMachine();
   
@@ -218,6 +222,9 @@ export class AgentBridge {
     
     this.log(`Tool registry initialized with ${this.toolRegistry.getToolNames().length} tools: ${this.toolRegistry.getToolNames().join(', ')}`);
     
+    // Initialize tool configuration loader (YAML-based)
+    this.toolConfigLoader = new ToolConfigLoader(this.toolRegistry, this.outputChannel);
+    
     const customPatterns = (config as any).execution?.longRunningPatterns;
     if (customPatterns && Array.isArray(customPatterns) && customPatterns.length > 0) {
       this.longRunningPatterns = customPatterns;
@@ -227,6 +234,13 @@ export class AgentBridge {
   async initialize(): Promise<void> { 
     this.isInitialized = true;
     this.stateMachine.reset();
+    
+    // Load YAML tool configuration
+    if (this.toolConfigLoader) {
+      await this.toolConfigLoader.loadConfig(this.workspaceRoot);
+      this.log('Tool configuration loader initialized');
+    }
+    
     this.log('AgentBridge initialized with state machine');
   }
 

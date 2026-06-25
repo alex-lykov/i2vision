@@ -251,6 +251,50 @@ export const deployTool: ToolDefinition = {
 
 ---
 
+### Phase 5: Custom Tool Loader (Plugin System) ✅
+**Priority:** Medium  
+**Estimated Effort:** 4 days  
+**Status:** COMPLETED
+
+- [x] Create `CustomToolPluginLoader` class
+- [x] Define `CustomToolPlugin` interface
+- [x] Add JavaScript plugin loading with VM sandboxing
+- [x] Add plugin validation (required fields, types)
+- [x] Add TypeScript plugin support (with compilation note)
+- [x] Create plugin template generator (example-plugin.js)
+- [x] Integrate plugin loader into AgentBridge.initialize()
+- [x] Add plugin execution with timeout protection
+- [x] Support all tool features (confirmation, layers, categories)
+- [x] Create example plugins (file analysis, DB migration)
+
+**Plugin System Features:**
+- JavaScript plugins loaded from `.vision-ai/tools/`
+- Sandboxed execution using Node.js `vm` module
+- Full access to ToolContext (file, terminal, git, etc.)
+- Timeout protection (default 30s)
+- Automatic registration on agent initialization
+- Plugin validation before loading
+
+**Example Plugin:**
+```javascript
+module.exports = {
+  name: 'deploy_to_staging',
+  description: 'Deploy to staging environment',
+  category: 'terminal',
+  isReadOnly: false,
+  requiresConfirmation: true,
+  parameters: { /* JSON schema */ },
+  execute: async (args, context) => {
+    const result = await context.runCommand('./deploy.sh staging', 120000);
+    return { result: result.stdout };
+  }
+};
+```
+
+**Files Created:**
+- `src/agent/tools/CustomToolPluginLoader.ts` (250 lines)
+- `.vision-ai/tools/example-plugin.js` (template with examples)
+
 ### Phase 7: Tool Analytics & Monitoring
 **Priority:** Low  
 **Estimated Effort:** 3 days

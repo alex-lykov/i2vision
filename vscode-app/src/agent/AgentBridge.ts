@@ -35,6 +35,7 @@ import {
   editTools,
   buildTools,
   ToolConfigLoader,
+  CustomToolPluginLoader,
 } from './tools';
 
 export interface ContextProfile {
@@ -141,6 +142,9 @@ export class AgentBridge {
   // Tool Configuration Loader - YAML-based config
   private toolConfigLoader?: ToolConfigLoader;
   
+  // Custom Tool Plugin Loader - JavaScript plugin system
+  private pluginLoader?: CustomToolPluginLoader;
+  
   // Current VSLFC layer for tool filtering
   private currentLayer?: VslfcLayer;
   
@@ -228,6 +232,9 @@ export class AgentBridge {
     // Initialize tool configuration loader (YAML-based)
     this.toolConfigLoader = new ToolConfigLoader(this.toolRegistry, this.outputChannel);
     
+    // Initialize custom tool plugin loader
+    this.pluginLoader = new CustomToolPluginLoader(this.workspaceRoot, this.outputChannel);
+    
     const customPatterns = (config as any).execution?.longRunningPatterns;
     if (customPatterns && Array.isArray(customPatterns) && customPatterns.length > 0) {
       this.longRunningPatterns = customPatterns;
@@ -242,6 +249,17 @@ export class AgentBridge {
     if (this.toolConfigLoader) {
       await this.toolConfigLoader.loadConfig(this.workspaceRoot);
       this.log('Tool configuration loader initialized');
+    }
+    
+    // Load custom tool plugins
+    if (this.pluginLoader) {
+      const plugins = await this.pluginLoader.loadPlugins();
+      for (const plugin of plugins) {
+        const toolDef = this.pluginLoader.convertToToolDefinition(plugin);
+        this.toolRegistry.register(toolDef);
+        this.log(`Registered custom plugin tool: ${plugin.name}`);
+      }
+      this.log(`Loaded ${plugins.length} custom tool plugin(s)`);
     }
     
     this.log('AgentBridge initialized with state machine');

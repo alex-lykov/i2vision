@@ -20,12 +20,22 @@ import {
     SETTING_KEYS
 } from './ToolCardConfig';
 import * as vscode from 'vscode';
+import { ToolRegistry, CATEGORY_ICONS } from './tools';
 
 export class ToolCardFormatter {
     private config: ToolCardConfig;
+    private toolRegistry?: ToolRegistry;
 
-    constructor(config?: ToolCardConfig) {
+    constructor(config?: ToolCardConfig, toolRegistry?: ToolRegistry) {
         this.config = config || ToolCardFormatter.loadConfigFromSettings();
+        this.toolRegistry = toolRegistry;
+    }
+
+    /**
+     * Set the tool registry for metadata lookup
+     */
+    setToolRegistry(registry: ToolRegistry): void {
+        this.toolRegistry = registry;
     }
 
     /**
@@ -48,6 +58,15 @@ export class ToolCardFormatter {
             collapseOnSuccess: config.get<boolean>(SETTING_KEYS.defaultCollapseOnSuccess, true)
         };
 
+        // Load UI configuration
+        const ui: import('./ToolCardConfig').ToolUiConfig = {
+            showCategoryIcon: config.get<boolean>(SETTING_KEYS.uiShowCategoryIcon, true),
+            showDescriptionTooltip: config.get<boolean>(SETTING_KEYS.uiShowDescriptionTooltip, true),
+            showCategoryBadge: config.get<boolean>(SETTING_KEYS.uiShowCategoryBadge, true),
+            iconSize: config.get<'small' | 'medium' | 'large'>(SETTING_KEYS.uiIconSize, 'medium'),
+            compactMode: config.get<boolean>(SETTING_KEYS.uiCompactMode, false)
+        };
+
         // Load per-tool overrides from settings (guard against null/undefined)
         const perToolConfig = config.get<Record<string, Partial<ToolDisplayOptions>>>(SETTING_KEYS.perToolConfig, {}) || {};
         const tools: Record<string, ToolDisplayOptions> = {};
@@ -65,7 +84,7 @@ export class ToolCardFormatter {
             }
         }
 
-        return { showTools, defaults, tools };
+        return { showTools, defaults, tools, ui };
     }
 
     /**
@@ -107,6 +126,13 @@ export class ToolCardFormatter {
         // Apply truncation
         formatted = this.applyTruncation(formatted, options);
 
+        // Get tool metadata from registry if available
+        const toolDef = this.toolRegistry?.getTool(toolName);
+        const categoryConfig = toolDef ? CATEGORY_ICONS[toolDef.category] : undefined;
+        
+        // Get UI config with defaults
+        const uiConfig = this.config.ui || DEFAULT_TOOL_CARD_CONFIG.ui;
+
         // Build the card
         return {
             toolName,
@@ -120,7 +146,14 @@ export class ToolCardFormatter {
             isTruncated: result.length > options.maxChars || result.split('\n').length > options.maxLines,
             format: options.format,
             showLineNumbers: options.showLineNumbers,
-            syntaxHighlight: options.syntaxHighlight
+            syntaxHighlight: options.syntaxHighlight,
+            
+            // UI metadata from ToolRegistry
+            category: toolDef?.category,
+            categoryIcon: uiConfig.showCategoryIcon ? categoryConfig?.icon : undefined,
+            categoryColor: uiConfig.showCategoryBadge ? categoryConfig?.color : undefined,
+            description: uiConfig.showDescriptionTooltip ? toolDef?.description : undefined,
+            isReadOnly: toolDef?.isReadOnly
         };
     }
 

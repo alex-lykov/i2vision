@@ -6,6 +6,7 @@
  * - Truncation (max lines, max chars)
  * - Folding (threshold, default state)
  * - Visibility (show args, duration, collapse on success)
+ * - UI metadata (icons, descriptions, categories)
  * 
  * Preferences are stored in VS Code workspace settings.
  */
@@ -19,6 +20,26 @@ export interface ToolCardConfig {
 
     /** Default options for unlisted tools */
     defaults: ToolDisplayOptions;
+    
+    /** UI configuration for tool cards */
+    ui?: ToolUiConfig;
+}
+
+export interface ToolUiConfig {
+    /** Show tool category icon */
+    showCategoryIcon: boolean;
+    
+    /** Show tool description in tooltip */
+    showDescriptionTooltip: boolean;
+    
+    /** Show category badge */
+    showCategoryBadge: boolean;
+    
+    /** Icon size */
+    iconSize: 'small' | 'medium' | 'large';
+    
+    /** Compact mode (minimal UI) */
+    compactMode: boolean;
 }
 
 export interface ToolDisplayOptions {
@@ -70,6 +91,13 @@ export interface FormattedToolCard {
     showLineNumbers: boolean;
     syntaxHighlight: boolean;
     toolCallId?: string; // OpenAI-compatible ID for linking results to tool calls
+    
+    // UI metadata from ToolRegistry
+    category?: string;
+    categoryIcon?: string;
+    categoryColor?: string;
+    description?: string;
+    isReadOnly?: boolean;
 }
 
 /**
@@ -77,6 +105,14 @@ export interface FormattedToolCard {
  */
 export const DEFAULT_TOOL_CARD_CONFIG: ToolCardConfig = {
     showTools: 'all',
+    
+    ui: {
+        showCategoryIcon: true,
+        showDescriptionTooltip: true,
+        showCategoryBadge: true,
+        iconSize: 'medium',
+        compactMode: false
+    },
 
     defaults: {
         maxLines: 20,
@@ -280,5 +316,11 @@ export const SETTING_KEYS = {
     defaultShowArgs: `${SETTINGS_PREFIX}.defaultShowArgs`,
     defaultShowDuration: `${SETTINGS_PREFIX}.defaultShowDuration`,
     defaultCollapseOnSuccess: `${SETTINGS_PREFIX}.defaultCollapseOnSuccess`,
-    perToolConfig: `${SETTINGS_PREFIX}.perToolConfig`
+    perToolConfig: `${SETTINGS_PREFIX}.perToolConfig`,
+    // UI configuration keys
+    uiShowCategoryIcon: `${SETTINGS_PREFIX}.ui.showCategoryIcon`,
+    uiShowDescriptionTooltip: `${SETTINGS_PREFIX}.ui.showDescriptionTooltip`,
+    uiShowCategoryBadge: `${SETTINGS_PREFIX}.ui.showCategoryBadge`,
+    uiIconSize: `${SETTINGS_PREFIX}.ui.iconSize`,
+    uiCompactMode: `${SETTINGS_PREFIX}.ui.compactMode`
 } as const;

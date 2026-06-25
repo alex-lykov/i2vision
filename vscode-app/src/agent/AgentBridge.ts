@@ -25,6 +25,16 @@ import {
   AgentEvent,
   StateContext,
 } from './AgentStateMachine';
+import {
+  ToolRegistry,
+  ToolContext,
+  ToolResult,
+  fileTools,
+  gitTools,
+  terminalTools,
+  editTools,
+  buildTools,
+} from './tools';
 
 export interface ContextProfile {
   eager: { currentFile?: boolean; projectMetadata?: boolean; gitStatus?: boolean; gitDiff?: boolean; relatedFiles?: boolean; directoryStructure?: boolean };
@@ -124,6 +134,9 @@ export class AgentBridge {
   private currentIteration: number = 1;
   private progressCallback?: ProgressCallback;
   
+  // Tool Registry - declarative tool management
+  private toolRegistry: ToolRegistry = new ToolRegistry();
+  
   // STATE MACHINE: Single source of truth for all agent state
   private stateMachine: AgentStateMachine = new AgentStateMachine();
   
@@ -196,6 +209,15 @@ export class AgentBridge {
     const settings = this.settingsManager.getSettings();
     this.terminalManager = new TerminalManager(outputChannel, settings.terminal.autoCloseDelayMs);
     
+    // Initialize tool registry with all built-in tools
+    this.toolRegistry.registerAll(fileTools);
+    this.toolRegistry.registerAll(gitTools);
+    this.toolRegistry.registerAll(terminalTools);
+    this.toolRegistry.registerAll(editTools);
+    this.toolRegistry.registerAll(buildTools);
+    
+    this.log(`Tool registry initialized with ${this.toolRegistry.getToolNames().length} tools: ${this.toolRegistry.getToolNames().join(', ')}`);
+    
     const customPatterns = (config as any).execution?.longRunningPatterns;
     if (customPatterns && Array.isArray(customPatterns) && customPatterns.length > 0) {
       this.longRunningPatterns = customPatterns;
@@ -260,250 +282,17 @@ export class AgentBridge {
       toolFilter = this.stateMachine.getToolFilter();
     }
 
-    const allTools: LLMTool[] = [
-      {
-        type: 'function',
-        function: {
-          name: 'list_directory',
-          description: 'List files in a directory',
-          parameters: {
-            type: 'object',
-            properties: {
-              path: { type: 'string', description: 'Directory path relative to workspace root' },
-              recursive: { type: 'boolean', description: 'Search recursively (default: false)' }
-            },
-            required: ['path']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'read_file',
-          description: 'Read contents of a file',
-          parameters: {
-            type: 'object',
-            properties: { path: { type: 'string', description: 'File path relative to workspace root' } },
-            required: ['path']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'write_file',
-          description: 'Write content to a file. Use for large changes, new files, or when apply_edits would need more than 50 edits.',
-          parameters: {
-            type: 'object',
-            properties: {
-              path: { type: 'string', description: 'File path relative to workspace root' },
-              content: { type: 'string', description: 'Full file content to write' }
-            },
-            required: ['path', 'content']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'apply_edits',
-          description: 'Apply targeted edits to an existing file. MAX 50 edits per call. For small changes (1-5 lines each). For large rewrites (>50 edits), use write_file instead.',
-          parameters: {
-            type: 'object',
-            properties: {
-              path: { type: 'string', description: 'File path relative to workspace root' },
-              edits: {
-                type: 'array',
-                description: 'List of edit operations. MAX 50 edits per call. For larger changes, use write_file.',
-                items: {
-                  type: 'object',
-                  properties: {
-                    search: { type: 'string', description: 'Exact text to find (must be unique in file)' },
-                    replace: { type: 'string', description: 'Replacement text' },
-                    lineHint: { type: 'number', description: 'Optional: approximate line number' }
-                  },
-                  required: ['search', 'replace']
-                }
-              }
-            },
-            required: ['path', 'edits']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'search_files',
-          description: 'Search for files matching a regex pattern. Returns file paths and matching lines. TIP: If you find a file, read it immediately instead of searching more.',
-          parameters: {
-            type: 'object',
-            properties: {
-              pattern: { type: 'string', description: 'Regex pattern to search for' },
-              path: { type: 'string', description: 'Directory to search in (optional)' }
-            },
-            required: ['pattern']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'get_file_context',
-          description: 'Get context for a specific file (classes, functions, imports)',
-          parameters: {
-            type: 'object',
-            properties: { path: { type: 'string', description: 'File path relative to workspace root' } },
-            required: ['path']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'git_status',
-          description: 'Show working tree status (modified, staged, untracked files)',
-          parameters: { type: 'object', properties: {}, required: [] }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'git_diff',
-          description: 'Show changes between commits, staged, or working tree',
-          parameters: {
-            type: 'object',
-            properties: {
-              target: { type: 'string', enum: ['staged', 'unstaged', 'all'], description: 'What to diff' },
-              path: { type: 'string', description: 'Specific file or directory (optional)' }
-            },
-            required: ['target']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'run_build',
-          description: 'Run a build command. FOR COMPILATION: use compileKotlin (source only, NO tests). FOR TESTS: use test. NEVER use "build" - it runs ALL tests and is slow.',
-          parameters: {
-            type: 'object',
-            properties: {
-              command: {
-                type: 'string',
-                description: 'Build command. FOR COMPILATION (source only): ./gradlew compileKotlin. FOR TESTS: ./gradlew test. NEVER use ./gradlew build (runs all tests, slow).',
-                enum: [
-                  './gradlew compileKotlin',
-                  './gradlew :app:server:compileKotlin',
-                  './gradlew :app:shared:compileKotlin',
-                  './gradlew :app:client:compileKotlin',
-                  './gradlew test',
-                  './gradlew :app:server:test',
-                  'gradlew.bat compileKotlin',
-                  'gradlew.bat :app:server:compileKotlin',
-                  'gradlew.bat test',
-                  'npm run build',
-                  'npm test',
-                  'tsc',
-                  'mvn clean install',
-                  'mvn test'
-                ]
-              }
-            },
-            required: ['command']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'run_terminal',
-          description: 'Run a terminal command. FOR SERVERS: use gradlew :app:server:run. IMPORTANT: Servers take 10-30 seconds to start. Do NOT check terminal_status immediately - wait 15+ seconds first.',
-          parameters: {
-            type: 'object',
-            properties: {
-              command: { type: 'string', description: 'Shell command. For servers: gradlew :app:server:run' },
-              workingDir: { type: 'string', description: 'Working directory relative to project root (optional)' }
-            },
-            required: ['command']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'kill_terminal',
-          description: 'Stop a running managed terminal by name',
-          parameters: {
-            type: 'object',
-            properties: { name: { type: 'string', description: 'Terminal name (e.g., "backend", "frontend")' } },
-            required: ['name']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'list_terminals',
-          description: 'List all managed terminals and their status',
-          parameters: { type: 'object', properties: {}, required: [] }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'terminal_status',
-          description: 'Check if a specific terminal is running. IMPORTANT: Only use this 15+ seconds after starting a server - servers take time to start up.',
-          parameters: {
-            type: 'object',
-            properties: { name: { type: 'string', description: 'Terminal name to check' } },
-            required: ['name']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'revert_file',
-          description: 'Revert a file to its original state before edits were made. Use this to undo changes that caused build failures.',
-          parameters: {
-            type: 'object',
-            properties: {
-              path: { type: 'string', description: 'File path relative to workspace root to revert' }
-            },
-            required: ['path']
-          }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'revert_all',
-          description: 'Revert ALL modified files to their original state. Use this to undo all changes in the current session.',
-          parameters: { type: 'object', properties: {}, required: [] }
-        }
-      },
-      {
-        type: 'function',
-        function: {
-          name: 'list_snapshots',
-          description: 'List all files that have been modified and can be reverted.',
-          parameters: { type: 'object', properties: {}, required: [] }
-        }
-      }
-    ];
+    // Get all tools from registry
+    const allTools = this.toolRegistry.getLLMTools();
 
     if (toolFilter === 'fix_only') {
-      const fixTools = allTools.filter(t => 
-        ['apply_edits', 'read_file', 'write_file', 'get_file_context'].includes(t.function.name)
-      );
+      const fixTools = this.toolRegistry.getLLMToolsByName(['apply_edits', 'read_file', 'write_file', 'get_file_context']);
       this.log(`Tool filter: fix_only (${fixTools.length}/${allTools.length} tools)`);
       return fixTools;
     }
     
     if (toolFilter === 'read_only') {
-      const readTools = allTools.filter(t => 
-        ['read_file', 'list_directory', 'search_files', 'get_file_context', 'git_status', 'git_diff', 'git_log', 'git_branch', 'list_terminals', 'terminal_status', 'list_snapshots'].includes(t.function.name)
-      );
+      const readTools = this.toolRegistry.getReadOnlyTools();
       this.log(`Tool filter: read_only (${readTools.length}/${allTools.length} tools)`);
       return readTools;
     }
@@ -1121,6 +910,35 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
 
   private async executeTool(toolCall: ToolCall): Promise<{ result: string; error?: string }> {
     try {
+      // Create tool context with all necessary dependencies
+      const context: ToolContext = {
+        workspaceRoot: this.workspaceRoot,
+        resolvePath: (p: string) => this.resolvePath(p),
+        runCommand: (cmd: string, timeout: number, cwd?: string) => this.runCommandWithTimeout(cmd, timeout, cwd),
+        readFile: (p: string) => this.cli.readFile(p),
+        writeFile: (p: string, c: string) => this.cli.writeFile(p, c),
+        listFiles: (p: string, r: boolean) => this.cli.listFiles(p, r),
+        searchFiles: (p: string, d?: string) => this.cli.searchFiles(p, d),
+        getFileContext: (p: string) => this.cli.getContext(p),
+        fileExists: async (p: string) => fs.existsSync(p),
+        terminalManager: this.terminalManager,
+        log: (msg: string) => this.log(msg),
+        emitProgress: (e: any) => this.emitProgress(e),
+        fileSnapshots: this._fileSnapshots,
+      };
+
+      // Delegate to tool registry
+      return this.toolRegistry.execute(toolCall.toolName, toolCall.args, context);
+    } catch (error: any) {
+      this.log(`  Tool error: ${error.message}`);
+      return { result: '', error: error.message };
+    }
+  }
+
+  // Legacy executeTool implementation - replaced by ToolRegistry
+  // The switch statement below has been migrated to individual tool handlers in src/agent/tools/builtin/
+  private async executeToolLegacy(toolCall: ToolCall): Promise<{ result: string; error?: string }> {
+    try {
       switch (toolCall.toolName) {
         case 'list_directory': {
           const dirPath = this.resolvePath(toolCall.args.path);
@@ -1565,6 +1383,40 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           return { 
             result: `Terminal "${name}" is running${ageInfo}. Auto-restart: ${status.autoRestart ? 'enabled' : 'disabled'}.${startupNote}` 
           };
+        }
+        
+        case 'kill_port': {
+          const port = toolCall.args.port;
+          this.log(`Killing process on port ${port}...`);
+          
+          if (process.platform === 'win32') {
+            // Windows: find PID using port, then kill it
+            const findPidResult = await this.runCommandWithTimeout(
+              `netstat -ano | findstr :${port}`, 5000
+            );
+            const pidMatch = findPidResult.stdout.match(/\s+(\d+)\s*$/m);
+            if (pidMatch) {
+              const pid = pidMatch[1];
+              const killResult = await this.runCommandWithTimeout(
+                `taskkill /PID ${pid} /F`, 5000
+              );
+              if (killResult.exitCode === 0) {
+                return { result: `Killed process ${pid} on port ${port}.` };
+              } else {
+                return { result: `Failed to kill process ${pid}. ${killResult.stderr}` };
+              }
+            }
+            return { result: `No process found on port ${port}.` };
+          } else {
+            // Unix/Linux/Mac: lsof to find PID, then kill
+            const killResult = await this.runCommandWithTimeout(
+              `lsof -ti:${port} | xargs kill -9`, 5000
+            );
+            if (killResult.exitCode === 0 || killResult.stdout.trim()) {
+              return { result: `Killed process on port ${port}.` };
+            }
+            return { result: `No process found on port ${port}.` };
+          }
         }
         
         // MODERN EDIT PIPELINE: Revert tools

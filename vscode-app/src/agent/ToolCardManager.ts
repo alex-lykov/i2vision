@@ -9,6 +9,7 @@ import * as vscode from 'vscode';
 import { ToolCardFormatter } from './ToolCardFormatter';
 import { FormattedToolCard, ToolCardConfig } from './ToolCardConfig';
 import { ProgressEvent, ToolCall } from './AgentBridge';
+import { ToolRegistry } from './tools';
 
 /**
  * Formatted progress event for webview
@@ -45,9 +46,9 @@ export class ToolCardManager implements vscode.Disposable {
     private outputChannel?: vscode.OutputChannel;
     private disposables: vscode.Disposable[] = [];
 
-    constructor(outputChannel?: vscode.OutputChannel) {
+    constructor(outputChannel?: vscode.OutputChannel, toolRegistry?: ToolRegistry) {
         this.outputChannel = outputChannel;
-        this.formatter = new ToolCardFormatter();
+        this.formatter = new ToolCardFormatter(undefined, toolRegistry);
 
         // Watch for configuration changes
         const configWatcher = vscode.workspace.onDidChangeConfiguration(e => {
@@ -59,6 +60,14 @@ export class ToolCardManager implements vscode.Disposable {
         this.disposables.push(configWatcher);
 
         this.log('ToolCardManager initialized');
+    }
+    
+    /**
+     * Set the tool registry for metadata lookup
+     */
+    setToolRegistry(registry: ToolRegistry): void {
+        this.formatter.setToolRegistry(registry);
+        this.log('Tool registry set for formatter');
     }
 
     /**

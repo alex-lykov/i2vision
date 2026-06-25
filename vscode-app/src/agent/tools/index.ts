@@ -1,0 +1,22 @@
+/**
+ * Tool Registry System
+ * 
+ * Declarative tool management replacing the switch statement approach.
+ * 
+ * Usage:
+ * ```typescript
+ * const registry = new ToolRegistry();
+ * registry.registerAll(fileTools);
+ * registry.registerAll(gitTools);
+ * 
+ * // Get LLM tools
+ * const llmTools = registry.getLLMTools();
+ * 
+ * // Execute a tool
+ * const result = await registry.execute('read_file', { path: 'src/main.kt' }, context);
+ * ```
+ */
+
+export { ToolRegistry } from './ToolRegistry';
+export * from './ToolTypes';
+export * from './builtin';

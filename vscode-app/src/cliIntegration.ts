@@ -846,25 +846,27 @@ export class CLI {
   async getContext(filePath: string): Promise<FileContext | null> {
     this.log(`Getting context: ${filePath}`);
     try {
-      const content = await fs.promises.readFile(filePath, 'utf8');
+      // Resolve relative paths to workspace root
+      const resolvedPath = path.isAbsolute(filePath) ? filePath : path.join(this.workspaceRoot, filePath);
+      const content = await fs.promises.readFile(resolvedPath, 'utf8');
       const lines = content.split('\n');
       const imports = content.match(/import.*from.*['"].*['"]/g) || [];
       const classes = content.match(/(class|interface|type)\s+\w+/g) || [];
       const functions = content.match(/(function|const|let|var)\s+\w+\s*=\s*\(.*\)/g) || [];
-      
+
       return {
-        path: filePath,
-        filePath: filePath,
-        name: path.basename(filePath),
-        language: path.extname(filePath).slice(1),
+        path: resolvedPath,
+        filePath: resolvedPath,
+        name: path.basename(resolvedPath),
+        language: path.extname(resolvedPath).slice(1),
         content,
         size: content.length,
         lines: lines.length,
         imports,
         classes,
         functions,
-        component: path.basename(path.dirname(filePath)),
-        layer: this.inferLayer(path.basename(path.dirname(filePath)))
+        component: path.basename(path.dirname(resolvedPath)),
+        layer: this.inferLayer(path.basename(path.dirname(resolvedPath)))
       };
     } catch (error: any) {
       this.log(`Error getting context: ${error.message}`);

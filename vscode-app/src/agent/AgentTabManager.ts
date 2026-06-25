@@ -352,7 +352,15 @@ export class AgentTabManager {
             ? vscode.ViewColumn.Beside 
             : vscode.ViewColumn.Active;
           try {
-            const doc = await vscode.workspace.openTextDocument(message.filePath);
+            let filePath = message.filePath;
+            // Convert relative path to absolute if needed
+            if (!path.isAbsolute(filePath)) {
+              const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+              if (workspaceRoot) {
+                filePath = path.join(workspaceRoot, filePath);
+              }
+            }
+            const doc = await vscode.workspace.openTextDocument(filePath);
             await vscode.window.showTextDocument(doc, viewColumn);
           } catch (error: any) {
             this.log('Error opening file: ' + error.message);

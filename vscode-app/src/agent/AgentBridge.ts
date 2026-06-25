@@ -141,6 +141,9 @@ export class AgentBridge {
   // Tool Configuration Loader - YAML-based config
   private toolConfigLoader?: ToolConfigLoader;
   
+  // Current VSLFC layer for tool filtering
+  private currentLayer?: VslfcLayer;
+  
   // STATE MACHINE: Single source of truth for all agent state
   private stateMachine: AgentStateMachine = new AgentStateMachine();
   
@@ -262,6 +265,21 @@ export class AgentBridge {
       history: this.stateMachine.getLastTransitions(10),
     };
   }
+  
+  /**
+   * Set the current VSLFC layer for tool filtering
+   */
+  setLayer(layer: VslfcLayer): void {
+    this.currentLayer = layer;
+    this.log(`Layer set to: ${layer}`);
+  }
+  
+  /**
+   * Get the current VSLFC layer
+   */
+  getLayer(): VslfcLayer | undefined {
+    return this.currentLayer;
+  }
 
   private log(message: string): void {
     const timestamp = new Date().toLocaleTimeString();
@@ -296,8 +314,8 @@ export class AgentBridge {
       toolFilter = this.stateMachine.getToolFilter();
     }
 
-    // Get all tools from registry
-    const allTools = this.toolRegistry.getLLMTools();
+    // Get all tools from registry with layer filtering
+    const allTools = this.toolRegistry.getLLMTools(this.currentLayer);
 
     if (toolFilter === 'fix_only') {
       const fixTools = this.toolRegistry.getLLMToolsByName(['apply_edits', 'read_file', 'write_file', 'get_file_context']);

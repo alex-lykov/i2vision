@@ -16,6 +16,55 @@
     function injectToolCardStyles() {
         const style = document.createElement('style');
         style.textContent = `
+            /* Layer selector */
+            .layer-selector-container {
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                padding: 8px 12px;
+                background-color: var(--vscode-panelSectionHeader-background);
+                border-bottom: 1px solid var(--vscode-panelSectionHeader-border);
+                margin-bottom: 10px;
+            }
+            
+            .layer-selector-label {
+                font-size: 12px;
+                font-weight: 600;
+                color: var(--vscode-foreground);
+            }
+            
+            .layer-selector {
+                padding: 4px 8px;
+                font-size: 12px;
+                background-color: var(--vscode-dropdown-background);
+                color: var(--vscode-dropdown-foreground);
+                border: 1px solid var(--vscode-dropdown-border);
+                border-radius: 2px;
+                cursor: pointer;
+            }
+            
+            .layer-selector:hover {
+                border-color: var(--vscode-focusBorder);
+            }
+            
+            .layer-badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                padding: 2px 8px;
+                border-radius: 12px;
+                font-size: 11px;
+                font-weight: 600;
+                text-transform: uppercase;
+                margin-left: 8px;
+            }
+            
+            .layer-badge-vision { background-color: #e91e6320; color: #e91e63; border: 1px solid #e91e63; }
+            .layer-badge-structure { background-color: #9c27b020; color: #9c27b0; border: 1px solid #9c27b0; }
+            .layer-badge-logic { background-color: #2196f320; color: #2196f3; border: 1px solid #2196f3; }
+            .layer-badge-flow { background-color: #ff980020; color: #ff9800; border: 1px solid #ff9800; }
+            .layer-badge-code { background-color: #4caf5020; color: #4caf50; border: 1px solid #4caf50; }
+            
             /* Tool category badge */
             .tool-category-badge {
                 display: inline-flex;
@@ -246,6 +295,12 @@
         window.onModelChange = function() {
             console.log('[WebView] Model changed to:', modelSelect.value);
             vscode.postMessage({ command: 'changeModel', model: modelSelect.value });
+        };
+        
+        window.onLayerChange = function() {
+            const layerSelect = document.getElementById('layerSelect');
+            console.log('[WebView] Layer changed to:', layerSelect.value);
+            vscode.postMessage({ command: 'changeLayer', layer: layerSelect.value });
         };
 
         window.handleKeyPress = function(event) {

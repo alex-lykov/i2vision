@@ -149,6 +149,35 @@ layers:
 
 ---
 
+### Phase 4: Layer-Specific Tool Filtering ✅
+**Priority:** Medium  
+**Estimated Effort:** 2 days  
+**Status:** COMPLETED
+
+- [x] Add `currentLayer` property to AgentBridge
+- [x] Add `setLayer()` and `getLayer()` methods
+- [x] Update `getLLMTools()` to filter by layer
+- [x] Add layer selector UI to webview (HTML/CSS)
+- [x] Add layer change handler in webview JavaScript
+- [x] Add layer badge styles (color-coded per layer)
+- [x] Integrate layer filtering with `getTools()` method
+- [x] Add `onLayerChange()` handler for VSCode communication
+
+**Layer Colors:**
+- VISION: Pink (#e91e63)
+- STRUCTURE: Purple (#9c27b0)
+- LOGIC: Blue (#2196f3)
+- FLOW: Orange (#ff9800)
+- CODE: Green (#4caf50)
+
+**Usage:**
+```typescript
+// Set layer in AgentBridge
+agentBridge.setLayer('VISION');
+
+// Tools will be filtered automatically based on enabledPerLayer
+```
+
 ### Phase 5: Custom Tool Loader
 **Priority:** Medium  
 **Estimated Effort:** 4 days

@@ -16,7 +16,7 @@
 - [x] Replace `getTools()` to use registry
 - [x] Replace `executeTool()` to delegate to registry
 
-### Phase 2: UI Enhancements
+### Phase 2: UI Enhancements - Backend
 - [x] Add category icon mappings (file, git, build, terminal, edit)
 - [x] Create `ToolUiConfig` interface for UI customization
 - [x] Add category badge support
@@ -24,6 +24,18 @@
 - [x] Integrate `ToolRegistry` with `ToolCardFormatter`
 - [x] Add UI configuration to `ToolCardConfig`
 - [x] Add VS Code settings for UI customization
+
+### Phase 6: Enhanced Tool Card UI - WebView ✅
+- [x] Create `injectToolCardStyles()` function for enhanced CSS
+- [x] Add category badges with Codicon icons in webview
+- [x] Add color-coded category badges (file=blue, git=purple, build=orange, terminal=green, edit=yellow)
+- [x] Add help icon (?) with tooltip showing tool description
+- [x] Update `createToolCard()` to include category metadata
+- [x] Add `getToolCategory()` helper function
+- [x] Add `TOOL_DESCRIPTIONS` constant for tooltips
+- [x] Implement compact mode styling (CSS class)
+- [x] Style success/error states with colored left border
+- [x] Enhanced tool call header layout with proper spacing
 
 ---
 

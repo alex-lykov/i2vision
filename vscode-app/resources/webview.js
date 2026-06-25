@@ -10,6 +10,182 @@
         initializeWebView();
     });
 
+    /**
+     * Inject enhanced tool card styles
+     */
+    function injectToolCardStyles() {
+        const style = document.createElement('style');
+        style.textContent = `
+            /* Tool category badge */
+            .tool-category-badge {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                padding: 2px 6px;
+                border-radius: 3px;
+                border: 1px solid;
+                margin-right: 6px;
+                font-size: 11px;
+            }
+            
+            .tool-category-badge .codicon {
+                font-size: 12px;
+                line-height: 1;
+            }
+            
+            /* Help icon (question mark) */
+            .tool-help-icon {
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 16px;
+                height: 16px;
+                border-radius: 50%;
+                background-color: var(--vscode-descriptionForeground);
+                color: var(--vscode-foreground);
+                font-size: 10px;
+                margin-left: 4px;
+                cursor: help;
+                opacity: 0.7;
+                transition: opacity 0.2s;
+            }
+            
+            .tool-help-icon:hover {
+                opacity: 1;
+            }
+            
+            .tool-help-icon .codicon {
+                font-size: 10px;
+            }
+            
+            /* Enhanced tool call card header */
+            .tool-call-header {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                padding: 8px 12px;
+                background-color: var(--vscode-panelSectionHeader-background);
+                border-bottom: 1px solid var(--vscode-panelSectionHeader-border);
+                cursor: pointer;
+                user-select: none;
+            }
+            
+            .tool-call-header:hover {
+                background-color: var(--vscode-panelSectionHeader-hoverBackground);
+            }
+            
+            .tool-call-toggle {
+                font-size: 10px;
+                color: var(--vscode-descriptionForeground);
+                width: 12px;
+            }
+            
+            .tool-call-icon {
+                font-size: 14px;
+            }
+            
+            .tool-call-name {
+                font-weight: 600;
+                font-size: 13px;
+                color: var(--vscode-foreground);
+            }
+            
+            .tool-call-meta {
+                margin-left: auto;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 11px;
+                color: var(--vscode-descriptionForeground);
+            }
+            
+            .tool-call-duration {
+                background-color: var(--vscode-badge-background);
+                color: var(--vscode-badge-foreground);
+                padding: 2px 6px;
+                border-radius: 2px;
+            }
+            
+            .tool-call-id {
+                font-family: var(--vscode-editor-font-family);
+                font-size: 10px;
+                opacity: 0.7;
+            }
+            
+            /* Tool call body */
+            .tool-call-body {
+                padding: 12px;
+                background-color: var(--vscode-panel-background);
+                display: block;
+            }
+            
+            .tool-call-args,
+            .tool-call-result {
+                margin-bottom: 10px;
+            }
+            
+            .tool-call-args:last-child,
+            .tool-call-result:last-child {
+                margin-bottom: 0;
+            }
+            
+            .args-label,
+            .result-label,
+            .error-label {
+                display: block;
+                font-weight: 600;
+                font-size: 11px;
+                text-transform: uppercase;
+                color: var(--vscode-descriptionForeground);
+                margin-bottom: 4px;
+            }
+            
+            .tool-call-args pre,
+            .tool-call-result pre {
+                margin: 0;
+                padding: 10px;
+                background-color: var(--vscode-textCodeBlock-background);
+                border-radius: 4px;
+                font-family: var(--vscode-editor-font-family);
+                font-size: 12px;
+                overflow-x: auto;
+                max-height: 300px;
+                overflow-y: auto;
+            }
+            
+            .tool-call-error {
+                padding: 10px;
+                background-color: var(--vscode-inputValidation-errorBackground);
+                border: 1px solid var(--vscode-inputValidation-errorBorder);
+                border-radius: 4px;
+                color: var(--vscode-errorForeground);
+            }
+            
+            /* Success/error states */
+            .tool-call-card.success .tool-call-header {
+                border-left: 3px solid var(--vscode-terminal-ansiGreen);
+            }
+            
+            .tool-call-card.processing .tool-call-header {
+                border-left: 3px solid var(--vscode-progressBar-background);
+            }
+            
+            .tool-call-card.error .tool-call-header {
+                border-left: 3px solid var(--vscode-errorForeground);
+            }
+            
+            /* Compact mode */
+            .tool-call-card.compact .tool-call-body {
+                display: none;
+            }
+            
+            .tool-call-card.compact .tool-call-toggle {
+                transform: rotate(-90deg);
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
     function initializeWebView() {
         const vscode = acquireVsCodeApi();
         const messagesDiv = document.getElementById('messages');
@@ -17,6 +193,9 @@
         const userInput = document.getElementById('userInput');
         const providerSelect = document.getElementById('providerSelect');
         const modelSelect = document.getElementById('modelSelect');
+
+        // Inject enhanced tool card styles
+        injectToolCardStyles();
 
         let isProcessing = false;
         let streamingMessageDiv = null;
@@ -406,11 +585,32 @@
             const statusClass = isComplete ? (toolCall.error ? 'status-error' : 'status-success') : 'status-pending';
             const argsJson = toolCall.args ? JSON.stringify(toolCall.args, null, 2) : '{}';
             
+            // Get category info
+            const categoryInfo = getToolCategory(toolCall.toolName);
+            const description = TOOL_DESCRIPTIONS[toolCall.toolName];
+
+            // Build category badge HTML
+            const categoryBadge = categoryInfo ? `
+                <span class="tool-category-badge" style="background-color: ${categoryInfo.color}20; border-color: ${categoryInfo.color};" 
+                      title="${categoryInfo.displayName}">
+                    <span class="codicon codicon-${categoryInfo.icon}" style="color: ${categoryInfo.color};"></span>
+                </span>
+            ` : '';
+
+            // Build help tooltip HTML
+            const helpTooltip = description ? `
+                <span class="tool-help-icon" title="${escapeHtml(description)}">
+                    <span class="codicon codicon-question"></span>
+                </span>
+            ` : '';
+
             card.innerHTML = `
                 <div class="tool-call-header" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
                     <span class="tool-call-toggle">▶</span>
                     <span class="tool-call-status" style="background: ${toolCall.error ? 'var(--vscode-errorForeground)' : 'var(--vscode-terminal-ansiGreen)'}">${statusIcon}</span>
+                    ${categoryBadge}
                     <span class="tool-call-name">${toolCall.toolName}</span>
+                    ${helpTooltip}
                     <div class="tool-call-meta">
                         <span class="tool-call-duration">${isComplete ? 'completed' : 'running...'}</span>
                     </div>
@@ -434,9 +634,74 @@
                     `}
                 </div>
             `;
-            
+
             return card;
         }
+
+        /**
+         * Tool category icon mappings
+         */
+        function getToolCategory(toolName) {
+            const toolCategoryMap = {
+                'list_directory': 'file',
+                'read_file': 'file',
+                'write_file': 'file',
+                'search_files': 'file',
+                'get_file_context': 'file',
+                'revert_file': 'file',
+                'revert_all': 'file',
+                'list_snapshots': 'file',
+                'git_status': 'git',
+                'git_diff': 'git',
+                'git_log': 'git',
+                'git_branch': 'git',
+                'git_commit': 'git',
+                'run_build': 'build',
+                'run_terminal': 'terminal',
+                'kill_terminal': 'terminal',
+                'list_terminals': 'terminal',
+                'terminal_status': 'terminal',
+                'kill_port': 'terminal',
+                'apply_edits': 'edit'
+            };
+
+            const category = toolCategoryMap[toolName];
+            const categoryIcons = {
+                file: { icon: 'file', color: '#007acc', displayName: 'File Operations' },
+                git: { icon: 'git-commit', color: '#6f42c1', displayName: 'Git Operations' },
+                build: { icon: 'gear', color: '#d46b08', displayName: 'Build & Compile' },
+                terminal: { icon: 'terminal', color: '#2ea043', displayName: 'Terminal' },
+                edit: { icon: 'edit', color: '#d29922', displayName: 'Edit Operations' }
+            };
+
+            return category ? categoryIcons[category] : undefined;
+        }
+
+        /**
+         * Tool descriptions for tooltips
+         */
+        const TOOL_DESCRIPTIONS = {
+            'list_directory': 'List files in a directory',
+            'read_file': 'Read contents of a file',
+            'write_file': 'Write content to a file',
+            'apply_edits': 'Apply targeted edits to an existing file (max 50 edits)',
+            'search_files': 'Search for files matching a regex pattern',
+            'get_file_context': 'Get context for a specific file (classes, functions, imports)',
+            'revert_file': 'Revert a file to its original state',
+            'revert_all': 'Revert ALL modified files to their original state',
+            'list_snapshots': 'List all files that have been modified',
+            'git_status': 'Show working tree status',
+            'git_diff': 'Show changes between commits',
+            'git_log': 'Show recent commit history',
+            'git_branch': 'Show current or all branches',
+            'git_commit': 'Stage files and create a commit',
+            'run_build': 'Run a build command',
+            'run_terminal': 'Run a terminal command',
+            'kill_terminal': 'Stop a running terminal by name',
+            'list_terminals': 'List all managed terminals',
+            'terminal_status': 'Check if a terminal is running',
+            'kill_port': 'Find and kill the process using a specific port'
+        };
 
         function updateToolCard(card, toolCall, isComplete) {
             const statusIcon = isComplete ? (toolCall.error ? '✗' : '✓') : '⏳';

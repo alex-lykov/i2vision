@@ -189,18 +189,108 @@ function createToolCallsSection(toolCalls: ToolCallData[], display: DisplayConfi
 }
 
 /**
- * Create individual tool call card
+ * Tool category icon mappings (must match CATEGORY_ICONS in ToolTypes.ts)
+ */
+const TOOL_CATEGORY_ICONS: Record<string, { icon: string; color: string; displayName: string }> = {
+  file: { icon: 'file', color: '#007acc', displayName: 'File Operations' },
+  git: { icon: 'git-commit', color: '#6f42c1', displayName: 'Git Operations' },
+  build: { icon: 'gear', color: '#d46b08', displayName: 'Build & Compile' },
+  terminal: { icon: 'terminal', color: '#2ea043', displayName: 'Terminal' },
+  edit: { icon: 'edit', color: '#d29922', displayName: 'Edit Operations' }
+};
+
+/**
+ * Get category info for a tool
+ */
+function getToolCategory(toolName: string): { icon: string; color: string; displayName: string } | undefined {
+  // Map tool names to categories
+  const toolCategoryMap: Record<string, string> = {
+    'list_directory': 'file',
+    'read_file': 'file',
+    'write_file': 'file',
+    'search_files': 'file',
+    'get_file_context': 'file',
+    'revert_file': 'file',
+    'revert_all': 'file',
+    'list_snapshots': 'file',
+    'git_status': 'git',
+    'git_diff': 'git',
+    'git_log': 'git',
+    'git_branch': 'git',
+    'git_commit': 'git',
+    'run_build': 'build',
+    'run_terminal': 'terminal',
+    'kill_terminal': 'terminal',
+    'list_terminals': 'terminal',
+    'terminal_status': 'terminal',
+    'kill_port': 'terminal',
+    'apply_edits': 'edit'
+  };
+
+  const category = toolCategoryMap[toolName];
+  return category ? TOOL_CATEGORY_ICONS[category] : undefined;
+}
+
+/**
+ * Tool descriptions for tooltips
+ */
+const TOOL_DESCRIPTIONS: Record<string, string> = {
+  'list_directory': 'List files in a directory',
+  'read_file': 'Read contents of a file',
+  'write_file': 'Write content to a file',
+  'apply_edits': 'Apply targeted edits to an existing file (max 50 edits)',
+  'search_files': 'Search for files matching a regex pattern',
+  'get_file_context': 'Get context for a specific file (classes, functions, imports)',
+  'revert_file': 'Revert a file to its original state',
+  'revert_all': 'Revert ALL modified files to their original state',
+  'list_snapshots': 'List all files that have been modified',
+  'git_status': 'Show working tree status',
+  'git_diff': 'Show changes between commits',
+  'git_log': 'Show recent commit history',
+  'git_branch': 'Show current or all branches',
+  'git_commit': 'Stage files and create a commit',
+  'run_build': 'Run a build command',
+  'run_terminal': 'Run a terminal command',
+  'kill_terminal': 'Stop a running terminal by name',
+  'list_terminals': 'List all managed terminals',
+  'terminal_status': 'Check if a terminal is running',
+  'kill_port': 'Find and kill the process using a specific port'
+};
+
+/**
+ * Create individual tool call card with enhanced UI
  */
 function createToolCallCard(toolCall: ToolCallData): string {
   const successClass = toolCall.success !== false ? 'success' : 'error';
   const icon = toolCall.success !== false ? '✅' : '❌';
+
+  // Get category info
+  const categoryInfo = getToolCategory(toolCall.toolName);
+  const description = TOOL_DESCRIPTIONS[toolCall.toolName];
+
+  // Build category badge HTML
+  const categoryBadge = categoryInfo ? `
+    <span class="tool-category-badge" style="background-color: ${categoryInfo.color}20; border-color: ${categoryInfo.color};" 
+          title="${categoryInfo.displayName}">
+      <span class="codicon codicon-${categoryInfo.icon}" style="color: ${categoryInfo.color};"></span>
+    </span>
+  ` : '';
+
+  // Build help tooltip HTML
+  const helpTooltip = description ? `
+    <span class="tool-help-icon" title="${escapeHtml(description)}">
+      <span class="codicon codicon-question"></span>
+    </span>
+  ` : '';
 
   return `
     <div class="tool-call-card ${successClass}" data-tool-call-id="${toolCall.toolCallId || ''}">
       <div class="tool-call-header" onclick="toggleToolCallCard(this)">
         <span class="tool-call-toggle">▼</span>
         <span class="tool-call-icon">${icon}</span>
+        ${categoryBadge}
         <span class="tool-call-name">${escapeHtml(toolCall.toolName)}</span>
+        ${helpTooltip}
         <span class="tool-call-meta">
           ${toolCall.durationMs ? `<span class="tool-call-duration">${formatDuration(toolCall.durationMs)}</span>` : ''}
           ${toolCall.toolCallId ? `<span class="tool-call-id" title="Tool Call ID">${escapeHtml(toolCall.toolCallId)}</span>` : ''}

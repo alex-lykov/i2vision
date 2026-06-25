@@ -25,6 +25,7 @@ import {
   AgentEvent,
   StateContext,
 } from './AgentStateMachine';
+import { VslfcLayer } from './tools';
 import {
   ToolRegistry,
   ToolContext,

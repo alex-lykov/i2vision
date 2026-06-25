@@ -150,9 +150,9 @@ export class ToolCardFormatter {
             
             // UI metadata from ToolRegistry
             category: toolDef?.category,
-            categoryIcon: uiConfig.showCategoryIcon ? categoryConfig?.icon : undefined,
-            categoryColor: uiConfig.showCategoryBadge ? categoryConfig?.color : undefined,
-            description: uiConfig.showDescriptionTooltip ? toolDef?.description : undefined,
+            categoryIcon: uiConfig?.showCategoryIcon ? categoryConfig?.icon : undefined,
+            categoryColor: uiConfig?.showCategoryBadge ? categoryConfig?.color : undefined,
+            description: uiConfig?.showDescriptionTooltip ? toolDef?.description : undefined,
             isReadOnly: toolDef?.isReadOnly
         };
     }

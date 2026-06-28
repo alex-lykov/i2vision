@@ -334,7 +334,9 @@ export class AgentBridge {
     }
 
     // Get all tools from registry with layer filtering
+    this.log(`getTools() called: layer=${this.currentLayer || 'none'}, toolFilter=${toolFilter || 'all'}`);
     const allTools = this.toolRegistry.getLLMTools(this.currentLayer);
+    this.log(`Tool registry returned ${allTools.length} tools`);
 
     if (toolFilter === 'fix_only') {
       const fixTools = this.toolRegistry.getLLMToolsByName(['apply_edits', 'read_file', 'write_file', 'get_file_context']);

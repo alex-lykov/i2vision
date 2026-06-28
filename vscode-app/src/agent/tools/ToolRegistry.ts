@@ -56,7 +56,7 @@ export class ToolRegistry {
    * Optionally filtered by VSLFC layer
    */
   getLLMTools(layer?: VslfcLayer): LLMTool[] {
-    return Array.from(this.tools.values())
+    const tools = Array.from(this.tools.values())
       .filter(t => !this.disabledTools.has(t.name))
       .filter(t => !layer || !t.enabledPerLayer || t.enabledPerLayer.includes(layer))
       .map(t => {
@@ -74,6 +74,13 @@ export class ToolRegistry {
           }
         } as LLMTool;
       });
+    
+    console.log(`[ToolRegistry] getLLMTools(layer=${layer || 'none'}): ${tools.length} tools returned out of ${this.tools.size} registered`);
+    if (layer) {
+      console.log(`[ToolRegistry] Layer filter applied for: ${layer}`);
+    }
+    
+    return tools;
   }
 
   /**

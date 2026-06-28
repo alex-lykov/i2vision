@@ -123,12 +123,6 @@
                 background-color: var(--vscode-panelSectionHeader-hoverBackground);
             }
             
-            .tool-call-toggle {
-                font-size: 10px;
-                color: var(--vscode-descriptionForeground);
-                width: 12px;
-            }
-            
             .tool-call-icon {
                 font-size: 14px;
             }
@@ -228,8 +222,9 @@
                 display: none;
             }
             
-            .tool-call-card.compact .tool-call-toggle {
-                transform: rotate(-90deg);
+            /* Collapsed state */
+            .tool-call-card.collapsed .tool-call-body {
+                display: none;
             }
         `;
         document.head.appendChild(style);
@@ -660,8 +655,7 @@
             ` : '';
 
             card.innerHTML = `
-                <div class="tool-call-header" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
-                    <span class="tool-call-toggle">▶</span>
+                <div class="tool-call-header" onclick="toggleToolCallCard(this)">
                     <span class="tool-call-status" style="background: ${toolCall.error ? 'var(--vscode-errorForeground)' : 'var(--vscode-terminal-ansiGreen)'}">${statusIcon}</span>
                     ${categoryBadge}
                     <span class="tool-call-name">${toolCall.toolName}</span>
@@ -784,6 +778,22 @@
                 `;
             }
         }
+        
+        /**
+         * Toggle tool call card expand/collapse (global function for onclick)
+         */
+        window.toggleToolCallCard = function(header) {
+            const body = header.nextElementSibling;
+            const card = header.parentElement;
+            
+            if (body.style.display === 'none') {
+                body.style.display = 'block';
+                card.classList.remove('collapsed');
+            } else {
+                body.style.display = 'none';
+                card.classList.add('collapsed');
+            }
+        };
 
         // =====================================================================
         // MESSAGE HANDLER (other commands)

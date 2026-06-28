@@ -286,8 +286,7 @@ function createToolCallCard(toolCall: ToolCallData): string {
   return `
     <div class="tool-call-card ${successClass}" data-tool-call-id="${toolCall.toolCallId || ''}">
       <div class="tool-call-header" onclick="toggleToolCallCard(this)">
-        <span class="tool-call-toggle">▼</span>
-        <span class="tool-call-icon">${icon}</span>
+        <span class="tool-call-status">${icon}</span>
         ${categoryBadge}
         <span class="tool-call-name">${escapeHtml(toolCall.toolName)}</span>
         ${helpTooltip}
@@ -422,14 +421,14 @@ function toggleOutputCard(button: HTMLElement): void {
  */
 function toggleToolCallCard(header: HTMLElement): void {
   const body = header.nextElementSibling as HTMLElement;
-  const toggle = header.querySelector('.tool-call-toggle') as HTMLElement;
-
+  const card = header.parentElement as HTMLElement;
+  
   if (body.style.display === 'none') {
     body.style.display = 'block';
-    toggle.textContent = '▼';
+    card.classList.remove('collapsed');
   } else {
     body.style.display = 'none';
-    toggle.textContent = '▶';
+    card.classList.add('collapsed');
   }
 }
 

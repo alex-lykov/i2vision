@@ -37,6 +37,8 @@ import {
   buildTools,
   ToolConfigLoader,
   CustomToolPluginLoader,
+  DomainDetector,
+  DomainResolution,
 } from './tools';
 
 export interface ContextProfile {
@@ -165,6 +167,11 @@ export class AgentBridge {
   private _buildFileReadAttempts = new Map<string, number>();
   private _hasReadBuildFiles = new Map<string, boolean>();
 
+  // Domain detector - architecture-aware domain resolution
+  private domainDetector: DomainDetector = new DomainDetector();
+  private _domainResolution?: DomainResolution;
+  private _suggestedDirectories: string[] = [];
+
   // Auto-explore on failed search tracking
   private _failedSearchCount: number = 0;
   private _lastSearchPattern: string | null = null;
@@ -238,6 +245,11 @@ export class AgentBridge {
     
     // Initialize custom tool plugin loader
     this.pluginLoader = new CustomToolPluginLoader(this.workspaceRoot, this.outputChannel);
+    
+    // Initialize domain detector (architecture-aware)
+    this.domainDetector.initialize(this.workspaceRoot).catch((e: any) => 
+      this.log(`Domain detector initialization error: ${e.message}`)
+    );
     
     const customPatterns = (config as any).execution?.longRunningPatterns;
     if (customPatterns && Array.isArray(customPatterns) && customPatterns.length > 0) {
@@ -447,6 +459,15 @@ export class AgentBridge {
 
   async *executeAgentLoop(userInput: string, systemPrompt: string, options: AgentLoopOptions = { streaming: false }): AsyncGenerator<AgentChunk> {
     // STATE MACHINE FLOW: Intent → Plan → Constraints → Sequence → Execute → Verify → Output
+    
+    // DOMAIN DETECTION: Classify task as frontend/backend/shared using architecture knowledge
+    this._domainResolution = this.domainDetector.resolveDomain(userInput);
+    this._suggestedDirectories = this._domainResolution.suggestedDirectories;
+    
+    if (this._domainResolution.primaryDomain !== 'unknown' && this._domainResolution.confidence > 0.3) {
+      this.log(`Domain resolved: ${this._domainResolution.primaryDomain} (${this._domainResolution.rationale})`);
+      this.log(`Suggested directories: ${this._suggestedDirectories.join(', ')}`);
+    }
     
     const taskType = this.detectTaskType(userInput);
     let contextProfile: ContextProfile | undefined;
@@ -925,40 +946,39 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
             this._failedSearchCount++;
             this._lastSearchPattern = searchPattern;
             
-            // First failed search - auto-list relevant directories and inject immediately
+            // First failed search - use domain knowledge to guide exploration
             if (this._failedSearchCount === 1) {
-              try {
-                const projectDirs = await this.cli.listFiles(this.workspaceRoot, false);
-                const relevantDirs = projectDirs.filter(d => 
-                  /frontend|src|components|editor|canvas|ui|web|app|client/i.test(d)
-                );
-                
-                if (relevantDirs.length > 0) {
-                  // Inject as a tool message immediately (not just _autoNudge)
-                  const exploreMessage = `[AUTO-EXPLORE] Search for "${searchPattern}" found nothing.
+              // Use domain-aware directories if available
+              const directoriesToList = this._suggestedDirectories.length > 0 
+                ? this._suggestedDirectories 
+                : [this.workspaceRoot];
+              
+              const domainContext = this._domainResolution?.primaryDomain !== 'unknown'
+                ? `This appears to be a **${this._domainResolution.primaryDomain}** task.\n\n`
+                : '';
+              
+              const exploreMessage = `[AUTO-EXPLORE] Search for "${searchPattern}" found nothing.
 
-Instead of searching again, explore these relevant directories first:
-${relevantDirs.map(d => `  - ${d}`).join('\n')}
+${domainContext}Instead of searching again, explore these directories first:
+${directoriesToList.map(d => `  - ${d}`).join('\n')}
 
 TIP: Use list_directory on these folders to understand the structure, THEN search or read specific files.
 
 Example:
-  list_directory(path: "frontend/src")
-  list_directory(path: "client/components")
+  list_directory(path: "${directoriesToList[0] || 'frontend/src'}")
 `;
-                  messages.push({
-                    role: 'tool',
-                    content: exploreMessage,
-                    tool_call_id: `auto_explore_${Date.now()}`
-                  });
-                  this.log(`Auto-explore: Listed ${relevantDirs.length} relevant directories after failed search for "${searchPattern}"`);
-                }
-              } catch (e: any) {
-                this.log(`Auto-explore error: ${e.message}`);
-              }
+              messages.push({
+                role: 'tool',
+                content: exploreMessage,
+                tool_call_id: `auto_explore_${Date.now()}`
+              });
+              this.log(`Auto-explore: Listed ${directoriesToList.length} directories after failed search for "${searchPattern}" (domain: ${this._domainResolution?.primaryDomain || 'unknown'})`);
             } else if (this._failedSearchCount >= 2) {
               // Second failed search - stronger nudge
-              this._autoNudge = `⚠️ You've searched ${this._failedSearchCount} times without finding results. STOP searching. Use list_directory to explore the project structure first.`;
+              const domainTip = this._domainResolution?.primaryDomain !== 'unknown'
+                ? ` Focus on ${this._domainResolution.primaryDomain} directories.`
+                : '';
+              this._autoNudge = `⚠️ You've searched ${this._failedSearchCount} times without finding results. STOP searching. Use list_directory to explore the project structure first.${domainTip}`;
             }
           } else {
             // Successful search - reset counter

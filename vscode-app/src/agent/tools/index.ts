@@ -24,7 +24,9 @@
 export { ToolRegistry } from './ToolRegistry';
 export { ToolConfigLoader } from './ToolConfigLoader';
 export { CustomToolPluginLoader } from './CustomToolPluginLoader';
+export { DomainDetector } from './DomainDetector';
 export type { ToolYamlConfig, CustomToolConfig, ToolOverrideConfig, LayerToolConfig } from './ToolConfigLoader';
 export type { CustomToolPlugin } from './CustomToolPluginLoader';
+export type { ModuleDomain, ModuleInfo, ProjectArchitecture, DomainResolution } from './DomainDetector';
 export * from './ToolTypes';
 export * from './builtin';

@@ -105,6 +105,25 @@
     .history-refresh-btn:hover{background:var(--vscode-toolbar-hoverBackground)}
     .btn-icon{width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:1px solid transparent;border-radius:4px;cursor:pointer;color:var(--vscode-foreground);transition:all 0.2s ease;font-size:1.2em;}
     .btn-icon:hover{background:var(--vscode-toolbar-hoverBackground);border-color:var(--vscode-input-border)}
+
+    /* Unified Tool Card - Simple format: |category icon| tool name | toggle | */
+    .tool-category-badge{display:inline-flex;align-items:center;justify-content:center;padding:2px 4px;border-radius:3px;margin-right:6px;font-size:14px;line-height:1;vertical-align:middle}
+
+    .tool-call-card{margin:4px 0;border-radius:4px;overflow:hidden}
+    .tool-call-header{display:flex;align-items:center;gap:6px;padding:8px 12px;background-color:var(--vscode-panelSectionHeader-background);cursor:pointer;user-select:none;transition:background-color 0.2s}
+    .tool-call-header:hover{background-color:var(--vscode-panelSectionHeader-hoverBackground)}
+    .tool-call-name{font-weight:600;font-size:13px;color:var(--vscode-foreground)}
+    .tool-call-toggle-icon{margin-left:auto;color:var(--vscode-descriptionForeground);font-size:14px}
+    .tool-call-card.collapsed .tool-call-toggle-icon .codicon{transform:rotate(-90deg)}
+    .tool-call-card.collapsed .tool-call-body{display:none}
+
+    .tool-call-body{padding:10px 12px;background-color:var(--vscode-panel-background)}
+    .tool-card-result pre{margin:0;padding:10px;background-color:var(--vscode-textCodeBlock-background);border-radius:4px;font-family:var(--vscode-editor-font-family);font-size:12px;overflow-x:auto;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-word}
+
+    .tool-call-card.running .tool-call-header{border-left:3px solid var(--vscode-progressBar-background)}
+    .tool-call-card.done .tool-call-header{border-left:3px solid var(--vscode-terminal-successBackground)}
+    .tool-call-card.error .tool-call-header{border-left:3px solid var(--vscode-errorForeground)}
+    .tool-call-status{font-size:14px}
   </style>
 </head>
 <body>
@@ -417,6 +436,32 @@
       scrollToBottom();
     }
     
+    /**
+     * Unified tool card HTML - used for BOTH new chat and resumed chat
+     * Simple format: |category icon| tool name | collapse/expand |
+     */
+    function createToolCardHTML(toolName, args, result, durationMs, isError, toolCallId) {
+      const categoryInfo = getToolCategory(toolName);
+      const categoryBadge = categoryInfo ?
+        '<span class="tool-category-badge" style="color: ' + categoryInfo.color + ';" title="' + categoryInfo.displayName + '">' +
+          categoryInfo.icon +
+        '</span>' : '';
+
+      const statusIcon = isError ? '✗' : '✓';
+      const statusColor = isError ? 'var(--vscode-errorForeground)' : 'var(--vscode-terminal-successBackground)';
+      const resultContent = result ? '<div class="tool-card-result"><pre>' + escapeHtml(result.substring(0, 3000)) + '</pre></div>' : '';
+
+      return '<div class="tool-call-card' + (isError ? ' error' : ' done collapsed') + '"' + (toolCallId ? ' data-tool-call-id="' + toolCallId + '"' : '') + '>' +
+        '<div class="tool-call-header" onclick="toggleToolCallCard(this)">' +
+          '<span class="tool-call-status" style="color: ' + statusColor + '">' + statusIcon + '</span>' +
+          categoryBadge +
+          '<span class="tool-call-name">' + escapeHtml(toolName.replace(/_/g, ' ')) + '</span>' +
+          '<span class="tool-call-toggle-icon"><span class="codicon codicon-chevron-down"></span></span>' +
+        '</div>' +
+        '<div class="tool-call-body">' + resultContent + '</div>' +
+      '</div>';
+    }
+
     function appendRestoredMessage(content, toolCalls, timestamp) {
       const div = document.createElement('div');
       div.className = 'message restored';
@@ -424,17 +469,10 @@
       timeline.appendChild(div);
       if (toolCalls && toolCalls.length > 0) {
         toolCalls.forEach(function(tc) {
+          const cardHTML = createToolCardHTML(tc.toolName, tc.args, tc.result, tc.durationMs, !!tc.error, tc.toolCallId);
           const card = document.createElement('div');
-          card.className = 'tool-card done collapsed';
-          const cardId = 'tool-' + Date.now();
-          card.id = cardId;
-          let resultHtml = tc.result ? '<div class="tool-card-label">Result</div><div class="tool-card-result">' + escapeHtml(tc.result.substring(0, 500)) + '</div>' : '';
-          card.innerHTML = '<div class="tool-card-header" onclick="toggleToolCard(\'' + cardId + '\')">' +
-            '<span class="tool-card-status"><span class="codicon codicon-check"></span></span>' +
-            '<span>' + escapeHtml(tc.toolName) + '</span>' +
-            '<span class="toggle-icon"><span class="codicon codicon-chevron-right"></span></span>' +
-            '</div><div class="tool-card-content">' + resultHtml + '</div>';
-          timeline.appendChild(card);
+          card.innerHTML = cardHTML;
+          timeline.appendChild(card.firstElementChild);
         });
       }
     }
@@ -465,47 +503,20 @@
       if (streamingElement) {
         streamingElement = null;
       }
-      const cardId = 'tool-' + Date.now();
       const card = document.createElement('div');
-      card.className = 'tool-card running';
-      card.id = cardId;
-      card.dataset.toolName = toolName;
-
-      // Get icon based on tool type
-      let icon = '📄';
-      if (toolName.includes('read')) icon = '📖';
-      else if (toolName.includes('write') || toolName.includes('apply')) icon = '✏️';
-      else if (toolName.includes('search')) icon = '🔍';
-      else if (toolName.includes('list')) icon = '📋';
-      else if (toolName.includes('run') || toolName.includes('terminal')) icon = '⚡';
-      else if (toolName.includes('build')) icon = '🔨';
-      else if (toolName.includes('git')) icon = '🌿';
-
-      // Extract first arg value for display
-      let argsText = '';
-      if (args) {
-        const values = Object.values(args);
-        if (values.length > 0) {
-          argsText = String(values[0]).split(/[\\/]/).pop() || String(values[0]);
-        }
+      card.innerHTML = createToolCardHTML(toolName, args, null, 0, false, null);
+      const cardEl = card.firstElementChild;
+      cardEl.classList.remove('done', 'collapsed');
+      cardEl.classList.add('running');
+      cardEl.dataset.toolName = toolName;
+      const statusSpan = cardEl.querySelector('.tool-call-status');
+      if (statusSpan) {
+        statusSpan.textContent = '⏳';
+        statusSpan.style.color = 'var(--vscode-progressBar-background)';
       }
-
-      // Check if args contain a file path for quick actions
-      const hasFilePath = args && (args.path || args.file);
-      const filePath = args?.path || args?.file || '';
-
-      card.innerHTML = '<div class="tool-card-row">' +
-        '<span class="tool-card-icon">' + icon + '</span>' +
-        '<span class="tool-card-command">' + escapeHtml(toolName.replace(/_/g, ' ')) + '</span>' +
-        '<span class="tool-card-args">' + escapeHtml(argsText) + '</span>' +
-        '<div class="tool-card-options">' +
-          (hasFilePath ? '<span class="tool-card-option" onclick="openFileInEditor(\'' + filePath + '\')" title="Open in editor">↗</span>' +
-                         '<span class="tool-card-option" onclick="openFileInNewWindow(\'' + filePath + '\')" title="Open in new window">⤢</span>' : '') +
-          '<span class="tool-card-option" onclick="toggleToolCard(\'' + cardId + '\')" title="Show details">⌄</span>' +
-        '</div>' +
-        '</div>' +
-        '<div class="tool-card-content"></div>';
-      timeline.appendChild(card);
+      const toggleIcon = cardEl.querySelector('.tool-call-toggle-icon');
+      if (toggleIcon) toggleIcon.remove();
+      timeline.appendChild(cardEl);
     }
 
     function openFileInEditor(filePath) {
@@ -517,7 +528,7 @@
     }
 
     function updateToolCard(toolName, result) {
-      const cards = timeline.querySelectorAll('.tool-card.running');
+      const cards = timeline.querySelectorAll('.tool-call-card.running');
       let targetCard = null;
       for (let i = cards.length - 1; i >= 0; i--) {
         if (cards[i].dataset.toolName === toolName) {
@@ -526,11 +537,24 @@
         }
       }
       if (targetCard) {
+        const isError = !result || result.toLowerCase().includes('error') || result.toLowerCase().includes('failed');
         targetCard.classList.remove('running');
-        targetCard.classList.add('done');
-        const contentDiv = targetCard.querySelector('.tool-card-content');
-        if (contentDiv && result) {
-          contentDiv.textContent = result.substring(0, 3000);
+        targetCard.classList.add('done', 'collapsed');
+        const statusSpan = targetCard.querySelector('.tool-call-status');
+        if (statusSpan) {
+          statusSpan.textContent = isError ? '✗' : '✓';
+          statusSpan.style.color = isError ? 'var(--vscode-errorForeground)' : 'var(--vscode-terminal-successBackground)';
+        }
+        const header = targetCard.querySelector('.tool-call-header');
+        if (header && !header.querySelector('.tool-call-toggle-icon')) {
+          const toggleIcon = document.createElement('span');
+          toggleIcon.className = 'tool-call-toggle-icon';
+          toggleIcon.innerHTML = '<span class="codicon codicon-chevron-down"></span>';
+          header.appendChild(toggleIcon);
+        }
+        const body = targetCard.querySelector('.tool-call-body');
+        if (body && result) {
+          body.innerHTML = '<div class="tool-card-result"><pre>' + escapeHtml(result.substring(0, 3000)) + '</pre></div>';
         }
       }
     }
@@ -587,13 +611,13 @@
       timeline.appendChild(div);
     }
     
-    function toggleToolCard(cardId) {
-      const card = document.getElementById(cardId);
-      if (card) card.classList.toggle('expanded');
+    function toggleToolCallCard(header) {
+      const card = header.parentElement;
+      card.classList.toggle('collapsed');
     }
     
     function collapseAllToolCardsExceptLast() {
-      const cards = timeline.querySelectorAll('.tool-card.done');
+      const cards = timeline.querySelectorAll('.tool-call-card.done');
       cards.forEach(function(card, index) {
         if (index < cards.length - 1) card.classList.add('collapsed');
         else card.classList.remove('collapsed');
@@ -648,6 +672,45 @@
       toast.innerHTML = '<span class="codicon codicon-check"></span>' + message;
       document.body.appendChild(toast);
       setTimeout(function() { toast.remove(); }, 2000);
+    }
+
+    /**
+     * Tool category icon mappings
+     */
+    function getToolCategory(toolName) {
+      const toolCategoryMap = {
+        'list_directory': 'file',
+        'read_file': 'file',
+        'write_file': 'file',
+        'search_files': 'file',
+        'get_file_context': 'file',
+        'revert_file': 'file',
+        'revert_all': 'file',
+        'list_snapshots': 'file',
+        'git_status': 'git',
+        'git_diff': 'git',
+        'git_log': 'git',
+        'git_branch': 'git',
+        'git_commit': 'git',
+        'run_build': 'build',
+        'run_terminal': 'terminal',
+        'kill_terminal': 'terminal',
+        'list_terminals': 'terminal',
+        'terminal_status': 'terminal',
+        'kill_port': 'terminal',
+        'apply_edits': 'edit'
+      };
+
+      const categoryIcons = {
+        file: { icon: '📄', color: '#007acc', displayName: 'File Operations' },
+        git: { icon: '🌿', color: '#6f42c1', displayName: 'Git Operations' },
+        build: { icon: '⚙️', color: '#d46b08', displayName: 'Build & Compile' },
+        terminal: { icon: '💻', color: '#2ea043', displayName: 'Terminal' },
+        edit: { icon: '✏️', color: '#d29922', displayName: 'Edit Operations' }
+      };
+
+      const category = toolCategoryMap[toolName];
+      return category ? categoryIcons[category] : undefined;
     }
   </script>
 </body>

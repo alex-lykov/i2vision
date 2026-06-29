@@ -425,14 +425,35 @@
                     const argsJson = tool.args ? JSON.stringify(tool.args, null, 2) : '{}';
                     const resultPreview = tool.result ? String(tool.result).substring(0, 200) + (tool.result.length > 200 ? '...' : '') : 'No result';
                     
+                    // Get category info
+                    const categoryInfo = getToolCategory(tool.toolName);
+                    const description = TOOL_DESCRIPTIONS[tool.toolName];
+                    
+                    // Build category badge HTML
+                    const categoryBadge = categoryInfo ? `
+                        <span class="tool-category-badge" style="background-color: ${categoryInfo.color}20; border-color: ${categoryInfo.color};" 
+                              title="${categoryInfo.displayName}">
+                            <span class="codicon codicon-${categoryInfo.icon}" style="color: ${categoryInfo.color};"></span>
+                        </span>
+                    ` : '';
+                    
+                    // Build help tooltip HTML
+                    const helpTooltip = description ? `
+                        <span class="tool-help-icon" title="${escapeHtml(description)}">
+                            <span class="codicon codicon-question"></span>
+                        </span>
+                    ` : '';
+                    
                     toolCardsHtml += `
-                        <div class="tool-call-card ${toolStatus}">
-                            <div class="tool-call-header" onclick="this.nextElementSibling.style.display = this.nextElementSibling.style.display === 'none' ? 'block' : 'none'">
-                                <span class="tool-call-toggle">▶</span>
+                        <div class="tool-call-card ${toolStatus}" data-tool-call-id="${tool.toolCallId || ''}">
+                            <div class="tool-call-header" onclick="toggleToolCallCard(this)">
                                 <span class="tool-call-status">${toolStatusIcon}</span>
+                                ${categoryBadge}
                                 <span class="tool-call-name">${tool.toolName}</span>
+                                ${helpTooltip}
                                 <div class="tool-call-meta">
                                     <span class="tool-call-duration">${tool.durationMs || 0}ms</span>
+                                    ${tool.toolCallId ? `<span class="tool-call-id" title="Tool Call ID">${escapeHtml(tool.toolCallId)}</span>` : ''}
                                 </div>
                             </div>
                             <div class="tool-call-body">
@@ -766,7 +787,7 @@
             
             const durationSpan = card.querySelector('.tool-call-duration');
             if (durationSpan) {
-                durationSpan.textContent = isComplete ? 'completed' : 'running...';
+                durationSpan.textContent = isComplete ? `${toolCall.durationMs || 0}ms` : 'running...';
             }
             
             const resultDiv = card.querySelector('.tool-call-result');

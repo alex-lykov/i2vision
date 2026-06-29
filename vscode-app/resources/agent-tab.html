@@ -124,6 +124,18 @@
     .tool-call-card.done .tool-call-header{border-left:3px solid var(--vscode-terminal-successBackground)}
     .tool-call-card.error .tool-call-header{border-left:3px solid var(--vscode-errorForeground)}
     .tool-call-status{font-size:14px}
+
+    /* Scroll-to-bottom button */
+    .scroll-to-bottom-btn{position:fixed;bottom:140px;right:40px;width:40px;height:40px;border-radius:50%;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;cursor:pointer;display:none;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.3);z-index:100;transition:all 0.2s}
+    .scroll-to-bottom-btn:hover{background:var(--vscode-button-hoverBackground);transform:translateY(-2px)}
+    .scroll-to-bottom-btn.visible{display:flex}
+    .scroll-to-bottom-btn .codicon{font-size:18px}
+
+    /* Auto-scroll toggle */
+    .auto-scroll-toggle{display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;font-size:0.8em;color:var(--vscode-descriptionForeground);position:fixed;bottom:140px;right:90px;cursor:pointer;z-index:100}
+    .auto-scroll-toggle:hover{background:var(--vscode-toolbar-hoverBackground)}
+    .auto-scroll-toggle input{margin:0;cursor:pointer}
+    .auto-scroll-toggle.enabled{color:var(--vscode-terminal-successBackground);border-color:var(--vscode-terminal-successBackground)}
   </style>
 </head>
 <body>
@@ -151,6 +163,17 @@
         Hello! I am your i2-Vision coding agent. What would you like to work on?
       </div>
     </div>
+
+    <!-- Scroll-to-bottom button -->
+    <button class="scroll-to-bottom-btn" id="scrollToBottomBtn" onclick="scrollToBottom()" title="Scroll to bottom (↓)">
+      <span class="codicon codicon-arrow-down"></span>
+    </button>
+
+    <!-- Auto-scroll toggle -->
+    <label class="auto-scroll-toggle enabled" id="autoScrollToggle" onclick="toggleAutoScroll()" title="Auto-scroll on new messages">
+      <input type="checkbox" id="autoScrollCheckbox" checked>
+      <span>Auto-scroll</span>
+    </label>
   </div>
   
   <div class="footer-panel">
@@ -215,13 +238,18 @@
     const tokenText = document.getElementById('tokenText');
     const providerSelect = document.getElementById('providerSelect');
     const modelSelect = document.getElementById('modelSelect');
-    
+    const scrollToBottomBtn = document.getElementById('scrollToBottomBtn');
+    const autoScrollToggle = document.getElementById('autoScrollToggle');
+    const autoScrollCheckbox = document.getElementById('autoScrollCheckbox');
+
     let streamingElement = null;
     let thinkingEl = null;
     let isProcessing = false;
     const streamingEnabled = {streamingEnabled};
     const showThinkingSetting = {showThinking};
     let historySidebarVisible = false;
+    let autoScrollEnabled = true;
+    let userHasScrolledUp = false;
     
     window.addEventListener('load', function() {
       vscode.postMessage({ command: 'fetch_models' });
@@ -229,6 +257,27 @@
       setTimeout(() => {
         vscode.postMessage({ command: 'fetch_history' });
       }, 500);
+
+      // Listen for scroll events to detect manual scrolling
+      timeline.addEventListener('scroll', function() {
+        const isAtBottom = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 50;
+
+        if (isAtBottom) {
+          userHasScrolledUp = false;
+          scrollToBottomBtn.classList.remove('visible');
+        } else {
+          userHasScrolledUp = true;
+          scrollToBottomBtn.classList.add('visible');
+        }
+      });
+
+      // Keyboard shortcut for scroll to bottom
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'ArrowDown' && e.ctrlKey) {
+          e.preventDefault();
+          scrollToBottom();
+        }
+      });
     });
     
     function toggleHistorySidebar() {
@@ -399,6 +448,7 @@
         case 'conversation_deleted': showToast('Conversation deleted'); break;
       }
       scrollToBottom();
+      autoScrollIfNeeded();
     });
     
     function populateModelDropdown(models, currentModel, currentProvider) {
@@ -433,7 +483,7 @@
       card.innerHTML = '<div class="reasoning-card-header"><span class="codicon codicon-lightbulb"></span>Reasoning</div>' +
         '<div class="reasoning-card-content">' + escapeHtml(reasoning) + '</div>';
       timeline.appendChild(card);
-      scrollToBottom();
+      autoScrollIfNeeded();
     }
     
     /**
@@ -565,12 +615,12 @@
         streamingElement.className = 'response-card streaming';
         streamingElement.innerHTML = '<div class="response-card-body"></div>';
         timeline.appendChild(streamingElement);
-        scrollToBottom();
+        autoScrollIfNeeded();
       }
       const body = streamingElement.querySelector('.response-card-body');
       if (body) {
         body.textContent += text;
-        scrollToBottom();
+        autoScrollIfNeeded();
       }
     }
     
@@ -625,7 +675,26 @@
     }
     
     function scrollToBottom() {
-      timeline.scrollTop = timeline.scrollHeight;
+      timeline.scrollTo({ top: timeline.scrollHeight, behavior: 'smooth' });
+      userHasScrolledUp = false;
+      scrollToBottomBtn.classList.remove('visible');
+    }
+
+    function toggleAutoScroll() {
+      autoScrollEnabled = !autoScrollEnabled;
+      autoScrollCheckbox.checked = autoScrollEnabled;
+      autoScrollToggle.classList.toggle('enabled', autoScrollEnabled);
+
+      // If enabling and user scrolled up, scroll to bottom now
+      if (autoScrollEnabled && userHasScrolledUp) {
+        scrollToBottom();
+      }
+    }
+
+    function autoScrollIfNeeded() {
+      if (autoScrollEnabled && !userHasScrolledUp) {
+        scrollToBottom();
+      }
     }
     
     function escapeHtml(text) {

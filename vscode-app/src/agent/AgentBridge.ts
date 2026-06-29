@@ -165,6 +165,10 @@ export class AgentBridge {
   private _buildFileReadAttempts = new Map<string, number>();
   private _hasReadBuildFiles = new Map<string, boolean>();
 
+  // Auto-explore on failed search tracking
+  private _failedSearchCount: number = 0;
+  private _lastSearchPattern: string | null = null;
+
   // Legacy state tracking (migrated to state machine context)
   // These are kept for backward compatibility during transition
   private _pendingFixes: string[] = [];
@@ -175,7 +179,6 @@ export class AgentBridge {
   private _failedEditAttempts: number = 0;
   private _lastBuildErrors: string = '';
   private _serverJustStarted: string | null = null;
-  private _lastSearchPattern: string | null = null;
   private _lastSearchFiles: string[] = [];
   private _lastSearchIteration: number = 0;
   
@@ -476,9 +479,10 @@ export class AgentBridge {
     this._failedEditAttempts = 0;
     this._lastBuildErrors = '';
     this._serverJustStarted = null;
-    this._lastSearchPattern = null;
     this._lastSearchFiles = [];
     this._lastSearchIteration = 0;
+    this._failedSearchCount = 0;
+    this._lastSearchPattern = null;
     this._autoNudge = null;
     this._triedStrategies = new Set<string>();
     this._strategyRotationCount = 0;
@@ -822,7 +826,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         executionSequence: optimizedSequence,
       });
       
-      // LOOP DETECTION
+      // LOOP DETECTION - Skip for search_files on first failure (auto-explore will guide)
       const repeatCountMap = new Map<string, number>();
       const shouldNudge: string[] = [];
       const thisIterationCalls = new Map<string, string>();
@@ -841,8 +845,10 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         }
         thisIterationCalls.set(callKey, argsSignature);
         
-        // Check state machine history for loop detection
-        if (this.stateMachine.detectLoop(toolCall.name, normalizedArgs, iteration)) {
+        // Skip loop detection for search_files if we're in auto-explore mode (first failed search)
+        const isAutoExploreMode = toolCall.name === 'search_files' && this._failedSearchCount === 1;
+        
+        if (!isAutoExploreMode && this.stateMachine.detectLoop(toolCall.name, normalizedArgs, iteration)) {
           this.log(`LOOP DETECTED: ${toolCall.name} with same arguments`);
           this.stateMachine.dispatch(AgentEvent.LOOP_DETECTED);
           if (options.streaming) {
@@ -852,22 +858,10 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           return;
         }
         
-        const recentCalls = history.filter(h => h.iteration >= iteration - 2 && h.toolName.toLowerCase().replace(/[_-]/g, '') === normalizedToolName && h.argsSignature === argsSignature);
-        const totalRepeatCount = (repeatCountMap.get(callKey) || 0) + recentCalls.length;
-        repeatCountMap.set(callKey, totalRepeatCount);
-
-        if (recentCalls.length > 0) {
-          if (totalRepeatCount === 2) shouldNudge.push(toolCall.name);
-          else if (totalRepeatCount >= 4) {
-            if (options.streaming) {
-              yield { type: 'text', text: `⚠️ Stopped after ${totalRepeatCount} repeated ${toolCall.name} calls.`, timestamp: Date.now() };
-              yield { type: 'done', outcome: 'error', timestamp: Date.now(), iterations: iteration };
-            }
-            return;
-          }
+        // Only track history for non-search tools during auto-explore
+        if (!isAutoExploreMode) {
+          history.push({ toolName: toolCall.name, argsSignature, iteration });
         }
-        
-        history.push({ toolName: toolCall.name, argsSignature, iteration });
       }
 
       if (shouldNudge.length > 0) {
@@ -895,11 +889,13 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         }
 
         const toolCallObj: ToolCall = { toolName: toolCall.name, args: toolCall.arguments, toolCallId: toolCall.id };
+        let toolResult: { result: string; error?: string } | null = null;
 
         try {
           const result = await this.executeTool({ toolName: toolCall.name, args: toolCall.arguments });
           toolCallObj.result = result.result;
           if (result.error) toolCallObj.error = result.error;
+          toolResult = result;
           
           const durationMs = Date.now() - startTime;
           
@@ -919,6 +915,57 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
 
         currentIterationToolCalls.push(toolCallObj);
         toolCalls.push(toolCallObj);
+        
+        // AUTO-EXPLORE: Track failed searches and guide agent to explore directories
+        if (toolCall.name === 'search_files' && toolResult) {
+          const searchPattern = toolCall.arguments.pattern;
+          
+          // Check if search returned no results
+          if (toolResult.result && toolResult.result.includes('No files found')) {
+            this._failedSearchCount++;
+            this._lastSearchPattern = searchPattern;
+            
+            // First failed search - auto-list relevant directories and inject immediately
+            if (this._failedSearchCount === 1) {
+              try {
+                const projectDirs = await this.cli.listFiles(this.workspaceRoot, false);
+                const relevantDirs = projectDirs.filter(d => 
+                  /frontend|src|components|editor|canvas|ui|web|app|client/i.test(d)
+                );
+                
+                if (relevantDirs.length > 0) {
+                  // Inject as a tool message immediately (not just _autoNudge)
+                  const exploreMessage = `[AUTO-EXPLORE] Search for "${searchPattern}" found nothing.
+
+Instead of searching again, explore these relevant directories first:
+${relevantDirs.map(d => `  - ${d}`).join('\n')}
+
+TIP: Use list_directory on these folders to understand the structure, THEN search or read specific files.
+
+Example:
+  list_directory(path: "frontend/src")
+  list_directory(path: "client/components")
+`;
+                  messages.push({
+                    role: 'tool',
+                    content: exploreMessage,
+                    tool_call_id: `auto_explore_${Date.now()}`
+                  });
+                  this.log(`Auto-explore: Listed ${relevantDirs.length} relevant directories after failed search for "${searchPattern}"`);
+                }
+              } catch (e: any) {
+                this.log(`Auto-explore error: ${e.message}`);
+              }
+            } else if (this._failedSearchCount >= 2) {
+              // Second failed search - stronger nudge
+              this._autoNudge = `⚠️ You've searched ${this._failedSearchCount} times without finding results. STOP searching. Use list_directory to explore the project structure first.`;
+            }
+          } else {
+            // Successful search - reset counter
+            this._failedSearchCount = 0;
+            this._lastSearchPattern = null;
+          }
+        }
       }
 
       let assistantContent = responseText;

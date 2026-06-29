@@ -126,16 +126,16 @@
     .tool-call-status{font-size:14px}
 
     /* Scroll-to-bottom button */
-    .scroll-to-bottom-btn{position:fixed;bottom:140px;right:40px;width:40px;height:40px;border-radius:50%;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;cursor:pointer;display:none;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.3);z-index:100;transition:all 0.2s}
-    .scroll-to-bottom-btn:hover{background:var(--vscode-button-hoverBackground);transform:translateY(-2px)}
+    .scroll-to-bottom-btn{position:fixed;bottom:100px;right:20px;width:44px;height:44px;border-radius:50%;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;cursor:pointer;display:none;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(0,0,0,0.4);z-index:1000;transition:all 0.2s}
+    .scroll-to-bottom-btn:hover{background:var(--vscode-button-hoverBackground);transform:translateY(-3px);box-shadow:0 6px 16px rgba(0,0,0,0.5)}
     .scroll-to-bottom-btn.visible{display:flex}
-    .scroll-to-bottom-btn .codicon{font-size:18px}
+    .scroll-to-bottom-btn .codicon{font-size:20px}
 
     /* Auto-scroll toggle */
-    .auto-scroll-toggle{display:flex;align-items:center;gap:6px;padding:6px 12px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;font-size:0.8em;color:var(--vscode-descriptionForeground);position:fixed;bottom:140px;right:90px;cursor:pointer;z-index:100}
+    .auto-scroll-toggle{display:flex;align-items:center;gap:6px;padding:8px 12px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:6px;font-size:0.85em;color:var(--vscode-descriptionForeground);position:fixed;bottom:100px;right:80px;cursor:pointer;z-index:1000;transition:all 0.2s}
     .auto-scroll-toggle:hover{background:var(--vscode-toolbar-hoverBackground)}
     .auto-scroll-toggle input{margin:0;cursor:pointer}
-    .auto-scroll-toggle.enabled{color:var(--vscode-terminal-successBackground);border-color:var(--vscode-terminal-successBackground)}
+    .auto-scroll-toggle.enabled{color:white;border-color:var(--vscode-terminal-successBackground);background:var(--vscode-terminal-successBackground)}
   </style>
 </head>
 <body>
@@ -163,17 +163,17 @@
         Hello! I am your i2-Vision coding agent. What would you like to work on?
       </div>
     </div>
+  </div>
 
-    <!-- Scroll-to-bottom button -->
-    <button class="scroll-to-bottom-btn" id="scrollToBottomBtn" onclick="scrollToBottom()" title="Scroll to bottom (↓)">
-      <span class="codicon codicon-arrow-down"></span>
-    </button>
+  <!-- Scroll-to-bottom button (outside center-panel for fixed positioning) -->
+  <button class="scroll-to-bottom-btn" id="scrollToBottomBtn" onclick="scrollToBottom()" title="Scroll to bottom (Ctrl+↓)">
+    <span class="codicon codicon-arrow-down"></span>
+  </button>
 
-    <!-- Auto-scroll toggle -->
-    <label class="auto-scroll-toggle enabled" id="autoScrollToggle" onclick="toggleAutoScroll()" title="Auto-scroll on new messages">
-      <input type="checkbox" id="autoScrollCheckbox" checked>
-      <span>Auto-scroll</span>
-    </label>
+  <!-- Auto-scroll toggle -->
+  <div class="auto-scroll-toggle enabled" id="autoScrollToggle" onclick="toggleAutoScroll()" title="Auto-scroll on new messages (click to toggle)">
+    <input type="checkbox" id="autoScrollCheckbox" checked>
+    <span>Auto-scroll</span>
   </div>
   
   <div class="footer-panel">
@@ -257,6 +257,9 @@
       setTimeout(() => {
         vscode.postMessage({ command: 'fetch_history' });
       }, 500);
+
+      // Initialize auto-scroll toggle state
+      updateAutoScrollUI();
 
       // Listen for scroll events to detect manual scrolling
       timeline.addEventListener('scroll', function() {
@@ -680,10 +683,18 @@
       scrollToBottomBtn.classList.remove('visible');
     }
 
+    function updateAutoScrollUI() {
+      if (autoScrollCheckbox) {
+        autoScrollCheckbox.checked = autoScrollEnabled;
+      }
+      if (autoScrollToggle) {
+        autoScrollToggle.classList.toggle('enabled', autoScrollEnabled);
+      }
+    }
+
     function toggleAutoScroll() {
       autoScrollEnabled = !autoScrollEnabled;
-      autoScrollCheckbox.checked = autoScrollEnabled;
-      autoScrollToggle.classList.toggle('enabled', autoScrollEnabled);
+      updateAutoScrollUI();
 
       // If enabling and user scrolled up, scroll to bottom now
       if (autoScrollEnabled && userHasScrolledUp) {

@@ -175,6 +175,10 @@ export class AgentBridge {
   // Auto-explore on failed search tracking
   private _failedSearchCount: number = 0;
   private _lastSearchPattern: string | null = null;
+  
+  // Similar search detection - track previous search patterns to detect variants
+  private _previousSearches: string[] = [];
+  private static readonly SIMILAR_SEARCH_THRESHOLD = 0.5; // Minimum overlap ratio to consider similar
 
   // Legacy state tracking (migrated to state machine context)
   // These are kept for backward compatibility during transition
@@ -504,6 +508,7 @@ export class AgentBridge {
     this._lastSearchIteration = 0;
     this._failedSearchCount = 0;
     this._lastSearchPattern = null;
+    this._previousSearches = [];
     this._autoNudge = null;
     this._triedStrategies = new Set<string>();
     this._strategyRotationCount = 0;
@@ -938,11 +943,27 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         toolCalls.push(toolCallObj);
         
         // AUTO-EXPLORE: Track failed searches and guide agent to explore directories
-        if (toolCall.name === 'search_files' && toolResult) {
+        // SIMILAR SEARCH DETECTION: Detect variant patterns of previous searches
+        if (toolCall.name === 'search_files') {
           const searchPattern = toolCall.arguments.pattern;
           
+          // Check for similar search patterns (variants of previous searches)
+          const similarPattern = this.findSimilarSearch(searchPattern);
+          if (similarPattern) {
+            const similarSearchMessage = `[AUTO] You've already searched for a similar pattern ("${similarPattern}"). The results won't change. Read the files you found instead of searching again with a slightly different pattern.`;
+            messages.push({
+              role: 'tool',
+              content: similarSearchMessage,
+              tool_call_id: `auto_similar_${Date.now()}`
+            });
+            this.log(`Similar search detected: "${searchPattern}" is similar to previous "${similarPattern}"`);
+          }
+          
+          // Record this search pattern for future detection
+          this.recordSearchPattern(searchPattern);
+          
           // Check if search returned no results
-          if (toolResult.result && toolResult.result.includes('No files found')) {
+          if (toolResult?.result && toolResult.result.includes('No files found')) {
             this._failedSearchCount++;
             this._lastSearchPattern = searchPattern;
             
@@ -1020,6 +1041,55 @@ Example:
   private injectContextIntoPrompt(prompt: string, context?: VslfcContext): string {
     if (!context) return prompt;
     return prompt;
+  }
+
+  /**
+   * Normalize search pattern by removing regex special characters and converting to lowercase
+   * Used for detecting similar search patterns (e.g., "ZoomToolsUI" vs "ZoomToolsUI|UnifiedEditor")
+   */
+  private normalizeSearchPattern(pattern: string): string {
+    return pattern.replace(/[|.*+?^${}()|[\]\\]/g, '').toLowerCase();
+  }
+
+  /**
+   * Check if current search pattern is similar to any previous search
+   * Returns the similar pattern if found, null otherwise
+   */
+  private findSimilarSearch(currentPattern: string): string | null {
+    const normalizedCurrent = this.normalizeSearchPattern(currentPattern);
+    
+    for (const prevPattern of this._previousSearches) {
+      const normalizedPrev = this.normalizeSearchPattern(prevPattern);
+      
+      // Check for substring overlap in either direction
+      const currentInPrev = normalizedPrev.includes(normalizedCurrent);
+      const prevInCurrent = normalizedCurrent.includes(normalizedPrev);
+      
+      // Also check for significant overlap using Jaccard-like similarity
+      const currentTerms = normalizedCurrent.split(/[\s_]+/).filter(t => t.length > 2);
+      const prevTerms = normalizedPrev.split(/[\s_]+/).filter(t => t.length > 2);
+      
+      const intersection = currentTerms.filter(t => prevTerms.includes(t));
+      const union = [...new Set([...currentTerms, ...prevTerms])];
+      const overlapRatio = union.length > 0 ? intersection.length / union.length : 0;
+      
+      if (currentInPrev || prevInCurrent || overlapRatio >= AgentBridge.SIMILAR_SEARCH_THRESHOLD) {
+        return prevPattern;
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * Record a search pattern for future similar-search detection
+   */
+  private recordSearchPattern(pattern: string): void {
+    // Keep only last 10 searches to avoid unbounded growth
+    if (this._previousSearches.length >= 10) {
+      this._previousSearches.shift();
+    }
+    this._previousSearches.push(pattern);
   }
 
   private async callLLM(messages: LLMMessage[], tools: LLMTool[]): Promise<LLMResponse> {

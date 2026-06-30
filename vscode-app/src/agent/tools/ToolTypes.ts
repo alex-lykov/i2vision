@@ -56,6 +56,7 @@ export interface ToolContext {
   getFileContext: (path: string) => Promise<any>;
   fileExists: (path: string) => Promise<boolean>;
   terminalManager: TerminalManager;
+  vscode: typeof import('vscode');
   log: (msg: string) => void;
   emitProgress: (event: ProgressEvent) => void;
   fileSnapshots: Map<string, string>;

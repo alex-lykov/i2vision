@@ -1189,6 +1189,7 @@ Example:
         getFileContext: (p: string) => this.cli.getContext(p),
         fileExists: async (p: string) => fs.existsSync(p),
         terminalManager: this.terminalManager,
+        vscode: require('vscode'),
         log: (msg: string) => this.log(msg),
         emitProgress: (e: any) => this.emitProgress(e),
         fileSnapshots: this._fileSnapshots,

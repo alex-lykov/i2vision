@@ -125,6 +125,33 @@ export const terminalTools: ToolDefinition[] = [
   },
   
   {
+    name: 'list_all_terminals',
+    description: 'List ALL open terminals in VS Code, including those started manually or from previous sessions. Use this to discover terminals not managed by the agent.',
+    category: 'terminal',
+    isReadOnly: true,
+    parameters: {
+      type: 'object',
+      properties: {},
+      required: []
+    },
+    async handler(args, ctx) {
+      const allTerminals = ctx.vscode.window.terminals;
+      const result = allTerminals.map(t => ({
+        name: t.name,
+        isActive: t === ctx.vscode.window.activeTerminal,
+        exitStatus: t.exitStatus ? 'closed' : 'running',
+        creationOptions: t.creationOptions
+      }));
+
+      return {
+        result: allTerminals.length === 0
+          ? 'No terminals open in VS Code.'
+          : `Found ${allTerminals.length} terminal(s):\n\n${JSON.stringify(result, null, 2)}`
+      };
+    }
+  },
+
+  {
     name: 'terminal_status',
     description: 'Check if a specific terminal is running. IMPORTANT: Only use this 15+ seconds after starting a server - servers take time to start up.',
     category: 'terminal',
@@ -138,23 +165,35 @@ export const terminalTools: ToolDefinition[] = [
     },
     async handler(args, ctx) {
       const name = args.name;
-      const status = ctx.terminalManager.getTerminalStatus(name);
-      
-      if (!status) {
-        return { result: `Terminal "${name}" is not running.` };
+
+      // Check managed terminals first
+      const managed = ctx.terminalManager.getTerminalStatus(name);
+      if (managed) {
+        // Provide age info to help understand startup progress
+        const ageInfo = managed.ageSeconds
+          ? ` (started ${managed.ageSeconds}s ago)`
+          : '';
+        const startupNote = managed.ageSeconds && managed.ageSeconds < 30
+          ? ` Server is still starting up - this is normal for Gradle servers.`
+          : '';
+
+        return {
+          result: `Terminal "${name}" is running${ageInfo}. Auto-restart: ${managed.autoRestart ? 'enabled' : 'disabled'}.${startupNote}`
+        };
       }
-      
-      // Provide age info to help understand startup progress
-      const ageInfo = status.ageSeconds 
-        ? ` (started ${status.ageSeconds}s ago)` 
-        : '';
-      const startupNote = status.ageSeconds && status.ageSeconds < 30 
-        ? ` Server is still starting up - this is normal for Gradle servers.` 
-        : '';
-      
-      return { 
-        result: `Terminal "${name}" is running${ageInfo}. Auto-restart: ${status.autoRestart ? 'enabled' : 'disabled'}.${startupNote}` 
-      };
+
+      // Fall back to VS Code terminals
+      const vscodeTerminal = ctx.vscode.window.terminals.find(t =>
+        t.name.toLowerCase().includes(name.toLowerCase())
+      );
+
+      if (vscodeTerminal) {
+        return {
+          result: `Found VS Code terminal "${vscodeTerminal.name}" (${vscodeTerminal.exitStatus ? 'closed' : 'running'}). This terminal was not started by the agent, so auto-restart is not available.`
+        };
+      }
+
+      return { result: `Terminal "${name}" is not running.` };
     }
   },
   

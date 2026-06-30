@@ -21,20 +21,27 @@ export const fileTools: ToolDefinition[] = [
       const dirPath = ctx.resolvePath(args.path);
       const recursive = args.recursive === true;
       
+      // Debug logging for path resolution
+      ctx.log(`list_directory: args.path="${args.path}" → resolved="${dirPath}", recursive=${recursive}`);
+
       try {
         const files = await ctx.listFiles(dirPath, recursive);
-        
+
+        ctx.log(`list_directory result: ${files.length} files found`);
+
         if (files.length === 0) {
           const exists = await ctx.fileExists(dirPath);
-          return { 
-            result: exists 
-              ? 'This directory is empty.' 
-              : `DIRECTORY_NOT_FOUND: '${args.path}' does not exist.` 
+          ctx.log(`list_directory: directory exists=${exists}`);
+          return {
+            result: exists
+              ? 'This directory is empty.'
+              : `DIRECTORY_NOT_FOUND: '${args.path}' does not exist.`
           };
         }
-        
+
         return { result: files.join('\n') };
       } catch (error: any) {
+        ctx.log(`list_directory error: ${error.message}`);
         if (error.code === 'ENOENT') {
           return { result: `DIRECTORY_NOT_FOUND: '${args.path}' does not exist.` };
         }

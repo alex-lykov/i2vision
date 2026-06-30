@@ -1213,14 +1213,17 @@ Example:
         case 'list_directory': {
           const dirPath = this.resolvePath(toolCall.args.path);
           const recursive = toolCall.args.recursive === true;
+          this.log(`list_directory (legacy): args.path="${toolCall.args.path}" → resolved="${dirPath}", recursive=${recursive}`);
           try {
             const files = await this.cli.listFiles(dirPath, recursive);
+            this.log(`list_directory (legacy) result: ${files.length} files found`);
             if (files.length === 0) {
               try { fs.accessSync(dirPath); return { result: 'This directory is empty.' }; }
               catch { return { result: `DIRECTORY_NOT_FOUND: '${toolCall.args.path}' does not exist.` }; }
             }
             return { result: files.join('\n') };
           } catch (error: any) {
+            this.log(`list_directory (legacy) error: ${error.message}`);
             if (error.code === 'ENOENT') return { result: `DIRECTORY_NOT_FOUND: '${toolCall.args.path}' does not exist.` };
             throw error;
           }

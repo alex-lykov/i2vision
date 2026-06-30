@@ -125,17 +125,12 @@
     .tool-call-card.error .tool-call-header{border-left:3px solid var(--vscode-errorForeground)}
     .tool-call-status{font-size:14px}
 
-    /* Scroll-to-bottom button */
-    .scroll-to-bottom-btn{position:fixed;bottom:100px;right:20px;width:44px;height:44px;border-radius:50%;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;cursor:pointer;display:none;align-items:center;justify-content:center;box-shadow:0 4px 12px rgba(0,0,0,0.4);z-index:1000;transition:all 0.2s}
-    .scroll-to-bottom-btn:hover{background:var(--vscode-button-hoverBackground);transform:translateY(-3px);box-shadow:0 6px 16px rgba(0,0,0,0.5)}
-    .scroll-to-bottom-btn.visible{display:flex}
-    .scroll-to-bottom-btn .codicon{font-size:20px}
-
-    /* Auto-scroll toggle */
-    .auto-scroll-toggle{display:flex;align-items:center;gap:6px;padding:8px 12px;background:var(--vscode-editorWidget-background);border:1px solid var(--vscode-editorWidget-border);border-radius:6px;font-size:0.85em;color:var(--vscode-descriptionForeground);position:fixed;bottom:100px;right:80px;cursor:pointer;z-index:1000;transition:all 0.2s}
-    .auto-scroll-toggle:hover{background:var(--vscode-toolbar-hoverBackground)}
-    .auto-scroll-toggle input{margin:0;cursor:pointer}
-    .auto-scroll-toggle.enabled{color:white;border-color:var(--vscode-terminal-successBackground);background:var(--vscode-terminal-successBackground)}
+    /* Auto-scroll toggle in header */
+    .auto-scroll-toggle{display:flex;align-items:center;gap:4px;padding:4px 8px;border-radius:4px;font-size:0.8em;cursor:pointer;transition:all 0.2s;border:1px solid transparent}
+    .auto-scroll-toggle.enabled{background:var(--vscode-terminal-successBackground);color:white;border-color:var(--vscode-terminal-successBackground)}
+    .auto-scroll-toggle.disabled{background:var(--vscode-descriptionForeground);color:var(--vscode-editor-background);border-color:var(--vscode-descriptionForeground)}
+    .auto-scroll-toggle:hover{opacity:0.9}
+    .auto-scroll-toggle .codicon{font-size:14px}
   </style>
 </head>
 <body>
@@ -149,6 +144,11 @@
     <div class="header-right">
       <div id="conversationIndicator" style="display:none;font-size:0.8em;color:var(--vscode-descriptionForeground);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
         <span class="codicon codicon-comment-discussion"></span><span id="conversationId"></span>
+      </div>
+      <!-- Auto-scroll toggle -->
+      <div class="header-item auto-scroll-toggle enabled" id="autoScrollToggle" onclick="toggleAutoScroll()" title="Auto-scroll on new messages (click to toggle)">
+        <span class="codicon codicon-arrow-down" style="font-size:14px;margin-right:4px"></span>
+        <span style="font-size:0.85em">Auto-scroll</span>
       </div>
       <button class="btn-icon" onclick="newChat()" title="New Chat">&#10133;</button>
       <button class="btn-icon" onclick="openSettings()" title="Settings (S)">&#9881;</button>
@@ -165,17 +165,6 @@
     </div>
   </div>
 
-  <!-- Scroll-to-bottom button (outside center-panel for fixed positioning) -->
-  <button class="scroll-to-bottom-btn" id="scrollToBottomBtn" onclick="scrollToBottom()" title="Scroll to bottom (Ctrl+↓)">
-    <span class="codicon codicon-arrow-down"></span>
-  </button>
-
-  <!-- Auto-scroll toggle -->
-  <div class="auto-scroll-toggle enabled" id="autoScrollToggle" onclick="toggleAutoScroll()" title="Auto-scroll on new messages (click to toggle)">
-    <input type="checkbox" id="autoScrollCheckbox" checked>
-    <span>Auto-scroll</span>
-  </div>
-  
   <div class="footer-panel">
     <div class="input-container">
       <div class="provider-model-row">
@@ -238,9 +227,7 @@
     const tokenText = document.getElementById('tokenText');
     const providerSelect = document.getElementById('providerSelect');
     const modelSelect = document.getElementById('modelSelect');
-    const scrollToBottomBtn = document.getElementById('scrollToBottomBtn');
     const autoScrollToggle = document.getElementById('autoScrollToggle');
-    const autoScrollCheckbox = document.getElementById('autoScrollCheckbox');
 
     let streamingElement = null;
     let thinkingEl = null;
@@ -249,7 +236,6 @@
     const showThinkingSetting = {showThinking};
     let historySidebarVisible = false;
     let autoScrollEnabled = true;
-    let userHasScrolledUp = false;
     
     window.addEventListener('load', function() {
       vscode.postMessage({ command: 'fetch_models' });
@@ -260,27 +246,6 @@
 
       // Initialize auto-scroll toggle state
       updateAutoScrollUI();
-
-      // Listen for scroll events to detect manual scrolling
-      timeline.addEventListener('scroll', function() {
-        const isAtBottom = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 50;
-
-        if (isAtBottom) {
-          userHasScrolledUp = false;
-          scrollToBottomBtn.classList.remove('visible');
-        } else {
-          userHasScrolledUp = true;
-          scrollToBottomBtn.classList.add('visible');
-        }
-      });
-
-      // Keyboard shortcut for scroll to bottom
-      document.addEventListener('keydown', function(e) {
-        if (e.key === 'ArrowDown' && e.ctrlKey) {
-          e.preventDefault();
-          scrollToBottom();
-        }
-      });
     });
     
     function toggleHistorySidebar() {
@@ -451,7 +416,6 @@
         case 'conversation_deleted': showToast('Conversation deleted'); break;
       }
       scrollToBottom();
-      autoScrollIfNeeded();
     });
     
     function populateModelDropdown(models, currentModel, currentProvider) {
@@ -486,7 +450,7 @@
       card.innerHTML = '<div class="reasoning-card-header"><span class="codicon codicon-lightbulb"></span>Reasoning</div>' +
         '<div class="reasoning-card-content">' + escapeHtml(reasoning) + '</div>';
       timeline.appendChild(card);
-      autoScrollIfNeeded();
+      scrollToBottom();
     }
     
     /**
@@ -618,12 +582,12 @@
         streamingElement.className = 'response-card streaming';
         streamingElement.innerHTML = '<div class="response-card-body"></div>';
         timeline.appendChild(streamingElement);
-        autoScrollIfNeeded();
+        scrollToBottom();
       }
       const body = streamingElement.querySelector('.response-card-body');
       if (body) {
         body.textContent += text;
-        autoScrollIfNeeded();
+        scrollToBottom();
       }
     }
     
@@ -679,33 +643,18 @@
     
     function scrollToBottom() {
       timeline.scrollTo({ top: timeline.scrollHeight, behavior: 'smooth' });
-      userHasScrolledUp = false;
-      scrollToBottomBtn.classList.remove('visible');
     }
 
     function updateAutoScrollUI() {
-      if (autoScrollCheckbox) {
-        autoScrollCheckbox.checked = autoScrollEnabled;
-      }
       if (autoScrollToggle) {
         autoScrollToggle.classList.toggle('enabled', autoScrollEnabled);
+        autoScrollToggle.classList.toggle('disabled', !autoScrollEnabled);
       }
     }
 
     function toggleAutoScroll() {
       autoScrollEnabled = !autoScrollEnabled;
       updateAutoScrollUI();
-
-      // If enabling and user scrolled up, scroll to bottom now
-      if (autoScrollEnabled && userHasScrolledUp) {
-        scrollToBottom();
-      }
-    }
-
-    function autoScrollIfNeeded() {
-      if (autoScrollEnabled && !userHasScrolledUp) {
-        scrollToBottom();
-      }
     }
     
     function escapeHtml(text) {

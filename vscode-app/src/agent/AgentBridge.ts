@@ -206,6 +206,9 @@ export class AgentBridge {
   // Tool call counter to prevent over-exploration
   private _consecutiveToolCallsWithoutResponse: number = 0;
   private static readonly MAX_CONSECUTIVE_TOOL_CALLS = 8; // Force synthesis after N tool calls
+  
+  // Track tool call history for pattern detection
+  private _toolCallHistory: Array<{ toolName: string; iteration: number }> = [];
 
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000;
   private static readonly MAX_LIST_FILES_RESULTS = 100;
@@ -529,6 +532,7 @@ export class AgentBridge {
     this._strategyRotationCount = 0;
     this._hasCheckedRunningServers = false; // Reset pre-flight check for new conversation
     this._consecutiveToolCallsWithoutResponse = 0; // Reset tool call counter
+    this._toolCallHistory = []; // Reset tool call history
 
     const toolCalls: ToolCall[] = [];
     const history: ToolCallHistory[] = [];
@@ -1053,13 +1057,34 @@ Example:
       
       messages.push({ role: 'assistant', content: assistantContent || '' });
 
-      // TOOL CALL COUNTER: Force synthesis after too many tool calls without response
+      // Record tool calls in history for pattern detection
       if (currentIterationToolCalls.length > 0) {
         this._consecutiveToolCallsWithoutResponse += currentIterationToolCalls.length;
+        currentIterationToolCalls.forEach(tc => {
+          this._toolCallHistory.push({ toolName: tc.toolName, iteration });
+        });
         
-        if (this._consecutiveToolCallsWithoutResponse >= AgentBridge.MAX_CONSECUTIVE_TOOL_CALLS) {
-          this.log(`Tool call counter: ${this._consecutiveToolCallsWithoutResponse} calls without synthesis - forcing response`);
-          this._autoNudge = `⚠️ You've called ${this._consecutiveToolCallsWithoutResponse} tools without providing a final answer. STOP gathering information. Synthesize what you've learned and RESPOND to the user's request. If you need to take action, do it NOW.`;
+        // Keep history bounded (last 20 calls)
+        if (this._toolCallHistory.length > 20) {
+          this._toolCallHistory.shift();
+        }
+        
+        // PATTERN DETECTION: Check for over-exploration (3+ exploration tools with no action)
+        const explorationTools = ['read_file', 'list_directory', 'search_files', 'get_file_context'];
+        const actionTools = ['write_file', 'apply_edits', 'run_terminal', 'run_build', 'git_commit'];
+        
+        const lastFiveCalls = this._toolCallHistory.slice(-5);
+        const allExploration = lastFiveCalls.length >= 3 && lastFiveCalls.every(tc => explorationTools.includes(tc.toolName));
+        const hasAction = this._toolCallHistory.some(tc => actionTools.includes(tc.toolName));
+        
+        if (allExploration && !hasAction && this._toolCallHistory.length >= 5) {
+          this.log(`Pattern detected: ${lastFiveCalls.length} consecutive exploration calls with no action - forcing synthesis`);
+          this._autoNudge = `⚠️ STOP exploring. You've called ${lastFiveCalls.length} exploration tools (read_file, list_directory, search_files) without taking any action. You have enough information. Either:
+1. Run a command (run_terminal, run_build)
+2. Apply edits (apply_edits, write_file)
+3. Provide a final answer
+
+Do NOT read any more files. RESPOND NOW.`;
           this._consecutiveToolCallsWithoutResponse = 0; // Reset after nudge
         }
       }

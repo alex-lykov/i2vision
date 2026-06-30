@@ -377,6 +377,8 @@ export class AgentTabManager {
             'Cancel'
           );
           if (confirmNew === 'New Chat') {
+            // Clear webview first to remove old conversation from UI
+            this.sendToWebview({ command: 'clear_conversation' });
             if (this.activeTabId) {
               await this.closeTab(this.activeTabId);
             }

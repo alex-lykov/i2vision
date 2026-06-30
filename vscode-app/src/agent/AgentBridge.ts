@@ -160,6 +160,9 @@ export class AgentBridge {
   // Auto-nudge message (generated during tool execution, consumed in next iteration)
   private _autoNudge: string | null = null;
   
+  // Token usage tracking for context meter
+  private _lastTokenUsage?: { prompt: number; completion: number; total: number };
+  
   // File snapshots for revert capability
   private _fileSnapshots: Map<string, string> = new Map();
   
@@ -199,6 +202,10 @@ export class AgentBridge {
   
   // Pre-flight check for server start commands
   private _hasCheckedRunningServers: boolean = false;
+  
+  // Tool call counter to prevent over-exploration
+  private _consecutiveToolCallsWithoutResponse: number = 0;
+  private static readonly MAX_CONSECUTIVE_TOOL_CALLS = 8; // Force synthesis after N tool calls
 
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000;
   private static readonly MAX_LIST_FILES_RESULTS = 100;
@@ -521,6 +528,7 @@ export class AgentBridge {
     this._triedStrategies = new Set<string>();
     this._strategyRotationCount = 0;
     this._hasCheckedRunningServers = false; // Reset pre-flight check for new conversation
+    this._consecutiveToolCallsWithoutResponse = 0; // Reset tool call counter
 
     const toolCalls: ToolCall[] = [];
     const history: ToolCallHistory[] = [];
@@ -758,7 +766,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
               }
             }
             if (chunk.toolCalls) streamingToolCalls = chunk.toolCalls;
-            if (chunk.tokenUsage) (this as any)._lastTokenUsage = chunk.tokenUsage;
+            if (chunk.tokenUsage) this._lastTokenUsage = chunk.tokenUsage;
             if (chunk.done) break;
           }
           
@@ -831,9 +839,12 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
             for (const textChunk of textBuffer) yield { type: 'text', text: textChunk, timestamp: Date.now() };
           }
           const doneChunk: any = { type: 'done', outcome: 'success', timestamp: Date.now(), iterations: iteration };
-          if ((this as any)._lastTokenUsage) doneChunk.tokenUsage = (this as any)._lastTokenUsage;
+          if (this._lastTokenUsage) doneChunk.tokenUsage = this._lastTokenUsage;
           yield doneChunk;
         }
+        
+        // Reset tool call counter when agent provides text response
+        this._consecutiveToolCallsWithoutResponse = 0;
         return;
       }
 
@@ -1042,6 +1053,17 @@ Example:
       
       messages.push({ role: 'assistant', content: assistantContent || '' });
 
+      // TOOL CALL COUNTER: Force synthesis after too many tool calls without response
+      if (currentIterationToolCalls.length > 0) {
+        this._consecutiveToolCallsWithoutResponse += currentIterationToolCalls.length;
+        
+        if (this._consecutiveToolCallsWithoutResponse >= AgentBridge.MAX_CONSECUTIVE_TOOL_CALLS) {
+          this.log(`Tool call counter: ${this._consecutiveToolCallsWithoutResponse} calls without synthesis - forcing response`);
+          this._autoNudge = `⚠️ You've called ${this._consecutiveToolCallsWithoutResponse} tools without providing a final answer. STOP gathering information. Synthesize what you've learned and RESPOND to the user's request. If you need to take action, do it NOW.`;
+          this._consecutiveToolCallsWithoutResponse = 0; // Reset after nudge
+        }
+      }
+
       for (let i = 0; i < currentIterationToolCalls.length; i++) {
         const tc = currentIterationToolCalls[i];
         const toolCallId = streamingToolCalls[i]?.id || tc.toolCallId || `call_${iteration}_${i}`;
@@ -1217,6 +1239,9 @@ Example:
               content: preflightMessage,
               tool_call_id: `auto_preflight_${Date.now()}`
             });
+            
+            // Also add to auto-nudge for immediate effect
+            this._autoNudge = `⚠️ Found ${runningTerminals.length} existing terminal(s). Check list_all_terminals before starting a new server!`;
 
             return {
               result: `Pre-flight check: Found ${runningTerminals.length} existing terminal(s). Use list_all_terminals to inspect them before starting a new server.`

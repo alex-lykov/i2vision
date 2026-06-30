@@ -826,7 +826,9 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           if (!textAlreadyStreamed) {
             for (const textChunk of textBuffer) yield { type: 'text', text: textChunk, timestamp: Date.now() };
           }
-          yield { type: 'done', outcome: 'success', timestamp: Date.now(), iterations: iteration };
+          const doneChunk: any = { type: 'done', outcome: 'success', timestamp: Date.now(), iterations: iteration };
+          if ((this as any)._lastTokenUsage) doneChunk.tokenUsage = (this as any)._lastTokenUsage;
+          yield doneChunk;
         }
         return;
       }

@@ -30,6 +30,7 @@ export interface AgentSettings {
     showOutputInWebview: boolean; // Show terminal output in webview timeline
     preserveTerminals: boolean; // Don't auto-close terminals
     maxTerminalHistory: number; // Max lines to keep in terminal history
+    mode: 'managed' | 'vscode' | 'hybrid'; // Which terminals to use: agent-managed, VS Code, or both
   };
   
   // ===== BUILD SETTINGS =====
@@ -93,7 +94,8 @@ const DEFAULT_SETTINGS: AgentSettings = {
     autoCloseDelayMs: 5000,
     showOutputInWebview: true,
     preserveTerminals: false,
-    maxTerminalHistory: 1000
+    maxTerminalHistory: 1000,
+    mode: 'hybrid' // Default: use both managed and VS Code terminals
   },
   
   build: {

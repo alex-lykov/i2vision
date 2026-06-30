@@ -1,4 +1,21 @@
-import { ToolDefinition } from '../ToolTypes';
+import { ToolDefinition, ToolContext } from '../ToolTypes';
+
+/**
+ * Get terminal mode from settings
+ */
+function getTerminalMode(ctx: ToolContext): 'managed' | 'vscode' | 'hybrid' {
+  try {
+    const settingsModule = require('../../AgentSettings');
+    const settingsManager = settingsModule.AgentSettingsManager.getInstance();
+    if (settingsManager) {
+      const settings = settingsManager.getSettings();
+      return settings.terminal.mode || 'hybrid';
+    }
+  } catch (e) {
+    // Settings not available, default to hybrid
+  }
+  return 'hybrid';
+}
 
 /**
  * Terminal and process management tools
@@ -119,10 +136,13 @@ export const terminalTools: ToolDefinition[] = [
       required: []
     },
     async handler(args, ctx) {
-      // First check managed terminals
-      const managed = ctx.terminalManager.listTerminals();
+      const mode = getTerminalMode(ctx);
       
-      // Also check all VS Code terminals
+      // Check managed terminals
+      const managed = ctx.terminalManager.listTerminals();
+      const hasManaged = managed && managed !== 'No managed terminals running.' && managed.trim() !== '';
+      
+      // Check all VS Code terminals
       const allVscodeTerminals = ctx.vscode.window.terminals;
       const vscodeTerminalsList = allVscodeTerminals.map(t => ({
         name: t.name,
@@ -131,17 +151,31 @@ export const terminalTools: ToolDefinition[] = [
         source: 'VS Code (not agent-managed)'
       }));
       
-      // If no managed terminals but VS Code terminals exist, show them
-      if (!managed || managed === 'No managed terminals running.' || managed.trim() === '') {
-        if (vscodeTerminalsList.length > 0) {
-          return { 
-            result: `No agent-managed terminals, but found ${vscodeTerminalsList.length} VS Code terminal(s):\n\n${JSON.stringify(vscodeTerminalsList, null, 2)}` 
-          };
+      // Filter based on mode
+      if (mode === 'managed') {
+        return { result: hasManaged ? managed : 'No agent-managed terminals running. (Terminal mode: managed)' };
+      }
+      
+      if (mode === 'vscode') {
+        if (vscodeTerminalsList.length === 0) {
+          return { result: 'No VS Code terminals open. (Terminal mode: vscode)' };
         }
+        return { 
+          result: `Found ${vscodeTerminalsList.length} VS Code terminal(s):\n\n${JSON.stringify(vscodeTerminalsList, null, 2)}` 
+        };
+      }
+      
+      // Hybrid mode (default): show both
+      if (!hasManaged && vscodeTerminalsList.length === 0) {
         return { result: 'No terminals running.' };
       }
       
-      // Show both managed and VS Code terminals
+      if (!hasManaged) {
+        return { 
+          result: `No agent-managed terminals, but found ${vscodeTerminalsList.length} VS Code terminal(s):\n\n${JSON.stringify(vscodeTerminalsList, null, 2)}` 
+        };
+      }
+      
       return { 
         result: `Managed terminals:\n${managed}\n\nAll VS Code terminals:\n${JSON.stringify(vscodeTerminalsList, null, 2)}` 
       };

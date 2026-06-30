@@ -167,11 +167,24 @@ export const terminalTools: ToolDefinition[] = [
         creationOptions: t.creationOptions
       }));
 
-      return {
-        result: allTerminals.length === 0
-          ? 'No terminals open in VS Code.'
-          : `Found ${allTerminals.length} terminal(s):\n\n${JSON.stringify(result, null, 2)}`
-      };
+      let message = '';
+      if (allTerminals.length === 0) {
+        message = 'No terminals open in VS Code.';
+      } else {
+        message = `Found ${allTerminals.length} terminal(s):\n\n${JSON.stringify(result, null, 2)}`;
+        
+        // Add helpful guidance for non-managed terminals
+        const hasNonManaged = allTerminals.some(t => t.name.startsWith('node') || t.name.startsWith('java') || t.name.includes('dev') || t.name.includes('server'));
+        if (hasNonManaged) {
+          message += '\n\n💡 TIP: These terminals appear to be running servers. To check their logs:\n';
+          message += '- Click on the terminal in VS Code to view live output\n';
+          message += '- Or use kill_port tool to restart the server with agent management\n';
+          message += '- For Vite/frontend: Check browser console (F12) for client-side errors\n';
+          message += '- For Java/backend: Check terminal output for stack traces';
+        }
+      }
+      
+      return { result: message };
     }
   },
 

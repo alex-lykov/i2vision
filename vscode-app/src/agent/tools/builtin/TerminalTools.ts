@@ -110,7 +110,7 @@ export const terminalTools: ToolDefinition[] = [
   
   {
     name: 'list_terminals',
-    description: 'List all managed terminals and their status',
+    description: 'List all terminals and their status. Shows both agent-managed terminals AND all VS Code terminals (including manually opened ones).',
     category: 'terminal',
     isReadOnly: true,
     parameters: {
@@ -119,8 +119,32 @@ export const terminalTools: ToolDefinition[] = [
       required: []
     },
     async handler(args, ctx) {
-      const result = ctx.terminalManager.listTerminals();
-      return { result };
+      // First check managed terminals
+      const managed = ctx.terminalManager.listTerminals();
+      
+      // Also check all VS Code terminals
+      const allVscodeTerminals = ctx.vscode.window.terminals;
+      const vscodeTerminalsList = allVscodeTerminals.map(t => ({
+        name: t.name,
+        isActive: t === ctx.vscode.window.activeTerminal,
+        exitStatus: t.exitStatus ? 'closed' : 'running',
+        source: 'VS Code (not agent-managed)'
+      }));
+      
+      // If no managed terminals but VS Code terminals exist, show them
+      if (!managed || managed === 'No managed terminals running.' || managed.trim() === '') {
+        if (vscodeTerminalsList.length > 0) {
+          return { 
+            result: `No agent-managed terminals, but found ${vscodeTerminalsList.length} VS Code terminal(s):\n\n${JSON.stringify(vscodeTerminalsList, null, 2)}` 
+          };
+        }
+        return { result: 'No terminals running.' };
+      }
+      
+      // Show both managed and VS Code terminals
+      return { 
+        result: `Managed terminals:\n${managed}\n\nAll VS Code terminals:\n${JSON.stringify(vscodeTerminalsList, null, 2)}` 
+      };
     }
   },
   

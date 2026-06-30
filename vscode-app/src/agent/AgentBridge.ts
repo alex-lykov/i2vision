@@ -471,6 +471,11 @@ export class AgentBridge {
     if (this._domainResolution.primaryDomain !== 'unknown' && this._domainResolution.confidence > 0.3) {
       this.log(`Domain resolved: ${this._domainResolution.primaryDomain} (${this._domainResolution.rationale})`);
       this.log(`Suggested directories: ${this._suggestedDirectories.join(', ')}`);
+      
+      // Inject domain hint into system prompt when confidence is high
+      if (this._domainResolution.confidence > 0.7 && this._suggestedDirectories.length > 0) {
+        systemPrompt += `\n\n[DOMAIN HINT] This query is about **${this._domainResolution.primaryDomain}** code. Focus your exploration on: ${this._suggestedDirectories.join(', ')}. Avoid exploring unrelated directories.`;
+      }
     }
     
     const taskType = this.detectTaskType(userInput);
@@ -485,7 +490,7 @@ export class AgentBridge {
     const loadedContext = contextProfile ? await this.loadEagerContext(contextProfile, this.config.templateVariables.currentFile) : undefined;
     const contextEnhancedPrompt = this.injectContextIntoPrompt(systemPrompt, loadedContext);
 
-    const messages: LLMMessage[] = [
+    let messages: LLMMessage[] = [
       { role: 'system', content: contextEnhancedPrompt },
       { role: 'user', content: userInput }
     ];
@@ -676,6 +681,21 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         messages.push(...pendingMessages);
         this.log(`Injected ${pendingMessages.length} pending message(s) into conversation`);
         (this as any)._pendingMessages = []; // Clear after injection
+      }
+
+      // TOKEN BUDGET CHECK: Trim conversation if approaching token limit
+      const estimatedTokens = this.estimateTokens(messages);
+      const tokenUsagePercent = (estimatedTokens / this.config.model.contextLength) * 100;
+      if (tokenUsagePercent > 50) {
+        this.log(`Token usage: ${estimatedTokens.toLocaleString()} / ${this.config.model.contextLength.toLocaleString()} (${tokenUsagePercent.toFixed(1)}%)`);
+      }
+      if (estimatedTokens > this.config.model.contextLength * 0.8) {
+        this.log(`Token warning: ${estimatedTokens} exceeds 80% of context window - summarizing old messages`);
+        const trimmedMessages = await this.trimMessagesToBudget(messages, 0.75);
+        if (trimmedMessages.length < messages.length) {
+          this.log(`Messages trimmed: ${messages.length} → ${trimmedMessages.length} (saved ~${this.estimateTokens(messages) - this.estimateTokens(trimmedMessages)} tokens)`);
+          messages = trimmedMessages;
+        }
       }
 
       let responseText = '';
@@ -1090,6 +1110,63 @@ Example:
       this._previousSearches.shift();
     }
     this._previousSearches.push(pattern);
+  }
+
+  /**
+   * Estimate token count for messages (rough approximation: 1 token ≈ 4 chars)
+   */
+  private estimateTokens(messages: LLMMessage[]): number {
+    return messages.reduce((sum, msg) => sum + Math.ceil(msg.content.length / 4), 0);
+  }
+
+  /**
+   * Summarize old conversation messages to reduce token usage
+   */
+  private async summarizeConversation(messages: LLMMessage[]): Promise<string> {
+    if (messages.length === 0) return '';
+    
+    // Extract key information from old messages
+    const toolCalls = messages
+      .filter(m => m.role === 'tool' && typeof m.content === 'string')
+      .map(m => {
+        const content = m.content as string;
+        // Extract file paths and key results
+        const fileMatch = content.match(/(?:read|wrote|edited|found)\s+[^\n]+/gi);
+        return fileMatch ? fileMatch.slice(0, 3).join('; ') : content.substring(0, 100);
+      })
+      .filter(Boolean);
+
+    const summary = `Previous conversation covered: ${toolCalls.slice(0, 10).join(' | ')}`;
+    this.log(`Conversation summarized: ${toolCalls.length} tool results condensed`);
+    return summary;
+  }
+
+  /**
+   * Trim messages to stay within token budget, summarizing old messages
+   */
+  private async trimMessagesToBudget(messages: LLMMessage[], maxTokenPercentage: number = 0.8): Promise<LLMMessage[]> {
+    const maxTokens = this.config.model.contextLength * maxTokenPercentage;
+    let estimatedTokens = this.estimateTokens(messages);
+    
+    if (estimatedTokens <= maxTokens) {
+      return messages;
+    }
+
+    this.log(`Token warning: ${estimatedTokens} / ${this.config.model.contextLength} (${(estimatedTokens / this.config.model.contextLength * 100).toFixed(1)}%) - trimming conversation`);
+
+    // Keep system prompt + last 8 messages, summarize the rest
+    const systemMsg = messages[0];
+    const recentMsgs = messages.slice(-8);
+    const oldMessages = messages.slice(1, -8);
+    
+    if (oldMessages.length === 0) {
+      return messages; // Nothing to trim
+    }
+
+    const summary = await this.summarizeConversation(oldMessages);
+    const summaryMsg: LLMMessage = { role: 'user', content: `[Previous conversation summary: ${summary}]. Continue from recent messages above.` };
+    
+    return [systemMsg, summaryMsg, ...recentMsgs];
   }
 
   private async callLLM(messages: LLMMessage[], tools: LLMTool[]): Promise<LLMResponse> {

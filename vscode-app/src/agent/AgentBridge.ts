@@ -196,6 +196,9 @@ export class AgentBridge {
   // Strategy rotation for repeated failures
   private _triedStrategies: Set<string> = new Set();
   private _strategyRotationCount: number = 0;
+  
+  // Pre-flight check for server start commands
+  private _hasCheckedRunningServers: boolean = false;
 
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000;
   private static readonly MAX_LIST_FILES_RESULTS = 100;
@@ -517,6 +520,7 @@ export class AgentBridge {
     this._autoNudge = null;
     this._triedStrategies = new Set<string>();
     this._strategyRotationCount = 0;
+    this._hasCheckedRunningServers = false; // Reset pre-flight check for new conversation
 
     const toolCalls: ToolCall[] = [];
     const history: ToolCallHistory[] = [];
@@ -1179,6 +1183,48 @@ Example:
 
   private async executeTool(toolCall: ToolCall): Promise<{ result: string; error?: string }> {
     try {
+      // PRE-FLIGHT CHECK: Before starting servers, check what's already running
+      if (toolCall.toolName === 'run_terminal') {
+        const command = toolCall.args.command as string;
+        const isServerStartCommand = /gradlew.*:run|npm\s+(run\s+)?(dev|start)|yarn\s+(dev|start)|vite|next\s+dev|react-scripts\s+start/i.test(command);
+
+        if (isServerStartCommand && !this._hasCheckedRunningServers) {
+          this._hasCheckedRunningServers = true;
+
+          // Check VS Code terminals for existing servers
+          const vscode = require('vscode');
+          const allTerminals = vscode.window.terminals;
+          const runningTerminals = allTerminals.filter((t: any) =>
+            !t.exitStatus && // undefined = running, defined = closed
+            (t.name.toLowerCase().includes('gradlew') ||
+             t.name.toLowerCase().includes('npm') ||
+             t.name.toLowerCase().includes('node') ||
+             t.name.toLowerCase().includes('vite') ||
+             t.name.toLowerCase().includes('java'))
+          );
+
+          if (runningTerminals.length > 0) {
+            this.log(`Pre-flight check: Found ${runningTerminals.length} existing terminal(s) that may be servers`);
+
+            // Inject a tool message to inform the agent
+            const terminalList = runningTerminals.map((t: any) => `- ${t.name}`).join('\n');
+            const preflightMessage = `[AUTO] Found ${runningTerminals.length} existing terminal(s) that may be running servers:\n${terminalList}\n\n**Check if the server is already running before starting a new one.**\n\nUse list_all_terminals to inspect them, or check the browser/application to see if it's responding.`;
+
+            // Store for injection into messages
+            if (!(this as any)._pendingMessages) (this as any)._pendingMessages = [];
+            (this as any)._pendingMessages.push({
+              role: 'tool',
+              content: preflightMessage,
+              tool_call_id: `auto_preflight_${Date.now()}`
+            });
+
+            return {
+              result: `Pre-flight check: Found ${runningTerminals.length} existing terminal(s). Use list_all_terminals to inspect them before starting a new server.`
+            };
+          }
+        }
+      }
+
       // Create tool context with all necessary dependencies
       const context: ToolContext = {
         workspaceRoot: this.workspaceRoot,

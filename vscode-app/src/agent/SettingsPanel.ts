@@ -530,6 +530,20 @@ export class SettingsPanel {
         <input type="number" id="terminal.maxTerminalHistory" min="100" max="10000" value="${settings.terminal.maxTerminalHistory}">
       </div>
     </div>
+    
+    <div class="setting-row">
+      <div class="setting-label">
+        <div>Terminal Mode</div>
+        <div class="setting-description">Which terminals to use</div>
+      </div>
+      <div class="setting-control">
+        <select id="terminal.mode">
+          <option value="hybrid" ${settings.terminal.mode === 'hybrid' ? 'selected' : ''}>Hybrid (Both)</option>
+          <option value="managed" ${settings.terminal.mode === 'managed' ? 'selected' : ''}>Managed Only</option>
+          <option value="vscode" ${settings.terminal.mode === 'vscode' ? 'selected' : ''}>VS Code Only</option>
+        </select>
+      </div>
+    </div>
   </div>
   
   <!-- Build Settings -->
@@ -864,7 +878,8 @@ export class SettingsPanel {
           showOutputInWebview: document.getElementById('terminal.showOutputInWebview').checked,
           autoCloseDelayMs: parseInt(document.getElementById('terminal.autoCloseDelayMs').value),
           preserveTerminals: document.getElementById('terminal.preserveTerminals').checked,
-          maxTerminalHistory: parseInt(document.getElementById('terminal.maxTerminalHistory').value)
+          maxTerminalHistory: parseInt(document.getElementById('terminal.maxTerminalHistory').value),
+          mode: document.getElementById('terminal.mode').value
         },
         build: {
           timeoutSeconds: parseInt(document.getElementById('build.timeoutSeconds').value),

@@ -262,7 +262,13 @@ export class AgentTabManager {
             if (streamingEnabled) this.sendToWebview({ command: 'streaming_text', text: chunk.text, timestamp: chunk.timestamp });
             break;
           case 'done':
-            if (chunk.tokenUsage) this.sendToWebview({ command: 'token_usage', tokenUsage: chunk.tokenUsage, contextLength: this.currentAgentBridge.getConfig().model.contextLength, timestamp: chunk.timestamp });
+            if (chunk.tokenUsage) {
+              const contextLength = this.currentAgentBridge.getConfig().model.contextLength;
+              const totalTokens = chunk.tokenUsage.prompt + chunk.tokenUsage.completion;
+              const percentage = ((totalTokens / contextLength) * 100).toFixed(1);
+              this.log(`Token usage: ${totalTokens.toLocaleString()} / ${contextLength.toLocaleString()} (${percentage}%) - prompt: ${chunk.tokenUsage.prompt.toLocaleString()}, completion: ${chunk.tokenUsage.completion.toLocaleString()}`);
+              this.sendToWebview({ command: 'token_usage', tokenUsage: chunk.tokenUsage, contextLength, timestamp: chunk.timestamp });
+            }
             break;
           case 'error':
             vscode.window.showErrorMessage('Agent error: ' + chunk.error);

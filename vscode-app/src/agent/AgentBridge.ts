@@ -469,12 +469,12 @@ export class AgentBridge {
     this._suggestedDirectories = this._domainResolution.suggestedDirectories;
     
     if (this._domainResolution.primaryDomain !== 'unknown' && this._domainResolution.confidence > 0.3) {
-      this.log(`Domain resolved: ${this._domainResolution.primaryDomain} (${this._domainResolution.rationale})`);
+      this.log(`Domain resolved: ${this._domainResolution.primaryDomain} (confidence: ${(this._domainResolution.confidence * 100).toFixed(0)}%, ${this._domainResolution.rationale})`);
       this.log(`Suggested directories: ${this._suggestedDirectories.join(', ')}`);
       
-      // Inject domain hint into system prompt when confidence is high
-      if (this._domainResolution.confidence > 0.7 && this._suggestedDirectories.length > 0) {
-        systemPrompt += `\n\n[DOMAIN HINT] This query is about **${this._domainResolution.primaryDomain}** code. Focus your exploration on: ${this._suggestedDirectories.join(', ')}. Avoid exploring unrelated directories.`;
+      // Inject domain hint into system prompt when confidence is moderate or higher
+      if (this._domainResolution.confidence >= 0.5 && this._suggestedDirectories.length > 0) {
+        systemPrompt += `\n\n[DOMAIN GUIDANCE] This task is about **${this._domainResolution.primaryDomain.toUpperCase()}** code (${(this._domainResolution.confidence * 100).toFixed(0)}% confidence). You should explore these directories FIRST: ${this._suggestedDirectories.join(', ')}. DO NOT waste time exploring unrelated directories like root, other modules, or unrelated code.`;
       }
     }
     

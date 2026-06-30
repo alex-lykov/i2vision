@@ -36,10 +36,10 @@ export const terminalTools: ToolDefinition[] = [
         },
         workingDir: { 
           type: 'string', 
-          description: 'Working directory relative to project root (optional)' 
+          description: 'REQUIRED: Directory where command should run (e.g., "frontend", "backend", "app/server"). ALWAYS specify this for npm, yarn, vite, or framework commands.' 
         }
       },
-      required: ['command']
+      required: ['command', 'workingDir']
     },
     timeoutMs: 120000,
     async handler(args, ctx) {
@@ -207,14 +207,24 @@ export const terminalTools: ToolDefinition[] = [
       } else {
         message = `Found ${allTerminals.length} terminal(s):\n\n${JSON.stringify(result, null, 2)}`;
         
-        // Add helpful guidance for non-managed terminals
-        const hasNonManaged = allTerminals.some(t => t.name.startsWith('node') || t.name.startsWith('java') || t.name.includes('dev') || t.name.includes('server'));
-        if (hasNonManaged) {
-          message += '\n\n💡 TIP: These terminals appear to be running servers. To check their logs:\n';
-          message += '- Click on the terminal in VS Code to view live output\n';
-          message += '- Or use kill_port tool to restart the server with agent management\n';
-          message += '- For Vite/frontend: Check browser console (F12) for client-side errors\n';
-          message += '- For Java/backend: Check terminal output for stack traces';
+        // Analyze terminals and provide actionable guidance
+        const nodeTerminal = allTerminals.find(t => t.name.toLowerCase().includes('node'));
+        const javaTerminal = allTerminals.find(t => t.name.toLowerCase().includes('java'));
+        const hasFrontend = nodeTerminal && !nodeTerminal.exitStatus; // undefined = running, defined = closed
+        const hasBackend = javaTerminal && !javaTerminal.exitStatus;
+        
+        if (hasFrontend || hasBackend) {
+          message += '\n\n💡 TIP: Servers are already running!\n';
+          if (hasFrontend) {
+            message += `- **Frontend** is running in "${nodeTerminal?.name}" terminal\n`;
+            message += `  → Check browser at http://localhost:5173 (or check terminal for actual port)\n`;
+            message += `  → Open browser DevTools (F12) to see frontend errors\n`;
+          }
+          if (hasBackend) {
+            message += `- **Backend** is running in "${javaTerminal?.name}" terminal\n`;
+            message += `  → Check terminal output for startup errors\n`;
+          }
+          message += '\n**Before starting new servers:** Check if existing terminals show errors!\n';
         }
       }
       

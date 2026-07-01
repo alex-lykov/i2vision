@@ -190,6 +190,7 @@ export class AgentBridge {
   private _consecutivePlans: number = 0;
   private _consecutiveSuccessfulEdits: number = 0;
   private _fixMode: boolean = false;
+  private _forceActionMode: boolean = false;
   private _failedEditAttempts: number = 0;
   private _lastBuildErrors: string = '';
   private _serverJustStarted: string | null = null;
@@ -359,10 +360,15 @@ export class AgentBridge {
     return merged;
   }
 
-  private getTools(lazyProfile?: ContextProfile['lazy'], toolFilter?: 'all' | 'fix_only' | 'read_only'): LLMTool[] {
+  private getTools(lazyProfile?: ContextProfile['lazy'], toolFilter?: 'all' | 'fix_only' | 'read_only' | 'action_only'): LLMTool[] {
     // Use state machine to determine tool filter if not explicitly provided
     if (!toolFilter) {
       toolFilter = this.stateMachine.getToolFilter();
+    }
+
+    // Force action mode overrides state machine filter
+    if (this._forceActionMode) {
+      toolFilter = 'action_only';
     }
 
     // Get all tools from registry with layer filtering
@@ -380,6 +386,12 @@ export class AgentBridge {
       const readTools = this.toolRegistry.getReadOnlyTools();
       this.log(`Tool filter: read_only (${readTools.length}/${allTools.length} tools)`);
       return readTools;
+    }
+
+    if (toolFilter === 'action_only') {
+      const actionTools = this.toolRegistry.getLLMToolsByName(['apply_edits', 'write_file', 'run_terminal', 'run_build', 'git_commit']);
+      this.log(`Tool filter: action_only (${actionTools.length}/${allTools.length} tools) - forcing action mode`);
+      return actionTools;
     }
 
     return allTools;
@@ -1069,15 +1081,15 @@ Example:
           this._toolCallHistory.shift();
         }
         
-        // PATTERN DETECTION: Check for over-exploration (3+ exploration tools with no action)
+        // PATTERN DETECTION: Check for over-exploration (5+ exploration tools with no action)
         const explorationTools = ['read_file', 'list_directory', 'search_files', 'get_file_context'];
         const actionTools = ['write_file', 'apply_edits', 'run_terminal', 'run_build', 'git_commit'];
         
         const lastFiveCalls = this._toolCallHistory.slice(-5);
-        const allExploration = lastFiveCalls.length >= 3 && lastFiveCalls.every(tc => explorationTools.includes(tc.toolName));
+        const allExploration = lastFiveCalls.length >= 5 && lastFiveCalls.every(tc => explorationTools.includes(tc.toolName));
         const hasAction = this._toolCallHistory.some(tc => actionTools.includes(tc.toolName));
         
-        if (allExploration && !hasAction && this._toolCallHistory.length >= 5) {
+        if (allExploration && !hasAction) {
           this.log(`Pattern detected: ${lastFiveCalls.length} consecutive exploration calls with no action - forcing synthesis`);
           this._autoNudge = `⚠️ STOP exploring. You've called ${lastFiveCalls.length} exploration tools (read_file, list_directory, search_files) without taking any action. You have enough information. Either:
 1. Run a command (run_terminal, run_build)
@@ -1086,6 +1098,11 @@ Example:
 
 Do NOT read any more files. RESPOND NOW.`;
           this._consecutiveToolCallsWithoutResponse = 0; // Reset after nudge
+          this._forceActionMode = true; // Force action mode - removes exploration tools
+        } else if (hasAction && this._forceActionMode) {
+          // Reset force action mode after an action is taken
+          this.log(`Force action mode: action tool detected - resetting`);
+          this._forceActionMode = false;
         }
       }
 
@@ -1600,6 +1617,17 @@ Do NOT read any more files. RESPOND NOW.`;
           this._consecutiveSuccessfulEdits = 0;
           this._failedEditAttempts = 0;
           
+          // Check for file lock errors (running server locking build files)
+          const isFileLockError = output.includes('Unable to delete') || output.includes('file has open') || output.includes('files has open') || output.includes('Access is denied') || output.includes('used by another process');
+          if (isFileLockError) {
+            this.log('File lock detected in build failure - guiding agent to kill running process');
+            (this as any)._pendingMessages = (this as any)._pendingMessages || [];
+            (this as any)._pendingMessages.push({ 
+              role: 'user', 
+              content: `[AUTO] Build failed because files are locked by a running process. Use list_all_terminals to find running servers, then kill_port to free the locked files. Then re-run the build.`
+            });
+          }
+          
           // IMPORTANT: Do NOT set _fixMode = true here. The LLM needs all tools
           // (including run_build and run_terminal) to diagnose and fix the issue.
           // _fixMode should only be set by the plan-only detection logic.
@@ -1676,6 +1704,17 @@ Do NOT read any more files. RESPOND NOW.`;
             const output = (result.stdout || '') + '\n' + (result.stderr || '');
             
             if (result.exitCode !== 0 || output.includes('BUILD FAILED') || output.includes('FAILED')) {
+              // Check for file lock errors (running server locking build files)
+              const isFileLockError = output.includes('Unable to delete') || output.includes('file has open') || output.includes('files has open') || output.includes('Access is denied') || output.includes('used by another process');
+              if (isFileLockError) {
+                this.log('File lock detected in run_terminal build failure - guiding agent to kill running process');
+                (this as any)._pendingMessages = (this as any)._pendingMessages || [];
+                (this as any)._pendingMessages.push({ 
+                  role: 'user', 
+                  content: `[AUTO] Build failed because files are locked by a running process. Use list_all_terminals to find running servers, then kill_port to free the locked files. Then re-run the build.`
+                });
+              }
+              
               const errors = this.extractCompilationErrors(output);
               this._lastBuildErrors = errors;
               this._buildFailureCount++;

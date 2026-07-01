@@ -191,6 +191,9 @@ export interface StateContext {
   /** Whether we're in a search loop */
   inSearchLoop: boolean;
   
+  /** Whether build failed due to environmental issue (file lock, not code) */
+  inEnvironmentalError: boolean;
+  
   /** Detected intent type (explore/create/debug/refactor/test/run) */
   intentType: string;
   
@@ -252,6 +255,7 @@ export function createInitialContext(): StateContext {
     inPlanLoop: false,
     inBuildFixCycle: false,
     inSearchLoop: false,
+    inEnvironmentalError: false,
     intentType: 'default',
     taskDescription: '',
     validatedToolCalls: [],
@@ -550,10 +554,26 @@ export const TRANSITIONS: StateTransition[] = [
     to: AgentState.PLAN, 
     event: AgentEvent.BUILD_FAILURE,
     description: 'Build failed, planning fixes',
+    guard: (ctx) => !ctx.inEnvironmentalError, // Don't enter fix mode for environmental errors
     action: (ctx) => ({
       buildFailures: ctx.buildFailures + 1,
       consecutiveEdits: 0,
       inBuildFixCycle: true,
+    }),
+  },
+  
+  // VERIFY → PLAN (build failed due to file lock - don't enter fix mode)
+  { 
+    from: AgentState.VERIFY, 
+    to: AgentState.PLAN, 
+    event: AgentEvent.BUILD_FAILURE,
+    guard: (ctx) => ctx.inEnvironmentalError,
+    description: 'Build failed due to file lock - environmental issue',
+    action: (ctx) => ({
+      buildFailures: ctx.buildFailures + 1,
+      consecutiveEdits: 0,
+      inBuildFixCycle: false, // Don't enter code fix mode
+      inEnvironmentalError: true,
     }),
   },
   
@@ -562,10 +582,24 @@ export const TRANSITIONS: StateTransition[] = [
     from: AgentState.PLAN,
     to: AgentState.PLAN,
     event: AgentEvent.BUILD_FAILURE,
+    guard: (ctx) => !ctx.inEnvironmentalError,
     description: 'Build failure tracked in plan state',
     action: (ctx) => ({
       buildFailures: ctx.buildFailures + 1,
       inBuildFixCycle: true,
+    }),
+  },
+  
+  // PLAN → PLAN (build failure due to file lock - reset environmental flag)
+  {
+    from: AgentState.PLAN,
+    to: AgentState.PLAN,
+    event: AgentEvent.BUILD_FAILURE,
+    guard: (ctx) => ctx.inEnvironmentalError,
+    description: 'Build failure (environmental) - reset flag',
+    action: (ctx) => ({
+      buildFailures: ctx.buildFailures + 1,
+      inEnvironmentalError: false, // Reset for next build attempt
     }),
   },
   
@@ -937,11 +971,32 @@ export class AgentStateMachine {
     
     // Build commands
     if (toolName === 'run_build' || (toolName === 'run_terminal' && result.includes('BUILD'))) {
+      // Check for file lock errors FIRST (environmental issue, not code error)
+      const isFileLockError = result.includes('Unable to delete') || 
+                              result.includes('file has open') || 
+                              result.includes('files has open') || 
+                              result.includes('Access is denied') || 
+                              result.includes('used by another process');
+      
+      if (isFileLockError) {
+        return { 
+          event: AgentEvent.BUILD_FAILURE,
+          contextUpdates: {
+            inEnvironmentalError: true,
+            lastBuildErrors: 'FILE_LOCKED: A running process is holding build files. Kill the server first before fixing code.',
+            inBuildFixCycle: false // Don't enter code fix mode - this is an environmental issue
+          }
+        };
+      }
+      
       if (result.includes('✅') || result.includes('BUILD SUCCESSFUL')) {
-        return { event: AgentEvent.BUILD_SUCCESS };
+        return { event: AgentEvent.BUILD_SUCCESS, contextUpdates: { inEnvironmentalError: false } };
       }
       if (result.includes('❌') || result.includes('BUILD FAILED')) {
-        return { event: AgentEvent.BUILD_FAILURE };
+        return { 
+          event: AgentEvent.BUILD_FAILURE,
+          contextUpdates: { inEnvironmentalError: false }
+        };
       }
     }
     
@@ -1009,7 +1064,7 @@ export class AgentStateMachine {
   }
   
   /** Get the tool filter mode based on state */
-  getToolFilter(): 'all' | 'fix_only' | 'read_only' {
+  getToolFilter(): 'all' | 'fix_only' | 'read_only' | 'action_only' {
     if (this._state === AgentState.COMPLETE || this._state === AgentState.FAILED) {
       return 'read_only';
     }

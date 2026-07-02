@@ -647,10 +647,12 @@
         let contextMeterDiv = null;
         
         function updateContextMeter(tokenUsage, contextLength) {
-            if (!tokenUsage) return;
+            if (!tokenUsage || !contextLength) return;
             
             const totalTokens = tokenUsage.prompt + tokenUsage.completion;
-            const percentage = ((totalTokens / contextLength) * 100).toFixed(1);
+            // Cap percentage at 100% for display purposes
+            const rawPercentage = ((totalTokens / contextLength) * 100);
+            const percentage = Math.min(rawPercentage, 100).toFixed(1);
             
             // Create meter UI if it doesn't exist
             if (!contextMeterDiv) {

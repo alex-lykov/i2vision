@@ -218,7 +218,8 @@ export class AgentTabManager {
   }
   
   /**
-   * Estimate token count from messages (rough approximation: 1 token ≈ 4 characters)
+   * Estimate token count from messages (rough approximation: 1 token ≈ 4 characters for code)
+   * Uses more conservative estimate to avoid inflated numbers
    */
   private estimateTokensFromMessages(messages: ChatMessage[]): number {
     const totalChars = messages.reduce((sum, msg) => {
@@ -228,8 +229,8 @@ export class AgentTabManager {
       }
       return sum + msgChars;
     }, 0);
-    // Rough estimate: 1 token ≈ 4 characters for English text
-    return Math.round(totalChars / 4);
+    // Conservative estimate: 1 token ≈ 6 characters for code (includes whitespace, brackets, etc.)
+    return Math.round(totalChars / 6);
   }
 
   getActiveTabId(): string | null { return this.activeTabId; }
@@ -295,6 +296,8 @@ export class AgentTabManager {
               const percentage = ((totalTokens / contextLength) * 100).toFixed(1);
               this.log(`Token usage: ${totalTokens.toLocaleString()} / ${contextLength.toLocaleString()} (${percentage}%) - prompt: ${chunk.tokenUsage.prompt.toLocaleString()}, completion: ${chunk.tokenUsage.completion.toLocaleString()}`);
               this.sendToWebview({ command: 'token_usage', tokenUsage: chunk.tokenUsage, contextLength, timestamp: chunk.timestamp });
+            } else {
+              this.log('Response complete (no token usage data)');
             }
             break;
           case 'error':

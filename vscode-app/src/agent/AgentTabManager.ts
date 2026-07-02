@@ -203,6 +203,33 @@ export class AgentTabManager {
     for (const msg of tabState.history) {
       this.sendToWebview({ command: msg.role === 'user' ? 'user_message' : 'restored_message', content: msg.content, toolCalls: msg.toolCalls, timestamp: msg.timestamp });
     }
+    
+    // Initialize context meter with estimated token count from loaded messages
+    if (this.currentAgentBridge) {
+      const contextLength = this.currentAgentBridge.getConfig().model.contextLength;
+      const estimatedTokens = this.estimateTokensFromMessages(tabState.history);
+      this.sendToWebview({ 
+        command: 'token_usage', 
+        tokenUsage: { prompt: estimatedTokens, completion: 0, total: estimatedTokens }, 
+        contextLength,
+        timestamp: Date.now() 
+      });
+    }
+  }
+  
+  /**
+   * Estimate token count from messages (rough approximation: 1 token ≈ 4 characters)
+   */
+  private estimateTokensFromMessages(messages: ChatMessage[]): number {
+    const totalChars = messages.reduce((sum, msg) => {
+      let msgChars = msg.content.length;
+      if (msg.toolCalls) {
+        msgChars += msg.toolCalls.reduce((s, tc) => s + JSON.stringify(tc).length, 0);
+      }
+      return sum + msgChars;
+    }, 0);
+    // Rough estimate: 1 token ≈ 4 characters for English text
+    return Math.round(totalChars / 4);
   }
 
   getActiveTabId(): string | null { return this.activeTabId; }

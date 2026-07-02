@@ -226,6 +226,60 @@
             .tool-call-card.collapsed .tool-call-body {
                 display: none;
             }
+            
+            /* Context Meter */
+            .context-meter {
+                position: sticky;
+                top: 0;
+                z-index: 100;
+                padding: 10px 12px;
+                background-color: var(--vscode-sideBar-background);
+                border-bottom: 1px solid var(--vscode-widget-border);
+                margin-bottom: 10px;
+            }
+            
+            .meter-header {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 6px;
+            }
+            
+            .meter-label {
+                font-size: 11px;
+                font-weight: 600;
+                text-transform: uppercase;
+                color: var(--vscode-descriptionForeground);
+            }
+            
+            .meter-values {
+                display: flex;
+                gap: 8px;
+                font-size: 11px;
+                color: var(--vscode-foreground);
+            }
+            
+            .token-count {
+                font-family: var(--vscode-editor-font-family);
+            }
+            
+            .percentage {
+                font-weight: 600;
+            }
+            
+            .meter-bar {
+                height: 6px;
+                background-color: var(--vscode-input-background);
+                border-radius: 3px;
+                overflow: hidden;
+            }
+            
+            .meter-fill {
+                height: 100%;
+                background-color: var(--vscode-terminal-ansiGreen);
+                transition: width 0.3s ease, background-color 0.3s ease;
+                border-radius: 3px;
+            }
         `;
         document.head.appendChild(style);
     }
@@ -585,6 +639,67 @@
                 }, 300);
             }, 2000);
         }
+        
+        // =====================================================================
+        // CONTEXT METER - TOKEN USAGE DISPLAY
+        // =====================================================================
+        
+        let contextMeterDiv = null;
+        
+        function updateContextMeter(tokenUsage, contextLength) {
+            if (!tokenUsage) return;
+            
+            const totalTokens = tokenUsage.prompt + tokenUsage.completion;
+            const percentage = ((totalTokens / contextLength) * 100).toFixed(1);
+            
+            // Create meter UI if it doesn't exist
+            if (!contextMeterDiv) {
+                contextMeterDiv = document.createElement('div');
+                contextMeterDiv.id = 'context-meter';
+                contextMeterDiv.className = 'context-meter';
+                contextMeterDiv.innerHTML = `
+                    <div class="meter-header">
+                        <span class="meter-label">Context Usage</span>
+                        <span class="meter-values">
+                            <span class="token-count">${totalTokens.toLocaleString()} / ${contextLength.toLocaleString()}</span>
+                            <span class="percentage">${percentage}%</span>
+                        </span>
+                    </div>
+                    <div class="meter-bar">
+                        <div class="meter-fill" style="width: ${percentage}%"></div>
+                    </div>
+                `;
+                
+                // Insert at the top of the messages area
+                if (messagesDiv.firstChild) {
+                    messagesDiv.insertBefore(contextMeterDiv, messagesDiv.firstChild);
+                } else {
+                    messagesDiv.appendChild(contextMeterDiv);
+                }
+            } else {
+                // Update existing meter
+                const tokenCountEl = contextMeterDiv.querySelector('.token-count');
+                const percentageEl = contextMeterDiv.querySelector('.percentage');
+                const fillEl = contextMeterDiv.querySelector('.meter-fill');
+                
+                if (tokenCountEl) tokenCountEl.textContent = `${totalTokens.toLocaleString()} / ${contextLength.toLocaleString()}`;
+                if (percentageEl) percentageEl.textContent = `${percentage}%`;
+                if (fillEl) fillEl.style.width = `${percentage}%`;
+            }
+            
+            // Update color based on usage
+            const fillEl = contextMeterDiv?.querySelector('.meter-fill');
+            if (fillEl) {
+                const pct = parseFloat(percentage);
+                if (pct >= 80) {
+                    fillEl.style.background = 'var(--vscode-terminal-ansiRed)';
+                } else if (pct >= 50) {
+                    fillEl.style.background = 'var(--vscode-terminal-ansiYellow)';
+                } else {
+                    fillEl.style.background = 'var(--vscode-terminal-ansiGreen)';
+                }
+            }
+        }
 
         // =====================================================================
         // PROGRESS EVENT HANDLER - REAL-TIME TOOL CARDS
@@ -925,6 +1040,11 @@
                     console.log('[WebView] Config updated:', message.provider, message.model);
                     if (message.provider) providerSelect.value = message.provider;
                     if (message.model) modelSelect.value = message.model;
+                    break;
+
+                case 'token_usage':
+                    console.log('[WebView] Token usage:', message.tokenUsage);
+                    updateContextMeter(message.tokenUsage, message.contextLength);
                     break;
             }
         }

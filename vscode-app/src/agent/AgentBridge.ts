@@ -40,6 +40,7 @@ import {
   DomainDetector,
   DomainResolution,
 } from './tools';
+import { ChatMessage, AgentSessionState } from './ConversationHistoryManager';
 
 export interface ContextProfile {
   eager: { currentFile?: boolean; projectMetadata?: boolean; gitStatus?: boolean; gitDiff?: boolean; relatedFiles?: boolean; directoryStructure?: boolean };
@@ -175,6 +176,11 @@ export class AgentBridge {
   private _domainResolution?: DomainResolution;
   private _suggestedDirectories: string[] = [];
 
+  // Session state - persists across agent recreation
+  private _sessionState?: AgentSessionState;
+  private _searchCache: Map<string, { results: string[], timestamp: number }> = new Map();
+  private static readonly SEARCH_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
   // Auto-explore on failed search tracking
   private _failedSearchCount: number = 0;
   private _lastSearchPattern: string | null = null;
@@ -215,6 +221,7 @@ export class AgentBridge {
   private static readonly MAX_LIST_FILES_RESULTS = 100;
   private static readonly MAX_APPLY_EDITS = 50;
   private static readonly MAX_SEARCH_ITERATIONS = 3; // Max iterations searching for same pattern
+  private static readonly SEARCH_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes search cache TTL
 
   private longRunningPatterns: string[] = [
     'run', 'serve', 'dev', 'start', 'watch', 'nodemon', 'vite', 'next dev',
@@ -360,6 +367,94 @@ export class AgentBridge {
     return merged;
   }
 
+  /**
+   * Restore session state from previous conversation
+   */
+  restoreSessionState(sessionState: AgentSessionState | undefined): void {
+    if (!sessionState) {
+      this.log('No session state to restore');
+      return;
+    }
+    
+    this._sessionState = sessionState;
+    this.log('Restoring session state...');
+    
+    // Restore visited paths
+    if (sessionState.visitedPaths && sessionState.visitedPaths.length > 0) {
+      this._autoReadFiles = new Set(sessionState.visitedPaths);
+      this.log(`Restored ${sessionState.visitedPaths.length} visited paths`);
+    }
+    
+    // Restore search cache
+    if (sessionState.searchCache) {
+      const now = Date.now();
+      for (const cached of sessionState.searchCache) {
+        if (now - cached.timestamp < AgentBridge.SEARCH_CACHE_TTL_MS) {
+          this._searchCache.set(cached.query, { results: cached.results, timestamp: cached.timestamp });
+        }
+      }
+      this.log(`Restored ${this._searchCache.size} search cache entries`);
+    }
+    
+    // Restore domain resolution
+    if (sessionState.resolvedDomain) {
+      this._domainResolution = {
+        primaryDomain: sessionState.resolvedDomain.primaryDomain,
+        confidence: sessionState.resolvedDomain.confidence,
+        suggestedDirectories: sessionState.resolvedDomain.suggestedDirectories,
+        rationale: sessionState.resolvedDomain.rationale,
+        relevantModules: [],
+        matchingTechnologies: []
+      };
+      this._suggestedDirectories = sessionState.resolvedDomain.suggestedDirectories;
+      this.log(`Restored domain resolution: ${sessionState.resolvedDomain.primaryDomain} (${(sessionState.resolvedDomain.confidence * 100).toFixed(0)}%)`);
+    }
+    
+    // Restore other state
+    if (sessionState.toolFilter) {
+      this._forceActionMode = sessionState.toolFilter === 'action_only';
+    }
+    if (sessionState.forceActionMode !== undefined) {
+      this._forceActionMode = sessionState.forceActionMode;
+    }
+    if (sessionState.failedSearchCount !== undefined) {
+      this._failedSearchCount = sessionState.failedSearchCount;
+    }
+    if (sessionState.lastSearchPattern) {
+      this._lastSearchPattern = sessionState.lastSearchPattern;
+    }
+    
+    this.log('Session state restored');
+  }
+
+  /**
+   * Get current session state for persistence
+   */
+  getSessionState(): AgentSessionState | undefined {
+    if (!this._sessionState) return undefined;
+    
+    return {
+      visitedPaths: Array.from(this._autoReadFiles),
+      searchCache: Array.from(this._searchCache.entries()).map(([query, data]) => ({
+        query,
+        results: data.results,
+        timestamp: data.timestamp,
+        workspaceRoot: this.workspaceRoot
+      })),
+      resolvedDomain: this._domainResolution ? {
+        primaryDomain: this._domainResolution.primaryDomain,
+        confidence: this._domainResolution.confidence,
+        suggestedDirectories: this._domainResolution.suggestedDirectories,
+        rationale: this._domainResolution.rationale
+      } : undefined,
+      workingDirectory: this.workspaceRoot,
+      toolFilter: this._forceActionMode ? 'action_only' : 'all',
+      forceActionMode: this._forceActionMode,
+      failedSearchCount: this._failedSearchCount,
+      lastSearchPattern: this._lastSearchPattern || undefined
+    };
+  }
+
   private getTools(lazyProfile?: ContextProfile['lazy'], toolFilter?: 'all' | 'fix_only' | 'read_only' | 'action_only'): LLMTool[] {
     // Use state machine to determine tool filter if not explicitly provided
     if (!toolFilter) {
@@ -475,23 +570,29 @@ export class AgentBridge {
     return { finalText, toolCalls, iterations, durationMs: Date.now() - startTime, success: !error, error };
   }
 
-  async *processStreaming(userInput: string, currentFile?: string): AsyncGenerator<AgentChunk> {
+  async *processStreaming(userInput: string, currentFile?: string, history?: ChatMessage[], sessionState?: AgentSessionState): AsyncGenerator<AgentChunk> {
     if (!this.isInitialized) await this.initialize();
+    
+    // Restore session state if provided
+    this.restoreSessionState(sessionState);
+    
     try {
       const templateVars = { ...this.config.templateVariables, currentFile: currentFile || this.config.templateVariables.currentFile || '', task: userInput };
       const systemPrompt = this.buildSystemPrompt(templateVars);
-      for await (const chunk of this.executeAgentLoop(userInput, systemPrompt, { streaming: true })) yield chunk;
+      for await (const chunk of this.executeAgentLoop(userInput, systemPrompt, { streaming: true }, history)) yield chunk;
     } catch (error: any) {
       yield { type: 'error', error: error.message, timestamp: Date.now() };
     }
   }
 
-  async *executeAgentLoop(userInput: string, systemPrompt: string, options: AgentLoopOptions = { streaming: false }): AsyncGenerator<AgentChunk> {
+  async *executeAgentLoop(userInput: string, systemPrompt: string, options: AgentLoopOptions = { streaming: false }, history?: ChatMessage[]): AsyncGenerator<AgentChunk> {
     // STATE MACHINE FLOW: Intent → Plan → Constraints → Sequence → Execute → Verify → Output
     
-    // DOMAIN DETECTION: Classify task as frontend/backend/shared using architecture knowledge
-    this._domainResolution = this.domainDetector.resolveDomain(userInput);
-    this._suggestedDirectories = this._domainResolution.suggestedDirectories;
+    // DOMAIN DETECTION: Only run if not already resolved (restored from session state)
+    if (!this._domainResolution || !this._domainResolution.resolvedDomain) {
+      this._domainResolution = this.domainDetector.resolveDomain(userInput);
+      this._suggestedDirectories = this._domainResolution.suggestedDirectories;
+    }
     
     if (this._domainResolution.primaryDomain !== 'unknown' && this._domainResolution.confidence > 0.3) {
       this.log(`Domain resolved: ${this._domainResolution.primaryDomain} (confidence: ${(this._domainResolution.confidence * 100).toFixed(0)}%, ${this._domainResolution.rationale})`);
@@ -515,37 +616,63 @@ export class AgentBridge {
     const loadedContext = contextProfile ? await this.loadEagerContext(contextProfile, this.config.templateVariables.currentFile) : undefined;
     const contextEnhancedPrompt = this.injectContextIntoPrompt(systemPrompt, loadedContext);
 
+    // Build messages array with conversation history
     let messages: LLMMessage[] = [
-      { role: 'system', content: contextEnhancedPrompt },
-      { role: 'user', content: userInput }
+      { role: 'system', content: contextEnhancedPrompt }
     ];
+    
+    // Inject conversation history if provided
+    if (history && history.length > 0) {
+      this.log(`Injecting ${history.length} historical messages into LLM context`);
+      for (const msg of history) {
+        messages.push({
+          role: msg.role,
+          content: msg.content
+        });
+      }
+    }
+    
+    // Add current user input
+    messages.push({ role: 'user', content: userInput });
 
     let maxIterations = this.config.iterationSettings.maxIterations;
     if (typeof maxIterations !== 'number' || maxIterations < 0 || maxIterations > 100) maxIterations = 50;
     
-    // Reset all state for a fresh conversation
-    this.stateMachine.reset();
-    this._pendingFixes = [];
-    this._buildFailureCount = 0;
-    this._autoReadFiles.clear();
-    this._consecutivePlans = 0;
-    this._consecutiveSuccessfulEdits = 0;
-    this._fixMode = false;
-    this._failedEditAttempts = 0;
-    this._lastBuildErrors = '';
-    this._serverJustStarted = null;
-    this._lastSearchFiles = [];
-    this._lastSearchIteration = 0;
-    this._failedSearchCount = 0;
-    this._lastSearchPattern = null;
-    this._previousSearches = [];
-    this._autoNudge = null;
-    this._triedStrategies = new Set<string>();
-    this._strategyRotationCount = 0;
-    this._hasCheckedRunningServers = false; // Reset pre-flight check for new conversation
-    this._consecutiveToolCallsWithoutResponse = 0; // Reset tool call counter
-    this._toolCallHistory = []; // Reset tool call history
-    this._forceActionMode = false; // Reset force action mode for new conversation
+    // Reset state only if no session state was restored (first conversation)
+    const isFreshConversation = !this._sessionState;
+    
+    if (isFreshConversation) {
+      this.log('Fresh conversation - resetting all state');
+      this.stateMachine.reset();
+      this._pendingFixes = [];
+      this._buildFailureCount = 0;
+      this._autoReadFiles.clear();
+      this._consecutivePlans = 0;
+      this._consecutiveSuccessfulEdits = 0;
+      this._fixMode = false;
+      this._failedEditAttempts = 0;
+      this._lastBuildErrors = '';
+      this._serverJustStarted = null;
+      this._lastSearchFiles = [];
+      this._lastSearchIteration = 0;
+      this._failedSearchCount = 0;
+      this._lastSearchPattern = null;
+      this._previousSearches = [];
+      this._autoNudge = null;
+      this._triedStrategies = new Set<string>();
+      this._strategyRotationCount = 0;
+      this._hasCheckedRunningServers = false;
+      this._consecutiveToolCallsWithoutResponse = 0;
+      this._toolCallHistory = [];
+      this._forceActionMode = false;
+    } else {
+      this.log('Resumed conversation - preserving session state');
+      // Only reset state machine, keep session-specific state
+      this.stateMachine.reset();
+      this._autoNudge = null;
+      this._consecutiveToolCallsWithoutResponse = 0;
+      this._toolCallHistory = [];
+    }
 
     const toolCalls: ToolCall[] = [];
     const history: ToolCallHistory[] = [];
@@ -1328,6 +1455,14 @@ Do NOT read any more files. RESPOND NOW.`;
           const dirPath = this.resolvePath(toolCall.args.path);
           const recursive = toolCall.args.recursive === true;
           this.log(`list_directory (legacy): args.path="${toolCall.args.path}" → resolved="${dirPath}", recursive=${recursive}`);
+          
+          // Track visited paths to prevent re-exploration
+          const visitedKey = `${dirPath}:${recursive}`;
+          if (this._autoReadFiles.has(visitedKey)) {
+            this.log(`list_directory: Already explored ${dirPath} (recursive=${recursive})`);
+          }
+          this._autoReadFiles.add(visitedKey);
+          
           try {
             const files = await this.cli.listFiles(dirPath, recursive);
             this.log(`list_directory (legacy) result: ${files.length} files found`);
@@ -1346,6 +1481,13 @@ Do NOT read any more files. RESPOND NOW.`;
         case 'read_file': {
           const filePath = this.resolvePath(toolCall.args.path);
           const normalizedPath = filePath.toLowerCase();
+          
+          // Track visited file paths
+          if (this._autoReadFiles.has(normalizedPath)) {
+            return { result: '[Already read. Focus on proposing fixes with apply_edits or write_file.]' };
+          }
+          this._autoReadFiles.add(normalizedPath);
+          
           if (this._autoReadFiles.has(normalizedPath)) return { result: '[Already auto-read. Focus on proposing fixes with apply_edits or write_file.]' };
           try {
             const result = await this.cli.readFile(filePath);
@@ -1449,6 +1591,20 @@ Do NOT read any more files. RESPOND NOW.`;
           const pattern = toolCall.args.pattern;
           const searchPath = toolCall.args.path ? this.resolvePath(toolCall.args.path) : undefined;
           
+          // Check search cache first
+          const cacheKey = `${pattern}:${searchPath || '*'}`;
+          const cachedResult = this._searchCache.get(cacheKey);
+          const now = Date.now();
+          
+          if (cachedResult && now - cachedResult.timestamp < AgentBridge.SEARCH_CACHE_TTL_MS) {
+            this.log(`Search cache HIT for "${pattern}" (${cachedResult.results.length} files)`);
+            const results = cachedResult.results;
+            if (results.length === 0) {
+              return { result: `No files found matching pattern "${pattern}" (cached). Try a different search term.`, error: 'NO_RESULTS' };
+            }
+            return { result: `Found ${results.length} file(s) (cached):\n${results.join('\n')}\n\nTIP: You found the files! Now READ one of them instead of searching more.` };
+          }
+          
           // Check for search loop - same pattern searched multiple times
           if (this._lastSearchPattern === pattern && this._lastSearchFiles.length > 0) {
             this.log(`SEARCH LOOP: Pattern "${pattern}" already searched. Found ${this._lastSearchFiles.length} files: ${this._lastSearchFiles.slice(0, 3).join(', ')}...`);
@@ -1464,7 +1620,11 @@ Do NOT read any more files. RESPOND NOW.`;
           const functionMatch = pattern.match(/function\s+(\w+)/);
           const simplePattern = classMatch ? classMatch[1] : functionMatch ? functionMatch[1] : pattern;
           
+          this.log(`Search cache MISS for "${pattern}" - executing search`);
           const results = await this.cli.searchFiles(simplePattern, searchPath);
+          
+          // Cache the search results
+          this._searchCache.set(cacheKey, { results, timestamp: now });
           
           // Track this search for loop detection
           this._lastSearchPattern = pattern;

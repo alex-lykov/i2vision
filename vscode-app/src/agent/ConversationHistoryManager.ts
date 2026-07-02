@@ -24,6 +24,30 @@ export interface ChatMessage {
 }
 
 /**
+ * Session state that persists across agent recreation
+ */
+export interface AgentSessionState {
+  visitedPaths: string[];
+  searchCache: Array<{
+    query: string;
+    results: string[];
+    timestamp: number;
+    workspaceRoot: string;
+  }>;
+  resolvedDomain?: {
+    primaryDomain: string;
+    confidence: number;
+    suggestedDirectories: string[];
+    rationale?: string;
+  };
+  workingDirectory?: string;
+  toolFilter?: 'all' | 'action_only';
+  forceActionMode?: boolean;
+  failedSearchCount?: number;
+  lastSearchPattern?: string;
+}
+
+/**
  * Saved conversation data structure
  */
 export interface SavedConversation {
@@ -34,6 +58,7 @@ export interface SavedConversation {
   createdAt: number;
   updatedAt: number;
   contextTitle?: string;
+  sessionState?: AgentSessionState;
 }
 
 /**
@@ -52,7 +77,7 @@ export class ConversationHistoryManager {
   /**
    * Save conversation to JSON file
    */
-  async save(tabId: string, messages: ChatMessage[], layer: string): Promise<void> {
+  async save(tabId: string, messages: ChatMessage[], layer: string, sessionState?: AgentSessionState): Promise<void> {
     const contextTitle = this.extractContextTitle(messages);
     const filePath = path.join(this.storageDir, `${tabId}.json`);
     const data: SavedConversation = {
@@ -62,7 +87,8 @@ export class ConversationHistoryManager {
       messages,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      contextTitle
+      contextTitle,
+      sessionState
     };
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
   }

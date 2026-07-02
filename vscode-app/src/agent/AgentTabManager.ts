@@ -8,7 +8,7 @@ import * as fs from 'fs';
 import { AgentBridge, ToolCall } from './AgentBridge';
 import { LocalAgentProvider } from './LocalAgentProvider';
 import { LocalI2VisionAgent, VslfcLayer } from './LocalI2VisionAgent';
-import { ConversationHistoryManager, ChatMessage } from './ConversationHistoryManager';
+import { ConversationHistoryManager, ChatMessage, AgentSessionState } from './ConversationHistoryManager';
 import { AgentSettingsManager } from './AgentSettings';
 
 interface AgentTabState {
@@ -21,6 +21,8 @@ interface AgentTabState {
   createdAt: number;
   lastActivityAt: number;
   lastAutoSaveAt?: number;
+  workspaceRoot: string; // Persist workspace path to prevent context loss on resume
+  sessionState?: AgentSessionState; // Persist session state across agent recreation
 }
 
 export class AgentTabManager {
@@ -121,7 +123,7 @@ export class AgentTabManager {
   private async saveTabQuietly(tabId: string, tabState: AgentTabState): Promise<void> {
     if (!this.historyManager) return;
     try {
-      await this.historyManager.save(tabId, tabState.history, tabState.layer);
+      await this.historyManager.save(tabId, tabState.history, tabState.layer, tabState.sessionState);
       tabState.lastAutoSaveAt = Date.now();
       this.log('Auto-saved tab ' + tabId + ' (' + tabState.history.length + ' messages)');
     } catch (error: any) {
@@ -187,9 +189,17 @@ export class AgentTabManager {
     const tabState = this.tabs.get(tabId);
     if (!tabState) { this.log('Tab ' + tabId + ' not found for loading conversation'); return; }
     tabState.history = saved.messages;
+    tabState.sessionState = saved.sessionState; // Restore session state
     tabState.lastActivityAt = saved.updatedAt;
     tabState.lastAutoSaveAt = saved.updatedAt;
     this.log('Loaded conversation data with ' + saved.messages.length + ' messages');
+    if (saved.sessionState) {
+      this.log('Restored session state: ' + JSON.stringify({
+        visitedPaths: saved.sessionState.visitedPaths?.length || 0,
+        searchCache: saved.sessionState.searchCache?.length || 0,
+        domain: saved.sessionState.resolvedDomain?.primaryDomain || 'none'
+      }));
+    }
   }
 
   private async sendLoadedConversation(tabId: string): Promise<void> {
@@ -266,7 +276,12 @@ export class AgentTabManager {
       let responseText = '';
       let startTime = Date.now();
       if (showThinking) this.sendToWebview({ command: 'thinking', message: 'Agent is thinking...', timestamp: Date.now() });
-      const streamGenerator = this.currentAgentBridge.processStreaming(userInput, currentFile);
+      const streamGenerator = this.currentAgentBridge.processStreaming(
+        userInput, 
+        currentFile,
+        tabState.history,  // Pass conversation history
+        tabState.sessionState  // Pass session state
+      );
       for await (const chunk of streamGenerator) {
         if (this.cancelTokenSource.token.isCancellationRequested) {
           this.log('Processing cancelled by user');
@@ -312,6 +327,10 @@ export class AgentTabManager {
         const cleanedResponse = this.cleanResponseText(responseText);
         const assistantMessage: ChatMessage = { role: 'assistant', content: cleanedResponse, toolCalls: tabState.accumulatedToolCalls.map(tc => ({ toolName: tc.toolName, args: tc.args, result: tc.result })), timestamp: Date.now() };
         tabState.history.push(assistantMessage);
+        
+        // Update session state from agent bridge
+        tabState.sessionState = this.currentAgentBridge.getSessionState();
+        
         if (settings.agent.autoSaveConversation && this.historyManager) await this.saveTabQuietly(this.activeTabId!, tabState);
         const durationMs = Date.now() - startTime;
         this.sendToWebview({ command: 'assistant_response', content: cleanedResponse, durationMs, timestamp: Date.now() });
@@ -623,7 +642,7 @@ export class AgentTabManager {
     const tab = this.tabs.get(tabId);
     if (tab) {
       if (this.historyManager && tab.history.length > 0) {
-        await this.historyManager.save(tabId, tab.history, tab.layer);
+        await this.historyManager.save(tabId, tab.history, tab.layer, tab.sessionState);
         this.log('Saved conversation history for ' + tabId + ' (' + tab.history.length + ' messages)');
       }
       tab.agent.dispose();
@@ -650,7 +669,7 @@ export class AgentTabManager {
     if (this.webviewPanel) this.webviewPanel.dispose();
     if (this.currentAgentBridge) { this.currentAgentBridge.dispose(); this.currentAgentBridge = null; }
     const savePromises = Array.from(this.tabs.entries()).map(async ([tabId, tabState]) => {
-      if (this.historyManager && tabState.history.length > 0) await this.historyManager.save(tabId, tabState.history, tabState.layer);
+      if (this.historyManager && tabState.history.length > 0) await this.historyManager.save(tabId, tabState.history, tabState.layer, tabState.sessionState);
       tabState.agent.dispose();
     });
     this.tabs.clear();

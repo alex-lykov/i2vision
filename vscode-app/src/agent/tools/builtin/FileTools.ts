@@ -122,7 +122,7 @@ export const fileTools: ToolDefinition[] = [
   
   {
     name: 'search_files',
-    description: 'Search for files matching a regex pattern. Returns file paths and matching lines. TIP: If you find a file, read it immediately instead of searching more.',
+    description: 'Search for files by name AND content. Searches file names first, then reads text file contents looking for regex matches. Returns file paths. TIP: If you find a file, read it immediately instead of searching more.',
     category: 'file',
     isReadOnly: true,
     parameters: {

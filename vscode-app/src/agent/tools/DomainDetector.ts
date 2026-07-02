@@ -28,10 +28,59 @@ export interface ProjectArchitecture {
         modules: ModuleInfo[];
     };
     technologyStack?: {
+        primaryLanguage?: string;
+        secondaryLanguages?: string[];
         frontend?: string[];
         backend?: string[];
         shared?: string[];
     };
+}
+
+/**
+ * Map language names to file extensions
+ * Used by CLI to determine which files to search based on detected project architecture
+ */
+export const LANGUAGE_EXTENSIONS: Record<string, string[]> = {
+    'KOTLIN': ['.kt', '.kts'],
+    'JAVA': ['.java'],
+    'TYPESCRIPT': ['.ts', '.tsx'],
+    'JAVASCRIPT': ['.js', '.jsx'],
+    'PYTHON': ['.py', '.pyw'],
+    'GO': ['.go'],
+    'RUST': ['.rs'],
+    'SWIFT': ['.swift'],
+    'C_SHARP': ['.cs'],
+    'CPP': ['.cpp', '.cc', '.cxx', '.hpp', '.h'],
+    'RUBY': ['.rb', '.erb'],
+    'PHP': ['.php', '.phtml'],
+    'UNKNOWN': []
+};
+
+/**
+ * Get file extensions from project architecture
+ * Combines primary language, secondary languages, and common support files
+ */
+export function getExtensionsFromArchitecture(architecture: ProjectArchitecture): string[] {
+    const extensions = new Set<string>();
+    
+    // Add extensions from detected languages
+    const languages = [
+        architecture.technologyStack?.primaryLanguage,
+        ...(architecture.technologyStack?.secondaryLanguages || [])
+    ].filter(Boolean) as string[];
+    
+    for (const lang of languages) {
+        const langUpper = lang.toUpperCase();
+        if (langUpper in LANGUAGE_EXTENSIONS) {
+            LANGUAGE_EXTENSIONS[langUpper].forEach(ext => extensions.add(ext));
+        }
+    }
+    
+    // Always include common support files (config, markup, styles)
+    const supportExtensions = ['.xml', '.json', '.yaml', '.yml', '.css', '.scss', '.less', '.html', '.htm', '.md', '.txt', '.gradle', '.properties', '.svg'];
+    supportExtensions.forEach(ext => extensions.add(ext));
+    
+    return Array.from(extensions);
 }
 
 export interface DomainResolution {

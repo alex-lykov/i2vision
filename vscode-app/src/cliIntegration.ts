@@ -14,6 +14,7 @@ import * as path from 'path';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as vscode from 'vscode';
+import { ProjectArchitecture, getExtensionsFromArchitecture } from './agent/tools/DomainDetector';
 
 const execAsync = promisify(exec);
 
@@ -169,6 +170,8 @@ export class CLI {
   private deepSeekBaseUrl: string = 'https://api.deepseek.com';
   private workspaceRoot: string;
   private cliPath?: string;
+  private projectArchitecture?: ProjectArchitecture;
+  private fileExtensions: string[] = [];
 
   constructor(workspaceRoot: string, outputChannel?: any) {
     this.workspaceRoot = workspaceRoot;
@@ -212,6 +215,9 @@ export class CLI {
     } catch (error: any) {
       this.log(`Could not read CLI path from settings: ${error.message}`);
     }
+    
+    // Load project architecture for dynamic file extension detection
+    this.loadProjectArchitecture();
   }
 
   /**
@@ -254,6 +260,38 @@ export class CLI {
     }
     
     return undefined;
+  }
+
+  /**
+   * Load project architecture from discovery cache to determine file extensions
+   */
+  private loadProjectArchitecture(): void {
+    const cachePath = path.join(this.workspaceRoot, '.vision-ai', 'cache', 'architecture.json');
+    
+    try {
+      if (!fs.existsSync(cachePath)) {
+        this.log('Project architecture cache not found, using default file extensions');
+        return;
+      }
+      
+      const cacheContent = fs.readFileSync(cachePath, 'utf-8');
+      this.projectArchitecture = JSON.parse(cacheContent) as ProjectArchitecture;
+      
+      // Extract file extensions from detected languages
+      this.fileExtensions = getExtensionsFromArchitecture(this.projectArchitecture);
+      
+      this.log(`Loaded project architecture: ${this.fileExtensions.length} file extensions (primary: ${this.projectArchitecture.technologyStack?.primaryLanguage || 'unknown'})`);
+    } catch (error: any) {
+      this.log(`Could not load project architecture cache: ${error.message}`);
+      this.fileExtensions = this.getDefaultExtensions();
+    }
+  }
+
+  /**
+   * Get default file extensions when architecture cache is not available
+   */
+  private getDefaultExtensions(): string[] {
+    return ['.ts', '.tsx', '.js', '.jsx', '.kt', '.kts', '.java', '.xml', '.json', '.yaml', '.yml', '.css', '.scss', '.less', '.html', '.htm', '.md', '.txt', '.gradle', '.properties', '.svg'];
   }
 
   /**
@@ -726,13 +764,19 @@ export class CLI {
   }
 
   /**
-   * Search files
+   * Search files by name AND content
    */
   async searchFiles(pattern: string, dirPath?: string): Promise<string[]> {
     this.log(`Searching: ${pattern}`);
     const searchDir = dirPath || this.workspaceRoot || process.cwd();
     const results: string[] = [];
+    const resultsSet = new Set<string>(); // Avoid duplicates
     const regex = new RegExp(pattern, 'i');
+    
+    // Use project-specific extensions from architecture detection, fallback to defaults
+    const textExtensions = this.fileExtensions.length > 0 
+      ? this.fileExtensions 
+      : this.getDefaultExtensions();
     
     const searchInDir = async (dir: string) => {
       try {
@@ -745,9 +789,31 @@ export class CLI {
           if (entry.isDirectory() && !entry.name.startsWith('.')) {
             await searchInDir(fullPath);
           } else if (entry.isFile()) {
+            // First check file name
             if (regex.test(entry.name)) {
-              results.push(fullPath);
-              if (results.length >= 50) return;
+              if (!resultsSet.has(fullPath)) {
+                resultsSet.add(fullPath);
+                results.push(fullPath);
+                if (results.length >= 50) return;
+              }
+            } else {
+              // If name doesn't match, check file content for text files
+              const ext = path.extname(entry.name).toLowerCase();
+              if (textExtensions.includes(ext)) {
+                try {
+                  const content = await fs.promises.readFile(fullPath, 'utf8');
+                  if (regex.test(content)) {
+                    if (!resultsSet.has(fullPath)) {
+                      resultsSet.add(fullPath);
+                      results.push(fullPath);
+                      if (results.length >= 50) return;
+                    }
+                  }
+                } catch (readError: any) {
+                  // Skip files that can't be read (binary, permissions, etc.)
+                  this.log(`Skipping ${fullPath}: ${readError.message}`);
+                }
+              }
             }
           }
         }

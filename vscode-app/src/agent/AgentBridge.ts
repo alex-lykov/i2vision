@@ -545,6 +545,7 @@ export class AgentBridge {
     this._hasCheckedRunningServers = false; // Reset pre-flight check for new conversation
     this._consecutiveToolCallsWithoutResponse = 0; // Reset tool call counter
     this._toolCallHistory = []; // Reset tool call history
+    this._forceActionMode = false; // Reset force action mode for new conversation
 
     const toolCalls: ToolCall[] = [];
     const history: ToolCallHistory[] = [];

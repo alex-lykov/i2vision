@@ -131,6 +131,26 @@
     .auto-scroll-toggle.disabled{background:var(--vscode-descriptionForeground);color:var(--vscode-editor-background);border-color:var(--vscode-descriptionForeground)}
     .auto-scroll-toggle:hover{opacity:0.9}
     .auto-scroll-toggle .codicon{font-size:14px}
+
+    /* Proxy Health Dashboard */
+    .proxy-status{display:none;align-items:center;gap:6px;padding:2px 8px;border-radius:4px;font-size:0.75em;font-weight:500;cursor:pointer;transition:all 0.2s}
+    .proxy-status.visible{display:flex}
+    .proxy-status.online{background:rgba(46,160,67,0.15);color:#2ea043;border:1px solid rgba(46,160,67,0.3)}
+    .proxy-status.degraded{background:rgba(210,153,34,0.15);color:#d29922;border:1px solid rgba(210,153,34,0.3)}
+    .proxy-status.offline{background:rgba(248,81,73,0.15);color:#f85149;border:1px solid rgba(248,81,73,0.3)}
+    .proxy-dashboard-panel{display:none;position:fixed;bottom:0;left:0;right:0;background:var(--vscode-editorWidget-background);border-top:1px solid var(--vscode-editorWidget-border);padding:12px 16px;z-index:50;max-height:200px;overflow-y:auto}
+    .proxy-dashboard-panel.visible{display:block}
+    .proxy-dashboard-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;max-width:900px;margin:0 auto}
+    .proxy-metric-card{background:var(--vscode-panel-background);border:1px solid var(--vscode-panel-border);border-radius:4px;padding:8px 10px}
+    .proxy-metric-label{font-size:0.7em;color:var(--vscode-descriptionForeground);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px}
+    .proxy-metric-value{font-size:0.9em;font-weight:600;color:var(--vscode-foreground)}
+    .proxy-metric-bar{height:3px;background:var(--vscode-input-border);border-radius:2px;margin-top:4px;overflow:hidden}
+    .proxy-metric-fill{height:100%;border-radius:2px;transition:width 0.3s ease}
+    .proxy-metric-fill.ok{background:#2ea043}
+    .proxy-metric-fill.warn{background:#d29922}
+    .proxy-metric-fill.crit{background:#f85149}
+    .proxy-close-btn{position:absolute;top:8px;right:8px;background:transparent;border:none;color:var(--vscode-foreground);cursor:pointer;font-size:1.1em}
+    .proxy-close-btn:hover{color:var(--vscode-errorForeground)}
   </style>
 </head>
 <body>
@@ -144,6 +164,11 @@
     <div class="header-right">
       <div id="conversationIndicator" style="display:none;font-size:0.8em;color:var(--vscode-descriptionForeground);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
         <span class="codicon codicon-comment-discussion"></span><span id="conversationId"></span>
+      </div>
+      <!-- Proxy Health Indicator -->
+      <div class="proxy-status" id="proxyStatus" onclick="toggleProxyDashboard()" title="Proxy health status">
+        <span class="codicon codicon-server-environment"></span>
+        <span id="proxyStatusText">Proxy</span>
       </div>
       <!-- Auto-scroll toggle -->
       <div class="header-item auto-scroll-toggle enabled" id="autoScrollToggle" onclick="toggleAutoScroll()" title="Auto-scroll on new messages (click to toggle)">
@@ -173,6 +198,7 @@
           <select id="providerSelect" onchange="onProviderChange()">
             <option value="ollama" {selectedProvider}>Ollama</option>
             <option value="deepseek" {selectedProviderDeepSeek}>DeepSeek</option>
+            <option value="3d-llm" {selectedProvider3DLlm}>3D LLM</option>
           </select>
         </div>
         <div class="selector-group">
@@ -214,7 +240,41 @@
       <div class="history-empty">Loading...</div>
     </div>
   </div>
-  
+
+  <!-- Proxy Health Dashboard Panel -->
+  <div class="proxy-dashboard-panel" id="proxyDashboardPanel">
+    <button class="proxy-close-btn" onclick="toggleProxyDashboard()" title="Close">&#10005;</button>
+    <div class="proxy-dashboard-grid" id="proxyDashboardGrid">
+      <div class="proxy-metric-card">
+        <div class="proxy-metric-label">Status</div>
+        <div class="proxy-metric-value" id="proxyMetricStatus">--</div>
+      </div>
+      <div class="proxy-metric-card">
+        <div class="proxy-metric-label">Messages</div>
+        <div class="proxy-metric-value" id="proxyMetricMessages">--</div>
+        <div class="proxy-metric-bar"><div class="proxy-metric-fill ok" id="proxyMetricMessagesBar" style="width:0%"></div></div>
+      </div>
+      <div class="proxy-metric-card">
+        <div class="proxy-metric-label">TTL Remaining</div>
+        <div class="proxy-metric-value" id="proxyMetricTtl">--</div>
+        <div class="proxy-metric-bar"><div class="proxy-metric-fill ok" id="proxyMetricTtlBar" style="width:0%"></div></div>
+      </div>
+      <div class="proxy-metric-card">
+        <div class="proxy-metric-label">Tokens</div>
+        <div class="proxy-metric-value" id="proxyMetricTokens">--</div>
+        <div class="proxy-metric-bar"><div class="proxy-metric-fill ok" id="proxyMetricTokensBar" style="width:0%"></div></div>
+      </div>
+      <div class="proxy-metric-card">
+        <div class="proxy-metric-label">Avg Latency</div>
+        <div class="proxy-metric-value" id="proxyMetricLatency">--</div>
+      </div>
+      <div class="proxy-metric-card">
+        <div class="proxy-metric-label">Warnings</div>
+        <div class="proxy-metric-value" id="proxyMetricWarnings">--</div>
+      </div>
+    </div>
+  </div>
+
   <script>
     const vscode = acquireVsCodeApi();
     const timeline = document.getElementById('timeline');
@@ -236,6 +296,8 @@
     const showThinkingSetting = {showThinking};
     let historySidebarVisible = false;
     let autoScrollEnabled = true;
+    let proxyDashboardVisible = false;
+    let proxyDashboardInitialized = false;
     
     window.addEventListener('load', function() {
       vscode.postMessage({ command: 'fetch_models' });
@@ -414,6 +476,13 @@
           toggleHistorySidebar();
           break;
         case 'conversation_deleted': showToast('Conversation deleted'); break;
+        case 'proxy_dashboard':
+          if (!proxyDashboardInitialized && message.status) {
+            document.getElementById('proxyStatus').classList.add('visible');
+            proxyDashboardInitialized = true;
+          }
+          updateProxyDashboard(message);
+          break;
       }
       scrollToBottom();
     });
@@ -701,6 +770,63 @@
       toast.innerHTML = '<span class="codicon codicon-check"></span>' + message;
       document.body.appendChild(toast);
       setTimeout(function() { toast.remove(); }, 2000);
+    }
+
+    function toggleProxyDashboard() {
+      proxyDashboardVisible = !proxyDashboardVisible;
+      const panel = document.getElementById('proxyDashboardPanel');
+      if (proxyDashboardVisible) {
+        panel.classList.add('visible');
+      } else {
+        panel.classList.remove('visible');
+      }
+    }
+
+    function updateProxyDashboard(data) {
+      const statusEl = document.getElementById('proxyStatus');
+      const statusText = document.getElementById('proxyStatusText');
+
+      // Determine overall status from health/context
+      let overallStatus = 'offline';
+      if (data.error) {
+        overallStatus = 'offline';
+      } else if (data.health) {
+        overallStatus = data.health.healthy ? 'online' : 'degraded';
+      }
+      statusEl.classList.remove('online', 'degraded', 'offline');
+      statusEl.classList.add(overallStatus);
+      statusText.textContent = overallStatus.charAt(0).toUpperCase() + overallStatus.slice(1);
+
+      // Update metrics
+      if (data.health) {
+        document.getElementById('proxyMetricStatus').textContent = data.health.status || 'Unknown';
+      } else if (data.error) {
+        document.getElementById('proxyMetricStatus').textContent = 'Proxy Unreachable';
+      }
+
+      // Map contextStatus to usageSummary fields
+      let u = data.usageSummary || data.contextStatus || {};
+      document.getElementById('proxyMetricMessages').textContent = (u.messagesUsed || 0) + ' / ' + (u.messagesLimit || 100);
+      const msgPct = Math.min(((u.messagesUsed || 0) / (u.messagesLimit || 100)) * 100, 100);
+      const msgBar = document.getElementById('proxyMetricMessagesBar');
+      msgBar.style.width = msgPct + '%';
+      msgBar.className = 'proxy-metric-fill ' + (msgPct > 80 ? 'crit' : msgPct > 60 ? 'warn' : 'ok');
+
+      document.getElementById('proxyMetricTtl').textContent = u.ttlRemaining || 'Unknown';
+      const ttlPct = u.ttlPercent || 50;
+      const ttlBar = document.getElementById('proxyMetricTtlBar');
+      ttlBar.style.width = ttlPct + '%';
+      ttlBar.className = 'proxy-metric-fill ' + (ttlPct < 15 ? 'crit' : ttlPct < 30 ? 'warn' : 'ok');
+
+      document.getElementById('proxyMetricTokens').textContent = (u.tokenPercent || 0) + '%';
+      const tokBar = document.getElementById('proxyMetricTokensBar');
+      tokBar.style.width = Math.min(u.tokenPercent || 0, 100) + '%';
+      tokBar.className = 'proxy-metric-fill ' + (u.status === 'exhausted' || u.status === 'critical' ? 'crit' : u.status === 'warning' ? 'warn' : 'ok');
+
+      document.getElementById('proxyMetricLatency').textContent = u.avgLatencyMs ? Math.round(u.avgLatencyMs) + ' ms' : '--';
+
+      const warnings = (data.warnings || []).concat(u.warnings || []);
+      document.getElementById('proxyMetricWarnings').textContent = warnings.length > 0 ? warnings.join('; ') : 'None';
     }
 
     /**

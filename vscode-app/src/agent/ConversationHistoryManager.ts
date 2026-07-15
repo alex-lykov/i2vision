@@ -45,6 +45,19 @@ export interface AgentSessionState {
   forceActionMode?: boolean;
   failedSearchCount?: number;
   lastSearchPattern?: string;
+
+  /** Provider-specific session state (e.g. 3D LLM proxy session) */
+  proxySession?: {
+    id: string | null;
+    messageCount: number;
+    createdAt: number;
+    accountId: string | null;
+    continuityCounter: number;
+    retryAttempts: number;
+  };
+
+  /** Serialized SessionManager state for restoration */
+  sessionManagerState?: object;
 }
 
 /**

@@ -3,260 +3,213 @@
 # =============================================================================
 # This is the base configuration for all VSLFC layer agents.
 # Layer-specific configs (.vision-ai/{layer}-agent.yaml) extend/override these values.
-# 
+#
 # Only specify values you want to override in your layer config.
 # All unspecified fields will use these defaults.
 # =============================================================================
 
-# -----------------------------------------------------------------------------
-# 1. IDENTITY
-# -----------------------------------------------------------------------------
-# Unique identifier for this agent configuration
-key: "agent"
-
-# Type of agent (matches VSLFC layer: coding, logic, flow, structure)
-agentType: "configurable"
-
-# Configuration version (use semantic versioning)
+# --- 1. IDENTITY ---
+key: agent
+agentType: configurable
 version: "1.0.0"
-
-# Whether this agent configuration is active
 isActive: true
 
-# -----------------------------------------------------------------------------
-# 2. PROMPT
-# -----------------------------------------------------------------------------
-# System prompt template for the agent
-# Supports variable substitution: ${variableName}
+# --- 2. PROMPT ---
 systemPromptTemplate: |
   You are an AI assistant for the VSLFC (Vision Software Layered Formal Contract) architecture.
   You help analyze, design, and implement software systems following formal contract specifications.
-  
-  IMPORTANT: Before taking any action, ALWAYS start your response with:
-  reasoning: [Your analysis of the situation, what you understand, and why you're choosing this action]
-  
-  Then proceed with your response or tool call.
-  
+
+  ## UNIVERSAL RULES (STRICT - NEVER IGNORE)
+
+  ### NEVER
+  - **Edit files** with Python/PowerShell/`edit_file` → Use **`write_file` ONLY**
+  - **Kill processes** with `taskkill` → User handles this
+  - **Use relative paths** or `working_dir` → **Absolute paths only**
+  - **Commit** without being asked
+  - **Run `read_file`** → It returns "File not found" on this system
+  - **List directories one level at a time** → Use `list_files` with `recursive:true`
+  - **Run tests** unless explicitly asked
+  - **Explore beyond 10 calls** without making an edit
+
+  ## ✅ WORKFLOW
+
+  ### Build/Test Failure Limits
+  - If the same build or test command fails 3 times with the same error, STOP. Output "BUILD FAILED: [error]" and wait for instructions.
+  - Do NOT try different flags, filters, or workarounds. Three identical failures = the problem is outside your ability to fix.
+  - If tests compile but aren't discovered, it's a JUnit/Gradle config issue. Do not debug it.
+
+  ### Reading Files
+  - For Kotlin/TypeScript: `document_symbols` to see file structure
+  - For raw content: `run_command type path\to\file`
+  - For finding code: `search_files` or `find_references`
+
+  ### Editing Files
+  1. Read with `run_command type`
+  2. Write with `write_file path="relative/path" content="..."`
+  3. Build, fix errors if any, rebuild
+
+  ### Pre-Existing Errors
+  - If build fails on files you didn't edit, output "BUILD FAILED with pre-existing errors only"
+
+  ### Restart Servers
+  1. Ask user to close the terminal
+  2. Wait for confirmation
+  3. Start server, output "BUILD PASSED. Server running."
+
   When given a task:
-  1. Start with "reasoning:" to explain your understanding and plan
-  2. Call ONE tool to gather information (if needed)
-  3. WAIT for tool results
-  4. ANALYZE the results carefully
-  5. Provide a clear, helpful ANSWER to the user
-  6. STOP - do not call more tools unless absolutely necessary
-  
+  1. Use i2vision_get_context to understand the current code architecture
+  2. Read relevant files before making changes
+  3. Make focused, minimal edits
+  4. Verify your changes make sense in the broader architecture
+
   Available context:
   - Project: ${projectName}
   - Current file: ${currentFile}
   - Task: ${task}
 
-# Variables available for template substitution
+  --- ERROR HANDLING (CRITICAL) ---
+  When a tool returns an error:
+  1. DO NOT retry the same tool call with the same arguments
+  2. Analyze the error message to understand what went wrong
+  3. Take a different approach:
+     - If path not found (ENOENT): Tell the user the path doesn't exist, offer to list parent directory or search for similar paths
+     - If permission denied: Tell the user and ask for alternative location
+     - If file is empty: Report that the file exists but is empty
+  4. If you've tried 2 different approaches and both failed, report to user and ask for clarification
+
+  Example responses to errors:
+  - "The folder 'ui' doesn't exist in this project. I found these folders instead: app, core, feature. Would you like me to check one of those?"
+  - "I couldn't find the file at that path. Would you like me to search for files with similar names?"
+
 templateVariables:
-  projectName: ""
+  projectName: "i2vision"
   currentFile: ""
   task: ""
 
-# References to rule sets (defined elsewhere in the system)
-# ruleSetKeys: ["rule-1", "rule-2"]
+ruleSetKeys: ["code-style-kotlin", "minimal-changes"]
+parserTemplateName: "json-output"
 
-# Name of the output parser template to use
-# parserTemplateName: "json-output"
-
-# -----------------------------------------------------------------------------
-# 3. MODEL
-# -----------------------------------------------------------------------------
-# Model configuration for LLM inference
+# --- 3. MODEL ---
 model:
-  # Model identifier (format depends on provider)
-  # Examples: "qwen3:4b", "llama3:8b", "minimax-m2.1:cloud"
-  id: "minimax-m2.1:cloud"
-  
-  # Provider name (ollama, openai, anthropic, etc.)
-  provider: "ollama"
-  
-  # Maximum context window size (tokens)
-  contextLength: 32768
-  
-  # Maximum tokens in response
+  id: minimax-m2.1:cloud
+  provider: ollama
+  contextLength: 8192
   maxOutputTokens: 4096
-  
-  # Sampling temperature (0.0 = deterministic, 1.0 = creative)
-  temperature: 0.7
-  
-  # Top-p sampling (nucleus sampling threshold)
-  topP: 0.9
-  
-  # Stop sequences
-  stopSequences:
-    - "EOS"
+  temperature: 0.2
+  topP: 0.95
 
-# -----------------------------------------------------------------------------
-# 4. LLM BEHAVIOR
-# -----------------------------------------------------------------------------
-# Timeout and retry settings for LLM calls
+# --- 4. LLM BEHAVIOR ---
 llm:
-  # Base URL for the LLM API
-  baseUrl: "http://localhost:11434"
-  
-  # API key (if required by provider)
-  apiKey: ""
-  
-  # Request timeout in milliseconds
-  timeout: 60000
-  
-  # Retry settings
-  maxRetries: 2
-  retryDelayMs: 1000
+  timeoutSeconds: 120
+  modificationTimeoutSeconds: 180
+  finalTurnBonusSeconds: 60
+  maxRetries: 3
+  retryBackoffMs: [1000, 2000, 4000]
 
-# -----------------------------------------------------------------------------
-# 5. FORMATTING
-# -----------------------------------------------------------------------------
-# Response formatting rules
+# --- 5. FORMATTING RULES ---
 formattingRules:
-  # Marker that indicates end of structured response
+  rules: "OUTPUT FORMAT (STRICT): Use header lines: reasoning: <text> and tool_call: <json>"
+  brief: "reasoning: <text> | tool_call: {\"tool\":\"...\",\"args\":{...}} | EOS"
+  reasoningHeader: "reasoning:"
+  toolCallHeader: "tool_call:"
   eosMarker: "EOS"
-  
-  # Tool call format (JSON schema)
-  toolCallFormat: '{"tool":"tool_name","args":{}}'
-  
-  # Reasoning prefix
-  reasoningPrefix: "reasoning:"
-  
-  # Tool call prefix
-  toolCallPrefix: "tool_call:"
 
-# -----------------------------------------------------------------------------
-# 6. ITERATION SETTINGS
-# -----------------------------------------------------------------------------
-# Controls agent iteration behavior
+# --- 6. ITERATION ---
 iterationSettings:
-  # Maximum number of tool call iterations
-  # Increased from 10 to 15 to allow time for:
-  # - Discovery (exploring project structure)
-  # - Diagnosis (running build, reading errors)
-  # - Auto-fix (reading failing files, proposing fixes)
-  # - Verification (re-running build after fixes)
-  maxIterations: 15
-  
-  # Maximum tool calls per iteration
-  maxToolCallsPerIteration: 1
-  
-  # Whether to stop after first tool result (for simple queries)
-  stopAfterFirstToolResult: false
+  maxIterations: 10
+  maxConsecutiveToolCalls: 12
+  enableKickstart: true
+  kickstartMinInvalidOutputs: 2
 
-# -----------------------------------------------------------------------------
-# 7. TOOL SELECTION
-# -----------------------------------------------------------------------------
-# Tool availability and configuration
+# --- 7. TOOL SELECTION ---
 toolSelection:
-  # Tools available to this agent
-  availableTools:
-    - "read_file"
-    - "list_files"
-    - "search_files"
-    - "write_file"
-    - "run_command"
-    - "find_definition"
-    - "find_references"
-    - "find_symbols"
-    - "find_implementations"
-    - "document_symbols"
-  
-  # Tools that require special handling
-  privilegedTools:
-    - "write_file"
-    - "run_command"
-  
-  # Tool call timeout in milliseconds
-  toolCallTimeout: 30000
+  requiredToolsForModification: [read_file, write_file, edit_file]
+  defaultRelevanceThreshold: 0.6
+  maxToolsPerTask: 10
+  toolTimeoutSeconds: 30
 
-# -----------------------------------------------------------------------------
-# 8. SAFETY
-# -----------------------------------------------------------------------------
-# Safety and security settings
+# --- 8. SAFETY ---
 safety:
-  # Maximum file size to read (bytes)
-  maxFileReadSize: 1048576  # 1MB
-  
-  # Maximum response size (characters)
-  maxResponseSize: 10000
-  
-  # Whether to allow file writes
-  allowFileWrites: true
-  
-  # Whether to allow command execution
-  allowCommandExecution: true
-  
-  # Blocked commands (shell injection prevention)
-  blockedCommands:
-    - "rm -rf /"
-    - "del /F /S /Q C:\\*"
-    - "format"
+  modificationKeywords: [edit, modify, update, change, fix, make, create, set, replace, remove, delete, add, persist, save]
+  listingKeywords: [list, show]
+  listingModificationExclusions: [edit, modify, update]
+  blockGeneratedPaths: [/build/, /bin/, /out/, /generated/]
+  allowNewFileCreationPatterns: [create file, new file, add file, scaffold, generate file]
 
-# -----------------------------------------------------------------------------
-# 9. PARSING
-# -----------------------------------------------------------------------------
-# Response parsing configuration
+# --- 9. PARSING ---
 parsing:
-  # Parser template name (from parser-templates)
-  parserTemplateName: "default"
-  
-  # Whether to validate tool call JSON
-  validateToolCallJson: true
-  
-  # Whether to extract reasoning from response
-  extractReasoning: true
+  enabledParsers: [header, naked_json]
+  headerPattern: "^(reasoning|tool_call|EOS|Observation)\\s*:?\\s*"
+  toolCallPattern: "\\{\\s*\"tool\"\\s*:\\s*\"[A-Za-z0-9_]+\""
+  malformedPattern: "([a-zA-Z0-9_]+)\"\\s*,\\s*\"args\"\\s*:\\s*\\{"
+  maxResponseSize: 200000
+  maxProseChars: 400
 
-# -----------------------------------------------------------------------------
-# 10. DISCOVERY
-# -----------------------------------------------------------------------------
-# Discovery-specific settings (for discovery agents)
+# --- 10. REPAIR ---
+repairStrategies: []
+
+# --- 11. DISCOVERY ---
 discovery:
-  # Batch size for parallel processing
-  batchSize: 10
-  
-  # Whether to use parallel processing
-  useParallelProcessing: true
-  
-  # Cache settings
-  cacheEnabled: true
-  cacheTtlHours: 24
+  maxSearchTerms: 8
+  maxCandidates: 12
+  frameworkProfiles: {}
 
-# -----------------------------------------------------------------------------
-# 11. EXECUTION
-# -----------------------------------------------------------------------------
-# Execution environment settings
+# --- 12. EXECUTION ---
 execution:
-  # Working directory (relative to workspace root)
-  workingDirectory: ""
-  
-  # Environment variables
-  environment: {}
-  
-  # Shell to use for command execution
-  shell: "bash"
-  
-  # Long-running command patterns - commands matching these use persistent terminals
-  # with auto-restart on file changes. Customize for your project's build tools.
-  longRunningPatterns:
-    - "run"
-    - "serve"
-    - "dev"
-    - "start"
-    - "watch"
-    - "nodemon"
-    - "vite"
-    - "next dev"
-    - "spring-boot:run"
-    - "jetty:run"
-    - "webpack --watch"
-    - "tsc --watch"
-    - "gulp watch"
-    - "grunt watch"
-    - "cargo run"
-    - "go run"
-    - "python -m uvicorn"
-    - "poetry run"
-    - "./gradlew :app:server:run"
-    - "npm run dev"
-    - "make run"
+  enableBuildVerification: false
+  buildCommand: gradlew.bat compileKotlin
+  buildTimeoutSeconds: 90
+  enableSynthesis: true
+  synthesisOnlyForNonModification: true
+  fileOperations:
+    mode: direct
+    shell:
+      executable: powershell
+      useNoProfile: true
+      readFileEnabled: true
+      writeFileEnabled: true
+      listDirectoryEnabled: true
+      regexSearchEnabled: true
+
+# --- 13. FORMATTING ---
+formatting:
+  chunkSize: 200
+  delayMs: 10
+  maxObservationChars: 20000
+
+# --- 14. STREAMING ---
+streaming:
+  enabled: true
+  methodCandidates: [stream, runStreaming, generateStream]
+  fallbackToNonStreaming: true
+  fallbackChunkSize: 200
+  fallbackChunkDelayMs: 10
+
+# --- 15. MCP ---
+mcp:
+  enabled: true
+  injectClusterContext: true
+  directCliEnabled: false
+  allowedToolPrefixes: [i2vision_, read_, write_, edit_, list_, grep_]
+  strictToolNamePolicy: false
+
+# --- 16. SYSTEM PROMPT RULES ---
+# Custom rules appended to the system prompt after --- RULES ---.
+# If omitted, built-in defaults are used. Each item becomes a bullet.
+systemPromptRules:
+  rules:
+    - "ALWAYS use tool calls. Never describe plans."
+    - 'FOR "run backend" or "run server": use run_terminal with gradlew :app:server:run (NOT run_build)'
+    - 'FOR compilation: use run_build with compileKotlin (source code ONLY, NO tests). NEVER use "build" - it runs ALL tests.'
+    - "apply_edits: MAX 50 edits per call. For large changes, use write_file instead."
+    - "When build fails: READ failing files, FIX code, THEN re-run compileKotlin."
+    - "NEVER re-run build without fixing first."
+    - "SERVER STARTUP WORKFLOW:"
+    - "  1. Start server with run_terminal"
+    - "  2. WAIT 20-30 seconds (Gradle servers take time!)"
+    - "  3. Check terminal_status"
+    - '  4. If terminal shows "not running" or BUILD FAILED: run .\\gradlew :app:server:compileKotlin to see errors'
+    - "  5. Fix errors with apply_edits, then retry"
+    - "SEARCH TIP: If search_files finds files, READ them immediately. Do NOT search again with different patterns."
+    - "FOCUS: Fix source files (src/main), NOT test files (src/test), unless user specifically asks about tests."
+    - "Paths: relative to workspace root, use forward slashes (/)."

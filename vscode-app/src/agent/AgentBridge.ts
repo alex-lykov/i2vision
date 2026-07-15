@@ -39,8 +39,11 @@ import {
   CustomToolPluginLoader,
   DomainDetector,
   DomainResolution,
+  ModuleDomain,
 } from './tools';
 import { ChatMessage, AgentSessionState } from './ConversationHistoryManager';
+import { SessionManager, createSessionManager } from './SessionManager';
+import { ToolResultCompressor } from './ToolResultCompressor';
 
 export interface ContextProfile {
   eager: { currentFile?: boolean; projectMetadata?: boolean; gitStatus?: boolean; gitDiff?: boolean; relatedFiles?: boolean; directoryStructure?: boolean };
@@ -81,6 +84,7 @@ export interface AgentConfig {
   formatting: { chunkSize: number; delayMs: number; maxObservationChars: number };
   streaming: { enabled: boolean; methodCandidates: string[]; fallbackToNonStreaming: boolean; fallbackChunkSize: number; fallbackChunkDelayMs: number };
   mcp: { enabled: boolean; injectClusterContext: boolean; directCliEnabled: boolean; allowedToolPrefixes: string[]; strictToolNamePolicy: boolean };
+  systemPromptRules?: { rules: string[] };
   context?: { default: ContextProfile; tasks?: Record<string, TaskContextProfile> };
 }
 
@@ -181,6 +185,12 @@ export class AgentBridge {
   private _searchCache: Map<string, { results: string[], timestamp: number }> = new Map();
   private static readonly SEARCH_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
+  // Provider-specific session manager (3D LLM proxy, etc.)
+  private sessionManager?: SessionManager;
+
+  // Tool result compressor for large outputs
+  private toolCompressor: ToolResultCompressor = new ToolResultCompressor();
+
   // Auto-explore on failed search tracking
   private _failedSearchCount: number = 0;
   private _lastSearchPattern: string | null = null;
@@ -221,7 +231,6 @@ export class AgentBridge {
   private static readonly MAX_LIST_FILES_RESULTS = 100;
   private static readonly MAX_APPLY_EDITS = 50;
   private static readonly MAX_SEARCH_ITERATIONS = 3; // Max iterations searching for same pattern
-  private static readonly SEARCH_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes search cache TTL
 
   private longRunningPatterns: string[] = [
     'run', 'serve', 'dev', 'start', 'watch', 'nodemon', 'vite', 'next dev',
@@ -233,26 +242,41 @@ export class AgentBridge {
     'rm -rf /', 'del /F /S /Q C:\\*', 'format', 'mkfs', 'dd if=/dev/zero'
   ];
 
+  id: string;
+
   constructor(
-    config: AgentConfig, 
-    outputChannel: vscode.OutputChannel, 
-    extensionRoot: string, 
+    config: AgentConfig,
+    outputChannel: vscode.OutputChannel,
+    extensionRoot: string,
     workspaceRoot: string,
-    settingsManager?: AgentSettingsManager
+    settingsManager?: AgentSettingsManager,
+    agentId?: string
   ) {
+    this.id = agentId || `bridge-${Date.now()}-${Math.random().toString(16).substring(2, 6)}`;
     this.config = config;
     this.outputChannel = outputChannel;
-    
+
     if (!workspaceRoot) throw new Error('workspaceRoot must be explicitly provided');
     if (extensionRoot && extensionRoot === workspaceRoot) throw new Error('workspaceRoot and extensionRoot cannot be the same path');
-    
+
     this.workspaceRoot = workspaceRoot;
     this.extensionRoot = extensionRoot;
     this.settingsManager = settingsManager!;
     
     this.log(`Workspace root: ${this.workspaceRoot}`);
     this.cli = new CLI(this.workspaceRoot, outputChannel);
-    
+
+    // Initialize provider-specific session manager
+    const provider = config.model.provider;
+    const threeDLlmUrl = vscode.workspace.getConfiguration('i2vision').get<string>('3dLlmUrl') || 'http://localhost:9655';
+    this.sessionManager = createSessionManager(
+      provider,
+      provider === '3d-llm' ? threeDLlmUrl : undefined
+    );
+    if (this.sessionManager && this.sessionManager.name !== 'Null') {
+      this.log(`Session manager initialized: ${this.sessionManager.name}`);
+    }
+
     const settings = this.settingsManager.getSettings();
     this.terminalManager = new TerminalManager(outputChannel, settings.terminal.autoCloseDelayMs);
     
@@ -315,6 +339,28 @@ export class AgentBridge {
   }
 
   getConfig(): AgentConfig { return { ...this.config }; }
+
+  /** Update model config after provider change */
+  updateConfig(updates: Partial<AgentConfig['model']>): void {
+    if (updates.id !== undefined) this.config.model.id = updates.id;
+    if (updates.provider !== undefined) this.config.model.provider = updates.provider;
+    if (updates.contextLength !== undefined) this.config.model.contextLength = updates.contextLength;
+    if (updates.maxOutputTokens !== undefined) this.config.model.maxOutputTokens = updates.maxOutputTokens;
+    if (updates.temperature !== undefined) this.config.model.temperature = updates.temperature;
+    if (updates.topP !== undefined) this.config.model.topP = updates.topP;
+    this.log(`Config updated: model=${this.config.model.id}, provider=${this.config.model.provider}`);
+  }
+
+  /** Replace the session manager (e.g. after provider change) */
+  setSessionManager(manager: SessionManager): void {
+    this.sessionManager = manager;
+    this.log(`Session manager replaced: ${manager.name}`);
+  }
+
+  /** Expose the current session manager for inspection */
+  getSessionManager(): SessionManager | undefined {
+    return this.sessionManager;
+  }
 
   /** Get current state machine state for debugging/monitoring */
   getState(): { state: AgentState; context: StateContext; history: Array<{ from: AgentState; to: AgentState; event: AgentEvent }> } {
@@ -399,10 +445,10 @@ export class AgentBridge {
     // Restore domain resolution
     if (sessionState.resolvedDomain) {
       this._domainResolution = {
-        primaryDomain: sessionState.resolvedDomain.primaryDomain,
+        primaryDomain: sessionState.resolvedDomain.primaryDomain as ModuleDomain,
         confidence: sessionState.resolvedDomain.confidence,
         suggestedDirectories: sessionState.resolvedDomain.suggestedDirectories,
-        rationale: sessionState.resolvedDomain.rationale,
+        rationale: sessionState.resolvedDomain.rationale || '',
         relevantModules: [],
         matchingTechnologies: []
       };
@@ -423,7 +469,18 @@ export class AgentBridge {
     if (sessionState.lastSearchPattern) {
       this._lastSearchPattern = sessionState.lastSearchPattern;
     }
-    
+
+    // Restore proxy session state
+    if (sessionState.proxySession && this.sessionManager) {
+      this.sessionManager.deserialize({ proxySession: sessionState.proxySession });
+      this.log(`Restored proxy session: ${sessionState.proxySession.id || 'none'} (${sessionState.proxySession.messageCount} msgs)`);
+    }
+
+    // Restore session manager state
+    if (sessionState.sessionManagerState && this.sessionManager) {
+      this.sessionManager.deserialize(sessionState.sessionManagerState);
+    }
+
     this.log('Session state restored');
   }
 
@@ -451,7 +508,9 @@ export class AgentBridge {
       toolFilter: this._forceActionMode ? 'action_only' : 'all',
       forceActionMode: this._forceActionMode,
       failedSearchCount: this._failedSearchCount,
-      lastSearchPattern: this._lastSearchPattern || undefined
+      lastSearchPattern: this._lastSearchPattern || undefined,
+      proxySession: this.sessionManager?.getSessionState() ?? undefined,
+      sessionManagerState: this.sessionManager?.serialize() ?? undefined,
     };
   }
 
@@ -526,6 +585,31 @@ export class AgentBridge {
     if (this.progressCallback) this.progressCallback(event);
   }
 
+  /** Format tool definitions for embedding in the system prompt (3D LLM text-based tool calling) */
+  private formatToolsForSystemPrompt(tools: LLMTool[]): string {
+    let text = '--- AVAILABLE TOOLS ---\n';
+    text += 'You have access to the following tools. Call a tool by outputting EXACTLY one JSON object (no markdown, no extra text around it):\n';
+    text += '{"name":"<tool_name>","arguments":{"param1":"value1","param2":"value2"}}\n\n';
+    for (const tool of tools) {
+      const fn = tool.function;
+      text += `### ${fn.name}\n`;
+      text += `${fn.description || 'No description'}\n`;
+      if (fn.parameters) {
+        const props = fn.parameters.properties || {};
+        const req = fn.parameters.required || [];
+        text += `Parameters:\n`;
+        for (const [key, val] of Object.entries(props)) {
+          const desc = (val as any).description || '';
+          const required = req.includes(key) ? ' (required)' : '';
+          text += `  - ${key}: ${desc}${required}\n`;
+        }
+      }
+      text += '\n';
+    }
+    text += '--- END TOOLS ---';
+    return text;
+  }
+
   async process(userInput: string, currentFile?: string, onProgress?: ProgressCallback): Promise<AgentResponse> {
     if (!this.isInitialized) await this.initialize();
 
@@ -589,7 +673,7 @@ export class AgentBridge {
     // STATE MACHINE FLOW: Intent → Plan → Constraints → Sequence → Execute → Verify → Output
     
     // DOMAIN DETECTION: Only run if not already resolved (restored from session state)
-    if (!this._domainResolution || !this._domainResolution.resolvedDomain) {
+    if (!this._domainResolution) {
       this._domainResolution = this.domainDetector.resolveDomain(userInput);
       this._suggestedDirectories = this._domainResolution.suggestedDirectories;
     }
@@ -614,7 +698,14 @@ export class AgentBridge {
     }
 
     const loadedContext = contextProfile ? await this.loadEagerContext(contextProfile, this.config.templateVariables.currentFile) : undefined;
-    const contextEnhancedPrompt = this.injectContextIntoPrompt(systemPrompt, loadedContext);
+    let contextEnhancedPrompt = this.injectContextIntoPrompt(systemPrompt, loadedContext);
+
+    // When using 3D LLM proxy, embed tool definitions directly in system prompt
+    // because the proxy's tool injection conflicts with i2-Vision's instructions
+    const tools = this.getTools(contextProfile?.lazy, this.stateMachine.getToolFilter());
+    if (this.config.model.provider === '3d-llm' && tools.length > 0) {
+      contextEnhancedPrompt += '\n\n' + this.formatToolsForSystemPrompt(tools);
+    }
 
     // Build messages array with conversation history
     let messages: LLMMessage[] = [
@@ -675,7 +766,7 @@ export class AgentBridge {
     }
 
     const toolCalls: ToolCall[] = [];
-    const history: ToolCallHistory[] = [];
+    const toolCallHistory: ToolCallHistory[] = [];
 
     let iteration = 0;
     
@@ -854,6 +945,31 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         }
       }
 
+      // SESSION MANAGEMENT: Sync and manage provider-specific session
+      if (this.sessionManager && this.sessionManager.name !== 'Null') {
+        if (iteration === 1) {
+          await this.sessionManager.syncSession(this.id);
+          const sessionState = this.sessionManager.getSessionState();
+          if (sessionState) {
+            this.log(`Session ${sessionState.id || 'new'} — ${sessionState.messageCount} msgs, ${Math.round((Date.now() - sessionState.createdAt) / 60000)} min old`);
+          }
+        }
+
+        // Proactive health check and reset
+        const health = await this.sessionManager.checkHealth();
+        if (!health.healthy) {
+          this.log(`Session unhealthy: ${health.warnings.join('; ')}`);
+          const resetOk = await this.sessionManager.resetSession(this.id);
+          if (resetOk) {
+            this.log('Session reset due to health check failure');
+            yield { type: 'thinking', message: 'Session reset for reliability', timestamp: Date.now() };
+          }
+        }
+
+        // Manage messages (compact if approaching limits)
+        messages = await this.sessionManager.manageMessages(messages);
+      }
+
       let responseText = '';
       let streamingToolCalls: LLMToolCall[] = [];
       let textBuffer: string[] = [];
@@ -862,7 +978,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
       let streamBuffer = '';
 
       if (options.streaming) {
-        const rawResponse = await this.cli.callLLM(this.config.model.id, messages, { temperature: this.config.model.temperature, top_p: this.config.model.topP, max_tokens: this.config.model.maxOutputTokens }, tools, true);
+        const rawResponse = await this.cli.callLLM(this.config.model.id, messages, { temperature: this.config.model.temperature, top_p: this.config.model.topP, max_tokens: this.config.model.maxOutputTokens }, tools, true, this.config.model.provider);
         
         // Check if response is actually an AsyncGenerator (streaming supported)
         const isAsyncGenerator = rawResponse && typeof (rawResponse as any)[Symbol.asyncIterator] === 'function';
@@ -870,7 +986,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         if (!isAsyncGenerator) {
           // Streaming not supported, fall back to non-streaming
           this.log(`Streaming not available, falling back to non-streaming mode`);
-          const nonStreamResponse = await this.cli.callLLM(this.config.model.id, messages, { temperature: this.config.model.temperature, top_p: this.config.model.topP, max_tokens: this.config.model.maxOutputTokens }, tools, false) as LLMResponse;
+          const nonStreamResponse = await this.cli.callLLM(this.config.model.id, messages, { temperature: this.config.model.temperature, top_p: this.config.model.topP, max_tokens: this.config.model.maxOutputTokens }, tools, false, this.config.model.provider) as LLMResponse;
           responseText = nonStreamResponse.content;
           streamingToolCalls = nonStreamResponse.toolCalls.map(tc => ({ id: tc.id, name: tc.name, arguments: tc.arguments }));
         } else {
@@ -1067,7 +1183,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         
         // Only track history for non-search tools during auto-explore
         if (!isAutoExploreMode) {
-          history.push({ toolName: toolCall.name, argsSignature, iteration });
+          toolCallHistory.push({ toolName: toolCall.name, argsSignature, iteration });
         }
       }
 
@@ -1099,16 +1215,16 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         let toolResult: { result: string; error?: string } | null = null;
 
         try {
-          const result = await this.executeTool({ toolName: toolCall.name, args: toolCall.arguments });
+          const result = await this.executeToolWithRetry(toolCall, 3);
           toolCallObj.result = result.result;
           if (result.error) toolCallObj.error = result.error;
           toolResult = result;
-          
+
           const durationMs = Date.now() - startTime;
-          
+
           // Record in state machine for loop detection and metrics
           this.stateMachine.recordToolCall(toolCall.name, toolCall.arguments, result.result, result.error, durationMs);
-          
+
           if (options.streaming) {
             yield { type: 'tool_call_completed', toolName: toolCall.name, result: result.result, timestamp: Date.now() };
           }
@@ -1368,7 +1484,7 @@ Do NOT read any more files. RESPOND NOW.`;
   }
 
   private async callLLM(messages: LLMMessage[], tools: LLMTool[]): Promise<LLMResponse> {
-    const result = await this.cli.callLLM(this.config.model.id, messages, { temperature: this.config.model.temperature, top_p: this.config.model.topP, max_tokens: this.config.model.maxOutputTokens }, tools, false);
+    const result = await this.cli.callLLM(this.config.model.id, messages, { temperature: this.config.model.temperature, top_p: this.config.model.topP, max_tokens: this.config.model.maxOutputTokens }, tools, false, this.config.model.provider);
     if (Symbol.asyncIterator in result) throw new Error('Expected non-streaming response but got streaming generator');
     return result as LLMResponse;
   }
@@ -1439,11 +1555,114 @@ Do NOT read any more files. RESPOND NOW.`;
       };
 
       // Delegate to tool registry
-      return this.toolRegistry.execute(toolCall.toolName, toolCall.args, context);
+      const rawResult = await this.toolRegistry.execute(toolCall.toolName, toolCall.args, context);
+
+      // Compress large tool results before sending to LLM
+      if (rawResult.result && this.config.model.provider === '3d-llm') {
+        const compressed = this.toolCompressor.compress(rawResult.result);
+        if (compressed.wasCompressed) {
+          this.log(`Tool result compressed: ${compressed.originalLength} → ${compressed.compressedLength} chars (${compressed.technique})`);
+        }
+        return {
+          result: compressed.compressed,
+          error: rawResult.error,
+        };
+      }
+
+      return rawResult;
     } catch (error: any) {
       this.log(`  Tool error: ${error.message}`);
       return { result: '', error: error.message };
     }
+  }
+
+  /**
+   * Execute a tool with retry logic.
+   * For 3D LLM: detects session errors and auto-resets, handles malformed JSON.
+   */
+  private async executeToolWithRetry(
+    toolCall: LLMToolCall,
+    maxRetries: number = 3
+  ): Promise<{ result: string; error?: string }> {
+    let attempt = 0;
+    let lastError = '';
+
+    while (attempt < maxRetries) {
+      attempt++;
+      try {
+        const result = await this.executeTool({ toolName: toolCall.name, args: toolCall.arguments });
+
+        // If tool executed but returned an error indicating session issues
+        if (result.error && this.isSessionError(result.error)) {
+          this.log(`Session error in tool result (attempt ${attempt}/${maxRetries})`);
+          if (this.sessionManager && attempt < maxRetries) {
+            const resetOk = await this.sessionManager.resetSession(this.id);
+            if (resetOk) {
+              this.log('Session reset after tool error, retrying...');
+              this.sessionManager?.recordRetry();
+              continue;
+            }
+          }
+        }
+
+        return result;
+      } catch (error: any) {
+        lastError = error.message;
+
+        // Session-level errors: reset and retry
+        if (this.isSessionError(lastError)) {
+          this.log(`Session-level error (attempt ${attempt}/${maxRetries}): ${lastError}`);
+          if (this.sessionManager && attempt < maxRetries) {
+            const resetOk = await this.sessionManager.resetSession(this.id);
+            if (resetOk) {
+              this.log('Session reset, retrying tool...');
+              this.sessionManager?.recordRetry();
+              continue;
+            }
+          }
+        }
+
+        // JSON parsing errors from LLM: inject simplified prompt for next iteration
+        if (lastError.includes('JSON') || lastError.includes('parse')) {
+          this.log(`JSON error (attempt ${attempt}/${maxRetries})`);
+          if (attempt < maxRetries) {
+            this.injectSimplifiedToolPrompt(toolCall);
+            continue;
+          }
+        }
+
+        throw error;
+      }
+    }
+
+    return { result: '', error: `Tool failed after ${maxRetries} attempts: ${lastError}` };
+  }
+
+  private isSessionError(errorText: string): boolean {
+    const sessionIndicators = [
+      'session',
+      'empty_response',
+      '502',
+      'session_reset',
+      'expired',
+      'invalid session',
+    ];
+    return sessionIndicators.some((ind) => errorText.toLowerCase().includes(ind));
+  }
+
+  private injectSimplifiedToolPrompt(toolCall: LLMToolCall): void {
+    const simplifiedPrompt = `Your previous tool call had malformed JSON. Retry with SIMPLIFIED arguments:
+TOOL_CALL: ${toolCall.name}
+arguments: {"path": "/path/to/file"}  // Keep it minimal
+
+DO NOT include large content in arguments. Just reference files by path.`;
+
+    const pending = (this as any)._pendingMessages as LLMMessage[] | undefined;
+    if (!pending) {
+      (this as any)._pendingMessages = [];
+    }
+    (this as any)._pendingMessages.push({ role: 'user', content: simplifiedPrompt });
+    this.log(`Injected simplified tool prompt for ${toolCall.name}`);
   }
 
   // Legacy executeTool implementation - replaced by ToolRegistry
@@ -2269,21 +2488,28 @@ Do NOT read any more files. RESPOND NOW.`;
     let prompt = this.config.systemPromptTemplate;
     for (const [key, value] of Object.entries(variables)) prompt = prompt.replace(new RegExp(`\\$\\{${key}\\}`, 'g'), value);
     prompt += '\n\n--- RULES ---';
-    prompt += '\n• ALWAYS use tool calls. Never describe plans.';
-    prompt += '\n• FOR "run backend" or "run server": use run_terminal with gradlew :app:server:run (NOT run_build)';
-    prompt += '\n• FOR compilation: use run_build with compileKotlin (source code ONLY, NO tests). NEVER use "build" - it runs ALL tests.';
-    prompt += '\n• apply_edits: MAX 50 edits per call. For large changes, use write_file instead.';
-    prompt += '\n• When build fails: READ failing files, FIX code, THEN re-run compileKotlin.';
-    prompt += '\n• NEVER re-run build without fixing first.';
-    prompt += '\n• SERVER STARTUP WORKFLOW:';
-    prompt += '\n  1. Start server with run_terminal';
-    prompt += '\n  2. WAIT 20-30 seconds (Gradle servers take time!)';
-    prompt += '\n  3. Check terminal_status';
-    prompt += '\n  4. If terminal shows "not running" or BUILD FAILED: run .\\gradlew :app:server:compileKotlin to see errors';
-    prompt += '\n  5. Fix errors with apply_edits, then retry';
-    prompt += '\n• SEARCH TIP: If search_files finds files, READ them immediately. Do NOT search again with different patterns.';
-    prompt += '\n• FOCUS: Fix source files (src/main), NOT test files (src/test), unless user specifically asks about tests.';
-    prompt += '\n• Paths: relative to workspace root, use forward slashes (/).';
+    if (this.config.systemPromptRules?.rules?.length) {
+      for (const rule of this.config.systemPromptRules.rules) {
+        prompt += '\n• ' + rule;
+      }
+    } else {
+      // Default hardcoded rules for backward compatibility
+      prompt += '\n• ALWAYS use tool calls. Never describe plans.';
+      prompt += '\n• FOR "run backend" or "run server": use run_terminal with gradlew :app:server:run (NOT run_build)';
+      prompt += '\n• FOR compilation: use run_build with compileKotlin (source code ONLY, NO tests). NEVER use "build" - it runs ALL tests.';
+      prompt += '\n• apply_edits: MAX 50 edits per call. For large changes, use write_file instead.';
+      prompt += '\n• When build fails: READ failing files, FIX code, THEN re-run compileKotlin.';
+      prompt += '\n• NEVER re-run build without fixing first.';
+      prompt += '\n• SERVER STARTUP WORKFLOW:';
+      prompt += '\n  1. Start server with run_terminal';
+      prompt += '\n  2. WAIT 20-30 seconds (Gradle servers take time!)';
+      prompt += '\n  3. Check terminal_status';
+      prompt += '\n  4. If terminal shows "not running" or BUILD FAILED: run .\\gradlew :app:server:compileKotlin to see errors';
+      prompt += '\n  5. Fix errors with apply_edits, then retry';
+      prompt += '\n• SEARCH TIP: If search_files finds files, READ them immediately. Do NOT search again with different patterns.';
+      prompt += '\n• FOCUS: Fix source files (src/main), NOT test files (src/test), unless user specifically asks about tests.';
+      prompt += '\n• Paths: relative to workspace root, use forward slashes (/).';
+    }
     return prompt;
   }
 }

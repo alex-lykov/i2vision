@@ -230,6 +230,13 @@ export class LocalAgentProvider {
     const finalConfig = layerConfig 
       ? this.mergeConfigs(this.defaultConfig || this.createDefaultConfig(layer), layerConfig)
       : (this.defaultConfig || this.createDefaultConfig(layer));
+
+    // Auto-fix stale 3D LLM default model from old hardcoded value
+    if (finalConfig.model.provider === '3d-llm' && finalConfig.model.id === 'deepseek-web-v3') {
+      finalConfig.model.id = 'deepseek-chat';
+      this.log(`Auto-fixed stale 3D LLM model: deepseek-web-v3 -> deepseek-chat`);
+      await this.saveConfig(layerName, finalConfig);
+    }
     
     this.configCache.set(cacheKey, finalConfig);
     return finalConfig;
@@ -446,6 +453,11 @@ export class LocalAgentProvider {
         allowedToolPrefixes: yamlConfig.mcp?.allowedToolPrefixes || [],
         strictToolNamePolicy: yamlConfig.mcp?.strictToolNamePolicy ?? true
       },
+
+      // ===== SYSTEM PROMPT RULES =====
+      systemPromptRules: yamlConfig.systemPromptRules ? {
+        rules: Array.isArray(yamlConfig.systemPromptRules.rules) ? yamlConfig.systemPromptRules.rules : []
+      } : undefined,
 
       // ===== CONTEXT MANAGEMENT (NEW) =====
       context: yamlConfig.context ? this.parseContextConfig(yamlConfig.context) : undefined

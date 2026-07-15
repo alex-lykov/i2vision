@@ -62,12 +62,17 @@ export interface AgentSettings {
   
   // ===== MODEL SETTINGS =====
   model: {
-    defaultProvider: 'ollama' | 'deepseek';
+    defaultProvider: 'ollama' | 'deepseek' | '3d-llm';
     defaultModel: string;
     contextLength: number;
     maxOutputTokens: number;
     temperature: number;
     topP: number;
+  };
+
+  // ===== 3D LLM PROXY =====
+  proxy: {
+    baseUrl: string;
   };
   
   // ===== ADVANCED =====
@@ -130,7 +135,11 @@ const DEFAULT_SETTINGS: AgentSettings = {
     temperature: 0.7,
     topP: 0.9
   },
-  
+
+  proxy: {
+    baseUrl: 'http://localhost:9655'
+  },
+
   advanced: {
     debugLogging: false,
     logToolCalls: true,

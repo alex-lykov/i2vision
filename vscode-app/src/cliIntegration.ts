@@ -4,7 +4,8 @@
  * This module provides HTTP integration with multiple LLM providers:
  * - Ollama (local + cloud models)
  * - DeepSeek (cloud API)
- * 
+ * - 3D LLM (FreeDeepseekAPI proxy)
+ *
  * UPDATED: All shell commands now use workspace root as working directory
  * UPDATED: Provider routing based on model ID
  */
@@ -168,6 +169,7 @@ export class CLI {
   private ollamaUrl: string = 'http://localhost:11434';
   private deepSeekApiKey?: string;
   private deepSeekBaseUrl: string = 'https://api.deepseek.com';
+  private threeDLlmUrl: string = 'http://localhost:9655';
   private workspaceRoot: string;
   private cliPath?: string;
   private projectArchitecture?: ProjectArchitecture;
@@ -202,7 +204,14 @@ export class CLI {
       } else {
         this.log(`⚠️ DeepSeek API key not configured - DeepSeek provider will not work`);
       }
-      
+
+      // Load 3D LLM URL from settings
+      const configured3DLlmUrl = config.get<string>('3dLlmUrl');
+      if (configured3DLlmUrl) {
+        this.threeDLlmUrl = configured3DLlmUrl;
+        this.log(`3D LLM URL from settings: ${this.threeDLlmUrl}`);
+      }
+
       if (this.cliPath) {
         this.log(`CLI path from settings: ${this.cliPath}`);
       } else {
@@ -310,16 +319,30 @@ export class CLI {
    * Check if model is a DeepSeek model
    */
   private isDeepSeekModel(modelId: string): boolean {
-    return modelId.startsWith('deepseek-') || 
-           modelId === 'deepseek-chat' || 
-           modelId === 'deepseek-coder' || 
+    return modelId.startsWith('deepseek-') ||
+           modelId === 'deepseek-chat' ||
+           modelId === 'deepseek-coder' ||
            modelId === 'deepseek-reasoner';
   }
 
   /**
-   * Call LLM through appropriate provider (Ollama or DeepSeek)
+   * Check if model is a 3D LLM model
+   */
+  private is3DLlmModel(modelId: string): boolean {
+    return modelId === 'deepseek-chat' || modelId === 'deepseek-web-v3' || modelId === '3d-llm';
+  }
+
+  /**
+   * Check if a model is likely an Ollama local model (heuristic)
+   */
+  private isOllamaModel(modelId: string): boolean {
+    return !this.isDeepSeekModel(modelId) && !this.is3DLlmModel(modelId);
+  }
+
+  /**
+   * Call LLM through appropriate provider (Ollama, DeepSeek, or 3D LLM)
    * Returns both content and tool calls
-   * 
+   *
    * @param stream - If true, returns AsyncGenerator<LLMChunk> for streaming
    */
   async callLLM(
@@ -327,12 +350,17 @@ export class CLI {
     messages: LLMMessage[],
     options?: LLMOptions,
     tools?: LLMTool[],
-    stream: boolean = false
+    stream: boolean = false,
+    provider?: string
   ): Promise<LLMResponse | AsyncGenerator<LLMChunk>> {
-    this.log(`[LLM] ${modelId} | ${this.isDeepSeekModel(modelId) ? 'DeepSeek' : 'Ollama'} | ${messages.length} msg | ${tools?.length || 0} tools | stream=${stream}`);
+    const resolvedProvider = provider || (this.isDeepSeekModel(modelId) ? 'deepseek' : (this.isOllamaModel(modelId) ? 'ollama' : '3d-llm'));
+    const providerName = resolvedProvider === '3d-llm' ? '3D LLM' : (resolvedProvider === 'deepseek' ? 'DeepSeek' : 'Ollama');
+    this.log(`[LLM] ${modelId} | ${providerName} | ${messages.length} msg | ${tools?.length || 0} tools | stream=${stream}`);
 
-    // Route to appropriate provider
-    if (this.isDeepSeekModel(modelId)) {
+    // Route to appropriate provider (explicit provider overrides model ID inference)
+    if (resolvedProvider === '3d-llm') {
+      return this.call3DLlm(modelId, messages, options, tools, stream);
+    } else if (resolvedProvider === 'deepseek') {
       return this.callDeepSeek(modelId, messages, options, tools, stream);
     } else {
       return this.callOllama(modelId, messages, options, tools, stream);
@@ -363,10 +391,8 @@ export class CLI {
         }
       };
 
-      if (tools?.length) {
-        body.tools = tools;
-        this.log(`Including ${tools.length} tools in request`);
-      }
+      // Tools are embedded in system prompt by AgentBridge for 3D LLM.
+      // The proxy handles tool calling through text parsing, not the `tools` array.
 
       this.log(`POST ${this.ollamaUrl}/api/chat`);
 
@@ -461,10 +487,8 @@ export class CLI {
         max_tokens: options?.max_tokens || 4096
       };
 
-      if (tools?.length) {
-        body.tools = tools;
-        this.log(`Including ${tools.length} tools in request`);
-      }
+      // Skip tools array for 3D LLM — tool definitions are embedded in system prompt by AgentBridge.
+      // The proxy parses TOOL_CALL: patterns from DeepSeek's text response.
 
       this.log(`POST ${this.deepSeekBaseUrl}/chat/completions`);
 
@@ -536,6 +560,177 @@ export class CLI {
         content: `Error: LLM call failed - ${error.message}`,
         toolCalls: []
       };
+    }
+  }
+
+  /**
+   * Call 3D LLM proxy API (FreeDeepseekAPI)
+   */
+  private async call3DLlm(
+    modelId: string,
+    messages: LLMMessage[],
+    options?: LLMOptions,
+    tools?: LLMTool[],
+    stream: boolean = false
+  ): Promise<LLMResponse | AsyncGenerator<LLMChunk>> {
+    const startTime = Date.now();
+
+    try {
+      const body: any = {
+        model: modelId,
+        messages,
+        stream: stream,
+        temperature: options?.temperature || 0.2,
+        top_p: options?.top_p || 0.95,
+        max_tokens: options?.max_tokens || 4096
+      };
+
+      // Skip tools array — proxy handles tool calling via text parsing from system prompt
+
+      this.log(`POST ${this.threeDLlmUrl}/v1/chat/completions`);
+
+      const res = await fetch(`${this.threeDLlmUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+
+      const elapsed = Date.now() - startTime;
+      this.log(`Response: ${res.status} ${res.statusText} (${elapsed}ms)`);
+
+      if (!res.ok) {
+        const errorText = await res.text();
+        this.log(`Error body: ${errorText.substring(0, 500)}`);
+        throw new Error(`3D LLM API error: ${res.status} ${res.statusText}`);
+      }
+
+      if (stream) {
+        return this.stream3DLlmResponse(res, startTime);
+      } else {
+        const data = await res.json() as any;
+
+        const choice = data.choices?.[0];
+        const content = choice?.message?.content || '';
+        const toolCallsData = choice?.message?.tool_calls || [];
+
+        const toolCalls: LLMToolCall[] = toolCallsData.map((tc: any) => {
+          let args = tc.function?.arguments || {};
+          if (typeof args === 'string') {
+            try {
+              args = JSON.parse(args);
+            } catch (e) {
+              this.log(`Warning: Could not parse tool arguments: ${args}`);
+              args = {};
+            }
+          }
+          return {
+            id: tc.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            name: tc.function?.name || '',
+            arguments: args
+          };
+        });
+
+        this.log(`Response: ${content.length} chars, ${toolCalls.length} tool calls`);
+        this.log(`=== LLM CALL END ===`);
+
+        return { content, toolCalls };
+      }
+    } catch (error: any) {
+      const elapsed = Date.now() - startTime;
+      this.log(`Error after ${elapsed}ms: ${error.message}`);
+      this.log(`=== LLM CALL FAILED ===`);
+
+      return {
+        content: `Error: LLM call failed - ${error.message}`,
+        toolCalls: []
+      };
+    }
+  }
+
+  /**
+   * Stream 3D LLM response
+   */
+  private async *stream3DLlmResponse(
+    res: Response,
+    startTime: number
+  ): AsyncGenerator<LLMChunk> {
+    try {
+      const reader = res.body?.getReader();
+      if (!reader) {
+        throw new Error('Response body is null');
+      }
+
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+      const toolCalls: LLMToolCall[] = [];
+      let promptTokens = 0;
+      let completionTokens = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+
+        if (done) {
+          this.log(`Stream complete (${Date.now() - startTime}ms)`);
+          const finalChunk: LLMChunk = { text: '', done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
+          if (promptTokens > 0 || completionTokens > 0) {
+            (finalChunk as any).tokenUsage = {
+              prompt: promptTokens,
+              completion: completionTokens,
+              total: promptTokens + completionTokens
+            };
+          }
+          yield finalChunk;
+          break;
+        }
+
+        const decoded = decoder.decode(value, { stream: true });
+        buffer += decoded;
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (!line.trim() || line === 'data: [DONE]') continue;
+
+          try {
+            const chunkStr = line.startsWith('data: ') ? line.slice(6) : line;
+            const chunk = JSON.parse(chunkStr) as any;
+
+            const choice = chunk.choices?.[0];
+            const delta = choice?.delta?.content || '';
+
+            if (delta) {
+              yield { text: delta, done: false };
+            }
+
+            if (chunk.usage?.prompt_tokens) {
+              promptTokens = chunk.usage.prompt_tokens;
+            }
+            if (chunk.usage?.completion_tokens) {
+              completionTokens = chunk.usage.completion_tokens;
+            }
+
+            if (choice?.delta?.tool_calls) {
+              const newToolCalls: LLMToolCall[] = choice.delta.tool_calls.map((tc: any) => {
+                let args = tc.function?.arguments || {};
+                if (typeof args === 'string') {
+                  try { args = JSON.parse(args); } catch (e) { args = {}; }
+                }
+                return {
+                  id: tc.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                  name: tc.function?.name || '',
+                  arguments: args
+                };
+              });
+              toolCalls.push(...newToolCalls);
+            }
+          } catch (e: any) {
+            this.log(`Warning: Could not parse chunk: ${line.substring(0, 100)}`);
+          }
+        }
+      }
+    } catch (error: any) {
+      this.log(`Streaming error: ${error.message}`);
+      yield { text: `Error: ${error.message}`, done: true };
     }
   }
 

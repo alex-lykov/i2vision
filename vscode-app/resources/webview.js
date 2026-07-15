@@ -1048,7 +1048,182 @@
                     console.log('[WebView] Token usage:', message.tokenUsage);
                     updateContextMeter(message.tokenUsage, message.contextLength);
                     break;
+
+                case 'context_meter_update':
+                    console.log('[WebView] Context meter update:', message.summary);
+                    updateContextMeterDetailed(message.summary);
+                    break;
+
+                case 'proxy_dashboard':
+                    console.log('[WebView] Proxy dashboard:', message);
+                    updateProxyDashboard(message);
+                    break;
             }
         }
+    }
+
+    /**
+     * Update the proxy health dashboard in the webview.
+     */
+    function updateProxyDashboard(data) {
+        let dashDiv = document.getElementById('proxy-dashboard');
+        if (!dashDiv) {
+            dashDiv = document.createElement('div');
+            dashDiv.id = 'proxy-dashboard';
+            dashDiv.className = 'proxy-dashboard';
+            // Insert after context meter if exists, else at top of messages
+            const contextMeter = document.getElementById('context-meter-detailed');
+            if (contextMeter && contextMeter.nextSibling) {
+                messagesDiv.insertBefore(dashDiv, contextMeter.nextSibling);
+            } else {
+                messagesDiv.insertBefore(dashDiv, messagesDiv.firstChild);
+            }
+        }
+
+        if (data.error) {
+            dashDiv.innerHTML = `<div class="dash-error" style="color:var(--vscode-terminal-ansiRed);font-size:12px;padding:4px 8px;">⚠️ ${data.error}</div>`;
+            return;
+        }
+
+        const health = data.health || {};
+        const session = data.session || {};
+        const ctx = data.contextStatus || {};
+        const warnings = data.warnings || [];
+
+        const statusColor = health.healthy ? 'var(--vscode-terminal-ansiGreen)' : 'var(--vscode-terminal-ansiRed)';
+        const statusText = health.healthy ? 'Online' : 'Offline';
+
+        let html = `
+            <div class="dash-header" style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px;border-bottom:1px solid var(--vscode-panel-border);font-size:12px;">
+                <span style="font-weight:600;">3D LLM Proxy</span>
+                <span style="color:${statusColor};">${statusText} · ${health.agents || 0} agents</span>
+            </div>
+        `;
+
+        if (session.id) {
+            html += `
+                <div class="dash-row" style="display:flex;justify-content:space-between;padding:2px 8px;font-size:11px;">
+                    <span>Session</span>
+                    <span>${session.id.substring(0, 8)}… · ${session.messageCount} msgs</span>
+                </div>
+            `;
+        }
+
+        if (ctx.tokens) {
+            html += `
+                <div class="dash-row" style="display:flex;justify-content:space-between;padding:2px 8px;font-size:11px;">
+                    <span>Tokens</span>
+                    <span>${ctx.tokens.used.toLocaleString()} / ${ctx.tokens.total.toLocaleString()}</span>
+                </div>
+            `;
+        }
+
+        if (warnings.length > 0) {
+            html += `
+                <div class="dash-warnings" style="margin-top:4px;padding:4px 8px;background:var(--vscode-inputValidation-warningBackground);border-radius:3px;font-size:11px;">
+                    ${warnings.map(w => `<div>⚠️ ${w}</div>`).join('')}
+                </div>
+            `;
+        }
+
+        dashDiv.innerHTML = html;
+    }
+
+    /**
+     * Update the detailed context meter with full ContextMeter summary data.
+     */
+    function updateContextMeterDetailed(summary) {
+        if (!summary) return;
+
+        let meterDiv = document.getElementById('context-meter-detailed');
+        if (!meterDiv) {
+            meterDiv = document.createElement('div');
+            meterDiv.id = 'context-meter-detailed';
+            meterDiv.className = 'context-meter-detailed';
+            messagesDiv.insertBefore(meterDiv, messagesDiv.firstChild);
+        }
+
+        const t = summary.tokens;
+        const m = summary.messages;
+        const ttl = summary.sessionTtl;
+        const lat = summary.latency;
+
+        const statusColors = {
+            healthy: 'var(--vscode-terminal-ansiGreen)',
+            warning: 'var(--vscode-terminal-ansiYellow)',
+            critical: 'var(--vscode-terminal-ansiRed)',
+            exhausted: 'var(--vscode-terminal-ansiBrightRed)',
+        };
+        const statusColor = statusColors[summary.status] || statusColors.healthy;
+
+        let html = `
+            <div class="meter-summary" style="border-left: 3px solid ${statusColor}; padding-left: 8px; margin-bottom: 8px;">
+                <div class="meter-status" style="font-weight: 600; color: ${statusColor};">${summary.statusText}</div>
+                <div class="meter-timestamp" style="font-size: 11px; opacity: 0.7;">${new Date(summary.timestamp).toLocaleTimeString()}</div>
+            </div>
+            <div class="meter-section" style="margin-bottom: 6px;">
+                <div class="meter-row" style="display: flex; justify-content: space-between; font-size: 12px;">
+                    <span>Tokens</span>
+                    <span>${t.used.toLocaleString()} / ${t.total.toLocaleString()} (${t.percentage.toFixed(1)}%)</span>
+                </div>
+                <div class="meter-bar-bg" style="background: var(--vscode-panel-border); height: 4px; border-radius: 2px; overflow: hidden; margin-top: 2px;">
+                    <div class="meter-bar-fill" style="width: ${Math.min(t.percentage, 100)}%; height: 100%; background: ${t.percentage >= 80 ? 'var(--vscode-terminal-ansiRed)' : t.percentage >= 50 ? 'var(--vscode-terminal-ansiYellow)' : 'var(--vscode-terminal-ansiGreen)'};"></div>
+                </div>
+                <div class="meter-detail" style="font-size: 11px; opacity: 0.8; margin-top: 2px;">
+                    prompt: ${t.prompt.toLocaleString()} | completion: ${t.completion.toLocaleString()}
+                    ${t.reasoning !== undefined ? `| reasoning: ${t.reasoning.toLocaleString()}` : ''}
+                    | remaining: ${t.remaining.toLocaleString()}
+                </div>
+            </div>
+        `;
+
+        if (m.total !== Infinity) {
+            html += `
+                <div class="meter-section" style="margin-bottom: 6px;">
+                    <div class="meter-row" style="display: flex; justify-content: space-between; font-size: 12px;">
+                        <span>Messages</span>
+                        <span>${m.used.toLocaleString()} / ${m.total.toLocaleString()} (${m.percentage.toFixed(1)}%)</span>
+                    </div>
+                    <div class="meter-bar-bg" style="background: var(--vscode-panel-border); height: 4px; border-radius: 2px; overflow: hidden; margin-top: 2px;">
+                        <div class="meter-bar-fill" style="width: ${Math.min(m.percentage, 100)}%; height: 100%; background: ${m.percentage >= 80 ? 'var(--vscode-terminal-ansiRed)' : m.percentage >= 50 ? 'var(--vscode-terminal-ansiYellow)' : 'var(--vscode-terminal-ansiGreen)'};"></div>
+                    </div>
+                </div>
+            `;
+        }
+
+        if (ttl.totalMs !== Infinity) {
+            const ttlRemainingMins = Math.ceil(ttl.remainingMs / 60000);
+            html += `
+                <div class="meter-section" style="margin-bottom: 6px;">
+                    <div class="meter-row" style="display: flex; justify-content: space-between; font-size: 12px;">
+                        <span>Session TTL</span>
+                        <span>${ttlRemainingMins}m remaining</span>
+                    </div>
+                    <div class="meter-bar-bg" style="background: var(--vscode-panel-border); height: 4px; border-radius: 2px; overflow: hidden; margin-top: 2px;">
+                        <div class="meter-bar-fill" style="width: ${Math.min(ttl.percentage, 100)}%; height: 100%; background: ${ttl.percentage >= 80 ? 'var(--vscode-terminal-ansiRed)' : ttl.percentage >= 50 ? 'var(--vscode-terminal-ansiYellow)' : 'var(--vscode-terminal-ansiGreen)'};"></div>
+                    </div>
+                    <div class="meter-detail" style="font-size: 11px; opacity: 0.8; margin-top: 2px;">expires: ${ttl.expiresAt.toLocaleTimeString()}</div>
+                </div>
+            `;
+        }
+
+        html += `
+            <div class="meter-section" style="margin-bottom: 6px;">
+                <div class="meter-row" style="display: flex; justify-content: space-between; font-size: 12px;">
+                    <span>Latency</span>
+                    <span>last: ${(lat.lastMs / 1000).toFixed(1)}s | avg: ${(lat.avgMs / 1000).toFixed(1)}s</span>
+                </div>
+            </div>
+        `;
+
+        if (summary.warnings.length > 0) {
+            html += `
+                <div class="meter-warnings" style="margin-top: 6px; padding: 4px 8px; background: var(--vscode-inputValidation-warningBackground); border-radius: 3px; font-size: 11px;">
+                    ${summary.warnings.map(w => `<div>⚠️ ${w}</div>`).join('')}
+                </div>
+            `;
+        }
+
+        meterDiv.innerHTML = html;
     }
 })();

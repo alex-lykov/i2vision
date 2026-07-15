@@ -15,11 +15,16 @@ enum class LLMProvider {
      * Local Ollama instance (free, self-hosted)
      */
     OLLAMA,
-    
+
     /**
      * DeepSeek cloud API (paid, high-quality reasoning)
      */
-    DEEPSEEK
+    DEEPSEEK,
+
+    /**
+     * 3D LLM proxy (FreeDeepseekAPI - DeepSeek Web V3 via OpenAI-compatible endpoint)
+     */
+    THREED_LLM
 }
 
 /**
@@ -60,13 +65,20 @@ object LLMClientFactory {
             }
             
             LLMProvider.DEEPSEEK -> {
-                val apiKey = config.apiKey 
+                val apiKey = config.apiKey
                     ?: throw IllegalArgumentException("DeepSeek API key is required")
-                
+
                 DeepSeekClient(
                     apiKey = apiKey,
                     baseUrl = config.baseUrl ?: "https://api.deepseek.com",
                     defaultModel = config.model ?: "deepseek-chat"
+                )
+            }
+
+            LLMProvider.THREED_LLM -> {
+                ThreeDLlmClient(
+                    baseUrl = config.baseUrl ?: "http://host2.onldigital.com:9654",
+                    defaultModel = config.model ?: "deepseek-web-v3"
                 )
             }
         }
@@ -92,6 +104,7 @@ object LLMClientFactory {
     ): DeepSeekClient {
         return DeepSeekClient(apiKey, baseUrl, model)
     }
+
 }
 
 /**
@@ -130,3 +143,4 @@ fun deepseekConfig(
 ): ProviderConfig {
     return ProviderConfig(apiKey = apiKey, baseUrl = baseUrl, model = model)
 }
+

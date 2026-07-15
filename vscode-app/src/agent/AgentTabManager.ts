@@ -10,6 +10,7 @@ import { LocalAgentProvider } from './LocalAgentProvider';
 import { LocalI2VisionAgent, VslfcLayer } from './LocalI2VisionAgent';
 import { ConversationHistoryManager, ChatMessage, AgentSessionState } from './ConversationHistoryManager';
 import { AgentSettingsManager } from './AgentSettings';
+import { ContextMeter } from './ContextMeter';
 
 interface AgentTabState {
   tabId: string;
@@ -23,6 +24,7 @@ interface AgentTabState {
   lastAutoSaveAt?: number;
   workspaceRoot: string; // Persist workspace path to prevent context loss on resume
   sessionState?: AgentSessionState; // Persist session state across agent recreation
+  contextMeter: ContextMeter; // Comprehensive context usage tracking
 }
 
 export class AgentTabManager {
@@ -38,7 +40,9 @@ export class AgentTabManager {
   private isProcessing: boolean = false;
   private cancelTokenSource: vscode.CancellationTokenSource | null = null;
   private autoSaveTimer: NodeJS.Timeout | null = null;
+  private proxyHealthTimer: NodeJS.Timeout | null = null;
   private readonly AUTO_SAVE_INTERVAL_MS = 5 * 60 * 1000;
+  private readonly PROXY_HEALTH_INTERVAL_MS = 10 * 1000;
 
   constructor(context: vscode.ExtensionContext, outputChannel: vscode.OutputChannel, agentProvider: LocalAgentProvider) {
     this.context = context;
@@ -55,6 +59,7 @@ export class AgentTabManager {
   async initialize(): Promise<void> {
     await this.agentProvider.initialize();
     this.startAutoSaveTimer();
+    this.startProxyHealthTimer();
     await this.loadLastConversation();
     this.log('AgentTabManager initialization complete');
   }
@@ -100,6 +105,60 @@ export class AgentTabManager {
       clearInterval(this.autoSaveTimer);
       this.autoSaveTimer = null;
       this.log('Auto-save timer stopped');
+    }
+  }
+
+  private startProxyHealthTimer(): void {
+    if (this.proxyHealthTimer) clearInterval(this.proxyHealthTimer);
+    this.proxyHealthTimer = setInterval(() => this.updateProxyDashboard(), this.PROXY_HEALTH_INTERVAL_MS);
+    this.log('Proxy health timer started (interval: ' + (this.PROXY_HEALTH_INTERVAL_MS / 1000) + 's)');
+  }
+
+  private stopProxyHealthTimer(): void {
+    if (this.proxyHealthTimer) {
+      clearInterval(this.proxyHealthTimer);
+      this.proxyHealthTimer = null;
+      this.log('Proxy health timer stopped');
+    }
+  }
+
+  /**
+   * Poll proxy health and session status, send dashboard update to webview.
+   */
+  private async updateProxyDashboard(): Promise<void> {
+    if (!this.activeTabId) return;
+    const tabState = this.tabs.get(this.activeTabId);
+    if (!tabState) return;
+
+    const config = this.agentProvider.getConfig(tabState.layer);
+    if (config.model.provider !== '3d-llm') return;
+
+    const bridge = this.currentAgentBridge;
+    if (!bridge) return;
+
+    const sessionMgr = bridge.getSessionManager?.();
+    if (!sessionMgr || sessionMgr.name === 'Null') return;
+
+    try {
+      const health = await sessionMgr.checkHealth();
+      const sessionState = sessionMgr.getSessionState();
+      const contextStatus = tabState.contextMeter.getUsageSummary();
+
+      this.sendToWebview({
+        command: 'proxy_dashboard',
+        health: { healthy: health.healthy, status: health.diagnostics.status || 'unknown', agents: health.diagnostics.agents || 0 },
+        session: sessionState,
+        contextStatus,
+        warnings: health.warnings,
+        timestamp: Date.now(),
+      });
+    } catch (error: any) {
+      this.log(`Proxy dashboard update failed: ${error.message}`);
+      this.sendToWebview({
+        command: 'proxy_dashboard',
+        error: 'Proxy unreachable',
+        timestamp: Date.now(),
+      });
     }
   }
 
@@ -163,12 +222,21 @@ export class AgentTabManager {
     const layerEnum = layer.toUpperCase() as VslfcLayer;
     const agent = await this.agentProvider.createAgent(layerEnum);
     const tabId = conversationId || 'tab-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
-    const tabState: AgentTabState = { tabId, agent, layer, history: [], accumulatedToolCalls: [], isActive: true, createdAt: Date.now(), lastActivityAt: Date.now(), lastAutoSaveAt: undefined };
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+    const config = agent.getConfig();
+
+    // Initialize context meter for this tab
+    const contextMeter = new ContextMeter();
+    contextMeter.configure(
+      config.model.provider,
+      config.model.id,
+      config.model.contextLength
+    );
+
+    const tabState: AgentTabState = { tabId, agent, layer, history: [], accumulatedToolCalls: [], isActive: true, createdAt: Date.now(), lastActivityAt: Date.now(), lastAutoSaveAt: undefined, workspaceRoot, contextMeter };
     this.tabs.set(tabId, tabState);
     this.activeTabId = tabId;
-    const config = agent.getConfig();
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
-    this.currentAgentBridge = new AgentBridge(config, this.outputChannel, this.context.extensionPath, workspaceRoot, this.settingsManager);
+    this.currentAgentBridge = new AgentBridge(config, this.outputChannel, this.context.extensionPath, workspaceRoot, this.settingsManager, agent.id);
     await this.currentAgentBridge.initialize();
     this.log('Created ' + layer + ' agent tab: ' + tabId);
     this.log('   Agent ID: ' + agent.id);
@@ -306,11 +374,26 @@ export class AgentTabManager {
             break;
           case 'done':
             if (chunk.tokenUsage) {
-              const contextLength = this.currentAgentBridge.getConfig().model.contextLength;
+              // Feed data into context meter
+              tabState.contextMeter.recordTokenUsage({
+                prompt: chunk.tokenUsage.prompt,
+                completion: chunk.tokenUsage.completion,
+                total: chunk.tokenUsage.total,
+              });
+              tabState.contextMeter.recordLatency(Date.now() - startTime);
+
+              const summary = tabState.contextMeter.getUsageSummary();
               const totalTokens = chunk.tokenUsage.prompt + chunk.tokenUsage.completion;
+              const contextLength = this.currentAgentBridge.getConfig().model.contextLength;
               const percentage = ((totalTokens / contextLength) * 100).toFixed(1);
               this.log(`Token usage: ${totalTokens.toLocaleString()} / ${contextLength.toLocaleString()} (${percentage}%) - prompt: ${chunk.tokenUsage.prompt.toLocaleString()}, completion: ${chunk.tokenUsage.completion.toLocaleString()}`);
+              if (summary.warnings.length > 0) {
+                this.log(`Context warnings: ${summary.warnings.join('; ')}`);
+              }
+
+              // Send both legacy token_usage and new context_meter_update
               this.sendToWebview({ command: 'token_usage', tokenUsage: chunk.tokenUsage, contextLength, timestamp: chunk.timestamp });
+              this.sendToWebview({ command: 'context_meter_update', summary, timestamp: chunk.timestamp });
             } else {
               this.log('Response complete (no token usage data)');
             }
@@ -531,9 +614,36 @@ export class AgentTabManager {
       this.agentProvider.clearConfigCache();
       const agentConfig = this.agentProvider.getConfig(tabState.layer);
       agentConfig.model.provider = provider;
-      const defaultModel = provider === 'deepseek' ? 'deepseek-chat' : 'llama3.2:3b';
+      let defaultModel: string;
+      if (provider === 'deepseek') {
+        defaultModel = 'deepseek-chat';
+      } else if (provider === '3d-llm') {
+        defaultModel = 'deepseek-chat';
+      } else {
+        defaultModel = 'llama3.2:3b';
+      }
       agentConfig.model.id = defaultModel;
       await this.agentProvider.updateConfig(tabState.layer, { provider, model: defaultModel });
+
+      // Reconfigure context meter for new provider
+      tabState.contextMeter.configure(provider, defaultModel, agentConfig.model.contextLength);
+      this.log('Context meter reconfigured for ' + provider + ' / ' + defaultModel);
+
+      // Reconfigure bridge config and session manager for new provider
+      if (this.currentAgentBridge) {
+        this.currentAgentBridge.updateConfig({ provider, id: defaultModel });
+        this.log('AgentBridge config updated: provider=' + provider + ', model=' + defaultModel);
+
+        const { createSessionManager } = require('./SessionManager');
+        const threeDLlmUrl = vscode.workspace.getConfiguration('i2vision').get<string>('3dLlmUrl') || 'http://localhost:9655';
+        const newSessionMgr = createSessionManager(
+          provider,
+          provider === '3d-llm' ? threeDLlmUrl : undefined
+        );
+        this.currentAgentBridge.setSessionManager(newSessionMgr);
+        this.log('Session manager reconfigured: ' + newSessionMgr.name);
+      }
+
       this.log('Provider changed to ' + provider);
       vscode.window.showInformationMessage('Provider changed to ' + provider);
       this.sendToWebview({ command: 'provider_changed', provider, model: defaultModel });
@@ -571,6 +681,7 @@ export class AgentTabManager {
       let models: string[] = [];
       if (providerId === 'ollama') models = await this.fetchOllamaModels();
       else if (providerId === 'deepseek') models = ['deepseek-chat', 'deepseek-coder'];
+      else if (providerId === '3d-llm') models = await this.fetchThreeDLlmModels();
       this.sendToWebview({ command: 'models_list', models, currentModel: agentConfig.model.id, currentProvider: providerId });
     } catch (error: any) {
       this.log('Error fetching models: ' + error.message);
@@ -596,6 +707,27 @@ export class AgentTabManager {
     });
   }
 
+  private async fetchThreeDLlmModels(): Promise<string[]> {
+    try {
+      const url = vscode.workspace.getConfiguration('i2vision').get<string>('3dLlmUrl') || 'http://localhost:9655';
+      const response = await fetch(`${url}/v1/models`);
+      if (!response.ok) {
+        this.log(`3D LLM models fetch failed: ${response.status}`);
+        return ['deepseek-chat'];
+      }
+      const data = await response.json() as any;
+      if (data.data && Array.isArray(data.data)) {
+        const models = data.data.map((m: any) => m.id).filter((id: string) => typeof id === 'string');
+        this.log(`Fetched ${models.length} 3D LLM models: ${models.join(', ')}`);
+        return models.length > 0 ? models : ['deepseek-chat'];
+      }
+      return ['deepseek-chat'];
+    } catch (error: any) {
+      this.log(`3D LLM models fetch error: ${error.message}`);
+      return ['deepseek-chat'];
+    }
+  }
+
   private sendToWebview(message: any): void {
     if (this.webviewPanel) this.webviewPanel.webview.postMessage(message);
   }
@@ -617,6 +749,7 @@ export class AgentTabManager {
     const showThinking = settings.streaming.showThinkingIndicator;
     const selectedProvider = currentProvider === 'ollama' ? 'selected' : '';
     const selectedProviderDeepSeek = currentProvider === 'deepseek' ? 'selected' : '';
+    const selectedProvider3DLlm = currentProvider === '3d-llm' ? 'selected' : '';
 
     // Read HTML template from file
     const templatePath = path.join(this.context.extensionPath, 'resources', 'agent-tab.html');
@@ -628,6 +761,7 @@ export class AgentTabManager {
     html = html.replace(/{currentModel}/g, currentModel);
     html = html.replace(/{selectedProvider}/g, selectedProvider);
     html = html.replace(/{selectedProviderDeepSeek}/g, selectedProviderDeepSeek);
+    html = html.replace(/{selectedProvider3DLlm}/g, selectedProvider3DLlm);
     html = html.replace(/{streamingEnabled}/g, String(streamingEnabled));
     html = html.replace(/{showThinking}/g, String(showThinking));
 
@@ -666,6 +800,7 @@ export class AgentTabManager {
 
   async dispose(): Promise<void> {
     this.stopAutoSaveTimer();
+    this.stopProxyHealthTimer();
     if (this.webviewPanel) this.webviewPanel.dispose();
     if (this.currentAgentBridge) { this.currentAgentBridge.dispose(); this.currentAgentBridge = null; }
     const savePromises = Array.from(this.tabs.entries()).map(async ([tabId, tabState]) => {

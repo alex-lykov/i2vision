@@ -610,8 +610,52 @@ export class CLI {
         const data = await res.json() as any;
 
         const choice = data.choices?.[0];
-        const content = choice?.message?.content || '';
-        const toolCallsData = choice?.message?.tool_calls || [];
+        let content = choice?.message?.content || '';
+        let toolCallsData = choice?.message?.tool_calls || [];
+
+        // Fallback: if proxy returned text with embedded tool calls but no tool_calls array
+        if (toolCallsData.length === 0 && content) {
+          // Try to parse {"name":"...","arguments":{...}} format
+          const jsonPattern = /\{[^}]*"name"[^}]*"arguments"[^}]*\}/g;
+          let match;
+          while ((match = jsonPattern.exec(content)) !== null) {
+            try {
+              const toolCallObj = JSON.parse(match[0]);
+              if (toolCallObj.name && typeof toolCallObj.name === 'string') {
+                toolCallsData.push({
+                  id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                  type: 'function',
+                  function: {
+                    name: toolCallObj.name,
+                    arguments: JSON.stringify(toolCallObj.arguments || {})
+                  }
+                });
+              }
+            } catch (e: any) {}
+          }
+          // Try to parse "Calling:" format
+          if (toolCallsData.length === 0) {
+            const callingPattern = /Calling:\s*(\w+)\s*\n?\s*```(?:json)?\s*\n?([\s\S]*?)```|Calling:\s*(\w+)\s*\n?\s*(\{[\s\S]*?\})/gi;
+            let cmatch;
+            while ((cmatch = callingPattern.exec(content)) !== null) {
+              try {
+                const toolName = cmatch[1] || cmatch[3];
+                const jsonStr = (cmatch[2] || cmatch[4]).trim();
+                const args = JSON.parse(jsonStr);
+                if (toolName) {
+                  toolCallsData.push({
+                    id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                    type: 'function',
+                    function: {
+                      name: toolName,
+                      arguments: JSON.stringify(args || {})
+                    }
+                  });
+                }
+              } catch (e: any) {}
+            }
+          }
+        }
 
         const toolCalls: LLMToolCall[] = toolCallsData.map((tc: any) => {
           let args = tc.function?.arguments || {};

@@ -199,6 +199,7 @@ mcp:
 systemPromptRules:
   rules:
     - "ALWAYS use tool calls. Never describe plans."
+    - 'To call a tool, output ONLY a single line of raw JSON like {"name":"tool_name","arguments":{"param1":"value"}}. Do NOT add "Calling:", markdown code blocks, or any other text around the JSON.'
     - 'FOR "run backend" or "run server": use run_terminal with gradlew :app:server:run (NOT run_build)'
     - 'FOR compilation: use run_build with compileKotlin (source code ONLY, NO tests). NEVER use "build" - it runs ALL tests.'
     - "apply_edits: MAX 50 edits per call. For large changes, use write_file instead."

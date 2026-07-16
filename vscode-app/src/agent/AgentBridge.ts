@@ -588,8 +588,10 @@ export class AgentBridge {
   /** Format tool definitions for embedding in the system prompt (3D LLM text-based tool calling) */
   private formatToolsForSystemPrompt(tools: LLMTool[]): string {
     let text = '--- AVAILABLE TOOLS ---\n';
-    text += 'You have access to the following tools. Call a tool by outputting EXACTLY one JSON object (no markdown, no extra text around it):\n';
-    text += '{"name":"<tool_name>","arguments":{"param1":"value1","param2":"value2"}}\n\n';
+    text += 'When you need to call a tool, output EXACTLY one line of raw JSON with NO markdown, NO code blocks, and NO explanation before or after it. Do NOT use "Calling:", do NOT wrap in ```json, do NOT add any text.\n';
+    text += 'Example:\n';
+    text += '{"name":"list_directory","arguments":{"path":".","recursive":false}}\n\n';
+    text += 'Available tools:\n';
     for (const tool of tools) {
       const fn = tool.function;
       text += `### ${fn.name}\n`;
@@ -1046,6 +1048,36 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
                 if (toolCallObj.tool) {
                   streamingToolCalls.push({ id: `call_${iteration}_${parseIndex}`, name: toolCallObj.tool, arguments: toolCallObj.args || {} });
                   parseIndex++;
+                }
+              } catch (e: any) {}
+            }
+          }
+
+          // Fallback: parse our embedded JSON format {"name":"...","arguments":{...}}
+          if (streamingToolCalls.length === 0) {
+            const jsonPattern = /\{[^}]*"name"[^}]*"arguments"[^}]*\}/g;
+            let match;
+            while ((match = jsonPattern.exec(responseText)) !== null) {
+              try {
+                const toolCallObj = JSON.parse(match[0]);
+                if (toolCallObj.name && typeof toolCallObj.name === 'string') {
+                  streamingToolCalls.push({ id: `call_${iteration}_${streamingToolCalls.length}`, name: toolCallObj.name, arguments: toolCallObj.arguments || {} });
+                }
+              } catch (e: any) {}
+            }
+          }
+
+          // Fallback: parse "Calling:" format that DeepSeek sometimes outputs
+          if (streamingToolCalls.length === 0) {
+            const callingPattern = /Calling:\s*(\w+)\s*\n?\s*```(?:json)?\s*\n?([\s\S]*?)```|Calling:\s*(\w+)\s*\n?\s*(\{[\s\S]*?\})/gi;
+            let match;
+            while ((match = callingPattern.exec(responseText)) !== null) {
+              try {
+                const toolName = match[1] || match[3];
+                const jsonStr = (match[2] || match[4]).trim();
+                const args = JSON.parse(jsonStr);
+                if (toolName) {
+                  streamingToolCalls.push({ id: `call_${iteration}_${streamingToolCalls.length}`, name: toolName, arguments: args || {} });
                 }
               } catch (e: any) {}
             }

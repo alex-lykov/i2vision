@@ -216,6 +216,9 @@ export class AgentBridge {
   // Strategy rotation for repeated failures
   private _triedStrategies: Set<string> = new Set();
   private _strategyRotationCount: number = 0;
+
+  // DeepSeek misbehavior detection (text responses that look like tool calls)
+  private _consecutiveTextResponsesWithoutToolCalls: number = 0;
   
   // Pre-flight check for server start commands
   private _hasCheckedRunningServers: boolean = false;
@@ -585,6 +588,30 @@ export class AgentBridge {
     if (this.progressCallback) this.progressCallback(event);
   }
 
+  /**
+   * Detect when DeepSeek is outputting text/plan format instead of tool calls.
+   * Happens when proxy conversation history teaches the model the wrong format.
+   */
+  private detectProxyMisbehavior(text: string): boolean {
+    if (!text || text.length < 10) return false;
+    const lower = text.toLowerCase();
+    // Score based on misbehavior indicators
+    let score = 0;
+    // Model writes about calling tools (but doesn't actually call them)
+    if (/\b(calling|call)\s*[:\s]+\w+/.test(text)) score += 2;
+    if (/\b(will|i'll|i will|let me)\s+\w+/.test(text) && /\b(read|list|search|check)\b/.test(lower)) score += 1;
+    // Model outputs markdown code blocks for tools (wrong format)
+    if (/```\s*(json)?\s*\n?\s*\{\s*"path"/.test(text)) score += 2;
+    // Model describes what it would do
+    if (/\bfirst\s*,?\s*(i'll|i will|let me)/.test(text)) score += 1;
+    if (/\bnext\s*,?\s*(i'll|i will)/.test(text)) score += 1;
+    // Contains tool parameter names but no actual JSON call
+    const hasToolParams = /"path"|"recursive"|"command"|"pattern"/.test(text);
+    const hasJsonToolCall = /"name"\s*:\s*"\w+"/.test(text) && /"arguments"\s*:/.test(text);
+    if (hasToolParams && !hasJsonToolCall) score += 1;
+    return score >= 2;
+  }
+
   /** Format tool definitions for embedding in the system prompt (3D LLM text-based tool calling) */
   private formatToolsForSystemPrompt(tools: LLMTool[]): string {
     let text = '--- AVAILABLE TOOLS ---\n';
@@ -756,6 +783,7 @@ export class AgentBridge {
       this._strategyRotationCount = 0;
       this._hasCheckedRunningServers = false;
       this._consecutiveToolCallsWithoutResponse = 0;
+      this._consecutiveTextResponsesWithoutToolCalls = 0;
       this._toolCallHistory = [];
       this._forceActionMode = false;
     } else {
@@ -1096,7 +1124,44 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
       // Classify LLM response and transition state machine
       const hasToolCalls = streamingToolCalls.length > 0;
       const responseEvent = this.stateMachine.classifyLLMResponse(responseText, hasToolCalls, this.stateMachine.context);
-      
+
+      // Detect DeepSeek misbehavior: text-only responses that look like plans/tool calls
+      // but don't contain actual tool_calls array. Happens when proxy session history
+      // teaches DeepSeek to output its own "Calling:" text format.
+      if (!hasToolCalls) {
+        const isMisbehavior = this.detectProxyMisbehavior(responseText);
+        if (isMisbehavior) {
+          this._consecutiveTextResponsesWithoutToolCalls++;
+          this.log(`DeepSeek misbehavior detected (${this._consecutiveTextResponsesWithoutToolCalls}/2): text response contains plan/tool-like patterns`);
+
+          if (this._consecutiveTextResponsesWithoutToolCalls >= 2) {
+            this.log('Misbehavior threshold reached — resetting proxy session to clear corrupted history');
+            if (this.sessionManager && this.sessionManager.provider === '3d-llm') {
+              const resetOk = await this.sessionManager.resetSession(this.id);
+              if (resetOk) {
+                this.log('Proxy session reset successfully, re-attempting with clean history');
+                // Force re-sync on next iteration
+                await this.sessionManager.syncSession(this.id);
+              } else {
+                this.log('Proxy session reset failed — falling through to nudge');
+              }
+            }
+            this._consecutiveTextResponsesWithoutToolCalls = 0;
+          }
+
+          // Inject a strong nudge that forces the model to output our JSON format
+          messages.push({
+            role: 'user',
+            content: 'STOP writing text. You MUST call a tool. Output ONLY a single line of raw JSON like {"name":"tool_name","arguments":{"param":"value"}}. No explanations, no markdown, no "Calling:" prefix. Just the JSON object.'
+          });
+          this.stateMachine.dispatch(responseEvent);
+          continue;
+        }
+      } else {
+        // Successful tool call — reset misbehavior counter
+        this._consecutiveTextResponsesWithoutToolCalls = 0;
+      }
+
       // NATURAL EXIT (no tool calls)
       if (!hasToolCalls) {
         const trimmedResponse = responseText.trim();

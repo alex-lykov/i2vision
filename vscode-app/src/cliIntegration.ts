@@ -76,6 +76,11 @@ export interface LLMToolCall {
 export interface LLMResponse {
   content: string;
   toolCalls: LLMToolCall[];
+  tokenUsage?: {
+    prompt: number;
+    completion: number;
+    total: number;
+  };
 }
 
 /**
@@ -677,7 +682,13 @@ export class CLI {
         this.log(`Response: ${content.length} chars, ${toolCalls.length} tool calls`);
         this.log(`=== LLM CALL END ===`);
 
-        return { content, toolCalls };
+        const tokenUsage = data.usage?.prompt_tokens !== undefined ? {
+          prompt: data.usage.prompt_tokens,
+          completion: data.usage.completion_tokens,
+          total: data.usage.total_tokens
+        } : undefined;
+
+        return { content, toolCalls, tokenUsage };
       }
     } catch (error: any) {
       const elapsed = Date.now() - startTime;

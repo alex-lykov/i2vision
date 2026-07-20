@@ -804,26 +804,40 @@
         document.getElementById('proxyMetricStatus').textContent = 'Proxy Unreachable';
       }
 
-      // Map contextStatus to usageSummary fields
+      // Map contextStatus (nested object shape) to dashboard fields
       let u = data.usageSummary || data.contextStatus || {};
-      document.getElementById('proxyMetricMessages').textContent = (u.messagesUsed || 0) + ' / ' + (u.messagesLimit || 100);
-      const msgPct = Math.min(((u.messagesUsed || 0) / (u.messagesLimit || 100)) * 100, 100);
+      // Tokens: nested as { used, total, percentage, remaining, prompt, completion, reasoning }
+      const tokenUsed = u.tokens?.used || 0;
+      const tokenTotal = u.tokens?.total || 1;
+      const tokenPct = u.tokens?.percentage || (tokenTotal > 0 ? (tokenUsed / tokenTotal) * 100 : 0);
+      // Messages: nested as { used, total, percentage, remaining }
+      const msgUsed = u.messages?.used || 0;
+      const msgTotal = u.messages?.total || 100;
+      const msgPct = msgTotal !== Infinity ? Math.min((msgUsed / msgTotal) * 100, 100) : 0;
+      // TTL: nested as { remainingMs, totalMs, percentage, expiresAt }
+      const ttlRemainingMs = u.sessionTtl?.remainingMs || 0;
+      const ttlPct = u.sessionTtl?.percentage || 0;
+      const status = u.status || 'healthy';
+      // Latency: nested as { lastMs, avgMs, minMs, maxMs }
+      const avgLatencyMs = u.latency?.avgMs || 0;
+
+      document.getElementById('proxyMetricMessages').textContent = msgUsed + ' / ' + msgTotal;
       const msgBar = document.getElementById('proxyMetricMessagesBar');
       msgBar.style.width = msgPct + '%';
       msgBar.className = 'proxy-metric-fill ' + (msgPct > 80 ? 'crit' : msgPct > 60 ? 'warn' : 'ok');
 
-      document.getElementById('proxyMetricTtl').textContent = u.ttlRemaining || 'Unknown';
-      const ttlPct = u.ttlPercent || 50;
+      const ttlText = ttlRemainingMs === Infinity || ttlRemainingMs === 0 ? 'Unknown' : Math.round(ttlRemainingMs / 60000) + ' min';
+      document.getElementById('proxyMetricTtl').textContent = ttlText;
       const ttlBar = document.getElementById('proxyMetricTtlBar');
       ttlBar.style.width = ttlPct + '%';
-      ttlBar.className = 'proxy-metric-fill ' + (ttlPct < 15 ? 'crit' : ttlPct < 30 ? 'warn' : 'ok');
+      ttlBar.className = 'proxy-metric-fill ' + (ttlPct > 85 ? 'crit' : ttlPct > 60 ? 'warn' : 'ok');
 
-      document.getElementById('proxyMetricTokens').textContent = (u.tokenPercent || 0) + '%';
+      document.getElementById('proxyMetricTokens').textContent = tokenPct.toFixed(1) + '%';
       const tokBar = document.getElementById('proxyMetricTokensBar');
-      tokBar.style.width = Math.min(u.tokenPercent || 0, 100) + '%';
-      tokBar.className = 'proxy-metric-fill ' + (u.status === 'exhausted' || u.status === 'critical' ? 'crit' : u.status === 'warning' ? 'warn' : 'ok');
+      tokBar.style.width = Math.min(tokenPct, 100) + '%';
+      tokBar.className = 'proxy-metric-fill ' + (status === 'exhausted' || status === 'critical' ? 'crit' : status === 'warning' ? 'warn' : 'ok');
 
-      document.getElementById('proxyMetricLatency').textContent = u.avgLatencyMs ? Math.round(u.avgLatencyMs) + ' ms' : '--';
+      document.getElementById('proxyMetricLatency').textContent = avgLatencyMs ? Math.round(avgLatencyMs) + ' ms' : '--';
 
       const warnings = (data.warnings || []).concat(u.warnings || []);
       document.getElementById('proxyMetricWarnings').textContent = warnings.length > 0 ? warnings.join('; ') : 'None';

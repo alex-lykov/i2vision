@@ -128,6 +128,7 @@ export class ContextMeter {
     prompt: 0,
     completion: 0,
     total: 0,
+    reasoning: 0,
     timestamp: Date.now(),
   };
 
@@ -205,7 +206,14 @@ export class ContextMeter {
     };
 
     this.tokenHistory.push(snapshot);
-    this.currentTokens = snapshot;
+    // Accumulate across the session instead of replacing the last snapshot
+    this.currentTokens.prompt += usage.prompt;
+    this.currentTokens.completion += usage.completion;
+    this.currentTokens.total += usage.total;
+    if (usage.reasoning !== undefined) {
+      this.currentTokens.reasoning = (this.currentTokens.reasoning || 0) + usage.reasoning;
+    }
+    this.currentTokens.timestamp = Date.now();
 
     // Increment message count for each token usage event
     this.sessionMetrics.messageCount++;

@@ -372,9 +372,29 @@ export class AgentTabManager {
             responseText += chunk.text;
             if (streamingEnabled) this.sendToWebview({ command: 'streaming_text', text: chunk.text, timestamp: chunk.timestamp });
             break;
+          case 'token_usage':
+            {
+              // Update context meter after each LLM response (not just at end)
+              const tu = chunk.tokenUsage;
+              tabState.contextMeter.recordTokenUsage({ prompt: tu.prompt, completion: tu.completion, total: tu.total });
+              tabState.contextMeter.recordLatency(Date.now() - startTime);
+
+              const summary = tabState.contextMeter.getUsageSummary();
+              const totalTokens = tu.prompt + tu.completion;
+              const contextLength = this.currentAgentBridge.getConfig().model.contextLength;
+              const percentage = ((totalTokens / contextLength) * 100).toFixed(1);
+              this.log(`Token usage (step): ${totalTokens.toLocaleString()} / ${contextLength.toLocaleString()} (${percentage}%)`);
+              if (summary.warnings.length > 0) {
+                this.log(`Context warnings: ${summary.warnings.join('; ')}`);
+              }
+
+              this.sendToWebview({ command: 'token_usage', tokenUsage: tu, contextLength, timestamp: chunk.timestamp });
+              this.sendToWebview({ command: 'context_meter_update', summary, timestamp: chunk.timestamp });
+            }
+            break;
           case 'done':
             if (chunk.tokenUsage) {
-              // Feed data into context meter
+              // Fallback: if token_usage wasn't emitted, update on done
               tabState.contextMeter.recordTokenUsage({
                 prompt: chunk.tokenUsage.prompt,
                 completion: chunk.tokenUsage.completion,
@@ -386,12 +406,11 @@ export class AgentTabManager {
               const totalTokens = chunk.tokenUsage.prompt + chunk.tokenUsage.completion;
               const contextLength = this.currentAgentBridge.getConfig().model.contextLength;
               const percentage = ((totalTokens / contextLength) * 100).toFixed(1);
-              this.log(`Token usage: ${totalTokens.toLocaleString()} / ${contextLength.toLocaleString()} (${percentage}%) - prompt: ${chunk.tokenUsage.prompt.toLocaleString()}, completion: ${chunk.tokenUsage.completion.toLocaleString()}`);
+              this.log(`Token usage (done): ${totalTokens.toLocaleString()} / ${contextLength.toLocaleString()} (${percentage}%) - prompt: ${chunk.tokenUsage.prompt.toLocaleString()}, completion: ${chunk.tokenUsage.completion.toLocaleString()}`);
               if (summary.warnings.length > 0) {
                 this.log(`Context warnings: ${summary.warnings.join('; ')}`);
               }
 
-              // Send both legacy token_usage and new context_meter_update
               this.sendToWebview({ command: 'token_usage', tokenUsage: chunk.tokenUsage, contextLength, timestamp: chunk.timestamp });
               this.sendToWebview({ command: 'context_meter_update', summary, timestamp: chunk.timestamp });
             } else {

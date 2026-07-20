@@ -118,7 +118,7 @@ export interface ProgressEvent {
 export type ProgressCallback = (event: ProgressEvent) => void;
 export interface AgentResponse { finalText: string; toolCalls: ToolCall[]; iterations: number; durationMs: number; success: boolean; error?: string; }
 
-export type AgentChunk = 
+export type AgentChunk =
   | { type: 'thinking'; message: string; timestamp: number }
   | { type: 'reasoning'; reasoning: string; timestamp: number }
   | { type: 'tool_call_started'; toolName: string; args: Record<string, any>; timestamp: number }
@@ -126,6 +126,7 @@ export type AgentChunk =
   | { type: 'text'; text: string; timestamp: number }
   | { type: 'done'; outcome: 'success' | 'error'; timestamp: number; iterations?: number; durationMs?: number; tokenUsage?: { prompt: number; completion: number; total: number } }
   | { type: 'iteration_complete'; iteration: number; timestamp: number }
+  | { type: 'token_usage'; tokenUsage: { prompt: number; completion: number; total: number }; timestamp: number }
   | { type: 'error'; error: string; timestamp: number }
   | { type: 'state_change'; from: string; to: string; event: string; timestamp: number };
 
@@ -809,6 +810,7 @@ export class AgentBridge {
     while (true) {
       iteration++;
       this._autoNudge = null;
+      this._lastTokenUsage = undefined; // Reset per-iteration so stale usage isn't carried forward
       // Remove ephemeral nudge messages from previous iterations to prevent accumulation
       messages = messages.filter(m => !(m as any)._isNudge);
       this.stateMachine.incrementIteration();
@@ -1027,6 +1029,15 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           const nonStreamResponse = await this.cli.callLLM(this.config.model.id, messages, { temperature: this.config.model.temperature, top_p: this.config.model.topP, max_tokens: this.config.model.maxOutputTokens }, tools, false, this.config.model.provider) as LLMResponse;
           responseText = nonStreamResponse.content;
           streamingToolCalls = nonStreamResponse.toolCalls.map(tc => ({ id: tc.id, name: tc.name, arguments: tc.arguments }));
+          // Carry forward real or estimated token usage from non-streaming response
+          if (nonStreamResponse.tokenUsage) {
+            this._lastTokenUsage = nonStreamResponse.tokenUsage;
+          } else {
+            const promptTokens = this.estimateTokens(messages);
+            const completionTokens = Math.ceil(responseText.length / 4);
+            this._lastTokenUsage = { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens };
+            this.log(`Estimated token usage (non-streaming): prompt=${promptTokens}, completion=${completionTokens}`);
+          }
         } else {
           const streamResponse = rawResponse as AsyncGenerator<LLMChunk>;
           let reasoningCaptured = false;
@@ -1066,6 +1077,15 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
             if (chunk.toolCalls) streamingToolCalls = chunk.toolCalls;
             if (chunk.tokenUsage) this._lastTokenUsage = chunk.tokenUsage;
             if (chunk.done) break;
+          }
+
+          // If the LLM provider did not include usage data (e.g. 3D LLM proxy SSE stream),
+          // estimate token usage so the context meter can still update.
+          if (!this._lastTokenUsage) {
+            const promptTokens = this.estimateTokens(messages);
+            const completionTokens = Math.ceil(responseText.length / 4);
+            this._lastTokenUsage = { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens };
+            this.log(`Estimated token usage (provider omitted usage): prompt=${promptTokens}, completion=${completionTokens}`);
           }
           
           if (!toolCallDetected && streamBuffer.trim()) {
@@ -1478,8 +1498,12 @@ Do NOT read any more files. RESPOND NOW.`;
 
       // STATE: VERIFY - Transition and check results
       this.stateMachine.dispatch(AgentEvent.TOOLS_EXECUTED);
-      
+
       if (options.streaming) {
+        // Emit token usage after each LLM response, even when tool calls follow
+        if (this._lastTokenUsage) {
+          yield { type: 'token_usage', tokenUsage: this._lastTokenUsage, timestamp: Date.now() };
+        }
         yield { type: 'iteration_complete', iteration, timestamp: Date.now() };
       }
     }

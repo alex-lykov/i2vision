@@ -622,12 +622,14 @@ export class CLI {
 
         // Fallback: if proxy returned text with embedded tool calls but no tool_calls array
         if (toolCallsData.length === 0 && content) {
-          // Try to parse {"name":"...","arguments":{...}} format
-          const jsonPattern = /\{[^}]*"name"[^}]*"arguments"[^}]*\}/g;
-          let match;
-          while ((match = jsonPattern.exec(content)) !== null) {
+          // Try 1: Parse JSON objects inside markdown code blocks (most common DeepSeek format)
+          const codeBlockPattern = /```(?:json)?\s*\n?([\s\S]*?)```/g;
+          let cbMatch;
+          while ((cbMatch = codeBlockPattern.exec(content)) !== null) {
             try {
-              const toolCallObj = JSON.parse(match[0]);
+              const blockContent = cbMatch[1].trim();
+              // Try parsing the whole block as a single tool call
+              const toolCallObj = JSON.parse(blockContent);
               if (toolCallObj.name && typeof toolCallObj.name === 'string') {
                 toolCallsData.push({
                   id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
@@ -638,9 +640,63 @@ export class CLI {
                   }
                 });
               }
+              // Also try if it's an array of tool calls
+              else if (Array.isArray(toolCallObj)) {
+                for (const tc of toolCallObj) {
+                  if (tc.name && typeof tc.name === 'string') {
+                    toolCallsData.push({
+                      id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                      type: 'function',
+                      function: {
+                        name: tc.name,
+                        arguments: JSON.stringify(tc.arguments || {})
+                      }
+                    });
+                  }
+                }
+              }
             } catch (e: any) {}
           }
-          // Try to parse "Calling:" format
+
+          // Try 2: Extract JSON objects by balancing braces (handles nested objects)
+          if (toolCallsData.length === 0) {
+            const lines = content.split('\n');
+            for (let i = 0; i < lines.length; i++) {
+              const line = lines[i].trim();
+              if (line === '{' || line.startsWith('{')) {
+                // Try to extract a complete JSON object starting at this line
+                let braceCount = 0;
+                let jsonStr = '';
+                for (let j = i; j < lines.length; j++) {
+                  for (const char of lines[j]) {
+                    if (char === '{') braceCount++;
+                    if (char === '}') braceCount--;
+                    jsonStr += char;
+                    if (braceCount === 0 && jsonStr.includes('"name"')) {
+                      try {
+                        const toolCallObj = JSON.parse(jsonStr);
+                        if (toolCallObj.name && typeof toolCallObj.name === 'string') {
+                          toolCallsData.push({
+                            id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                            type: 'function',
+                            function: {
+                              name: toolCallObj.name,
+                              arguments: JSON.stringify(toolCallObj.arguments || {})
+                            }
+                          });
+                          i = j; // Skip parsed lines
+                          break;
+                        }
+                      } catch (e: any) {}
+                    }
+                  }
+                  if (toolCallsData.length > 0) break;
+                }
+              }
+            }
+          }
+
+          // Try 3: Parse "Calling:" format
           if (toolCallsData.length === 0) {
             const callingPattern = /Calling:\s*(\w+)\s*\n?\s*```(?:json)?\s*\n?([\s\S]*?)```|Calling:\s*(\w+)\s*\n?\s*(\{[\s\S]*?\})/gi;
             let cmatch;
@@ -705,6 +761,98 @@ export class CLI {
   }
 
   /**
+   * Extract tool calls from raw text using multiple parsing strategies.
+   * Used as a fallback when the LLM provider returns inline tool calls
+   * that were not parsed into the standard tool_calls array.
+   */
+  private extractToolCallsFromText(text: string): LLMToolCall[] {
+    const toolCalls: LLMToolCall[] = [];
+
+    // Strategy 1: JSON objects inside markdown code blocks
+    const codeBlockPattern = /```(?:json)?\s*\n?([\s\S]*?)```/g;
+    let cbMatch;
+    while ((cbMatch = codeBlockPattern.exec(text)) !== null) {
+      try {
+        const blockContent = cbMatch[1].trim();
+        const toolCallObj = JSON.parse(blockContent);
+        if (toolCallObj.name && typeof toolCallObj.name === 'string') {
+          toolCalls.push({
+            id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            name: toolCallObj.name,
+            arguments: toolCallObj.arguments || {}
+          });
+        } else if (Array.isArray(toolCallObj)) {
+          for (const tc of toolCallObj) {
+            if (tc.name && typeof tc.name === 'string') {
+              toolCalls.push({
+                id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                name: tc.name,
+                arguments: tc.arguments || {}
+              });
+            }
+          }
+        }
+      } catch (e: any) {}
+    }
+
+    if (toolCalls.length > 0) return toolCalls;
+
+    // Strategy 2: Balance-brace JSON extraction (handles nested objects)
+    const lines = text.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (line === '{' || line.startsWith('{')) {
+        let braceCount = 0;
+        let jsonStr = '';
+        for (let j = i; j < lines.length; j++) {
+          for (const char of lines[j]) {
+            if (char === '{') braceCount++;
+            if (char === '}') braceCount--;
+            jsonStr += char;
+            if (braceCount === 0 && jsonStr.includes('"name"')) {
+              try {
+                const toolCallObj = JSON.parse(jsonStr);
+                if (toolCallObj.name && typeof toolCallObj.name === 'string') {
+                  toolCalls.push({
+                    id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                    name: toolCallObj.name,
+                    arguments: toolCallObj.arguments || {}
+                  });
+                  i = j; // Skip parsed lines
+                  break;
+                }
+              } catch (e: any) {}
+            }
+          }
+          if (toolCalls.length > 0) break;
+        }
+      }
+    }
+
+    if (toolCalls.length > 0) return toolCalls;
+
+    // Strategy 3: "Calling:" format
+    const callingPattern = /Calling:\s*(\w+)\s*\n?\s*```(?:json)?\s*\n?([\s\S]*?)```|Calling:\s*(\w+)\s*\n?\s*(\{[\s\S]*?\})/gi;
+    let cmatch;
+    while ((cmatch = callingPattern.exec(text)) !== null) {
+      try {
+        const toolName = cmatch[1] || cmatch[3];
+        const jsonStr = (cmatch[2] || cmatch[4]).trim();
+        const args = JSON.parse(jsonStr);
+        if (toolName) {
+          toolCalls.push({
+            id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            name: toolName,
+            arguments: args || {}
+          });
+        }
+      } catch (e: any) {}
+    }
+
+    return toolCalls;
+  }
+
+  /**
    * Stream 3D LLM response
    */
   private async *stream3DLlmResponse(
@@ -722,12 +870,24 @@ export class CLI {
       const toolCalls: LLMToolCall[] = [];
       let promptTokens = 0;
       let completionTokens = 0;
+      let accumulatedText = ''; // Track all text for post-stream inline parsing
 
       while (true) {
         const { done, value } = await reader.read();
 
         if (done) {
           this.log(`Stream complete (${Date.now() - startTime}ms)`);
+          
+          // Fallback: if no tool_calls in SSE deltas, try to extract from accumulated text.
+          // The proxy may have returned inline JSON that its own parseToolCall couldn't match.
+          if (toolCalls.length === 0 && accumulatedText) {
+            const extracted = this.extractToolCallsFromText(accumulatedText);
+            if (extracted.length > 0) {
+              this.log(`Post-stream fallback: extracted ${extracted.length} tool calls from accumulated text`);
+              toolCalls.push(...extracted);
+            }
+          }
+          
           const finalChunk: LLMChunk = { text: '', done: true, toolCalls: toolCalls.length > 0 ? toolCalls : undefined };
           if (promptTokens > 0 || completionTokens > 0) {
             (finalChunk as any).tokenUsage = {
@@ -756,6 +916,7 @@ export class CLI {
             const delta = choice?.delta?.content || '';
 
             if (delta) {
+              accumulatedText += delta;
               yield { text: delta, done: false };
             }
 

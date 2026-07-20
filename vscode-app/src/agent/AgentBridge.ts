@@ -745,6 +745,12 @@ export class AgentBridge {
     if (history && history.length > 0) {
       this.log(`Injecting ${history.length} historical messages into LLM context`);
       for (const msg of history) {
+        // Skip text-only assistant messages that had no tool calls.
+        // These teach the model to output prose instead of JSON tool calls.
+        if (msg.role === 'assistant' && (!msg.toolCalls || msg.toolCalls.length === 0)) {
+          this.log(`  Skipped text-only assistant message (${msg.content.length} chars) - no tool calls`);
+          continue;
+        }
         messages.push({
           role: msg.role,
           content: msg.content
@@ -803,6 +809,8 @@ export class AgentBridge {
     while (true) {
       iteration++;
       this._autoNudge = null;
+      // Remove ephemeral nudge messages from previous iterations to prevent accumulation
+      messages = messages.filter(m => !(m as any)._isNudge);
       this.stateMachine.incrementIteration();
       
       // STATE: INTENT - Classify user intent
@@ -1134,26 +1142,30 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           this._consecutiveTextResponsesWithoutToolCalls++;
           this.log(`DeepSeek misbehavior detected (${this._consecutiveTextResponsesWithoutToolCalls}/2): text response contains plan/tool-like patterns`);
 
-          if (this._consecutiveTextResponsesWithoutToolCalls >= 2) {
-            this.log('Misbehavior threshold reached — resetting proxy session to clear corrupted history');
+          // FIRST misbehavior: reset proxy session and rebuild clean context.
+          // Don't add a nudge — the corrupted proxy history is the problem.
+          if (this._consecutiveTextResponsesWithoutToolCalls >= 1) {
+            this.log('Misbehavior detected — resetting proxy session and rebuilding clean context');
             if (this.sessionManager && this.sessionManager.provider === '3d-llm') {
               const resetOk = await this.sessionManager.resetSession(this.id);
               if (resetOk) {
                 this.log('Proxy session reset successfully, re-attempting with clean history');
-                // Force re-sync on next iteration
                 await this.sessionManager.syncSession(this.id);
               } else {
-                this.log('Proxy session reset failed — falling through to nudge');
+                this.log('Proxy session reset failed');
               }
             }
-            this._consecutiveTextResponsesWithoutToolCalls = 0;
+
+            // Rebuild messages: keep system prompt + last user input, drop everything else.
+            // The proxy gets a clean conversation with just instructions + task.
+            const systemPrompt = messages.find(m => m.role === 'system');
+            const lastUserInput = messages.filter(m => m.role === 'user').pop();
+            messages = systemPrompt ? [systemPrompt] : [];
+            if (lastUserInput) messages.push(lastUserInput);
+            this.log(`Rebuilt messages: ${messages.length} items (system + last user input)`);
           }
 
-          // Inject a strong nudge that forces the model to output our JSON format
-          messages.push({
-            role: 'user',
-            content: 'STOP writing text. You MUST call a tool. Output ONLY a single line of raw JSON like {"name":"tool_name","arguments":{"param":"value"}}. No explanations, no markdown, no "Calling:" prefix. Just the JSON object.'
-          });
+          this._consecutiveTextResponsesWithoutToolCalls = 0;
           this.stateMachine.dispatch(responseEvent);
           continue;
         }
@@ -1182,7 +1194,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
             }
           }
           
-          messages.push({ role: 'user', content: nudgeMessage });
+          messages.push({ role: 'user', content: nudgeMessage, _isNudge: true } as any);
           this.stateMachine.dispatch(responseEvent);
           continue;
         } else {
@@ -1404,8 +1416,12 @@ Example:
       }
 
       let assistantContent = responseText;
-      if (!assistantContent || assistantContent.trim() === '') {
-        assistantContent = `I will: ${currentIterationToolCalls.map(tc => `Calling ${tc.toolName}`).join('; ')}`;
+      // When model outputs text prose alongside actual JSON tool calls, don't save
+      // the prose to history — it teaches the model that "I will: Calling X" is valid.
+      if (currentIterationToolCalls.length > 0) {
+        assistantContent = `Executed: ${currentIterationToolCalls.map(tc => tc.toolName).join(', ')}`;
+      } else if (!assistantContent || assistantContent.trim() === '') {
+        assistantContent = 'No tool calls.';
       }
       
       messages.push({ role: 'assistant', content: assistantContent || '' });

@@ -206,12 +206,14 @@ export class ContextMeter {
     };
 
     this.tokenHistory.push(snapshot);
-    // Accumulate across the session instead of replacing the last snapshot
-    this.currentTokens.prompt += usage.prompt;
-    this.currentTokens.completion += usage.completion;
-    this.currentTokens.total += usage.total;
+    // Replace with the latest snapshot — usage.total from the LLM already
+    // reflects the full prompt context (including conversation history).
+    // Accumulating would double-count tokens across turns.
+    this.currentTokens.prompt = usage.prompt;
+    this.currentTokens.completion = usage.completion;
+    this.currentTokens.total = usage.total;
     if (usage.reasoning !== undefined) {
-      this.currentTokens.reasoning = (this.currentTokens.reasoning || 0) + usage.reasoning;
+      this.currentTokens.reasoning = usage.reasoning;
     }
     this.currentTokens.timestamp = Date.now();
 
@@ -273,6 +275,8 @@ export class ContextMeter {
     this.sessionMetrics.lastResetAt = Date.now();
     this.sessionMetrics.messageCount = 0;
     this.sessionMetrics.retryCount = 0;
+    this.currentTokens = { prompt: 0, completion: 0, total: 0, timestamp: Date.now() };
+    this.tokenHistory = [];
     // Keep latency stats
   }
 

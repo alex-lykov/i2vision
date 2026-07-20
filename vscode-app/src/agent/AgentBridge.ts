@@ -221,6 +221,9 @@ export class AgentBridge {
   // DeepSeek misbehavior detection (text responses that look like tool calls)
   private _consecutiveTextResponsesWithoutToolCalls: number = 0;
   
+  // Store original user input for misbehavior rebuild (don't use auto-generated tool-result messages)
+  private _lastUserInput: string = '';
+  
   // Pre-flight check for server start commands
   private _hasCheckedRunningServers: boolean = false;
   
@@ -762,6 +765,9 @@ export class AgentBridge {
     // Add current user input
     messages.push({ role: 'user', content: userInput });
 
+    // Store original user input for potential misbehavior rebuild
+    this._lastUserInput = userInput;
+
     let maxIterations = this.config.iterationSettings.maxIterations;
     if (typeof maxIterations !== 'number' || maxIterations < 0 || maxIterations > 100) maxIterations = 50;
     
@@ -786,6 +792,7 @@ export class AgentBridge {
       this._lastSearchPattern = null;
       this._previousSearches = [];
       this._autoNudge = null;
+      this._lastUserInput = '';
       this._triedStrategies = new Set<string>();
       this._strategyRotationCount = 0;
       this._hasCheckedRunningServers = false;
@@ -863,15 +870,17 @@ export class AgentBridge {
             this.log(`Strategy rotation: trying "${unusedStrategy}"`);
             messages.push({
               role: 'user',
-              content: `Your current approach isn't working. Try a different strategy: ${unusedStrategy}`
-            });
+              content: `Your current approach isn't working. Try a different strategy: ${unusedStrategy}`,
+              _isNudge: true
+            } as any);
             continue; // Skip to next iteration with new strategy
           } else {
             this.log('All strategies exhausted - asking user for guidance');
             messages.push({
               role: 'user',
-              content: 'Multiple approaches have failed. Please explain what you tried so far and ask the user for guidance on how to proceed.'
-            });
+              content: 'Multiple approaches have failed. Please explain what you tried so far and ask the user for guidance on how to proceed.',
+              _isNudge: true
+            } as any);
             continue;
           }
         }
@@ -936,8 +945,9 @@ ${compilerErrors.map(e => `- ${e}`).join('\n') || '(see build output)'}
 }
 \`\`\`
 
-DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
-        });
+DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
+          _isNudge: true
+        } as any);
       }
 
       // FORCED BUILD VERIFICATION (after consecutive successful edits)
@@ -953,7 +963,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
           const buildResult = await this.executeTool({ toolName: 'run_terminal', args: { command: buildCmd, workingDir: this.workspaceRoot } });
           const buildOutput = buildResult.result || buildResult.error || 'No output';
           messages.push({ role: 'tool', content: `[AUTO BUILD VERIFICATION]\n${buildOutput}`, tool_call_id: `auto_build_${Date.now()}` } as any);
-          messages.push({ role: 'user', content: 'Build verification complete. Review results. If build passed, task is complete. If errors, fix them.' });
+          messages.push({ role: 'user', content: 'Build verification complete. Review results. If build passed, task is complete. If errors, fix them.', _isNudge: true } as any);
           continue;
         } catch (e: any) {
           messages.push({ role: 'tool', content: `Error: ${e.message}` } as any);
@@ -1176,13 +1186,15 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
               }
             }
 
-            // Rebuild messages: keep system prompt + last user input, drop everything else.
-            // The proxy gets a clean conversation with just instructions + task.
+            // Rebuild messages: keep system prompt + original user task, drop everything else.
+            // Using this._lastUserInput instead of messages.filter() because the messages array
+            // may contain auto-generated "Tool results received" entries, not the actual task.
             const systemPrompt = messages.find(m => m.role === 'system');
-            const lastUserInput = messages.filter(m => m.role === 'user').pop();
             messages = systemPrompt ? [systemPrompt] : [];
-            if (lastUserInput) messages.push(lastUserInput);
-            this.log(`Rebuilt messages: ${messages.length} items (system + last user input)`);
+            if (this._lastUserInput) {
+              messages.push({ role: 'user', content: this._lastUserInput });
+            }
+            this.log(`Rebuilt messages: ${messages.length} items (system + original user task)`);
           }
 
           this._consecutiveTextResponsesWithoutToolCalls = 0;
@@ -1253,8 +1265,9 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
         // Inject constraint violations as user message
         messages.push({ 
           role: 'user', 
-          content: `⚠️ Plan validation failed:\n${validation.violations.join('\n')}\n\nPlease revise your tool calls to comply with constraints.` 
-        });
+          content: `⚠️ Plan validation failed:\n${validation.violations.join('\n')}\n\nPlease revise your tool calls to comply with constraints.`,
+          _isNudge: true
+        } as any);
         continue;
       }
       
@@ -1317,7 +1330,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`
       }
 
       if (shouldNudge.length > 0) {
-        messages.push({ role: 'user', content: `NOTICE: You called ${[...new Set(shouldNudge)].join(', ')} with same arguments. Try a DIFFERENT approach.` });
+        messages.push({ role: 'user', content: `NOTICE: You called ${[...new Set(shouldNudge)].join(', ')} with same arguments. Try a DIFFERENT approach.`, _isNudge: true } as any);
       }
 
       // STATE: EXECUTE - Execute tools
@@ -1490,11 +1503,17 @@ Do NOT read any more files. RESPOND NOW.`;
       }
 
       if (this._autoNudge) {
-        messages.push({ role: 'user', content: this._autoNudge });
+        messages.push({ role: 'user', content: this._autoNudge, _isNudge: true });
         this._autoNudge = null;
       }
 
-      messages.push({ role: 'user', content: 'Tool results received. If you have enough information, answer now. Only call another tool if missing critical info.' });
+      // When in action-only mode (forcing synthesis), don't ask the model to "answer now".
+      // The system explicitly stripped exploration tools, so the model has no choice but to act.
+      if (this._forceActionMode) {
+        messages.push({ role: 'user', content: 'You must take action now. Use apply_edits, write_file, run_terminal, run_build, or git_commit. No more exploration.', _isNudge: true });
+      } else {
+        messages.push({ role: 'user', content: 'Tool results received. If you have enough information, answer now. Only call another tool if missing critical info.' });
+      }
 
       // STATE: VERIFY - Transition and check results
       this.stateMachine.dispatch(AgentEvent.TOOLS_EXECUTED);

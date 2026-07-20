@@ -1110,11 +1110,17 @@ export class AgentStateMachine {
     // These are legitimate repeated calls while waiting for state changes
     const pollingTools = [
       'terminal_status',
-      'get_terminal_output', 
+      'get_terminal_output',
       'run_build',
       'get_build_status',
       'check_server',
       'get_server_status',
+      // Git tools: calling git_diff/git_status repeatedly to check workspace
+      // state after edits is a normal workflow, not a loop.
+      'git_diff',
+      'git_status',
+      'git_log',
+      'git_branch',
     ];
     
     const normalizedToolName = toolName.toLowerCase().replace(/[_-]/g, '');
@@ -1124,7 +1130,11 @@ export class AgentStateMachine {
     
     const argsSignature = JSON.stringify(args);
     
-    // Check recent calls - if iteration is high but we have no recent iterations, check all calls
+    // For tools with no args (empty object), don't count as a loop until
+    // the 5th repetition. Empty args means the tool has no configurable
+    // parameters — calling it multiple times is often legitimate.
+    const isEmptyArgs = argsSignature === '{}';
+    const loopThreshold = isEmptyArgs ? 5 : 2;
     const hasRecentIterations = this._context.toolCallHistory.some(h => h.iteration >= iteration - 2);
     
     const recentCalls = this._context.toolCallHistory.filter(h => {
@@ -1134,9 +1144,9 @@ export class AgentStateMachine {
       return iterationMatch && toolNameMatch && argsMatch;
     });
     
-    // If we're checking for a loop and already have 2+ matching calls in history, it's a loop
-    // The current call being checked is not yet in history, so we check for >= 2
-    return recentCalls.length >= 2;
+    // If we're checking for a loop and already have N+ matching calls in history, it's a loop
+    // The current call being checked is not yet in history, so we check for >= threshold
+    return recentCalls.length >= loopThreshold;
   }
   
   /** Get state diagram as text */

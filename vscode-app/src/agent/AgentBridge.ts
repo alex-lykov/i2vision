@@ -819,7 +819,7 @@ export class AgentBridge {
       this._autoNudge = null;
       this._lastTokenUsage = undefined; // Reset per-iteration so stale usage isn't carried forward
       // Remove ephemeral nudge messages from previous iterations to prevent accumulation
-      messages = messages.filter(m => !(m as any)._isNudge);
+      messages = messages.filter(m => !m._isNudge);
       this.stateMachine.incrementIteration();
       
       // STATE: INTENT - Classify user intent
@@ -872,7 +872,7 @@ export class AgentBridge {
               role: 'user',
               content: `Your current approach isn't working. Try a different strategy: ${unusedStrategy}`,
               _isNudge: true
-            } as any);
+            });
             continue; // Skip to next iteration with new strategy
           } else {
             this.log('All strategies exhausted - asking user for guidance');
@@ -880,7 +880,7 @@ export class AgentBridge {
               role: 'user',
               content: 'Multiple approaches have failed. Please explain what you tried so far and ask the user for guidance on how to proceed.',
               _isNudge: true
-            } as any);
+            });
             continue;
           }
         }
@@ -947,7 +947,7 @@ ${compilerErrors.map(e => `- ${e}`).join('\n') || '(see build output)'}
 
 DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
           _isNudge: true
-        } as any);
+        });
       }
 
       // FORCED BUILD VERIFICATION (after consecutive successful edits)
@@ -962,11 +962,11 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
         try {
           const buildResult = await this.executeTool({ toolName: 'run_terminal', args: { command: buildCmd, workingDir: this.workspaceRoot } });
           const buildOutput = buildResult.result || buildResult.error || 'No output';
-          messages.push({ role: 'tool', content: `[AUTO BUILD VERIFICATION]\n${buildOutput}`, tool_call_id: `auto_build_${Date.now()}` } as any);
-          messages.push({ role: 'user', content: 'Build verification complete. Review results. If build passed, task is complete. If errors, fix them.', _isNudge: true } as any);
+          messages.push({ role: 'tool', content: `[AUTO BUILD VERIFICATION]\n${buildOutput}`, tool_call_id: `auto_build_${Date.now()}` });
+          messages.push({ role: 'user', content: 'Build verification complete. Review results. If build passed, task is complete. If errors, fix them.', _isNudge: true });
           continue;
         } catch (e: any) {
-          messages.push({ role: 'tool', content: `Error: ${e.message}` } as any);
+          messages.push({ role: 'tool', content: `Error: ${e.message}` });
         }
       }
 
@@ -1226,7 +1226,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
             }
           }
           
-          messages.push({ role: 'user', content: nudgeMessage, _isNudge: true } as any);
+          messages.push({ role: 'user', content: nudgeMessage, _isNudge: true });
           this.stateMachine.dispatch(responseEvent);
           continue;
         } else {
@@ -1267,7 +1267,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
           role: 'user', 
           content: `⚠️ Plan validation failed:\n${validation.violations.join('\n')}\n\nPlease revise your tool calls to comply with constraints.`,
           _isNudge: true
-        } as any);
+        });
         continue;
       }
       
@@ -1330,7 +1330,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
       }
 
       if (shouldNudge.length > 0) {
-        messages.push({ role: 'user', content: `NOTICE: You called ${[...new Set(shouldNudge)].join(', ')} with same arguments. Try a DIFFERENT approach.`, _isNudge: true } as any);
+        messages.push({ role: 'user', content: `NOTICE: You called ${[...new Set(shouldNudge)].join(', ')} with same arguments. Try a DIFFERENT approach.`, _isNudge: true });
       }
 
       // STATE: EXECUTE - Execute tools

@@ -34,6 +34,8 @@ export interface LLMMessage {
       arguments: string;
     };
   }[];
+  /** Internal flag for auto-generated nudge messages that should be filtered out between iterations */
+  _isNudge?: boolean;
 }
 
 /**

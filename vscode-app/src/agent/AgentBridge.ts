@@ -169,6 +169,15 @@ export class AgentBridge {
   // Token usage tracking for context meter
   private _lastTokenUsage?: { prompt: number; completion: number; total: number };
   
+  // Persisted actual LLM prompt token count and message metrics for accurate
+  // pre-call estimation. We track the character/message count at the time
+  // the baseline was captured so we can estimate ONLY the delta (new content).
+  private _lastKnownPromptTokens: number = 0;
+  private _lastKnownMessageCount: number = 0;
+  private _lastKnownMessageChars: number = 0;
+  // Per-message overhead for role/formatting tokens
+  private static readonly PER_MESSAGE_OVERHEAD = 4;
+  
   // File snapshots for revert capability
   private _fileSnapshots: Map<string, string> = new Map();
   
@@ -800,6 +809,9 @@ export class AgentBridge {
       this._consecutiveTextResponsesWithoutToolCalls = 0;
       this._toolCallHistory = [];
       this._forceActionMode = false;
+      this._lastKnownPromptTokens = 0; // Reset on fresh conversation
+      this._lastKnownMessageCount = 0;
+      this._lastKnownMessageChars = 0;
     } else {
       this.log('Resumed conversation - preserving session state');
       // Only reset state machine, keep session-specific state
@@ -1042,12 +1054,16 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
           // Carry forward real or estimated token usage from non-streaming response
           if (nonStreamResponse.tokenUsage) {
             this._lastTokenUsage = nonStreamResponse.tokenUsage;
+            this._lastKnownPromptTokens = nonStreamResponse.tokenUsage.prompt;
           } else {
             const promptTokens = this.estimateTokens(messages);
             const completionTokens = Math.ceil(responseText.length / 4);
             this._lastTokenUsage = { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens };
+            this._lastKnownPromptTokens = promptTokens;
             this.log(`Estimated token usage (non-streaming): prompt=${promptTokens}, completion=${completionTokens}`);
           }
+          this._lastKnownMessageCount = messages.length;
+          this._lastKnownMessageChars = messages.reduce((s, m) => s + m.content.length, 0);
         } else {
           const streamResponse = rawResponse as AsyncGenerator<LLMChunk>;
           let reasoningCaptured = false;
@@ -1085,7 +1101,10 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
               }
             }
             if (chunk.toolCalls) streamingToolCalls = chunk.toolCalls;
-            if (chunk.tokenUsage) this._lastTokenUsage = chunk.tokenUsage;
+            if (chunk.tokenUsage) {
+              this._lastTokenUsage = chunk.tokenUsage;
+              this._lastKnownPromptTokens = chunk.tokenUsage.prompt;
+            }
             if (chunk.done) break;
           }
 
@@ -1095,9 +1114,14 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
             const promptTokens = this.estimateTokens(messages);
             const completionTokens = Math.ceil(responseText.length / 4);
             this._lastTokenUsage = { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens };
+            this._lastKnownPromptTokens = promptTokens;
             this.log(`Estimated token usage (provider omitted usage): prompt=${promptTokens}, completion=${completionTokens}`);
           }
           
+          // Persist metrics after streaming response completes for delta estimation
+          this._lastKnownMessageCount = messages.length;
+          this._lastKnownMessageChars = messages.reduce((s, m) => s + m.content.length, 0);
+
           if (!toolCallDetected && streamBuffer.trim()) {
             textAlreadyStreamed = true;
             yield { type: 'text', text: streamBuffer.trim(), timestamp: Date.now() };
@@ -1583,10 +1607,28 @@ Do NOT read any more files. RESPOND NOW.`;
   }
 
   /**
-   * Estimate token count for messages (rough approximation: 1 token ≈ 4 chars)
+   * Estimate token count for messages using actual LLM-reported prompt tokens
+   * as a baseline, plus a delta estimate for new content since the last call.
+   * Falls back to conservative character counting when no baseline exists.
    */
   private estimateTokens(messages: LLMMessage[]): number {
-    return messages.reduce((sum, msg) => sum + Math.ceil(msg.content.length / 4), 0);
+    const baseline = this._lastKnownPromptTokens || 0;
+    if (baseline === 0) {
+      // No prior data — fallback to conservative estimate
+      const msgOverhead = messages.length * AgentBridge.PER_MESSAGE_OVERHEAD;
+      return messages.reduce((sum, msg) => sum + Math.ceil(msg.content.length / 3.5), msgOverhead);
+    }
+
+    // Calculate delta: how many new messages and new characters were added
+    const currentChars = messages.reduce((sum, msg) => sum + msg.content.length, 0);
+    const currentCount = messages.length;
+    const newChars = Math.max(0, currentChars - this._lastKnownMessageChars);
+    const newMessages = Math.max(0, currentCount - this._lastKnownMessageCount);
+
+    // Estimate only the new content added since the baseline was captured.
+    // Use a tighter ratio for deltas (3.5 chars/token) plus per-message overhead.
+    const deltaTokens = Math.ceil(newChars / 3.5) + (newMessages * AgentBridge.PER_MESSAGE_OVERHEAD);
+    return baseline + deltaTokens;
   }
 
   /**

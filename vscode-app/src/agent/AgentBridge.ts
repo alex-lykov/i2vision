@@ -1004,6 +1004,11 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
         if (trimmedMessages.length < messages.length) {
           this.log(`Messages trimmed: ${messages.length} → ${trimmedMessages.length} (saved ~${this.estimateTokens(messages) - this.estimateTokens(trimmedMessages)} tokens)`);
           messages = trimmedMessages;
+          // Invalidate baseline so next estimate uses a fresh full count
+          this._lastKnownPromptTokens = 0;
+          this._lastKnownMessageCount = 0;
+          this._lastKnownMessageChars = 0;
+          this.log('Token baseline reset after trimming');
         }
       }
 

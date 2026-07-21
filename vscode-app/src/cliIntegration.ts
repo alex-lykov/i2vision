@@ -1181,7 +1181,19 @@ export class CLI {
    */
   async searchFiles(pattern: string, dirPath?: string): Promise<string[]> {
     this.log(`Searching: ${pattern}`);
-    const searchDir = dirPath || this.workspaceRoot || process.cwd();
+    let searchDir = dirPath || this.workspaceRoot || process.cwd();
+
+    // If searchDir points to a file, search in its parent directory instead
+    try {
+      const stat = await fs.promises.stat(searchDir);
+      if (stat.isFile()) {
+        const parentDir = path.dirname(searchDir);
+        this.log(`Search path is a file, searching parent directory: ${parentDir}`);
+        searchDir = parentDir;
+      }
+    } catch (e: any) {
+      // If stat fails, continue with the original path (will fail gracefully in searchInDir)
+    }
     const results: string[] = [];
     const resultsSet = new Set<string>(); // Avoid duplicates
     const regex = new RegExp(pattern, 'i');

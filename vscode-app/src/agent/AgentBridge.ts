@@ -769,7 +769,7 @@ export class AgentBridge {
     this._lastUserInput = userInput;
 
     let maxIterations = this.config.iterationSettings.maxIterations;
-    if (typeof maxIterations !== 'number' || maxIterations < 0 || maxIterations > 100) maxIterations = 50;
+    if (typeof maxIterations !== 'number' || maxIterations < 0 || maxIterations > 100) maxIterations = 20;
     
     // Reset state only if no session state was restored (first conversation)
     const isFreshConversation = !this._sessionState;

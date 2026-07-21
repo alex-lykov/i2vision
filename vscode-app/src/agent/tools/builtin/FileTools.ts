@@ -52,24 +52,37 @@ export const fileTools: ToolDefinition[] = [
   
   {
     name: 'read_file',
-    description: 'Read contents of a file',
+    description: 'Read contents of a file. Supports optional offset (1-based line number) and limit (max lines) for reading partial content.',
     category: 'file',
     isReadOnly: true,
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'File path relative to workspace root' }
+        path: { type: 'string', description: 'File path relative to workspace root' },
+        offset: { type: 'number', description: 'Optional: 1-based line number to start reading from' },
+        limit: { type: 'number', description: 'Optional: Maximum number of lines to read' }
       },
       required: ['path']
     },
     async handler(args, ctx) {
       const filePath = ctx.resolvePath(args.path);
-      
+      const offset = typeof args.offset === 'number' ? args.offset : undefined;
+      const limit = typeof args.limit === 'number' ? args.limit : undefined;
+
       try {
-        const content = await ctx.readFile(filePath);
-        
+        let content = await ctx.readFile(filePath);
+
         if (!content || content.trim() === '') {
           return { result: 'The file exists but is empty.' };
+        }
+
+        // Apply offset/limit if specified
+        if (offset !== undefined || limit !== undefined) {
+          const lines = content.split('\n');
+          const startIdx = offset !== undefined ? Math.max(0, offset - 1) : 0;
+          const endIdx = limit !== undefined ? startIdx + limit : lines.length;
+          const sliced = lines.slice(startIdx, endIdx);
+          content = sliced.join('\n');
         }
         
         return { result: content };

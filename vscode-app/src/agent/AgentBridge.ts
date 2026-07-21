@@ -364,6 +364,15 @@ export class AgentBridge {
     if (updates.maxOutputTokens !== undefined) this.config.model.maxOutputTokens = updates.maxOutputTokens;
     if (updates.temperature !== undefined) this.config.model.temperature = updates.temperature;
     if (updates.topP !== undefined) this.config.model.topP = updates.topP;
+
+    // Hardcode context length for 3D LLM provider since the proxy doesn't expose
+    // the actual model's context window over its API.
+    if (this.config.model.provider === '3d-llm' && this.config.model.contextLength < 64000) {
+      const oldCtx = this.config.model.contextLength;
+      this.config.model.contextLength = 64000;
+      this.log(`3D LLM provider detected — contextLength overridden: ${oldCtx} -> 64000`);
+    }
+
     this.log(`Config updated: model=${this.config.model.id}, provider=${this.config.model.provider}`);
   }
 

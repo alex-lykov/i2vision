@@ -237,6 +237,15 @@ export class LocalAgentProvider {
       this.log(`Auto-fixed stale 3D LLM model: deepseek-web-v3 -> deepseek-chat`);
       await this.saveConfig(layerName, finalConfig);
     }
+
+    // Hardcode context length for 3D LLM provider since the proxy doesn't expose
+    // the actual model's context window over its API. All 3D LLM models are DeepSeek
+    // V3/R1 based with 64k context windows.
+    if (finalConfig.model.provider === '3d-llm') {
+      const oldCtx = finalConfig.model.contextLength;
+      finalConfig.model.contextLength = 64000;
+      this.log(`3D LLM provider detected — contextLength overridden: ${oldCtx} -> 64000`);
+    }
     
     this.configCache.set(cacheKey, finalConfig);
     return finalConfig;

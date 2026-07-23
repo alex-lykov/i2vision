@@ -162,6 +162,8 @@ export class AgentBridge {
   
   // Auto-read tracking (not part of state machine - it's per-session cache)
   private _autoReadFiles: Set<string> = new Set();
+  private _readFileCount: Map<string, number> = new Map();
+  private static readonly MAX_READS_PER_FILE = 3; // Force action after N reads of same file
   
   // Auto-nudge message (generated during tool execution, consumed in next iteration)
   private _autoNudge: string | null = null;
@@ -1719,6 +1721,19 @@ Do NOT search or list any more files. RESPOND NOW.`;
         }
       }
 
+      // PRE-FLIGHT CHECK: Re-read limit - block repeated reads of same file
+      if (toolCall.toolName === 'read_file') {
+        const filePath = this.resolvePath(toolCall.args.path);
+        const count = this._readFileCount.get(filePath) || 0;
+        if (count >= AgentBridge.MAX_READS_PER_FILE) {
+          this.log(`READ LIMIT: "${filePath}" already read ${count} times. Forcing action.`);
+          return {
+            result: '',
+            error: `⚠️ READ LIMIT: "${toolCall.args.path}" has been read ${count} times already. You have enough information. Use apply_edits or write_file to make changes. Stop reading and take action now.`
+          };
+        }
+      }
+
       // PRE-FLIGHT CHECK: Before starting servers, check what's already running
       if (toolCall.toolName === 'run_terminal') {
         const command = toolCall.args.command as string;
@@ -1788,6 +1803,13 @@ Do NOT search or list any more files. RESPOND NOW.`;
 
       // Delegate to tool registry
       const rawResult = await this.toolRegistry.execute(toolCall.toolName, toolCall.args, context);
+
+      // Track successful read_file calls for per-file limit
+      if (toolCall.toolName === 'read_file' && !rawResult.error) {
+        const filePath = this.resolvePath(toolCall.args.path);
+        const currentCount = this._readFileCount.get(filePath) || 0;
+        this._readFileCount.set(filePath, currentCount + 1);
+      }
 
       // Compress large tool results before sending to LLM
       if (rawResult.result && this.config.model.provider === '3d-llm') {

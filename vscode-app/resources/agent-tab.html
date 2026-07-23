@@ -93,10 +93,14 @@
     .footer-right{display:flex;gap:8px}
     .footer-panel{flex:0 0 auto;padding:16px;background-color:var(--vscode-editorWidget-background);border-top:1px solid var(--vscode-editorWidget-border)}
     .input-container{max-width:900px;margin:0 auto}
-    .provider-model-row{display:flex;gap:16px;margin-bottom:10px;align-items:center;flex-wrap:wrap}
-    .token-meter{display:flex;align-items:center;gap:8px;font-size:0.75em;color:var(--vscode-descriptionForeground);margin-left:auto;}
-    .token-bar{width:100px;height:4px;background-color:var(--vscode-input-border);border-radius:2px;overflow:hidden}
-    .token-fill{height:100%;background:linear-gradient(90deg,var(--vscode-terminal-successBackground) 0%,var(--vscode-terminal-successBackground) 50%,var(--vscode-terminal-ansiYellow) 75%,var(--vscode-errorForeground) 100%);transition:width 0.3s ease}
+    .provider-model-row{display:flex;gap:16px;margin-bottom:2px;align-items:center;flex-wrap:wrap}
+    .context-meter-row{display:flex;gap:8px;align-items:center;width:100%;margin-bottom:8px}
+    .token-meter{display:flex;align-items:center;gap:8px;font-size:0.7em;color:var(--vscode-descriptionForeground);flex-wrap:wrap}
+    .token-circle{width:14px;height:14px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;position:relative}
+    .token-circle-inner{width:8px;height:8px;border-radius:50%;background:var(--vscode-editorWidget-background)}
+    .meter-value{font-size:0.7em;font-family:var(--vscode-editor-font-family)}
+    .meter-status{font-size:0.7em;font-weight:600}
+    .meter-warn{font-size:0.65em;color:var(--vscode-errorForeground)}
     .input-box{width:100%;padding:12px;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;background-color:var(--vscode-input-background);color:var(--vscode-input-foreground);font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);resize:vertical;min-height:80px}
     .input-box:focus{outline:2px solid var(--vscode-focusBorder);outline-offset:-2px}
     .button-row{margin-top:10px;display:flex;gap:8px;align-items:center}
@@ -230,10 +234,15 @@
             <option value="{currentModel}" selected>{currentModel}</option>
           </select>
         </div>
-        <div class="token-meter">
-          <span class="codicon codicon-database"></span>
-          <div class="token-bar"><div class="token-fill" id="tokenFill" style="width:0%"></div></div>
-          <span id="tokenText">0 / 0</span>
+      </div>
+      <div class="context-meter-row" id="contextMeterRow">
+        <div class="token-meter" id="tokenMeter">
+          <div class="token-circle" id="tokenCircle" title="Token usage">
+            <div class="token-circle-inner" id="tokenCircleInner"></div>
+          </div>
+          <span class="meter-value" id="tokenText">0 / 0</span>
+          <span class="meter-status" id="meterStatus"></span>
+          <span class="meter-warn" id="meterWarn"></span>
         </div>
       </div>
       <textarea class="input-box" id="userInput" placeholder="Ask me anything about your code..." rows="3"></textarea>
@@ -470,7 +479,7 @@
           finalizeStreamingText(message.durationMs);
           setProcessingState(false);
           break;
-        case 'token_usage': updateTokenMeter(message.tokenUsage, message.contextLength); break;
+        case 'context_meter_update': updateTokenMeter(message.summary); break;
         case 'error': appendErrorMessage(message.error); setProcessingState(false); break;
         case 'stopped': hideThinkingIndicator(); setProcessingState(false); appendStoppedMessage(); break;
         case 'provider_changed': providerSelect.value = message.provider; vscode.postMessage({ command: 'fetch_models' }); break;
@@ -701,17 +710,49 @@
       }
       streamingElement = null;
     }
-    
-    function updateTokenMeter(tokenUsage, contextLength) {
-      const total = tokenUsage.prompt + tokenUsage.completion;
+
+    function updateTokenMeter(summary) {
+      if (!summary) return;
+
+      const t = summary.tokens || {};
+      const total = (t.prompt || 0) + (t.completion || 0);
+      const contextLength = t.total || 1;
       const percentage = Math.min((total / contextLength) * 100, 100);
-      tokenFill.style.width = percentage + '%';
       tokenText.textContent = total.toLocaleString() + ' / ' + contextLength.toLocaleString();
-      if (percentage > 80) tokenFill.style.background = 'var(--vscode-errorForeground)';
-      else if (percentage > 60) tokenFill.style.background = 'var(--vscode-terminal-ansiYellow)';
-      else tokenFill.style.background = 'var(--vscode-terminal-successBackground)';
+
+      // Color the circle based on usage
+      var circle = document.getElementById('tokenCircle');
+      if (circle) {
+        var color = 'var(--vscode-terminal-ansiGreen)';
+        if (percentage >= 80) color = 'var(--vscode-errorForeground)';
+        else if (percentage >= 50) color = 'var(--vscode-terminal-ansiYellow)';
+        circle.style.background = color;
+      }
+
+      // Status
+      var statusEl = document.getElementById('meterStatus');
+      if (statusEl) {
+        if (summary.statusText) {
+          statusEl.style.display = 'inline';
+          statusEl.style.color = summary.status === 'healthy' ? 'var(--vscode-terminal-ansiGreen)' : summary.status === 'warning' ? 'var(--vscode-terminal-ansiYellow)' : 'var(--vscode-errorForeground)';
+          statusEl.textContent = summary.statusText;
+        } else {
+          statusEl.style.display = 'none';
+        }
+      }
+
+      // Warnings
+      var warnEl = document.getElementById('meterWarn');
+      if (warnEl) {
+        if (summary.warnings && summary.warnings.length > 0) {
+          warnEl.style.display = 'inline';
+          warnEl.textContent = summary.warnings.join('; ');
+        } else {
+          warnEl.style.display = 'none';
+        }
+      }
     }
-    
+
     function appendErrorMessage(error) {
       const div = document.createElement('div');
       div.className = 'message error';

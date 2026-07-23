@@ -1707,6 +1707,18 @@ Do NOT read any more files. RESPOND NOW.`;
 
   private async executeTool(toolCall: ToolCall): Promise<{ result: string; error?: string }> {
     try {
+      // TOOL FILTER ENFORCEMENT: When action_only mode is active, reject disallowed tools
+      if (this._forceActionMode) {
+        const allowedTools = ['apply_edits', 'write_file', 'run_terminal', 'run_build', 'git_commit'];
+        if (!allowedTools.includes(toolCall.toolName)) {
+          this.log(`TOOL FILTER BLOCKED: ${toolCall.toolName} not in action_only set. Allowed: ${allowedTools.join(', ')}`);
+          return {
+            result: '',
+            error: `⚠️ TOOL NOT AVAILABLE: "${toolCall.toolName}" is blocked in action-only mode. You must use one of the following allowed tools: ${allowedTools.join(', ')}. Stop exploring and take action now.`
+          };
+        }
+      }
+
       // PRE-FLIGHT CHECK: Before starting servers, check what's already running
       if (toolCall.toolName === 'run_terminal') {
         const command = toolCall.args.command as string;

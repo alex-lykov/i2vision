@@ -94,13 +94,13 @@
     .footer-panel{flex:0 0 auto;padding:16px;background-color:var(--vscode-editorWidget-background);border-top:1px solid var(--vscode-editorWidget-border)}
     .input-container{max-width:900px;margin:0 auto}
     .provider-model-row{display:flex;gap:16px;margin-bottom:2px;align-items:center;flex-wrap:wrap}
-    .context-meter-row{display:flex;gap:8px;align-items:center;width:100%;margin-bottom:8px}
-    .token-meter{display:flex;align-items:center;gap:8px;font-size:0.7em;color:var(--vscode-descriptionForeground);flex-wrap:wrap}
-    .token-circle{width:14px;height:14px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;position:relative}
-    .token-circle-inner{width:8px;height:8px;border-radius:50%;background:var(--vscode-editorWidget-background)}
-    .meter-value{font-size:0.7em;font-family:var(--vscode-editor-font-family)}
-    .meter-status{font-size:0.7em;font-weight:600}
-    .meter-warn{font-size:0.65em;color:var(--vscode-errorForeground)}
+    .context-meter-row{display:flex;gap:12px;align-items:center;width:100%;margin-bottom:8px;font-size:0.85em;color:var(--vscode-descriptionForeground)}
+    .token-meter{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .token-circle{width:16px;height:16px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;position:relative;flex-shrink:0}
+    .token-circle-inner{width:10px;height:10px;border-radius:50%;background:var(--vscode-editorWidget-background)}
+    .meter-value{font-family:var(--vscode-editor-font-family)}
+    .meter-status{font-weight:600}
+    .meter-warn{color:var(--vscode-errorForeground)}
     .input-box{width:100%;padding:12px;border:1px solid var(--vscode-editorWidget-border);border-radius:6px;background-color:var(--vscode-input-background);color:var(--vscode-input-foreground);font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);resize:vertical;min-height:80px}
     .input-box:focus{outline:2px solid var(--vscode-focusBorder);outline-offset:-2px}
     .button-row{margin-top:10px;display:flex;gap:8px;align-items:center}
@@ -241,6 +241,10 @@
             <div class="token-circle-inner" id="tokenCircleInner"></div>
           </div>
           <span class="meter-value" id="tokenText">0 / 0</span>
+          <span id="msgText"></span>
+          <span id="ttlText"></span>
+          <span id="latText"></span>
+          <span id="detailText"></span>
           <span class="meter-status" id="meterStatus"></span>
           <span class="meter-warn" id="meterWarn"></span>
         </div>
@@ -727,6 +731,43 @@
         if (percentage >= 80) color = 'var(--vscode-errorForeground)';
         else if (percentage >= 50) color = 'var(--vscode-terminal-ansiYellow)';
         circle.style.background = color;
+      }
+
+      // Messages text
+      var m = summary.messages || {};
+      var msgText = document.getElementById('msgText');
+      if (msgText && typeof m.used === 'number' && typeof m.total === 'number' && m.total !== Infinity) {
+        msgText.textContent = 'msg: ' + m.used.toLocaleString() + '/' + m.total.toLocaleString();
+      } else if (msgText) {
+        msgText.textContent = '';
+      }
+
+      // TTL text
+      var ttl = summary.sessionTtl || {};
+      var ttlText = document.getElementById('ttlText');
+      if (ttlText && typeof ttl.remainingMs === 'number' && ttl.totalMs !== Infinity) {
+        ttlText.textContent = 'ttl: ' + Math.ceil(ttl.remainingMs / 60000) + 'm';
+      } else if (ttlText) {
+        ttlText.textContent = '';
+      }
+
+      // Latency text
+      var lat = summary.latency || {};
+      var latText = document.getElementById('latText');
+      if (latText && typeof lat.lastMs === 'number') {
+        latText.textContent = 'lat: ' + (lat.lastMs / 1000).toFixed(1) + 's';
+      } else if (latText) {
+        latText.textContent = '';
+      }
+
+      // Detail row: prompt | completion | remaining
+      var detailText = document.getElementById('detailText');
+      if (detailText) {
+        var detail = '';
+        if (typeof t.prompt === 'number') detail += 'p:' + t.prompt.toLocaleString() + ' ';
+        if (typeof t.completion === 'number') detail += 'c:' + t.completion.toLocaleString() + ' ';
+        if (typeof t.remaining === 'number') detail += 'rem:' + t.remaining.toLocaleString();
+        detailText.textContent = detail.trim();
       }
 
       // Status

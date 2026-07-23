@@ -574,8 +574,10 @@ export class AgentBridge {
     }
 
     if (toolFilter === 'action_only') {
-      const actionTools = this.toolRegistry.getLLMToolsByName(['apply_edits', 'write_file', 'run_terminal', 'run_build', 'git_commit', 'read_file', 'get_file_context']);
-      this.log(`Tool filter: action_only (${actionTools.length}/${allTools.length} tools) - forcing action mode`);
+      // STRICT action-only: no read tools. If model needs more info, it should
+      // synthesize from what it already has or ask the user.
+      const actionTools = this.toolRegistry.getLLMToolsByName(['apply_edits', 'write_file', 'run_terminal', 'run_build', 'git_commit']);
+      this.log(`Tool filter: action_only (${actionTools.length}/${allTools.length} tools) - forcing action mode (NO reads)`);
       return actionTools;
     }
 
@@ -1515,25 +1517,26 @@ Example:
           this._toolCallHistory.shift();
         }
         
-        // PATTERN DETECTION: Check for over-exploration (3+ exploration tools with no action)
-        const explorationTools = ['list_directory', 'search_files'];
+        // PATTERN DETECTION: Check for over-exploration (4+ exploration tools with no action)
+        // Exploration includes list_directory, search_files, read_file, get_file_context.
+        // If the model keeps reading/looking without ever acting, force action mode.
+        const explorationTools = ['list_directory', 'search_files', 'read_file', 'get_file_context'];
         const actionTools = ['write_file', 'apply_edits', 'run_terminal', 'run_build', 'git_commit'];
         
-        const lastThreeCalls = this._toolCallHistory.slice(-3);
-        const allExploration = lastThreeCalls.length >= 3 && lastThreeCalls.every(tc => explorationTools.includes(tc.toolName));
-        const hasAction = this._toolCallHistory.some(tc => actionTools.includes(tc.toolName));
+        const explorationCount = this._toolCallHistory.filter(tc => explorationTools.includes(tc.toolName)).length;
+        const actionCount = this._toolCallHistory.filter(tc => actionTools.includes(tc.toolName)).length;
         
-        if (allExploration && !hasAction) {
-          this.log(`Pattern detected: ${lastThreeCalls.length} consecutive exploration calls with no action - forcing synthesis`);
-          this._autoNudge = `⚠️ STOP exploring. You've called ${lastThreeCalls.length} exploration tools (list_directory, search_files) without taking any action. You have enough information. Either:
+        if (explorationCount >= 4 && actionCount === 0) {
+          this.log(`Pattern detected: ${explorationCount} exploration calls (including reads) with no action - forcing action mode`);
+          this._autoNudge = `⚠️ STOP exploring. You've called ${explorationCount} exploration tools (list_directory, search_files, read_file, get_file_context) without taking any action. You have enough information. Either:
 1. Run a command (run_terminal, run_build)
 2. Apply edits (apply_edits, write_file)
 3. Provide a final answer
 
-Do NOT search or list any more files. RESPOND NOW.`;
+Do NOT search, list, or read any more files. RESPOND NOW.`;
           this._consecutiveToolCallsWithoutResponse = 0; // Reset after nudge
           this._forceActionMode = true; // Force action mode - removes exploration tools
-        } else if (hasAction && this._forceActionMode) {
+        } else if (actionCount > 0 && this._forceActionMode) {
           // Reset force action mode after an action is taken
           this.log(`Force action mode: action tool detected - resetting`);
           this._forceActionMode = false;
@@ -1711,7 +1714,7 @@ Do NOT search or list any more files. RESPOND NOW.`;
     try {
       // TOOL FILTER ENFORCEMENT: When action_only mode is active, reject disallowed tools
       if (this._forceActionMode) {
-        const allowedTools = ['apply_edits', 'write_file', 'run_terminal', 'run_build', 'git_commit', 'read_file', 'get_file_context'];
+        const allowedTools = ['apply_edits', 'write_file', 'run_terminal', 'run_build', 'git_commit'];
         if (!allowedTools.includes(toolCall.toolName)) {
           this.log(`TOOL FILTER BLOCKED: ${toolCall.toolName} not in action_only set. Allowed: ${allowedTools.join(', ')}`);
           return {

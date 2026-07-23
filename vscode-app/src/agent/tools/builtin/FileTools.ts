@@ -52,7 +52,7 @@ export const fileTools: ToolDefinition[] = [
   
   {
     name: 'read_file',
-    description: 'Read contents of a file. Supports optional offset (1-based line number) and limit (max lines) for reading partial content.',
+    description: 'Read contents of a file. Output includes line numbers (1-based) for precise targeting with apply_edits. Supports optional offset (1-based line number) and limit (max lines) for reading partial content. IMPORTANT: File content is cached during a session - if you read a file and the content is unchanged, you will get the same numbered output without a disk re-read.',
     category: 'file',
     isReadOnly: true,
     parameters: {
@@ -77,13 +77,20 @@ export const fileTools: ToolDefinition[] = [
         }
 
         // Apply offset/limit if specified
-        if (offset !== undefined || limit !== undefined) {
-          const lines = content.split('\n');
-          const startIdx = offset !== undefined ? Math.max(0, offset - 1) : 0;
-          const endIdx = limit !== undefined ? startIdx + limit : lines.length;
-          const sliced = lines.slice(startIdx, endIdx);
-          content = sliced.join('\n');
-        }
+        const lines = content.split('\n');
+        const startIdx = offset !== undefined ? Math.max(0, offset - 1) : 0;
+        const endIdx = limit !== undefined ? startIdx + limit : lines.length;
+        const sliced = lines.slice(startIdx, endIdx);
+
+        // Add line numbers (1-based) for precise edit targeting
+        const maxLineNum = startIdx + sliced.length;
+        const padWidth = String(maxLineNum).length;
+        const numberedLines = sliced.map((line, i) => {
+          const lineNum = startIdx + i + 1;
+          return `${String(lineNum).padStart(padWidth)} | ${line}`;
+        });
+
+        content = numberedLines.join('\n');
         
         return { result: content };
       } catch (error: any) {
@@ -135,7 +142,7 @@ export const fileTools: ToolDefinition[] = [
   
   {
     name: 'search_files',
-    description: 'Search for files by name AND content. Searches file names first, then reads text file contents looking for regex matches. Returns file paths. TIP: If you find a file, read it immediately instead of searching more.',
+    description: 'Search for files by name AND content. Returns each matching file with line numbers, match snippets, and match counts. TIP: Once you see the line numbers and snippets, you can use apply_edits directly without re-reading the file.',
     category: 'file',
     isReadOnly: true,
     parameters: {
@@ -159,15 +166,41 @@ export const fileTools: ToolDefinition[] = [
         };
       }
       
+      // Format detailed results with line numbers and snippets
+      const formatResult = (result: any): string => {
+        const relativePath = result.path.replace(ctx.workspaceRoot, '').replace(/^[/\\]/, '');
+        let output = `📄 ${relativePath}`;
+        if (result.matchedByName) {
+          output += ' (file name matches)';
+        } else {
+          output += ` — ${result.matchCount} match(es)`;
+        }
+        
+        if (result.matches && result.matches.length > 0 && !result.matchedByName) {
+          for (const match of result.matches.slice(0, 3)) { // Show top 3 matches
+            output += `\n  Line ${match.line}: ${match.text}`;
+            if (match.snippet) {
+              output += `\n${match.snippet.split('\\n').map((l: string) => '    ' + l).join('\\n')}`;
+            }
+          }
+          if (result.matches.length > 3) {
+            output += `\n  ... and ${result.matches.length - 3} more match(es)`;
+          }
+        }
+        return output;
+      };
+      
+      const formatted = results.slice(0, 10).map(formatResult);
+      
       if (results.length > 10) {
         return { 
-          result: `Found ${results.length} files matching "${pattern}". Here are the first 10:\n${results.slice(0, 10).join('\n')}\n\nTIP: You found ${results.length} results. Instead of searching more, READ one of these files to understand the code.`, 
+          result: `Found ${results.length} files matching "${pattern}". Here are the first 10:\n${formatted.join('\\n\\n')}\n\nTIP: You found ${results.length} results. Read one of these files with read_file (offset line) to see full context, or use apply_edits directly on the line numbers shown above.`, 
           error: 'MANY_RESULTS' 
         };
       }
       
       return { 
-        result: `Found ${results.length} file(s):\n${results.join('\n')}\n\nTIP: You found the files! Now READ one of them instead of searching more.` 
+        result: `Found ${results.length} file(s):\n\n${formatted.join('\\n\\n')}\n\nTIP: You found the files! Use apply_edits on the shown line numbers, or read_file with offset for more context.` 
       };
     }
   },

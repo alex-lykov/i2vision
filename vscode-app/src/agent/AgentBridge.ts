@@ -181,6 +181,10 @@ export class AgentBridge {
   // File snapshots for revert capability
   private _fileSnapshots: Map<string, string> = new Map();
   
+  // File read cache to prevent redundant reads within a session
+  private _fileReadCache: Map<string, { mtime: number; content: string }> = new Map();
+  private static readonly FILE_CACHE_TTL_MS = 60 * 1000; // 1 minute TTL for mtime check
+
   // Auto-inject build context tracking (per-workspace)
   private _buildFileReadAttempts = new Map<string, number>();
   private _hasReadBuildFiles = new Map<string, boolean>();
@@ -192,7 +196,7 @@ export class AgentBridge {
 
   // Session state - persists across agent recreation
   private _sessionState?: AgentSessionState;
-  private _searchCache: Map<string, { results: string[], timestamp: number }> = new Map();
+  private _searchCache: Map<string, { results: any[], timestamp: number }> = new Map();
   private static readonly SEARCH_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
   // Provider-specific session manager (3D LLM proxy, etc.)
@@ -294,7 +298,7 @@ export class AgentBridge {
     }
 
     const settings = this.settingsManager.getSettings();
-    this.terminalManager = new TerminalManager(outputChannel, settings.terminal.autoCloseDelayMs);
+    this.terminalManager = new TerminalManager(outputChannel, settings.terminal.autoCloseDelayMs, settings.terminal);
     
     // Initialize tool registry with all built-in tools
     this.toolRegistry.registerAll(fileTools);
@@ -1749,12 +1753,16 @@ Do NOT read any more files. RESPOND NOW.`;
       }
 
       // Create tool context with all necessary dependencies
+      // Wrap readFile with session-level caching to prevent redundant reads
       const context: ToolContext = {
         workspaceRoot: this.workspaceRoot,
         resolvePath: (p: string) => this.resolvePath(p),
         runCommand: (cmd: string, timeout: number, cwd?: string) => this.runCommandWithTimeout(cmd, timeout, cwd),
-        readFile: (p: string) => this.cli.readFile(p),
-        writeFile: (p: string, c: string) => this.cli.writeFile(p, c),
+        readFile: (p: string) => this.readFileCached(p),
+        writeFile: (p: string, c: string) => {
+          this.invalidateFileCache(p);
+          return this.cli.writeFile(p, c);
+        },
         listFiles: (p: string, r: boolean) => this.cli.listFiles(p, r),
         searchFiles: (p: string, d?: string) => this.cli.searchFiles(p, d),
         getFileContext: (p: string) => this.cli.getContext(p),
@@ -2033,7 +2041,19 @@ DO NOT include large content in arguments. Just reference files by path.`;
             if (results.length === 0) {
               return { result: `No files found matching pattern "${pattern}" (cached). Try a different search term.`, error: 'NO_RESULTS' };
             }
-            return { result: `Found ${results.length} file(s) (cached):\n${results.join('\n')}\n\nTIP: You found the files! Now READ one of them instead of searching more.` };
+            // Format cached SearchResult objects
+            const formatted = results.slice(0, 10).map((r: any) => {
+              const rel = r.path.replace(this.workspaceRoot, '').replace(/^[/\\]/, '');
+              let out = `📄 ${rel}`;
+              if (!r.matchedByName && r.matches?.length) {
+                out += ` — ${r.matchCount} match(es)`;
+                for (const m of r.matches.slice(0, 3)) {
+                  out += `\n  Line ${m.line}: ${m.text}`;
+                }
+              }
+              return out;
+            });
+            return { result: `Found ${results.length} file(s) (cached):\n\n${formatted.join('\n\n')}\n\nTIP: You found the files! Now READ one of them instead of searching more.` };
           }
           
           // Check for search loop - same pattern searched multiple times
@@ -2059,7 +2079,7 @@ DO NOT include large content in arguments. Just reference files by path.`;
           
           // Track this search for loop detection
           this._lastSearchPattern = pattern;
-          this._lastSearchFiles = results;
+          this._lastSearchFiles = results.map((r: any) => r.path);
           
           if (results.length === 0) {
             let suggestion = 'Try a different search term or use list_directory to explore.';
@@ -2074,12 +2094,35 @@ DO NOT include large content in arguments. Just reference files by path.`;
             return { result: `No files found matching pattern "${pattern}". ${suggestion}`, error: 'NO_RESULTS' };
           }
           
+          // Format SearchResult objects for output
+          const formatted = results.slice(0, 10).map((r: any) => {
+            const rel = r.path.replace(this.workspaceRoot, '').replace(/^[/\\]/, '');
+            let out = `📄 ${rel}`;
+            if (r.matchedByName) {
+              out += ' (file name matches)';
+            } else {
+              out += ` — ${r.matchCount} match(es)`;
+              if (r.matches?.length) {
+                for (const m of r.matches.slice(0, 3)) {
+                  out += `\n  Line ${m.line}: ${m.text}`;
+                  if (m.snippet) {
+                    out += `\n${m.snippet.split('\\n').map((l: string) => '    ' + l).join('\\n')}`;
+                  }
+                }
+                if (r.matches.length > 3) {
+                  out += `\n  ... and ${r.matches.length - 3} more match(es)`;
+                }
+              }
+            }
+            return out;
+          });
+          
           // If many results found, suggest reading instead of more searching
           if (results.length > 10) {
-            return { result: `Found ${results.length} files matching "${simplePattern}". Here are the first 10:\n${results.slice(0, 10).join('\n')}\n\nTIP: You found many results. Instead of searching more, READ one of these files to understand the code.`, error: 'MANY_RESULTS' };
+            return { result: `Found ${results.length} files matching "${simplePattern}". Here are the first 10:\n\n${formatted.join('\\n\\n')}\n\nTIP: You found many results. Use apply_edits on the shown line numbers, or read_file with offset for full context.`, error: 'MANY_RESULTS' };
           }
           
-          return { result: `Found ${results.length} file(s):\n${results.join('\n')}\n\nTIP: You found the files! Now READ one of them instead of searching more.` };
+          return { result: `Found ${results.length} file(s):\n\n${formatted.join('\\n\\n')}\n\nTIP: You found the files! Use apply_edits on the shown line numbers, or read_file with offset for full context.` };
         }
         
         case 'get_file_context': {
@@ -2566,6 +2609,40 @@ DO NOT include large content in arguments. Just reference files by path.`;
   private generateTerminalName(command: string): string { return this.terminalManager.generateTerminalName(command); }
   private resolvePath(relativePath: string): string { return path.isAbsolute(relativePath) ? relativePath : path.join(this.workspaceRoot, relativePath); }
   
+  /**
+   * Cached file read with mtime-based invalidation.
+   * Prevents redundant reads when the model re-reads the same file within a session.
+   */
+  private async readFileCached(filePath: string): Promise<string> {
+    try {
+      const stat = await fs.promises.stat(filePath);
+      const mtime = stat.mtimeMs;
+      const cached = this._fileReadCache.get(filePath);
+      
+      if (cached && cached.mtime === mtime) {
+        this.log(`[CACHE HIT] ${filePath} (${cached.content.length} chars)`);
+        return cached.content;
+      }
+      
+      const content = await this.cli.readFile(filePath);
+      this._fileReadCache.set(filePath, { mtime, content });
+      return content;
+    } catch (error: any) {
+      // If stat fails, fall back to direct read
+      return this.cli.readFile(filePath);
+    }
+  }
+  
+  /**
+   * Invalidate cached file content after writes.
+   */
+  private invalidateFileCache(filePath: string): void {
+    const hadCache = this._fileReadCache.delete(filePath);
+    if (hadCache) {
+      this.log(`[CACHE INVALIDATED] ${filePath}`);
+    }
+  }
+
   /** Get workspace key for per-workspace tracking */
   private getWorkspaceKey(): string {
     return this.workspaceRoot || 'default';

@@ -31,6 +31,9 @@ export interface AgentSettings {
     preserveTerminals: boolean; // Don't auto-close terminals
     maxTerminalHistory: number; // Max lines to keep in terminal history
     mode: 'managed' | 'vscode' | 'hybrid'; // Which terminals to use: agent-managed, VS Code, or both
+    // NEW: configurable timeouts for long-running command output capture
+    serverStartupTimeoutMs: number; // Timeout for server startup output capture (e.g., gradle :app:server:run)
+    buildOutputCaptureTimeoutMs: number; // Timeout for build output capture (e.g., gradle build)
   };
   
   // ===== BUILD SETTINGS =====
@@ -100,7 +103,9 @@ const DEFAULT_SETTINGS: AgentSettings = {
     showOutputInWebview: true,
     preserveTerminals: false,
     maxTerminalHistory: 1000,
-    mode: 'hybrid' // Default: use both managed and VS Code terminals
+    mode: 'hybrid', // Default: use both managed and VS Code terminals
+    serverStartupTimeoutMs: 60000, // Server startup can take 30-60s for Gradle
+    buildOutputCaptureTimeoutMs: 30000 // Build output capture: 30s
   },
   
   build: {
@@ -354,6 +359,12 @@ export function validateSettings(settings: Partial<AgentSettings>): { valid: boo
     }
     if (settings.terminal.maxTerminalHistory < 100 || settings.terminal.maxTerminalHistory > 10000) {
       errors.push('Terminal history limit must be between 100 and 10000 lines');
+    }
+    if (settings.terminal.serverStartupTimeoutMs < 5000 || settings.terminal.serverStartupTimeoutMs > 300000) {
+      errors.push('Server startup timeout must be between 5000 and 300000ms');
+    }
+    if (settings.terminal.buildOutputCaptureTimeoutMs < 5000 || settings.terminal.buildOutputCaptureTimeoutMs > 120000) {
+      errors.push('Build output capture timeout must be between 5000 and 120000ms');
     }
   }
   

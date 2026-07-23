@@ -44,11 +44,17 @@ Manage terminal behavior for command execution.
 | **Auto-Close Delay** | number | `5000ms` | Delay before closing short-lived terminals |
 | **Preserve Terminals** | boolean | `false` | Don't auto-close terminals after execution |
 | **Max Terminal History** | number | `1000` | Maximum lines to keep in terminal history |
+| **Terminal Mode** | string | `"hybrid"` | Which terminals to use: `"managed"`, `"vscode"`, or `"hybrid"` |
+| **Server Startup Timeout** | number | `60000ms` | How long to capture server startup output (e.g., Gradle `:run`) |
+| **Build Output Capture Timeout** | number | `30000ms` | How long to capture build output (e.g., Gradle `build`) |
 
 **Use Cases:**
 - Increase auto-close delay to review command output longer
 - Enable "Preserve Terminals" for debugging long-running processes
 - Increase history limit for commands with verbose output
+- Set **Server Startup Timeout** to `120000` for slow Gradle servers that take 60+ seconds to start
+- Set **Build Output Capture Timeout** to `60000` for large multi-module builds
+- Use `"vscode"` mode if you prefer managing terminals yourself; `"managed"` for full agent control
 
 ---
 
@@ -193,7 +199,10 @@ To reset all settings:
     "autoCloseDelayMs": 5000,
     "showOutputInWebview": true,
     "preserveTerminals": false,
-    "maxTerminalHistory": 1000
+    "maxTerminalHistory": 1000,
+    "mode": "hybrid",
+    "serverStartupTimeoutMs": 60000,
+    "buildOutputCaptureTimeoutMs": 30000
   },
   "build": {
     "timeoutSeconds": 120,
@@ -241,6 +250,8 @@ Settings are automatically validated when saved. Invalid values will show error 
 - Chunk size: 10-500 characters
 - Chunk delay: 0-1000ms
 - Terminal auto-close: 0-60000ms
+- Server startup timeout: 5000-300000ms (5s - 5min)
+- Build output capture timeout: 5000-120000ms (5s - 2min)
 - Build timeout: 10-600 seconds
 - Max iterations: 1-50
 - Context length: 1024-128000 tokens

@@ -169,6 +169,22 @@ export interface FileContext {
 }
 
 /**
+ * Search result with line-level match details
+ */
+export interface SearchMatch {
+  line: number;
+  text: string;
+  snippet: string;
+}
+
+export interface SearchResult {
+  path: string;
+  matchCount: number;
+  matches: SearchMatch[];
+  matchedByName: boolean;
+}
+
+/**
  * CLI class for multi-provider LLM integration
  */
 export class CLI {
@@ -1177,9 +1193,9 @@ export class CLI {
   }
 
   /**
-   * Search files by name AND content
+   * Search files by name AND content, returning detailed match info
    */
-  async searchFiles(pattern: string, dirPath?: string): Promise<string[]> {
+  async searchFiles(pattern: string, dirPath?: string): Promise<SearchResult[]> {
     this.log(`Searching: ${pattern}`);
     let searchDir = dirPath || this.workspaceRoot || process.cwd();
 
@@ -1194,15 +1210,25 @@ export class CLI {
     } catch (e: any) {
       // If stat fails, continue with the original path (will fail gracefully in searchInDir)
     }
-    const results: string[] = [];
-    const resultsSet = new Set<string>(); // Avoid duplicates
+    const results: SearchResult[] = [];
+    const resultsMap = new Map<string, SearchResult>();
     const regex = new RegExp(pattern, 'i');
-    
+
     // Use project-specific extensions from architecture detection, fallback to defaults
-    const textExtensions = this.fileExtensions.length > 0 
-      ? this.fileExtensions 
+    const textExtensions = this.fileExtensions.length > 0
+      ? this.fileExtensions
       : this.getDefaultExtensions();
-    
+
+    const extractSnippet = (lines: string[], matchLine: number): string => {
+      const start = Math.max(0, matchLine - 2);
+      const end = Math.min(lines.length, matchLine + 3);
+      return lines.slice(start, end).map((line, i) => {
+        const lineNum = start + i + 1;
+        const prefix = lineNum === matchLine ? '>>>' : '   ';
+        return `${prefix} ${String(lineNum).padStart(4)} | ${line}`;
+      }).join('\n');
+    };
+
     const searchInDir = async (dir: string) => {
       try {
         const entries = await fs.promises.readdir(dir, { withFileTypes: true });
@@ -1216,9 +1242,15 @@ export class CLI {
           } else if (entry.isFile()) {
             // First check file name
             if (regex.test(entry.name)) {
-              if (!resultsSet.has(fullPath)) {
-                resultsSet.add(fullPath);
-                results.push(fullPath);
+              if (!resultsMap.has(fullPath)) {
+                const result: SearchResult = {
+                  path: fullPath,
+                  matchCount: 1,
+                  matches: [{ line: 0, text: `File name matches "${pattern}"`, snippet: '' }],
+                  matchedByName: true
+                };
+                resultsMap.set(fullPath, result);
+                results.push(result);
                 if (results.length >= 50) return;
               }
             } else {
@@ -1227,10 +1259,29 @@ export class CLI {
               if (textExtensions.includes(ext)) {
                 try {
                   const content = await fs.promises.readFile(fullPath, 'utf8');
-                  if (regex.test(content)) {
-                    if (!resultsSet.has(fullPath)) {
-                      resultsSet.add(fullPath);
-                      results.push(fullPath);
+                  const lines = content.split('\n');
+                  const matches: SearchMatch[] = [];
+
+                  for (let i = 0; i < lines.length; i++) {
+                    if (regex.test(lines[i])) {
+                      matches.push({
+                        line: i + 1,
+                        text: lines[i].trim().substring(0, 120),
+                        snippet: extractSnippet(lines, i + 1)
+                      });
+                    }
+                  }
+
+                  if (matches.length > 0) {
+                    if (!resultsMap.has(fullPath)) {
+                      const result: SearchResult = {
+                        path: fullPath,
+                        matchCount: matches.length,
+                        matches: matches.slice(0, 5), // Cap at 5 matches per file
+                        matchedByName: false
+                      };
+                      resultsMap.set(fullPath, result);
+                      results.push(result);
                       if (results.length >= 50) return;
                     }
                   }

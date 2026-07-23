@@ -30,7 +30,7 @@ export interface AgentSessionState {
   visitedPaths: string[];
   searchCache: Array<{
     query: string;
-    results: string[];
+    results: any[];
     timestamp: number;
     workspaceRoot: string;
   }>;

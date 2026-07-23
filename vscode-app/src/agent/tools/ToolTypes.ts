@@ -1,4 +1,4 @@
-import { LLMTool } from '../../cliIntegration';
+import { LLMTool, SearchResult } from '../../cliIntegration';
 import { TerminalManager } from '../TerminalManager';
 
 /**
@@ -52,7 +52,7 @@ export interface ToolContext {
   readFile: (path: string) => Promise<string>;
   writeFile: (path: string, content: string) => Promise<void>;
   listFiles: (path: string, recursive: boolean) => Promise<string[]>;
-  searchFiles: (pattern: string, path?: string) => Promise<string[]>;
+  searchFiles: (pattern: string, path?: string) => Promise<SearchResult[]>;
   getFileContext: (path: string) => Promise<any>;
   fileExists: (path: string) => Promise<boolean>;
   terminalManager: TerminalManager;

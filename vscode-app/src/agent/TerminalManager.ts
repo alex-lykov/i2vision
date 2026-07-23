@@ -23,6 +23,7 @@
 
 import * as vscode from 'vscode';
 import {exec} from 'child_process';
+import { AgentSettings } from './AgentSettings';
 
 /**
  * Managed terminal instance
@@ -46,19 +47,21 @@ export class TerminalManager {
     private terminals: Map<string, ManagedTerminal> = new Map();
     private outputChannel?: vscode.OutputChannel;
     private debounceMs: number = 1000; // Default 1 second debounce for Gradle projects
+    private settings?: AgentSettings['terminal'];
 
-    constructor(outputChannel?: vscode.OutputChannel, debounceMs?: number) {
+    constructor(outputChannel?: vscode.OutputChannel, debounceMs?: number, terminalSettings?: AgentSettings['terminal']) {
         this.outputChannel = outputChannel;
         if (debounceMs) {
             this.debounceMs = debounceMs;
         }
+        this.settings = terminalSettings;
     }
 
     /**
-     * Set debounce delay for auto-restart
+     * Update terminal settings at runtime
      */
-    setDebounce(delayMs: number): void {
-        this.debounceMs = delayMs;
+    setTerminalSettings(settings: AgentSettings['terminal']): void {
+        this.settings = settings;
     }
 
     /**
@@ -141,8 +144,9 @@ export class TerminalManager {
         
         // For build commands: capture output and check for errors
         if (this.isBuildCommand(command)) {
-            this.log(`Build command detected - capturing output for 15 seconds`);
-            const output = await this.captureTerminalOutput(terminal, 15000);
+            const timeoutMs = this.settings?.buildOutputCaptureTimeoutMs || 30000;
+            this.log(`Build command detected - capturing output for ${timeoutMs}ms`);
+            const output = await this.captureTerminalOutput(terminal, timeoutMs);
             
             // Build: check for all failure indicators
             const hasFailure = 
@@ -168,8 +172,9 @@ export class TerminalManager {
         // let the timeout kill the server. We capture for a limited time to check
         // for compilation errors, then return the result.
         if (this.isServerCommand(command)) {
-            this.log(`Server command detected - capturing output for 15 seconds to check for build errors`);
-            const output = await this.captureTerminalOutput(terminal, 15000);
+            const timeoutMs = this.settings?.serverStartupTimeoutMs || 60000;
+            this.log(`Server command detected - capturing output for ${timeoutMs}ms to check for build errors`);
+            const output = await this.captureTerminalOutput(terminal, timeoutMs);
             
             // Check for build failures in the captured output
             const hasFailure = 

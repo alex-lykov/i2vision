@@ -64,7 +64,30 @@
     .response-card-status{font-size:0.8em;margin-left:auto}
     .response-card-status.streaming{color:var(--vscode-progressBarBackground)}
     .response-card-status.done{color:#73c991}
-    .response-card-body{background-color:var(--vscode-textCodeBlock-background);padding:10px 12px;border-radius:4px;font-family:var(--vscode-editor-font-family);font-size:0.9em;white-space:pre-wrap;word-break:break-word;line-height:1.5;max-height:500px;overflow-y:auto}
+        .response-card-body{background-color:var(--vscode-textCodeBlock-background);padding:10px 12px;border-radius:4px;font-family:var(--vscode-editor-font-family);font-size:0.9em;white-space:pre-wrap;word-break:break-word;line-height:1.5;max-height:500px;overflow-y:auto}
+
+    /* Markdown rendering styles */
+    .md-content h1{font-size:1.4em;font-weight:600;margin:0.6em 0 0.3em;color:var(--vscode-foreground);border-bottom:1px solid var(--vscode-editorWidget-border);padding-bottom:0.2em}
+    .md-content h2{font-size:1.2em;font-weight:600;margin:0.5em 0 0.25em;color:var(--vscode-foreground);border-bottom:1px solid var(--vscode-editorWidget-border);padding-bottom:0.15em}
+    .md-content h3{font-size:1.1em;font-weight:600;margin:0.4em 0 0.2em;color:var(--vscode-foreground)}
+    .md-content h4,.md-content h5,.md-content h6{font-size:1em;font-weight:600;margin:0.3em 0 0.15em;color:var(--vscode-foreground)}
+    .md-content p{margin:0.3em 0;line-height:1.6}
+    .md-content ul,.md-content ol{margin:0.3em 0;padding-left:1.5em}
+    .md-content li{margin:0.15em 0}
+    .md-content blockquote{margin:0.4em 0;padding:4px 12px;border-left:3px solid var(--vscode-descriptionForeground);background:var(--vscode-editor-inactiveSelectionBackground);color:var(--vscode-foreground);font-style:italic}
+    .md-content table{border-collapse:collapse;margin:0.4em 0;width:100%;font-size:0.9em}
+    .md-content th,.md-content td{padding:4px 8px;border:1px solid var(--vscode-editorWidget-border);text-align:left}
+    .md-content th{background:var(--vscode-editorWidget-background);font-weight:600}
+    .md-content tr:nth-child(even){background:var(--vscode-editor-inactiveSelectionBackground)}
+    .md-content pre{margin:0.4em 0;padding:8px 10px;background:var(--vscode-editor-background);border:1px solid var(--vscode-editorWidget-border);border-radius:4px;overflow-x:auto;font-size:0.85em;line-height:1.4}
+    .md-content code{font-family:var(--vscode-editor-font-family);font-size:0.9em;background:var(--vscode-textCodeBlock-background);padding:1px 4px;border-radius:3px;color:var(--vscode-foreground)}
+    .md-content pre code{background:transparent;padding:0;border-radius:0;font-size:inherit}
+    .md-content strong{font-weight:600}
+    .md-content em{font-style:italic}
+    .md-content a{color:var(--vscode-textLink-foreground);text-decoration:none}
+    .md-content a:hover{text-decoration:underline}
+    .md-content hr{border:none;border-top:1px solid var(--vscode-editorWidget-border);margin:0.6em 0}
+    .md-content img{max-width:100%;border-radius:4px}
     .message-footer{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;background-color:var(--vscode-editorWidget-background);border-radius:4px;margin-top:10px;font-size:0.85em}
     .footer-left{display:flex;gap:15px;color:var(--vscode-descriptionForeground)}
     .footer-right{display:flex;gap:8px}
@@ -655,6 +678,8 @@
       }
       const body = streamingElement.querySelector('.response-card-body');
       if (body) {
+        // Accumulate raw text; render markdown on finalize
+        body.dataset.rawText = (body.dataset.rawText || '') + text;
         body.textContent += text;
         scrollToBottom();
       }
@@ -669,6 +694,10 @@
       }
       if (targetElement) {
         targetElement.className = 'response-card done';
+        const body = targetElement.querySelector('.response-card-body');
+        if (body && body.dataset.rawText) {
+          body.innerHTML = renderMarkdown(body.dataset.rawText);
+        }
       }
       streamingElement = null;
     }
@@ -732,7 +761,106 @@
       div.textContent = text;
       return div.innerHTML;
     }
-    
+
+    /**
+     * Render markdown-like text to HTML for agent cards.
+     * Handles: headers, bold, italic, inline code, code blocks,
+     * blockquotes, lists, tables, links, horizontal rules.
+     */
+    function renderMarkdown(text) {
+      if (!text) return '';
+      var html = escapeHtml(text);
+
+      // Horizontal rules
+      html = html.replace(/^(---|\*\*|___)\s*$/gm, '<hr>');
+
+      // Code blocks: ```lang\ncode\n```
+      html = html.replace(/```(\w+)?\n?([\s\S]*?)```/g, function(match, lang, code) {
+        return '<pre><code class="language-' + (lang || 'plaintext') + '">' + code + '</code></pre>';
+      });
+
+      // Inline code: `code`
+      html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+      // Headers: ### Header
+      html = html.replace(/^######\s(.+)$/gm, '<h6>$1</h6>');
+      html = html.replace(/^#####\s(.+)$/gm, '<h5>$1</h5>');
+      html = html.replace(/^####\s(.+)$/gm, '<h4>$1</h4>');
+      html = html.replace(/^###\s(.+)$/gm, '<h3>$1</h3>');
+      html = html.replace(/^##\s(.+)$/gm, '<h2>$1</h2>');
+      html = html.replace(/^#\s(.+)$/gm, '<h1>$1</h1>');
+
+      // Blockquotes: > quote
+      html = html.replace(/^(>\s?.+)$/gm, function(match, content) {
+        return '<blockquote>' + content.replace(/^>\s?/, '') + '</blockquote>';
+      });
+
+      // Tables (simple pipe-separated)
+      var tableBlocks = html.split('\n\n');
+      html = tableBlocks.map(function(block) {
+        var lines = block.split('\n').filter(function(l) { return l.trim(); });
+        if (lines.length >= 2 && lines[0].includes('|') && lines[1].includes('---')) {
+          var headerCells = lines[0].split('|').map(function(c) { return c.trim(); }).filter(function(c) { return c; });
+          var headerRow = '<tr>' + headerCells.map(function(c) { return '<th>' + c + '</th>'; }).join('') + '</tr>';
+          var bodyRows = lines.slice(2).map(function(row) {
+            var cells = row.split('|').map(function(c) { return c.trim(); }).filter(function(c) { return c; });
+            return '<tr>' + cells.map(function(c) { return '<td>' + c + '</td>'; }).join('') + '</tr>';
+          }).join('');
+          return '<table><thead>' + headerRow + '</thead><tbody>' + bodyRows + '</tbody></table>';
+        }
+        return block;
+      }).join('\n\n');
+
+      // Bold: **text**
+      html = html.replace(/\*\*([^\*]+)\*\*/g, '<strong>$1</strong>');
+
+      // Italic: *text* (not inside bold)
+      html = html.replace(/\*([^\*<]+)\*/g, '<em>$1</em>');
+
+      // Links: [text](url)
+      html = html.replace(/\[([^\]]+)\]\(([^\)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+
+      // Unordered lists
+      html = html.replace(/((?:^\s*-\s.+$\n?)+)/gm, function(match, listBlock) {
+        var items = listBlock.split('\n').filter(function(l) { return l.trim(); }).map(function(item) {
+          return '<li>' + item.replace(/^\s*-\s*/, '') + '</li>';
+        }).join('');
+        return '<ul>' + items + '</ul>';
+      });
+
+      // Ordered lists
+      html = html.replace(/((?:^\s*\d+\.\s.+$\n?)+)/gm, function(match, listBlock) {
+        var items = listBlock.split('\n').filter(function(l) { return l.trim(); }).map(function(item) {
+          return '<li>' + item.replace(/^\s*\d+\.\s*/, '') + '</li>';
+        }).join('');
+        return '<ol>' + items + '</ol>';
+      });
+
+      // Paragraphs: split on newlines, wrap non-block elements
+      var lines = html.split('\n');
+      var result = [];
+      var inBlock = false;
+      for (var i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (line.match(/^<(h[1-6]|pre|blockquote|ul|ol|table|hr|li|tr|th|td|thead|tbody)/)) {
+          result.push(line);
+          inBlock = true;
+        } else if (line.match(/^<\/(h[1-6]|pre|blockquote|ul|ol|table|li|tr|th|td|thead|tbody)/)) {
+          result.push(line);
+          inBlock = false;
+        } else if (line.trim() === '') {
+          result.push('');
+          inBlock = false;
+        } else if (!inBlock) {
+          result.push('<p>' + line + '</p>');
+        } else {
+          result.push(line);
+        }
+      }
+
+      return '<div class="md-content">' + result.join('\n') + '</div>';
+    }
+
     function copyResponse() {
       const lastAgentMessage = timeline.querySelector('.message.agent:last-child');
       if (lastAgentMessage) {

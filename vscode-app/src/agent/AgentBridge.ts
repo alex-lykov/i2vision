@@ -1195,6 +1195,34 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
             }
           }
 
+          // Fallback: parse DeepSeek native XML function-calling format
+          // (e.g. <｜｜DSML｜｜invoke name="read_file">...)
+          if (streamingToolCalls.length === 0) {
+            const dsmlPattern = /<\｜\｜DSML\｜\｜invoke\s+name="([^"]+)">([\s\S]*?)<\/\｜\｜DSML\｜\｜invoke>/g;
+            let match;
+            while ((match = dsmlPattern.exec(responseText)) !== null) {
+              try {
+                const toolName = match[1];
+                const paramBlock = match[2];
+                const args: Record<string, any> = {};
+                // Parse <｜｜DSML｜｜parameter name="..." ...>value</｜｜DSML｜｜parameter>
+                const paramPattern = /<\｜\｜DSML\｜\｜parameter\s+name="([^"]+)"[^>]*>([\s\S]*?)<\/\｜\｜DSML\｜\｜parameter>/g;
+                let pMatch;
+                while ((pMatch = paramPattern.exec(paramBlock)) !== null) {
+                  const pName = pMatch[1];
+                  const pValue = pMatch[2].trim();
+                  // Try to parse as number/boolean, fallback to string
+                  if (pValue === 'true') args[pName] = true;
+                  else if (pValue === 'false') args[pName] = false;
+                  else if (/^-?\d+$/.test(pValue)) args[pName] = parseInt(pValue, 10);
+                  else args[pName] = pValue;
+                }
+                streamingToolCalls.push({ id: `call_${iteration}_${streamingToolCalls.length}`, name: toolName, arguments: args });
+                this.log(`Parsed DSML tool call: ${toolName}(${JSON.stringify(args)})`);
+              } catch (e: any) {}
+            }
+          }
+
           responseText = this.extractFinalResponse(responseText);
           textBuffer = [responseText];
         }

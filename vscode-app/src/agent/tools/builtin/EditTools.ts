@@ -2,6 +2,17 @@ import { ToolDefinition } from '../ToolTypes';
 import { applyEditsToContent, formatEditFailure, EditOperation } from '../../ApplyEditsTool';
 
 /**
+ * Strip line number prefixes that read_file injects for display.
+ * read_file formats each line as "{pad}{lineNum} | {originalLine}",
+ * e.g. "  1 | import { x } from 'y';".
+ * When the model copies this into apply_edits search/replace, the
+ * prefix must be removed so the search matches the actual file content.
+ */
+function stripLineNumberPrefix(text: string): string {
+  return text.split('\n').map(line => line.replace(/^\s*\d+\s*\|\s*/, '')).join('\n');
+}
+
+/**
  * Edit tools for applying targeted changes to files
  */
 export const editTools: ToolDefinition[] = [
@@ -59,8 +70,17 @@ export const editTools: ToolDefinition[] = [
       // Read current content
       const currentContent = await ctx.readFile(filePath);
       
+      // Strip line number prefixes that read_file injects for display.
+      // The model often copies text directly from read_file output which
+      // includes "N | " prefixes. Without stripping, the search fails.
+      const cleanedEdits: EditOperation[] = edits.map(e => ({
+        search: stripLineNumberPrefix(e.search),
+        replace: stripLineNumberPrefix(e.replace),
+        lineHint: e.lineHint
+      }));
+      
       // Apply edits
-      const editResult = applyEditsToContent(currentContent, edits);
+      const editResult = applyEditsToContent(currentContent, cleanedEdits);
       
       // Handle failures
       if (editResult.appliedCount === 0) {

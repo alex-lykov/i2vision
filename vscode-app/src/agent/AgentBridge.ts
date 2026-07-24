@@ -834,7 +834,7 @@ export class AgentBridge {
       // doesn't teach the model wrong formats (DSML XML, "Calling:", etc.)
       if (this.sessionManager && this.sessionManager.name !== 'Null') {
         this.log('Fresh conversation - resetting proxy session');
-        await this.sessionManager.resetSession(this.id);
+        await this.sessionManager.resetSession(this.config.model.id);
       }
     } else {
       this.log('Resumed conversation - preserving session state');
@@ -1039,7 +1039,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
       // SESSION MANAGEMENT: Sync and manage provider-specific session
       if (this.sessionManager && this.sessionManager.name !== 'Null') {
         if (iteration === 1) {
-          await this.sessionManager.syncSession(this.id);
+          await this.sessionManager.syncSession(this.config.model.id);
           const sessionState = this.sessionManager.getSessionState();
           if (sessionState) {
             this.log(`Session ${sessionState.id || 'new'} — ${sessionState.messageCount} msgs, ${Math.round((Date.now() - sessionState.createdAt) / 60000)} min old`);
@@ -1050,7 +1050,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
         const health = await this.sessionManager.checkHealth();
         if (!health.healthy) {
           this.log(`Session unhealthy: ${health.warnings.join('; ')}`);
-          const resetOk = await this.sessionManager.resetSession(this.id);
+          const resetOk = await this.sessionManager.resetSession(this.config.model.id);
           if (resetOk) {
             this.log('Session reset due to health check failure');
             yield { type: 'thinking', message: 'Session reset for reliability', timestamp: Date.now() };
@@ -1258,10 +1258,10 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
           if (this._consecutiveTextResponsesWithoutToolCalls >= 1) {
             this.log('Misbehavior detected — resetting proxy session and rebuilding clean context');
             if (this.sessionManager && this.sessionManager.provider === '3d-llm') {
-              const resetOk = await this.sessionManager.resetSession(this.id);
+              const resetOk = await this.sessionManager.resetSession(this.config.model.id);
               if (resetOk) {
                 this.log('Proxy session reset successfully, re-attempting with clean history');
-                await this.sessionManager.syncSession(this.id);
+                await this.sessionManager.syncSession(this.config.model.id);
               } else {
                 this.log('Proxy session reset failed');
               }
@@ -1890,7 +1890,7 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
         if (result.error && this.isSessionError(result.error)) {
           this.log(`Session error in tool result (attempt ${attempt}/${maxRetries})`);
           if (this.sessionManager && attempt < maxRetries) {
-            const resetOk = await this.sessionManager.resetSession(this.id);
+            const resetOk = await this.sessionManager.resetSession(this.config.model.id);
             if (resetOk) {
               this.log('Session reset after tool error, retrying...');
               this.sessionManager?.recordRetry();
@@ -1907,7 +1907,7 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
         if (this.isSessionError(lastError)) {
           this.log(`Session-level error (attempt ${attempt}/${maxRetries}): ${lastError}`);
           if (this.sessionManager && attempt < maxRetries) {
-            const resetOk = await this.sessionManager.resetSession(this.id);
+            const resetOk = await this.sessionManager.resetSession(this.config.model.id);
             if (resetOk) {
               this.log('Session reset, retrying tool...');
               this.sessionManager?.recordRetry();

@@ -829,6 +829,13 @@ export class AgentBridge {
       this._lastKnownPromptTokens = 0; // Reset on fresh conversation
       this._lastKnownMessageCount = 0;
       this._lastKnownMessageChars = 0;
+
+      // CRITICAL: Reset proxy session on fresh conversation so stale history
+      // doesn't teach the model wrong formats (DSML XML, "Calling:", etc.)
+      if (this.sessionManager && this.sessionManager.name !== 'Null') {
+        this.log('Fresh conversation - resetting proxy session');
+        await this.sessionManager.resetSession(this.id);
+      }
     } else {
       this.log('Resumed conversation - preserving session state');
       // Only reset state machine, keep session-specific state

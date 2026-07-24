@@ -1559,7 +1559,9 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
       if (this._forceActionMode) {
         messages.push({ role: 'user', content: 'You must take action now. Use apply_edits, write_file, run_terminal, run_build, or git_commit. No more exploration.', _isNudge: true });
       } else {
-        messages.push({ role: 'user', content: 'Tool results received. If you have enough information, answer now. Only call another tool if missing critical info.' });
+        // PRESSURE TO CONTINUE: Don't let the model stop early. Force it to keep acting
+        // until the task is demonstrably complete (files edited, build run, tests pass).
+        messages.push({ role: 'user', content: 'Tool results received. Continue with the next step. Do NOT stop or summarize until the task is fully complete — files are edited, builds pass, and changes are verified.', _isNudge: true });
       }
 
       // STATE: VERIFY - Transition and check results

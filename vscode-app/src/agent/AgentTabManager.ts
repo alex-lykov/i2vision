@@ -66,6 +66,11 @@ export class AgentTabManager {
 
   private async loadLastConversation(): Promise<void> {
     if (!this.historyManager) return;
+    // Don't auto-load if user already has an active tab (e.g. from createTab during startup)
+    if (this.activeTabId) {
+      this.log('Skipping auto-load: user already has an active tab (' + this.activeTabId + ')');
+      return;
+    }
     try {
       const conversationIds = await this.historyManager.list();
       if (conversationIds.length === 0) return;

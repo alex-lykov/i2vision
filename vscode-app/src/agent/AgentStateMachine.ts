@@ -1115,6 +1115,9 @@ export class AgentStateMachine {
       'get_build_status',
       'check_server',
       'get_server_status',
+      // run_terminal: running different commands in sequence is a normal workflow
+      // (e.g. cat file1, then cat file2). Flagging as loops causes false positives.
+      'run_terminal',
       // Git tools: calling git_diff/git_status repeatedly to check workspace
       // state after edits is a normal workflow, not a loop.
       'git_diff',

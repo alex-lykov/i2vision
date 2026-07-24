@@ -574,9 +574,9 @@ export class AgentBridge {
     }
 
     if (toolFilter === 'action_only') {
-      // STRICT action-only: no read tools. If model needs more info, it should
-      // synthesize from what it already has or ask the user.
-      const actionTools = this.toolRegistry.getLLMToolsByName(['apply_edits', 'write_file', 'run_terminal', 'run_build', 'git_commit']);
+      // ACTION-ONLY: prioritize edit/write tools but keep reads available.
+      // Read tools are included so the model can reference files when applying edits.
+      const actionTools = this.toolRegistry.getLLMToolsByName(['apply_edits', 'write_file', 'read_file', 'get_file_context', 'run_terminal', 'run_build', 'git_commit']);
       this.log(`Tool filter: action_only (${actionTools.length}/${allTools.length} tools) - forcing action mode (NO reads)`);
       return actionTools;
     }
@@ -1751,7 +1751,7 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
     try {
       // TOOL FILTER ENFORCEMENT: When action_only mode is active, reject disallowed tools
       if (this._forceActionMode) {
-        const allowedTools = ['apply_edits', 'write_file', 'run_terminal', 'run_build', 'git_commit'];
+        const allowedTools = ['apply_edits', 'write_file', 'read_file', 'get_file_context', 'run_terminal', 'run_build', 'git_commit'];
         if (!allowedTools.includes(toolCall.toolName)) {
           this.log(`TOOL FILTER BLOCKED: ${toolCall.toolName} not in action_only set. Allowed: ${allowedTools.join(', ')}`);
           return {

@@ -573,11 +573,30 @@
       const statusColor = isError ? 'var(--vscode-errorForeground)' : 'var(--vscode-terminal-successBackground)';
       const resultContent = result ? '<div class="tool-card-result"><pre>' + escapeHtml(result.substring(0, 3000)) + '</pre></div>' : '';
 
+      // Format args for display
+      var argsDisplay = '';
+      if (args) {
+        try {
+          var argPairs = [];
+          for (var key in args) {
+            if (args.hasOwnProperty(key)) {
+              var val = args[key];
+              if (typeof val === 'string' && val.length > 60) val = val.substring(0, 57) + '...';
+              argPairs.push(key + '=' + (typeof val === 'string' ? '"' + val + '"' : val));
+            }
+          }
+          if (argPairs.length > 0) {
+            argsDisplay = '<span class="tool-call-args" style="margin-left:8px;font-size:0.85em;color:var(--vscode-descriptionForeground);font-family:var(--vscode-editor-font-family);">' + escapeHtml(argPairs.join(', ')) + '</span>';
+          }
+        } catch (e) {}
+      }
+
       return '<div class="tool-call-card' + (isError ? ' error' : ' done collapsed') + '"' + (toolCallId ? ' data-tool-call-id="' + toolCallId + '"' : '') + '>' +
         '<div class="tool-call-header" onclick="toggleToolCallCard(this)">' +
           '<span class="tool-call-status" style="color: ' + statusColor + '">' + statusIcon + '</span>' +
           categoryBadge +
           '<span class="tool-call-name">' + escapeHtml(toolName.replace(/_/g, ' ')) + '</span>' +
+          argsDisplay +
           '<span class="tool-call-toggle-icon"><span class="codicon codicon-chevron-down"></span></span>' +
         '</div>' +
         '<div class="tool-call-body">' + resultContent + '</div>' +

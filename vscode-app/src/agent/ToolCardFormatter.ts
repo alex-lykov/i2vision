@@ -121,7 +121,7 @@ export class ToolCardFormatter {
         }
 
         // Apply formatting
-        let formatted = this.applyFormat(result, options.format);
+        let formatted = this.applyFormat(result, options.format, toolName);
 
         // Apply truncation
         formatted = this.applyTruncation(formatted, options);
@@ -173,7 +173,12 @@ export class ToolCardFormatter {
     /**
      * Apply format transformation to result
      */
-    private applyFormat(result: string, format: string): string {
+    private applyFormat(result: string, format: string, toolName?: string): string {
+        // Special handling for apply_edits
+        if (toolName === 'apply_edits') {
+            return this.formatApplyEditsResult(result);
+        }
+        
         switch (format) {
             case 'tree':
                 return this.formatAsTree(result);
@@ -224,6 +229,29 @@ export class ToolCardFormatter {
         }
 
         return output;
+    }
+
+    /**
+     * Format apply_edits result specifically
+     */
+    private formatApplyEditsResult(result: string): string {
+        // If result is already formatted with emojis, keep it as is
+        if (result.includes('✅ Applied') || result.includes('❌')) {
+            return result;
+        }
+        
+        // If result looks like a simple success message, enhance it
+        if (result.includes('Applied') && result.includes('/')) {
+            return `✅ ${result}`;
+        }
+        
+        // If result contains edit details, format as markdown
+        if (result.includes('edits') || result.includes('edit')) {
+            return `## Apply Edits Result\n\n${result}`;
+        }
+        
+        // Default formatting
+        return result;
     }
 
     /**

@@ -60,6 +60,9 @@ export function createOutputCard(card: AgentOutputCard): HTMLElement {
   // Add event listeners
   attachEventListeners(cardDiv, card.display);
 
+  // Add CSS for apply_edits specific styling
+  addApplyEditsCSS(cardDiv);
+
   return cardDiv;
 }
 
@@ -299,13 +302,24 @@ function createToolCallCard(toolCall: ToolCallData): string {
         ${Object.keys(toolCall.args).length > 0 ? `
           <div class="tool-call-args">
             <span class="args-label">Args:</span>
-            <code>${escapeHtml(JSON.stringify(toolCall.args, null, 2))}</code>
+            ${toolCall.toolName === 'apply_edits' ? `
+              <div class="apply-edits-args-summary">
+                <span class="arg-path">📄 ${escapeHtml(toolCall.args.path)}</span>
+                <span class="arg-edits-count">✏️ ${Array.isArray(toolCall.args.edits) ? toolCall.args.edits.length : 0} edits</span>
+              </div>
+              <details class="apply-edits-args-details">
+                <summary>Show full args</summary>
+                <pre>${escapeHtml(JSON.stringify(toolCall.args, null, 2))}</pre>
+              </details>
+            ` : `<code>${escapeHtml(JSON.stringify(toolCall.args, null, 2))}</code>`}
           </div>
         ` : ''}
         ${toolCall.result ? `
           <div class="tool-call-result">
             <span class="result-label">Result:</span>
-            <pre>${escapeHtml(toolCall.result)}</pre>
+            ${toolCall.format === 'markdown' ? `
+              <div class="markdown-result">${formatResponseText(toolCall.result, {})}</div>
+            ` : `<pre>${escapeHtml(toolCall.result)}</pre>`}
           </div>
         ` : ''}
         ${toolCall.error ? `
@@ -466,6 +480,96 @@ function attachEventListeners(cardDiv: HTMLElement, display: DisplayConfig): voi
   // This will be overridden by the webview to communicate with VSCode
   console.log(`Footer action clicked: ${actionId}`);
 };
+
+/**
+ * Add CSS for apply_edits specific styling
+ */
+function addApplyEditsCSS(cardDiv: HTMLElement): void {
+  const style = document.createElement('style');
+  style.textContent = `
+    /* Apply edits specific styling */
+    .apply-edits-args-summary {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      margin-bottom: 0.25rem;
+      flex-wrap: wrap;
+    }
+
+    .arg-path {
+      font-family: var(--vscode-editor-font-family);
+      color: var(--vscode-editor-foreground);
+      background: var(--vscode-editor-background);
+      padding: 0.1rem 0.4rem;
+      border-radius: 0.2rem;
+      border: 1px solid var(--vscode-editor-bracketMatch-border);
+      font-size: 0.9em;
+    }
+
+    .arg-edits-count {
+      color: var(--vscode-editorInfo-foreground);
+      font-size: 0.9em;
+      display: flex;
+      align-items: center;
+      gap: 0.3rem;
+    }
+
+    .apply-edits-args-details {
+      margin-top: 0.5rem;
+    }
+
+    .apply-edits-args-details summary {
+      cursor: pointer;
+      color: var(--vscode-textLink-foreground);
+      font-size: 0.9em;
+      padding: 0.2rem 0;
+      display: inline-block;
+    }
+
+    .apply-edits-args-details summary:hover {
+      text-decoration: underline;
+    }
+
+    .markdown-result {
+      line-height: 1.4;
+      padding: 0.5rem;
+      background: var(--vscode-editor-background);
+      border-radius: 0.3rem;
+      margin-top: 0.5rem;
+    }
+
+    .markdown-result pre {
+      background: var(--vscode-editorWidget-background);
+      padding: 0.5rem;
+      border-radius: 0.2rem;
+      overflow-x: auto;
+      margin: 0.5rem 0;
+    }
+
+    .markdown-result code {
+      font-family: var(--vscode-editor-font-family);
+      background: var(--vscode-editorWidget-background);
+      padding: 0.1rem 0.3rem;
+      border-radius: 0.2rem;
+    }
+
+    .markdown-result strong {
+      font-weight: 600;
+      color: var(--vscode-editor-foreground);
+    }
+
+    .markdown-result em {
+      font-style: italic;
+      color: var(--vscode-editor-foreground);
+    }
+  `;
+
+  // Check if style already exists to avoid duplicates
+  if (!document.getElementById('apply-edits-css')) {
+    style.id = 'apply-edits-css';
+    document.head.appendChild(style);
+  }
+}
 
 /**
  * Convert legacy response format to new output card format

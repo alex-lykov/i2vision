@@ -66,7 +66,7 @@ export function applyEditsToContent(
         edit,
         reason: 'NOT_FOUND',
         occurrences: 0,
-        suggestion: 'Check if the text was already modified by a previous edit, or verify the exact whitespace/indentation'
+        suggestion: 'Check if the text was already modified by a previous edit, or verify the exact whitespace/indentation. Common issues: line number prefixes not stripped, extra spaces, or content already changed.'
       });
       continue;
     }
@@ -137,9 +137,9 @@ export function getContextAroundLine(
 export function formatEditFailure(failure: EditFailure, filePath: string): string {
   const { edit, reason, occurrences, suggestion } = failure;
   
-  const searchPreview = edit.search.length > 80 
+  const searchPreview = edit.search && edit.search.length > 80 
     ? edit.search.substring(0, 80) + '...' 
-    : edit.search;
+    : edit.search || '';
   
   switch (reason) {
     case 'NOT_FOUND':

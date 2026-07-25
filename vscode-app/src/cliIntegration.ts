@@ -554,6 +554,8 @@ export class CLI {
         
         const toolCalls: LLMToolCall[] = toolCallsData.map((tc: any) => {
           let args = tc.function?.arguments || {};
+          
+          // Special handling for apply_edits - if args is already an object with edits array, don't parse it
           if (typeof args === 'string') {
             try {
               args = JSON.parse(args);
@@ -562,6 +564,23 @@ export class CLI {
               args = {};
             }
           }
+          // If this is apply_edits with an edits array, preserve the structure
+          else if (tc.function?.name === 'apply_edits' && typeof args === 'object' && args.edits) {
+            // args is already in the correct format, don't modify it
+          }
+          // For other tools, ensure args is an object
+          else if (typeof args !== 'object' || args === null) {
+            args = {};
+          }
+          
+          // Debug logging to verify the structure
+          if (tc.function?.name === 'apply_edits') {
+            this.log(`[DEBUG] apply_edits args type: ${typeof args}, has edits: ${Array.isArray(args.edits)}`);
+            if (Array.isArray(args.edits)) {
+              this.log(`[DEBUG] apply_edits has ${args.edits.length} edits`);
+            }
+          }
+          
           return {
             id: tc.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             name: tc.function?.name || '',
@@ -647,12 +666,35 @@ export class CLI {
               // Try parsing the whole block as a single tool call
               const toolCallObj = JSON.parse(blockContent);
               if (toolCallObj.name && typeof toolCallObj.name === 'string') {
+                // Special handling for apply_edits tool to preserve nested structure
+                const toolName = toolCallObj.name;
+                let toolArgs = toolCallObj.arguments || {};
+                
+                // If arguments is a string, try to parse it as JSON
+                if (typeof toolArgs === 'string') {
+                  try {
+                    toolArgs = JSON.parse(toolArgs);
+                  } catch (parseError) {
+                    // Keep as string if parsing fails
+                  }
+                }
+                
+                // Special handling for tools with nested structures
+                let finalArgs = toolArgs;
+                if (toolName === 'apply_edits' && typeof toolArgs === 'object' && toolArgs.edits) {
+                  // Preserve the edits array structure - don't double-stringify
+                  finalArgs = toolArgs;
+                } else if (typeof toolArgs === 'object') {
+                  // For other objects, stringify to maintain compatibility
+                  finalArgs = JSON.stringify(toolArgs);
+                }
+                
                 toolCallsData.push({
                   id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                   type: 'function',
                   function: {
-                    name: toolCallObj.name,
-                    arguments: JSON.stringify(toolCallObj.arguments || {})
+                    name: toolName,
+                    arguments: finalArgs
                   }
                 });
               }
@@ -660,18 +702,42 @@ export class CLI {
               else if (Array.isArray(toolCallObj)) {
                 for (const tc of toolCallObj) {
                   if (tc.name && typeof tc.name === 'string') {
+                    // Special handling for apply_edits tool
+                    const toolName = tc.name;
+                    let toolArgs = tc.arguments || {};
+                    
+                    if (typeof toolArgs === 'string') {
+                      try {
+                        toolArgs = JSON.parse(toolArgs);
+                      } catch (parseError) {
+                        // Keep as string if parsing fails
+                      }
+                    }
+                    
+                    // Special handling for tools with nested structures
+                    let finalArgs = toolArgs;
+                    if (toolName === 'apply_edits' && typeof toolArgs === 'object' && toolArgs.edits) {
+                      // Preserve the edits array structure - don't double-stringify
+                      finalArgs = toolArgs;
+                    } else if (typeof toolArgs === 'object') {
+                      // For other objects, stringify to maintain compatibility
+                      finalArgs = JSON.stringify(toolArgs);
+                    }
+                    
                     toolCallsData.push({
                       id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                       type: 'function',
                       function: {
-                        name: tc.name,
-                        arguments: JSON.stringify(tc.arguments || {})
+                        name: toolName,
+                        arguments: finalArgs
                       }
                     });
                   }
                 }
               }
-            } catch (e: any) {}
+            } catch (e: any) {
+              this.log(`Warning: Could not parse tool call from code block: ${e.message}`);
+            }
           }
 
           // Try 2: Extract JSON objects by balancing braces (handles nested objects)
@@ -692,12 +758,26 @@ export class CLI {
                       try {
                         const toolCallObj = JSON.parse(jsonStr);
                         if (toolCallObj.name && typeof toolCallObj.name === 'string') {
+                          // Special handling for tools with nested structures
+                          let toolArgs = toolCallObj.arguments || {};
+                          let finalArgs = toolArgs;
+                          
+                          if (toolCallObj.name === 'apply_edits' && typeof toolArgs === 'object' && toolArgs.edits) {
+                            // Preserve the edits array structure - don't double-stringify
+                            finalArgs = toolArgs;
+                          } else if (typeof toolArgs === 'object') {
+                            // For other objects, stringify to maintain compatibility
+                            finalArgs = JSON.stringify(toolArgs);
+                          } else {
+                            finalArgs = JSON.stringify(toolArgs);
+                          }
+                          
                           toolCallsData.push({
                             id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                             type: 'function',
                             function: {
                               name: toolCallObj.name,
-                              arguments: JSON.stringify(toolCallObj.arguments || {})
+                              arguments: finalArgs
                             }
                           });
                           i = j; // Skip parsed lines
@@ -722,12 +802,25 @@ export class CLI {
                 const jsonStr = (cmatch[2] || cmatch[4]).trim();
                 const args = JSON.parse(jsonStr);
                 if (toolName) {
+                  // Special handling for tools with nested structures
+                  let finalArgs = args || {};
+                  
+                  if (toolName === 'apply_edits' && typeof args === 'object' && args.edits) {
+                    // Preserve the edits array structure - don't double-stringify
+                    finalArgs = args;
+                  } else if (typeof args === 'object') {
+                    // For other objects, stringify to maintain compatibility
+                    finalArgs = JSON.stringify(args);
+                  } else {
+                    finalArgs = JSON.stringify(args);
+                  }
+                  
                   toolCallsData.push({
                     id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
                     type: 'function',
                     function: {
                       name: toolName,
-                      arguments: JSON.stringify(args || {})
+                      arguments: finalArgs
                     }
                   });
                 }

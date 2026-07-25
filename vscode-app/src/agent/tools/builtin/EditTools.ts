@@ -9,7 +9,51 @@ import { applyEditsToContent, formatEditFailure, EditOperation } from '../../App
  * prefix must be removed so the search matches the actual file content.
  */
 function stripLineNumberPrefix(text: string): string {
-  return text.split('\n').map(line => line.replace(/^\s*\d+\s*\|\s*/, '')).join('\n');
+  if (typeof text !== 'string' || text === null) return '';
+  
+  // Handle various line number formats that might come from read_file output
+  // Format 1: "  1 | content" (standard read_file format)
+  // Format 2: "1: content" (alternative format)
+  // Format 3: "Line 1: content" (verbose format)
+  // Format 4: "[1] content" (bracket format)
+  // Format 5: "1 | content" (compact format)
+  try {
+    return text.split('\n').map(line => 
+      line.replace(/^\s*\d+\s*\|\s*/, '')  // "  1 | content" and "1 | content"
+         .replace(/^\s*\d+:\s*/, '')        // "1: content" 
+         .replace(/^\s*Line\s+\d+:\s*/i, '') // "Line 1: content"
+         .replace(/^\[\d+\]\s*/, '')       // "[1] content"
+         .replace(/^\s*\d+\s+\|\s*/, '')  // "1 | content" with single space
+    ).join('\n');
+  } catch (error) {
+    console.error(`[stripLineNumberPrefix] Error processing text: ${error.message}`);
+    return text; // Return original text if processing fails
+  }
+}
+
+/**
+ * More aggressive line number removal for cases where the basic stripping failed
+ * This handles cases where line numbers might be embedded in multi-line strings
+ */
+function aggressiveStripLineNumbers(text: string): string {
+  if (typeof text !== 'string' || text === null || text === undefined) return '';
+  
+  try {
+    // Pattern to match line numbers at the start of lines
+    const lineNumberPattern = /^\s*(?:\d+\s*(?:[|:]|Line\s+\d+:\s*)\s*)+/gim;
+    
+    // Remove line numbers from the beginning of each line
+    let result = text.replace(lineNumberPattern, '');
+    
+    // Also handle cases where line numbers might be in the middle of content
+    // (e.g., when model copies multi-line content with line numbers)
+    result = result.replace(/\n\s*\d+\s*[|:]\s*/g, '\n');
+    
+    return result;
+  } catch (error) {
+    console.error(`[aggressiveStripLineNumbers] Error: ${error.message}`);
+    return text; // Return original if processing fails
+  }
 }
 
 /**
@@ -44,8 +88,52 @@ export const editTools: ToolDefinition[] = [
     },
     timeoutMs: 30000,
     async handler(args, ctx) {
+      try {
+      // Comprehensive parameter validation
+      if (!args) {
+        return {
+          result: '',
+          error: 'Invalid arguments: args is null or undefined'
+        };
+      }
+      
+      if (typeof args !== 'object') {
+        return {
+          result: '',
+          error: `Invalid arguments: expected object, got ${typeof args}`
+        };
+      }
+      
+      // Validate required parameters
+      if (typeof args.path !== 'string' || !args.path) {
+        return {
+          result: '',
+          error: `Invalid path parameter: expected non-empty string, got ${typeof args.path}`
+        };
+      }
+      
+      if (args.edits === undefined || args.edits === null) {
+        return {
+          result: '',
+          error: 'Invalid edits parameter: edits is null or undefined'
+        };
+      }
+      
       const filePath = ctx.resolvePath(args.path);
-      const edits: EditOperation[] = args.edits;
+      
+      // Handle both direct array format and proxy-corrected object format
+      let edits: EditOperation[] = [];
+      if (Array.isArray(args.edits)) {
+        edits = args.edits;
+      } else if (typeof args.edits === 'object' && args.edits !== null && Array.isArray(args.edits.edits)) {
+        ctx.log(`[apply_edits] Using proxy-corrected format: edits.edits`);
+        edits = args.edits.edits;
+      } else {
+        return {
+          result: '',
+          error: `Invalid edits parameter: expected array or {edits: array}, got ${typeof args.edits}`
+        };
+      }
       
       // Validate edit count
       const MAX_EDITS = 50;
@@ -70,21 +158,145 @@ export const editTools: ToolDefinition[] = [
       // Read current content
       const currentContent = await ctx.readFile(filePath);
       
+      // Validate edits array exists and is properly structured
+      if (!Array.isArray(edits)) {
+        // Check if edits is already a valid object (from proxy fix)
+        if (typeof edits === 'object' && edits !== null && Array.isArray(edits.edits)) {
+          // This is the corrected format from the proxy - use it directly
+          ctx.log(`[apply_edits] Received proxy-corrected format, using edits.edits`);
+          // Continue with edits.edits as the actual edits array
+        } else {
+          return {
+            result: '',
+            error: `Invalid edits parameter: expected array, got ${typeof edits}`
+          };
+        }
+      }
+      
+      // Validate each edit has required fields before processing
+      const invalidEdits = edits.filter((e, i) => 
+        typeof e?.search !== 'string' || typeof e?.replace !== 'string' || e.search === null || e.replace === null
+      );
+      if (invalidEdits.length > 0) {
+        const indices = invalidEdits.map((_, i) => `#${i + 1}`).join(', ');
+        const details = invalidEdits.map((e, idx) => {
+          const searchPreview = e?.search === null ? 'null' : (e?.search === undefined ? 'undefined' : (typeof e?.search === 'string' ? JSON.stringify(e.search).substring(0, 50) : String(e?.search).substring(0, 50)));
+          const replacePreview = e?.replace === null ? 'null' : (e?.replace === undefined ? 'undefined' : (typeof e?.replace === 'string' ? JSON.stringify(e.replace).substring(0, 50) : String(e?.replace).substring(0, 50)));
+          return `Edit ${idx + 1}: search=${typeof e?.search} (${searchPreview}), replace=${typeof e?.replace} (${replacePreview})`;
+        }).join('; ');
+        return {
+          result: '',
+          error: `Invalid edits at ${indices}: each edit must have non-null string 'search' and 'replace' fields. Details: ${details}`
+        };
+      }
+      
+      // Additional validation for empty search strings
+      const emptySearchEdits = edits.filter(e => e.search.trim() === '');
+      if (emptySearchEdits.length > 0) {
+        const indices = emptySearchEdits.map((_, i) => `#${i + 1}`).join(', ');
+        return {
+          result: '',
+          error: `Invalid edits at ${indices}: search string cannot be empty`
+        };
+      }
+
       // Strip line number prefixes that read_file injects for display.
       // The model often copies text directly from read_file output which
       // includes "N | " prefixes. Without stripping, the search fails.
-      const cleanedEdits: EditOperation[] = edits.map(e => ({
-        search: stripLineNumberPrefix(e.search),
-        replace: stripLineNumberPrefix(e.replace),
-        lineHint: e.lineHint
-      }));
+      const cleanedEdits: EditOperation[] = edits.map(e => {
+        // Final safety check - ensure search and replace are defined
+        if (e.search === undefined || e.search === null) {
+          ctx.log(`[apply_edits] WARNING: Edit search is undefined/null, using empty string`);
+        }
+        if (e.replace === undefined || e.replace === null) {
+          ctx.log(`[apply_edits] WARNING: Edit replace is undefined/null, using empty string`);
+        }
+        
+        // First try basic stripping with null safety
+        let cleanedSearch = stripLineNumberPrefix(e.search || '');
+        let cleanedReplace = stripLineNumberPrefix(e.replace || '');
+        
+        // If the search still looks like it has line numbers, try aggressive stripping
+        try {
+          if (cleanedSearch && (/^\s*\d+\s*[|:]/.test(cleanedSearch) || (cleanedSearch.includes('\n') && /\d+\s*[|:]/.test(cleanedSearch)))) {
+            ctx.log(`[apply_edits] Using aggressive line number stripping for search string`);
+            cleanedSearch = aggressiveStripLineNumbers(e.search || '');
+            cleanedReplace = aggressiveStripLineNumbers(e.replace || '');
+          }
+        } catch (error) {
+          ctx.log(`[apply_edits] ERROR in line number stripping: ${error.message}`);
+          // Fallback to original values if stripping fails
+          cleanedSearch = e.search || '';
+          cleanedReplace = e.replace || '';
+        }
+        
+        return {
+          search: cleanedSearch,
+          replace: cleanedReplace,
+          lineHint: e.lineHint
+        };
+      });
       
-      // Apply edits
-      const editResult = applyEditsToContent(currentContent, cleanedEdits);
+      // Debug logging for troubleshooting
+      ctx.log(`[apply_edits] Processing ${cleanedEdits.length} edits on ${filePath}`);
+      cleanedEdits.forEach((edit, index) => {
+        // Safe string conversion for debug logging
+        const searchPreview = edit.search != null && typeof edit.search === 'string' && edit.search.length > 50 
+          ? edit.search.substring(0, 50) + '...' 
+          : (edit.search != null ? String(edit.search) : 'null');
+        const replacePreview = edit.replace != null && typeof edit.replace === 'string' && edit.replace.length > 50 
+          ? edit.replace.substring(0, 50) + '...' 
+          : (edit.replace != null ? String(edit.replace) : 'null');
+        ctx.log(`[apply_edits] Edit ${index + 1}: search="${searchPreview}", replace="${replacePreview}"`);
+      });
+      
+      // Check if current content contains any of the search strings
+      const contentPreview = currentContent && typeof currentContent === 'string' && currentContent.length > 200 
+        ? currentContent.substring(0, 200) + '...' 
+        : (currentContent || 'empty content');
+      ctx.log(`[apply_edits] File content preview: ${contentPreview}`);
+      
+      // Apply edits with retry logic for common failure patterns
+      let editResult = applyEditsToContent(currentContent, cleanedEdits);
+      
+      // If all edits failed due to NOT_FOUND, try some common fixes
+      if (editResult.appliedCount === 0 && editResult.failures.every(f => f.reason === 'NOT_FOUND')) {
+        ctx.log(`[apply_edits] All edits failed (NOT_FOUND), attempting automatic fixes...`);
+        
+        // Try removing any remaining line number prefixes that might have been missed
+        const retryEdits = cleanedEdits.map(e => ({
+          search: aggressiveStripLineNumbers(e.search),
+          replace: aggressiveStripLineNumbers(e.replace),
+          lineHint: e.lineHint
+        }));
+        
+        // Try again with more aggressive cleaning
+        const retryResult = applyEditsToContent(currentContent, retryEdits);
+        
+        if (retryResult.appliedCount > 0) {
+          ctx.log(`[apply_edits] Retry successful: applied ${retryResult.appliedCount} edits`);
+          editResult = retryResult;
+        } else {
+          ctx.log(`[apply_edits] Retry failed: still no matches found`);
+        }
+      }
       
       // Handle failures
       if (editResult.appliedCount === 0) {
         const failureMessages = editResult.failures.map(f => formatEditFailure(f, filePath));
+        
+        // Additional debugging for common failure patterns
+        if (editResult.failures.some(f => f.reason === 'NOT_FOUND')) {
+          ctx.log(`[apply_edits] DEBUG: Some search strings not found in file content`);
+          ctx.log(`[apply_edits] DEBUG: File content length: ${currentContent.length} characters`);
+          ctx.log(`[apply_edits] DEBUG: File content hash: ${currentContent.length.toString(16)}`);
+          
+          // Check if any search strings appear to be line-number prefixed
+          const possiblyPrefixed = cleanedEdits.filter(e => /^\s*\d+\s*[|:]/.test(e.search));
+          if (possiblyPrefixed.length > 0) {
+            ctx.log(`[apply_edits] DEBUG: Found ${possiblyPrefixed.length} edits that might still have line number prefixes`);
+          }
+        }
         
         return { 
           result: `❌ No edits applied\n\n${failureMessages.join('\n\n')}`, 
@@ -103,6 +315,13 @@ export const editTools: ToolDefinition[] = [
       }
       
       return { result: resultMessage };
-    }
+      } catch (error) {
+        ctx.log(`[apply_edits] CRITICAL ERROR: ${error.message}`);
+        console.error(`[apply_edits] Handler error:`, error);
+        return {
+          result: '',
+          error: `apply_edits failed with internal error: ${error.message}. Please check logs for details.`
+        };
+      }
   }
 ];

@@ -827,6 +827,74 @@ export class CLI {
               } catch (e: any) {}
             }
           }
+          
+          // Try 4: Fallback for LLM outputs that contain tool parameters without name/arguments wrapper
+          if (toolCallsData.length === 0) {
+            const inlineJsonPattern = /\{["']path["']\s*:\s*["'][^"']+["'][^}]*["']edits["']\s*:\s*\[/g;
+            let jsonMatch;
+            while ((jsonMatch = inlineJsonPattern.exec(content)) !== null) {
+              try {
+                // Extract the JSON object
+                let braceCount = 0;
+                let jsonStr = '';
+                let startPos = jsonMatch.index;
+                
+                // Find the complete JSON object starting from the match
+                for (let i = startPos; i < content.length; i++) {
+                  const char = content[i];
+                  if (char === '{') braceCount++;
+                  if (char === '}') braceCount--;
+                  jsonStr += char;
+                  if (braceCount === 0) break;
+                }
+                
+                if (jsonStr.trim()) {
+                  const toolParams = JSON.parse(jsonStr);
+                  
+                  // Infer tool name based on parameter structure
+                  let inferredToolName: string | null = null;
+                  
+                  if (toolParams.path && Array.isArray(toolParams.edits)) {
+                    inferredToolName = 'apply_edits';
+                  } else if (toolParams.path && toolParams.recursive !== undefined) {
+                    inferredToolName = 'list_directory';
+                  } else if (toolParams.command) {
+                    inferredToolName = 'run_terminal';
+                  } else if (toolParams.pattern) {
+                    inferredToolName = 'search_files';
+                  }
+                  
+                  if (inferredToolName) {
+                    // Special handling for tools with nested structures
+                    let finalArgs = toolParams;
+                    
+                    if (inferredToolName === 'apply_edits' && typeof toolParams === 'object' && toolParams.edits) {
+                      // Preserve the edits array structure - don't double-stringify
+                      finalArgs = toolParams;
+                    } else if (typeof toolParams === 'object') {
+                      // For other objects, stringify to maintain compatibility
+                      finalArgs = JSON.stringify(toolParams);
+                    } else {
+                      finalArgs = JSON.stringify(toolParams);
+                    }
+                    
+                    toolCallsData.push({
+                      id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                      type: 'function',
+                      function: {
+                        name: inferredToolName,
+                        arguments: finalArgs
+                      }
+                    });
+                    
+                    this.log(`Fallback tool call parsing: inferred ${inferredToolName} from parameters`);
+                  }
+                }
+              } catch (e: any) {
+                this.log(`Warning: Could not parse fallback tool call: ${e.message}`);
+              }
+            }
+          }
         }
 
         const toolCalls: LLMToolCall[] = toolCallsData.map((tc: any) => {
@@ -956,6 +1024,56 @@ export class CLI {
           });
         }
       } catch (e: any) {}
+    }
+
+    if (toolCalls.length > 0) return toolCalls;
+
+    // Strategy 4: Fallback for LLM outputs that contain tool parameters without name/arguments wrapper
+    const inlineJsonPattern = /\{["']path["']\s*:\s*["'][^"']+["'][^}]*["']edits["']\s*:\s*\[/g;
+    let jsonMatch;
+    while ((jsonMatch = inlineJsonPattern.exec(text)) !== null) {
+      try {
+        // Extract the complete JSON object
+        let braceCount = 0;
+        let jsonStr = '';
+        let startPos = jsonMatch.index;
+        
+        // Find the complete JSON object starting from the match
+        for (let i = startPos; i < text.length; i++) {
+          const char = text[i];
+          if (char === '{') braceCount++;
+          if (char === '}') braceCount--;
+          jsonStr += char;
+          if (braceCount === 0) break;
+        }
+        
+        if (jsonStr.trim()) {
+          const toolParams = JSON.parse(jsonStr);
+          
+          // Infer tool name based on parameter structure
+          let inferredToolName: string | null = null;
+          
+          if (toolParams.path && Array.isArray(toolParams.edits)) {
+            inferredToolName = 'apply_edits';
+          } else if (toolParams.path && toolParams.recursive !== undefined) {
+            inferredToolName = 'list_directory';
+          } else if (toolParams.command) {
+            inferredToolName = 'run_terminal';
+          } else if (toolParams.pattern) {
+            inferredToolName = 'search_files';
+          }
+          
+          if (inferredToolName) {
+            toolCalls.push({
+              id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              name: inferredToolName,
+              arguments: toolParams
+            });
+          }
+        }
+      } catch (e: any) {
+        // Silent catch for parsing errors
+      }
     }
 
     return toolCalls;

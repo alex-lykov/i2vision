@@ -17,13 +17,17 @@ function stripLineNumberPrefix(text: string): string {
   // Format 3: "Line 1: content" (verbose format)
   // Format 4: "[1] content" (bracket format)
   // Format 5: "1 | content" (compact format)
+  // Format 6: "… content" (truncation with ellipsis)
+  // Format 7: "... content" (truncation with dots)
   try {
     return text.split('\n').map(line => 
       line.replace(/^\s*\d+\s*\|\s*/, '')  // "  1 | content" and "1 | content"
          .replace(/^\s*\d+:\s*/, '')        // "1: content" 
          .replace(/^\s*Line\s+\d+:\s*/i, '') // "Line 1: content"
          .replace(/^\[\d+\]\s*/, '')       // "[1] content"
-         .replace(/^\s*\d+\s+\|\s*/, '')  // "1 | content" with single space
+         .replace(/^\s*\d+\s+\|\s*/, '')              // "1 | content" with single space
+         .replace(/^\s*[…\.]{3,}\s*/, '')               // "… content" or "... content" (truncation)
+         .replace(/\s+[…\.]{3,}\s*$/, '')               // trailing truncation indicators
     ).join('\n');
   } catch (error) {
     console.error(`[stripLineNumberPrefix] Error processing text: ${error.message}`);
@@ -48,6 +52,9 @@ function aggressiveStripLineNumbers(text: string): string {
     // Also handle cases where line numbers might be in the middle of content
     // (e.g., when model copies multi-line content with line numbers)
     result = result.replace(/\n\s*\d+\s*[|:]\s*/g, '\n');
+    
+    // Handle truncation indicators that might appear in content
+    result = result.replace(/[…\.]{3,}/g, '').trim();
     
     return result;
   } catch (error) {
@@ -157,6 +164,13 @@ export const editTools: ToolDefinition[] = [
       
       // Read current content
       const currentContent = await ctx.readFile(filePath);
+      
+      // Large file detection and handling
+      const LARGE_FILE_THRESHOLD = 50000; // 50KB
+      if (currentContent.length > LARGE_FILE_THRESHOLD) {
+        ctx.log(`[apply_edits] Large file detected: ${filePath} (${currentContent.length} chars)`);
+        // For large files, extend processing limits and provide guidance
+      }
       
       // Validate edits array exists and is properly structured
       if (!Array.isArray(edits)) {
@@ -296,6 +310,18 @@ export const editTools: ToolDefinition[] = [
           if (possiblyPrefixed.length > 0) {
             ctx.log(`[apply_edits] DEBUG: Found ${possiblyPrefixed.length} edits that might still have line number prefixes`);
           }
+        }
+        
+        // Enhanced error message for large files
+        if (currentContent.length > LARGE_FILE_THRESHOLD) {
+          return { 
+            result: `❌ Large file edit failed (${currentContent.length} characters)`,
+            error: `apply_edits struggled with this large file. For files over 50KB, consider:
+    • Breaking changes into multiple smaller apply_edits calls
+    • Using write_file to replace the entire file
+    • Using run_terminal with sed/awk for complex transformations
+    • Temporarily splitting the file into smaller components`
+          };
         }
         
         return { 

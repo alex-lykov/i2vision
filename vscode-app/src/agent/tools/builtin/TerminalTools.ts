@@ -48,10 +48,34 @@ export const terminalTools: ToolDefinition[] = [
         ? ctx.resolvePath(args.workingDir) 
         : ctx.workspaceRoot;
       
+      // Validate command length
+      const MAX_DIRECT_COMMAND_LENGTH = 3000;
+      if (command.length > MAX_DIRECT_COMMAND_LENGTH) {
+        return {
+          result: `❌ Command too complex (${command.length} characters)`,
+          error: `For complex operations, use this pattern:
+1. write_file to create a script file
+2. run_terminal to execute the script
+
+Example:
+- write_file: {"path":"fix.py", "content":"your script here"}
+- run_terminal: {"command":"python fix.py", "workingDir":"your/dir"}`
+        };
+      }
+      
       // Auto-prefix gradle commands
       if (/^:/.test(command)) {
         const gradleWrapper = process.platform === 'win32' ? '.\\gradlew' : './gradlew';
         command = `${gradleWrapper} ${command}`;
+      }
+      
+      // Detect and log complex commands
+      const isComplexCommand = command.length > 1000 ||
+                             command.includes('python -c') ||
+                             (command.match(/\n/g) || []).length > 2;
+      
+      if (isComplexCommand) {
+        ctx.log(`[run_terminal] Complex command detected (${command.length} chars, ${(command.match(/\n/g) || []).length} lines)`);
       }
       
       // Windows-specific fixes

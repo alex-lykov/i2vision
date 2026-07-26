@@ -2589,10 +2589,16 @@ DO NOT include large content in arguments. Just reference files by path.`;
       const proc = spawn(command, { shell: true, cwd: workingDir || this.workspaceRoot, timeout: timeoutMs });
       let stdout = '', stderr = '', exitCode: number | null = null;
       const timeout = setTimeout(() => { proc.kill(); stderr += '\n\n[TIMEOUT]'; resolve({ stdout, stderr, exitCode: null }); }, timeoutMs);
-      proc.stdout?.on('data', (data: Buffer) => { stdout += data.toString(); if (onOutput) onOutput(stdout); if (stdout.length > 10000) { stdout = stdout.slice(0, 10000) + '\n... (truncated)'; proc.kill(); } });
+      proc.stdout?.on('data', (data: Buffer) => { stdout += data.toString(); if (onOutput) onOutput(stdout); if (stdout.length > 50000) { stdout = stdout.slice(0, 50000) + '\n... (truncated)'; } });
       proc.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); if (onOutput) onOutput(stderr); });
       proc.on('close', (code: number | null) => { clearTimeout(timeout); exitCode = code; resolve({ stdout, stderr, exitCode }); });
-      proc.on('error', (err: Error) => { clearTimeout(timeout); resolve({ stdout, stderr: err.message, exitCode: -1 }); });
+      proc.on('error', (err: Error) => { 
+        clearTimeout(timeout);
+        const errorMessage = `Command execution failed: ${err.message}`;
+        const guidance = command.length > 1500 ? 
+          `\n\n💡 For complex commands, consider:\n- Breaking into smaller steps\n- Using write_file + run_terminal pattern\n- Writing scripts to temporary files` : '';
+        resolve({ stdout, stderr: errorMessage + guidance, exitCode: -1 });
+      });
     });
   }
 

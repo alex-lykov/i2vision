@@ -19,31 +19,25 @@ import {CLI, LLMChunk, LLMMessage, LLMResponse, LLMTool, LLMToolCall} from '../c
 import {TerminalManager} from './TerminalManager';
 import {AgentSettingsManager} from './AgentSettings';
 import {applyEditsToContent, EditOperation, formatEditFailure} from './ApplyEditsTool';
+import {AgentEvent, AgentState, AgentStateMachine, StateContext,} from './AgentStateMachine';
 import {
-  AgentStateMachine,
-  AgentState,
-  AgentEvent,
-  StateContext,
-} from './AgentStateMachine';
-import { VslfcLayer } from './tools';
-import {
-  ToolRegistry,
-  ToolContext,
-  ToolResult,
-  fileTools,
-  gitTools,
-  terminalTools,
-  editTools,
   buildTools,
-  ToolConfigLoader,
   CustomToolPluginLoader,
   DomainDetector,
   DomainResolution,
+  editTools,
+  fileTools,
+  gitTools,
   ModuleDomain,
+  terminalTools,
+  ToolConfigLoader,
+  ToolContext,
+  ToolRegistry,
+  VslfcLayer
 } from './tools';
-import { ChatMessage, AgentSessionState } from './ConversationHistoryManager';
-import { SessionManager, createSessionManager } from './SessionManager';
-import { ToolResultCompressor } from './ToolResultCompressor';
+import {AgentSessionState, ChatMessage} from './ConversationHistoryManager';
+import {createSessionManager, SessionManager} from './SessionManager';
+import {ToolResultCompressor} from './ToolResultCompressor';
 
 export interface ContextProfile {
   eager: { currentFile?: boolean; projectMetadata?: boolean; gitStatus?: boolean; gitDiff?: boolean; relatedFiles?: boolean; directoryStructure?: boolean };
@@ -417,11 +411,28 @@ export class AgentBridge {
     return this.currentLayer;
   }
 
-  private log(message: string): void {
-    const timestamp = new Date().toLocaleTimeString();
-    const formatted = `[${timestamp}] [AgentBridge] ${message}`;
+  private log(message: string, level: 'info' | 'warn' | 'error' = 'info'): void {
+    const timestamp = new Date().toISOString();
+    const levelPrefix = level === 'error' ? '❌' : level === 'warn' ? '⚠️' : 'ℹ️';
+    const formatted = `[${timestamp}] [AgentBridge] ${levelPrefix} ${message}`;
     if (this.outputChannel) this.outputChannel.appendLine(formatted);
-    console.log(formatted);
+    console[level](formatted);
+  }
+
+  private logStateTransition(from: AgentState, to: AgentState, event: AgentEvent, details?: string): void {
+    const timestamp = new Date().toISOString();
+    const stateInfo = `[${timestamp}] [StateMachine] ${from}───${event}───> ${to}`;
+    const fullMessage = details ? `${stateInfo} | ${details}` : stateInfo;
+    if (this.outputChannel) this.outputChannel.appendLine(fullMessage);
+    console.log(fullMessage);
+  }
+
+  private logToolExecution(toolName: string, args: Record<string, any>, startTime: number): void {
+    const duration = Date.now() - startTime;
+    const argsSummary = Object.entries(args)
+      .map(([k, v]) => `${k}=${typeof v === 'string' && v.length > 50 ? `${v.substring(0, 47)}...` : v}`)
+      .join(', ');
+    this.log(`🔧 Tool executed: ${toolName}(${argsSummary}) [${duration}ms]`, 'info');
   }
 
   /** Detect task type from user input */
@@ -645,9 +656,16 @@ export class AgentBridge {
   /** Format tool definitions for embedding in the system prompt (3D LLM text-based tool calling) */
   private formatToolsForSystemPrompt(tools: LLMTool[]): string {
     let text = '--- AVAILABLE TOOLS ---\n';
-    text += 'When you need to call a tool, output EXACTLY one line of raw JSON with NO markdown, NO code blocks, and NO explanation before or after it. Do NOT use "Calling:", do NOT wrap in ```json, do NOT add any text.\n';
+    text += 'IMPORTANT: YOU MUST call tools using the JSON format below. NEVER describe what you will do - CALL THE TOOL IMMEDIATELY.\n';
+    text += 'Output EXACTLY one line of raw JSON with NO markdown, NO code blocks, NO explanation, NO "I will", NO "Let me", NO "Calling:".\n';
+    text += 'JUST the JSON, NOTHING ELSE.\n';
     text += 'Example:\n';
     text += '{"name":"list_directory","arguments":{"path":".","recursive":false}}\n\n';
+    text += 'RULES:\n';
+    text += '- NEVER write "I will call" or "Let me call" - JUST CALL IT\n';
+    text += '- NEVER wrap in ```json or markdown - JUST raw JSON\n';
+    text += '- NEVER add explanation before or after - JUST the tool call\n';
+    text += '- ALWAYS call tools immediately when you know what to do\n\n';
     text += 'Available tools:\n';
     for (const tool of tools) {
       const fn = tool.function;
@@ -860,11 +878,14 @@ export class AgentBridge {
       
       // STATE: INTENT - Classify user intent
       if (iteration === 1) {
-        this.stateMachine.dispatch(AgentEvent.USER_INPUT);
-        this.stateMachine.dispatch(AgentEvent.INTENT_CLASSIFIED, { 
+        const userInputResult = this.stateMachine.dispatch(AgentEvent.USER_INPUT);
+        this.logStateTransition(AgentState.IDLE, this.stateMachine.state, AgentEvent.USER_INPUT, `Starting new task`);
+        
+        const intentResult = this.stateMachine.dispatch(AgentEvent.INTENT_CLASSIFIED, { 
           intentType: taskType,
           taskDescription: userInput,
         });
+        this.logStateTransition(AgentState.INTENT, this.stateMachine.state, AgentEvent.INTENT_CLASSIFIED, `Intent: ${taskType}`);
         
         if (options.streaming) {
           yield { type: 'thinking', message: `Understanding task: ${taskType}`, timestamp: Date.now() };
@@ -873,9 +894,17 @@ export class AgentBridge {
       
       // Check iteration limits
       if (iteration > maxIterations) {
-        this.stateMachine.dispatch(AgentEvent.MAX_ITERATIONS);
+        const failureResult = this.stateMachine.dispatch(AgentEvent.MAX_ITERATIONS);
+        this.logStateTransition(this.stateMachine.state, failureResult.state, AgentEvent.MAX_ITERATIONS, `Max iterations reached: ${iteration}/${maxIterations}`);
+        this.log(`Agent stopped: Reached maximum iterations (${iteration})`, 'error');
+        
         if (options.streaming) {
-          yield { type: 'text', text: `⚠️ Stopped after ${iteration} iterations.`, timestamp: Date.now() };
+          yield { type: 'text', text: `❌ Agent stopped: Reached maximum iterations (${iteration}/${maxIterations})`, timestamp: Date.now() };
+          yield { 
+            type: 'error', 
+            error: `MAX_ITERATIONS_REACHED: Agent executed ${iteration} iterations without completing the task`, 
+            timestamp: Date.now() 
+          };
           yield { type: 'done', outcome: 'error', timestamp: Date.now(), iterations: iteration };
         }
         return;
@@ -923,10 +952,21 @@ export class AgentBridge {
       }
       
       if (this.stateMachine.isBuildFixCycleStuck()) {
-        this.log('Build-fix cycle stuck after 3 failures - stopping');
-        this.stateMachine.dispatch(AgentEvent.MAX_FAILURES);
+        this.log('Build-fix cycle stuck after 3 failures - stopping', 'error');
+        const failureResult = this.stateMachine.dispatch(AgentEvent.MAX_FAILURES);
+        this.logStateTransition(this.stateMachine.state, failureResult.state, AgentEvent.MAX_FAILURES, `Build failures: ${this._buildFailureCount}`);
+        
         if (options.streaming) {
-          yield { type: 'text', text: `⚠️ Build failed ${this._buildFailureCount} times. Manual intervention required.`, timestamp: Date.now() };
+          yield { 
+            type: 'text', 
+            text: `❌ Build-fix cycle failed: ${this._buildFailureCount} consecutive build failures. The agent cannot automatically fix these errors.`, 
+            timestamp: Date.now() 
+          };
+          yield { 
+            type: 'error', 
+            error: `BUILD_FIX_CYCLE_FAILED: ${this._buildFailureCount} consecutive build failures. Last errors: ${this._lastBuildErrors.substring(0, 200)}...`, 
+            timestamp: Date.now() 
+          };
           yield { type: 'done', outcome: 'error', timestamp: Date.now(), iterations: iteration };
         }
         return;
@@ -1298,6 +1338,34 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
           if (lastBuildError) this._fixMode = true;
           
           let nudgeMessage = `STOP describing plans. Use tool calling API NOW.`;
+          
+          // TOOL CALL ENFORCEMENT: Detect when LLM mentions specific tools but doesn't call them
+          const toolMentionPatterns = [
+            { pattern: /apply_edits\s*(?:on|to|for)/i, tool: 'apply_edits', message: 'You mentioned apply_edits but did not call it. CALL apply_edits NOW with the exact file path and edits.' },
+            { pattern: /read_file\s*(?:to|for|from)/i, tool: 'read_file', message: 'You mentioned read_file but did not call it. CALL read_file NOW with the exact file path.' },
+            { pattern: /write_file\s*(?:to|for|with)/i, tool: 'write_file', message: 'You mentioned write_file but did not call it. CALL write_file NOW with the exact file path and content.' },
+            { pattern: /search_files\s*(?:for|with|using)/i, tool: 'search_files', message: 'You mentioned search_files but did not call it. CALL search_files NOW with the exact pattern.' },
+            { pattern: /run_terminal\s*(?:with|using|command)/i, tool: 'run_terminal', message: 'You mentioned run_terminal but did not call it. CALL run_terminal NOW with the exact command.' }
+          ];
+          
+          // Check if LLM mentioned a specific tool without calling it
+          for (const { pattern, tool, message } of toolMentionPatterns) {
+            if (pattern.test(trimmedResponse)) {
+              nudgeMessage = message;
+              this.log(`TOOL CALL ENFORCEMENT: LLM mentioned ${tool} but didn't call it`, 'warn');
+              break;
+            }
+          }
+          
+          // Add specific file context if available
+          if (lastBuildError) {
+            const content = lastBuildError.content as string;
+            const fileMatch = content.match(/FILES TO READ AND FIX:[\s\S]*?(?:COMPILER ERRORS|$)/);
+            if (fileMatch) {
+              const files = fileMatch[0].split('\n').filter(line => line.includes('.kt:') || line.includes('.java')).map(line => line.replace(/^\s*-\s*/, '').trim());
+              nudgeMessage += `\n\nBuild failed. Use apply_edits to fix:\n${files.map(f => `- ${f}`).join('\n')}`;
+            }
+          }
           if (lastBuildError) {
             const content = lastBuildError.content as string;
             const fileMatch = content.match(/FILES TO READ AND FIX:[\s\S]*?(?:COMPILER ERRORS|$)/);
@@ -1395,10 +1463,21 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
         const isAutoExploreMode = toolCall.name === 'search_files' && this._failedSearchCount === 1;
         
         if (!isAutoExploreMode && this.stateMachine.detectLoop(toolCall.name, normalizedArgs, iteration)) {
-          this.log(`LOOP DETECTED: ${toolCall.name} with same arguments`);
-          this.stateMachine.dispatch(AgentEvent.LOOP_DETECTED);
+          this.log(`LOOP DETECTED: ${toolCall.name} with same arguments`, 'error');
+          const failureResult = this.stateMachine.dispatch(AgentEvent.LOOP_DETECTED);
+          this.logStateTransition(this.stateMachine.state, failureResult.state, AgentEvent.LOOP_DETECTED, `Tool loop: ${toolCall.name}`);
+          
           if (options.streaming) {
-            yield { type: 'text', text: `⚠️ Loop detected. Stopping.`, timestamp: Date.now() };
+            yield { 
+              type: 'text', 
+              text: `❌ Agent stopped: Detected loop calling ${toolCall.name} with same arguments repeatedly.`, 
+              timestamp: Date.now() 
+            };
+            yield { 
+              type: 'error', 
+              error: `TOOL_LOOP_DETECTED: Agent is stuck in a loop calling ${toolCall.name} with identical arguments.`, 
+              timestamp: Date.now() 
+            };
             yield { type: 'done', outcome: 'error', timestamp: Date.now(), iterations: iteration };
           }
           return;
@@ -1438,10 +1517,17 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
         let toolResult: { result: string; error?: string } | null = null;
 
         try {
+          this.log(`Executing tool: ${toolCall.name}`, 'info');
           const result = await this.executeToolWithRetry(toolCall, 3);
           toolCallObj.result = result.result;
           if (result.error) toolCallObj.error = result.error;
           toolResult = result;
+          
+          if (result.error) {
+            this.log(`Tool ${toolCall.name} failed: ${result.error}`, 'error');
+          } else {
+            this.log(`Tool ${toolCall.name} completed successfully`, 'info');
+          }
 
           const durationMs = Date.now() - startTime;
 
@@ -1453,9 +1539,12 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
           }
         } catch (error: any) {
           toolCallObj.error = error.message;
+          this.log(`Tool ${toolCall.name} execution failed with exception: ${error.message}`, 'error');
+          this.log(`Stack trace: ${error.stack}`, 'error');
           this.stateMachine.recordToolCall(toolCall.name, toolCall.arguments, undefined, error.message);
           if (options.streaming) {
             yield { type: 'tool_call_completed', toolName: toolCall.name, result: `Error: ${error.message}`, timestamp: Date.now() };
+            yield { type: 'error', error: `TOOL_EXECUTION_FAILED: ${toolCall.name}: ${error.message}`, timestamp: Date.now() };
           }
         }
 

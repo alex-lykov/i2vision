@@ -17,20 +17,20 @@
 
 import {
   AgentOutputCard,
-  CardHeader,
+  AgentStatus,
   CardContent,
   CardFooter,
-  DisplayConfig,
-  ToolCallData,
-  ProviderType,
-  AgentStatus,
-  getProviderDisplayName,
-  getProviderColor,
-  getStatusIcon,
-  formatDuration,
-  shouldAutoCollapse,
-  getPreviewText,
+  CardHeader,
   DEFAULT_DISPLAY_CONFIG,
+  DisplayConfig,
+  formatDuration,
+  getPreviewText,
+  getProviderColor,
+  getProviderDisplayName,
+  getStatusIcon,
+  ProviderType,
+  shouldAutoCollapse,
+  ToolCallData,
 } from './AgentOutputCard.types';
 
 /**
@@ -88,6 +88,32 @@ function createCardHeader(header: CardHeader): string {
         <span class="iterations-badge">${header.iterations} iter</span>
       </div>
     </div>
+    ${createStatusBanner(header.status)}
+  `;
+}
+
+function createStatusBanner(status: AgentStatus): string {
+  if (status === 'success') {
+    return '';
+  }
+  
+  const bannerClasses = `status-banner ${status}`;
+  const bannerIcons = {
+    'error': '❌',
+    'partial': '⚠️',
+    'stopped': '🛑'
+  };
+  const bannerMessages = {
+    'error': 'Agent encountered an error',
+    'partial': 'Agent completed partially',
+    'stopped': 'Agent was stopped'
+  };
+  
+  return `
+    <div class="${bannerClasses}">
+      <span class="banner-icon">${bannerIcons[status] || 'ℹ️'}</span>
+      <span class="banner-message">${bannerMessages[status] || 'Agent status updated'}</span>
+    </div>
   `;
 }
 
@@ -122,12 +148,92 @@ function createCardContent(content: CardContent, display: DisplayConfig): string
  * Create error section
  */
 function createErrorSection(error: string): string {
+  // Parse error to extract meaningful information
+  const errorMessage = extractErrorMessage(error);
+  const errorType = extractErrorType(error);
+  
   return `
     <div class="error-section">
       <span class="error-icon">❌</span>
-      <span class="error-text">${escapeHtml(error)}</span>
+      <div class="error-content">
+        ${errorType ? `<div class="error-type">${escapeHtml(errorType)}</div>` : ''}
+        <div class="error-text">${escapeHtml(errorMessage)}</div>
+        ${shouldShowErrorDetails(error) ? createErrorDetailsSection(error) : ''}
+      </div>
     </div>
   `;
+}
+
+function extractErrorMessage(error: string): string {
+  // Extract the main error message from common error patterns
+  const patterns = [
+    /^(ERROR|FAILED|TOOL_EXECUTION_FAILED|MAX_ITERATIONS_REACHED|BUILD_FIX_CYCLE_FAILED|TOOL_LOOP_DETECTED):\s*(.+)$/i,
+    /^(Error:\s*)(.+)$/i,
+    /^([^:]+:\s*)(.+)$/
+  ];
+  
+  for (const pattern of patterns) {
+    const match = error.match(pattern);
+    if (match && match[2]) {
+      return match[2].trim();
+    }
+  }
+  
+  return error;
+}
+
+function extractErrorType(error: string): string | null {
+  // Extract error type from common patterns
+  const typePatterns = [
+    /^(ERROR|FAILED|TOOL_EXECUTION_FAILED|MAX_ITERATIONS_REACHED|BUILD_FIX_CYCLE_FAILED|TOOL_LOOP_DETECTED)/i,
+    /^(Error|Exception|Failure)/i
+  ];
+  
+  for (const pattern of typePatterns) {
+    const match = error.match(pattern);
+    if (match && match[1]) {
+      return match[1].toUpperCase();
+    }
+  }
+  
+  return null;
+}
+
+function shouldShowErrorDetails(error: string): boolean {
+  // Show details for specific error types that benefit from more context
+  return error.includes('TOOL_EXECUTION_FAILED') || 
+         error.includes('BUILD_FIX_CYCLE_FAILED') || 
+         error.includes('MAX_ITERATIONS_REACHED') ||
+         error.includes('TOOL_LOOP_DETECTED');
+}
+
+function createErrorDetailsSection(error: string): string {
+  // Extract additional details from error
+  let details = '';
+  
+  if (error.includes('TOOL_EXECUTION_FAILED')) {
+    const toolMatch = error.match(/TOOL_EXECUTION_FAILED:\s*(\w+)/i);
+    if (toolMatch) {
+      details = `Tool: <strong>${escapeHtml(toolMatch[1])}</strong>`;
+    }
+  } else if (error.includes('MAX_ITERATIONS_REACHED')) {
+    const iterationMatch = error.match(/(\d+)\s*iterations/i);
+    if (iterationMatch) {
+      details = `Iterations: <strong>${escapeHtml(iterationMatch[1])}</strong>`;
+    }
+  } else if (error.includes('BUILD_FIX_CYCLE_FAILED')) {
+    const failureMatch = error.match(/(\d+)\s*consecutive\s*build\s*failures/i);
+    if (failureMatch) {
+      details = `Build failures: <strong>${escapeHtml(failureMatch[1])}</strong>`;
+    }
+  } else if (error.includes('TOOL_LOOP_DETECTED')) {
+    const toolMatch = error.match(/calling\s*(\w+)/i);
+    if (toolMatch) {
+      details = `Tool in loop: <strong>${escapeHtml(toolMatch[1])}</strong>`;
+    }
+  }
+  
+  return details ? `<div class="error-details">${details}</div>` : '';
 }
 
 /**
@@ -487,6 +593,88 @@ function attachEventListeners(cardDiv: HTMLElement, display: DisplayConfig): voi
 function addApplyEditsCSS(cardDiv: HTMLElement): void {
   const style = document.createElement('style');
   style.textContent = `
+    /* Status banner styles */
+    .status-banner {
+      padding: 0.5rem 1rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 500;
+      border-radius: 0 0 4px 4px;
+      margin-bottom: 1rem;
+    }
+    
+    .status-banner.error {
+      background-color: #ffdddd;
+      color: #d32f2f;
+      border: 1px solid #ef9a9a;
+    }
+    
+    .status-banner.partial {
+      background-color: #fff8e1;
+      color: #f57f17;
+      border: 1px solid #ffcc80;
+    }
+    
+    .status-banner.stopped {
+      background-color: #e8eaf6;
+      color: #3f51b5;
+      border: 1px solid #c5cae9;
+    }
+    
+    .banner-icon {
+      font-size: 1.1rem;
+    }
+    
+    .banner-message {
+      font-size: 0.9rem;
+    }
+    
+    /* Enhanced error section styles */
+    .error-section {
+      background-color: #ffebee;
+      border-left: 4px solid #d32f2f;
+      padding: 1rem;
+      margin: 1rem 0;
+      border-radius: 4px;
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+    }
+    
+    .error-icon {
+      font-size: 1.5rem;
+      color: #d32f2f;
+      margin-top: 2px;
+    }
+    
+    .error-content {
+      flex: 1;
+    }
+    
+    .error-type {
+      font-weight: 600;
+      color: #c62828;
+      margin-bottom: 0.25rem;
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    
+    .error-text {
+      color: #d32f2f;
+      line-height: 1.4;
+    }
+    
+    .error-details {
+      margin-top: 0.5rem;
+      padding: 0.5rem;
+      background-color: #ffcdd2;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      color: #b71c1c;
+    }
+    
     /* Apply edits specific styling */
     .apply-edits-args-summary {
       display: flex;

@@ -1,6 +1,43 @@
 import { ToolDefinition, ToolContext } from '../ToolTypes';
 
 /**
+ * Get recovery suggestions for failed commands
+ */
+function getRecoverySuggestions(command: string, errorOutput: string): string {
+  const suggestions: string[] = [];
+  
+  if (command.includes('git')) {
+    if (errorOutput.includes('not a git repository')) {
+      suggestions.push('✅ Check if you are in the correct directory');
+      suggestions.push('✅ Use git_status to verify git repository');
+      suggestions.push('✅ Navigate to the correct directory first');
+    } else if (errorOutput.includes('nothing to commit')) {
+      suggestions.push('✅ This is normal - no changes to commit');
+      suggestions.push('✅ Continue with the next task');
+    } else if (errorOutput.includes('pathspec') || errorOutput.includes('did not match')) {
+      suggestions.push('✅ Verify the file path exists');
+      suggestions.push('✅ Use list_directory to check available files');
+      suggestions.push('✅ Check for typos in the file path');
+    } else if (errorOutput.includes('Authentication failed') || errorOutput.includes('Permission denied')) {
+      suggestions.push('✅ Check git credentials and permissions');
+      suggestions.push('✅ Ensure you have write access to the repository');
+    } else {
+      suggestions.push('✅ Check git_status for repository state');
+      suggestions.push('✅ Review the specific error message');
+      suggestions.push('✅ Try breaking complex operations into smaller steps');
+    }
+  } else {
+    suggestions.push('✅ Check the command syntax');
+    suggestions.push('✅ Verify working directory');
+    suggestions.push('✅ Review error output for specific issues');
+  }
+  
+  return suggestions.length > 0 
+    ? `\n💡 RECOVERY SUGGESTIONS:\n${suggestions.map(s => `  ${s}`).join('\n')}`
+    : '';
+}
+
+/**
  * Get terminal mode from settings
  */
 function getTerminalMode(ctx: ToolContext): 'managed' | 'vscode' | 'hybrid' {
@@ -118,9 +155,32 @@ Example:
         const output = (result.stdout || '') + '\n' + (result.stderr || '');
         
         if (result.exitCode !== 0) {
+          const errorOutput = output.slice(-1000);
+          let errorMessage = 'Command failed';
+          
+          // Provide specific guidance based on command type
+          if (command.includes('git')) {
+            if (errorOutput.includes('not a git repository') || errorOutput.includes('fatal: not a git repository')) {
+              errorMessage = 'GIT_REPOSITORY_ERROR: Not a git repository. Check working directory.';
+            } else if (errorOutput.includes('nothing to commit') || errorOutput.includes('no changes added to commit')) {
+              errorMessage = 'GIT_NO_CHANGES: No changes to commit. This is not an error.';
+            } else if (errorOutput.includes('pathspec') || errorOutput.includes('did not match any files')) {
+              errorMessage = 'GIT_PATH_ERROR: File path not found in git repository.';
+            } else if (errorOutput.includes('Authentication failed') || errorOutput.includes('Permission denied')) {
+              errorMessage = 'GIT_AUTH_ERROR: Authentication failed. Check git credentials.';
+            } else {
+              errorMessage = 'GIT_COMMAND_FAILED: Git command failed. Check the specific error in result output.';
+            }
+          } else if (command.includes('npm') || command.includes('yarn') || command.includes('pnpm')) {
+            errorMessage = 'PACKAGE_MANAGER_FAILED: Package manager command failed. Check error details.';
+          } else if (command.includes('gradlew') || command.includes('mvnw')) {
+            errorMessage = 'BUILD_TOOL_FAILED: Build tool command failed. Check error details.';
+          }
+          
+          const recoverySuggestions = getRecoverySuggestions(command, errorOutput);
           return { 
-            result: `Command executed with exit code ${result.exitCode}\n\n${output.slice(-1000)}`,
-            error: 'Command failed'
+            result: `Command executed with exit code ${result.exitCode}\n\n${errorOutput}${recoverySuggestions}`,
+            error: errorMessage
           };
         }
         

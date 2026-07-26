@@ -893,19 +893,19 @@ export class AgentBridge {
       }
       
       // Check iteration limits
-      if (iteration > maxIterations) {
+      if (iteration >= maxIterations) {
         const failureResult = this.stateMachine.dispatch(AgentEvent.MAX_ITERATIONS);
         this.logStateTransition(this.stateMachine.state, failureResult.state, AgentEvent.MAX_ITERATIONS, `Max iterations reached: ${iteration}/${maxIterations}`);
         this.log(`Agent stopped: Reached maximum iterations (${iteration})`, 'error');
         
         if (options.streaming) {
-          yield { type: 'text', text: `❌ Agent stopped: Reached maximum iterations (${iteration}/${maxIterations})`, timestamp: Date.now() };
+          yield { type: 'text', text: `❌ Agent stopped: Reached maximum iterations (${maxIterations})`, timestamp: Date.now() };
           yield { 
             type: 'error', 
-            error: `MAX_ITERATIONS_REACHED: Agent executed ${iteration} iterations without completing the task`, 
+            error: `MAX_ITERATIONS_REACHED: Agent executed ${maxIterations} iterations without completing the task`, 
             timestamp: Date.now() 
           };
-          yield { type: 'done', outcome: 'error', timestamp: Date.now(), iterations: iteration };
+          yield { type: 'done', outcome: 'error', timestamp: Date.now(), iterations: maxIterations };
         }
         return;
       }

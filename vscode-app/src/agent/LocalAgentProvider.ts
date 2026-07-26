@@ -33,6 +33,7 @@ import * as fs from 'fs';
 import * as yaml from 'js-yaml';
 import { LocalI2VisionAgent, VslfcLayer } from './LocalI2VisionAgent';
 import { AgentConfig, ContextProfile, TaskContextProfile } from './AgentBridge';
+import { AgentSettingsManager } from './AgentSettings';
 
 /**
  * LocalAgentProvider - Creates and manages LocalI2VisionAgent instances
@@ -44,6 +45,7 @@ export class LocalAgentProvider {
   private visionAiDir: string;
   private workspaceRoot: string;
   private defaultConfig: AgentConfig | null = null;
+  private agentSettings: AgentSettingsManager;
 
   constructor(
     context: vscode.ExtensionContext,
@@ -52,6 +54,9 @@ export class LocalAgentProvider {
     this.context = context;
     this.outputChannel = outputChannel;
     this.workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+    
+    // Initialize AgentSettingsManager to access VSCode settings
+    this.agentSettings = AgentSettingsManager.getInstance(context);
     
     // Load agent configs from workspace's .vision-ai directory
     // Config path: {workspace}/.vision-ai/{layer}-agent.yaml
@@ -374,7 +379,7 @@ export class LocalAgentProvider {
       
       // Iteration section
       iterationSettings: {
-        maxIterations: yamlConfig.iterationSettings?.maxIterations || 10,
+        maxIterations: this.getMaxIterationsSetting(yamlConfig.iterationSettings?.maxIterations),
         maxConsecutiveToolCalls: yamlConfig.iterationSettings?.maxConsecutiveToolCalls || 5,
         enableKickstart: yamlConfig.iterationSettings?.enableKickstart ?? false,
         kickstartMinInvalidOutputs: yamlConfig.iterationSettings?.kickstartMinInvalidOutputs || 3
@@ -473,6 +478,38 @@ export class LocalAgentProvider {
     };
     
     return config;
+  }
+
+  /**
+   * Get maxIterations setting with proper precedence:
+   * 1. VSCode settings (highest priority)
+   * 2. YAML configuration
+   * 3. Default value (lowest priority)
+   */
+  private getMaxIterationsSetting(yamlMaxIterations?: number): number {
+    // Get maxIterations from VSCode settings (highest priority)
+    const vscodeMaxIterations = this.agentSettings.getSettings().agent.maxIterations;
+    
+    // Log the configuration sources for debugging
+    this.log(`[Config] === MAX ITERATIONS CONFIGURATION ===`);
+    this.log(`[Config] YAML maxIterations: ${yamlMaxIterations || 'not set'}`);
+    this.log(`[Config] VSCode maxIterations: ${vscodeMaxIterations}`);
+    
+    // Precedence: VSCode settings > YAML config > Default
+    if (vscodeMaxIterations > 0) {
+      this.log(`[Config] ✅ Using VSCode maxIterations: ${vscodeMaxIterations}`);
+      return vscodeMaxIterations;
+    }
+    
+    if (yamlMaxIterations !== undefined && yamlMaxIterations > 0) {
+      this.log(`[Config] ✅ Using YAML maxIterations: ${yamlMaxIterations}`);
+      return yamlMaxIterations;
+    }
+    
+    // Fallback to default
+    const defaultValue = 10;
+    this.log(`[Config] ⚠️ Using default maxIterations: ${defaultValue}`);
+    return defaultValue;
   }
 
   /**

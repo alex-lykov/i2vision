@@ -317,8 +317,8 @@ function createToolCallCard(toolCall: ToolCallData): string {
         ${toolCall.result ? `
           <div class="tool-call-result">
             <span class="result-label">Result:</span>
-            ${toolCall.format === 'markdown' ? `
-              <div class="markdown-result">${formatResponseText(toolCall.result, {})}</div>
+            ${(toolCall as any).format === 'markdown' ? `
+              <div class="markdown-result">${formatResponseText(toolCall.result, DEFAULT_DISPLAY_CONFIG)}</div>
             ` : `<pre>${escapeHtml(toolCall.result)}</pre>`}
           </div>
         ` : ''}

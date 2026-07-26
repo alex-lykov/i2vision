@@ -30,7 +30,8 @@ function stripLineNumberPrefix(text: string): string {
          .replace(/\s+[…\.]{3,}\s*$/, '')               // trailing truncation indicators
     ).join('\n');
   } catch (error) {
-    console.error(`[stripLineNumberPrefix] Error processing text: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[stripLineNumberPrefix] Error processing text: ${message}`);
     return text; // Return original text if processing fails
   }
 }
@@ -58,7 +59,8 @@ function aggressiveStripLineNumbers(text: string): string {
     
     return result;
   } catch (error) {
-    console.error(`[aggressiveStripLineNumbers] Error: ${error.message}`);
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`[aggressiveStripLineNumbers] Error: ${message}`);
     return text; // Return original if processing fails
   }
 }
@@ -175,7 +177,7 @@ export const editTools: ToolDefinition[] = [
       // Validate edits array exists and is properly structured
       if (!Array.isArray(edits)) {
         // Check if edits is already a valid object (from proxy fix)
-        if (typeof edits === 'object' && edits !== null && Array.isArray(edits.edits)) {
+        if (typeof edits === 'object' && edits !== null && 'edits' in edits && Array.isArray((edits as any).edits)) {
           // This is the corrected format from the proxy - use it directly
           ctx.log(`[apply_edits] Received proxy-corrected format, using edits.edits`);
           // Continue with edits.edits as the actual edits array
@@ -237,7 +239,7 @@ export const editTools: ToolDefinition[] = [
             cleanedSearch = aggressiveStripLineNumbers(e.search || '');
             cleanedReplace = aggressiveStripLineNumbers(e.replace || '');
           }
-        } catch (error) {
+        } catch (error: any) {
           ctx.log(`[apply_edits] ERROR in line number stripping: ${error.message}`);
           // Fallback to original values if stripping fails
           cleanedSearch = e.search || '';
@@ -341,7 +343,7 @@ export const editTools: ToolDefinition[] = [
       }
       
       return { result: resultMessage };
-      } catch (error) {
+      } catch (error: any) {
         ctx.log(`[apply_edits] CRITICAL ERROR: ${error.message}`);
         console.error(`[apply_edits] Handler error:`, error);
         return {
@@ -349,5 +351,6 @@ export const editTools: ToolDefinition[] = [
           error: `apply_edits failed with internal error: ${error.message}. Please check logs for details.`
         };
       }
+    }
   }
 ];

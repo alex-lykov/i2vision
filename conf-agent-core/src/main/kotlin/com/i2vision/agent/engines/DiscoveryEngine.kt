@@ -226,8 +226,52 @@ class DiscoveryEngine(
             return xmlSeg
         }
 
+        // 4. DeepSeek <file_action> format
+        val fileActionSeg = extractFileAction(text)
+        if (fileActionSeg != null) {
+            log.info("[DISCOVERY][TRACE] extractToolSegment; strategy=file_action, segmentFound=true — model used file_action format")
+            return fileActionSeg
+        }
+
         log.debug("[DISCOVERY][TRACE] extractToolSegment; no tool segment found")
         return null
+    }
+
+    /**
+     * Extract {@code <file_action>} blocks (DeepSeek XML-like format).
+     * Format: <file_action><action>tool_name</action><param1>value1</param1>...</file_action>
+     */
+    private fun extractFileAction(text: String): ToolSegment? {
+        val pattern = Regex("<file_action>\\s*<action>([^<]+)</action>(.*?)</file_action>", RegexOption.DOT_MATCHES_ALL)
+        val match = pattern.find(text) ?: return null
+        
+        val toolName = match.groupValues[1].trim()
+        val innerContent = match.groupValues[2]
+        
+        // Build a JSON-like representation from the inner XML
+        val args = linkedMapOf<String, Any>()
+        val paramPattern = Regex("<([^>]+)>([^<]*)</\\1>")
+        paramPattern.findAll(innerContent).forEach { m ->
+            val key = m.groupValues[1].trim()
+            val value = m.groupValues[2].trim()
+            if (key.isNotEmpty() && key != "action") {
+                args[key] = value
+            }
+        }
+        
+        // Create a JSON representation
+        val jsonBuilder = StringBuilder()
+        jsonBuilder.append("{\"name\":\"").append(toolName).append("\",\"arguments\":{")
+        val argEntries = args.entries.map { "\"" + it.key + "\":\"" + it.value.toString().replace("\\", "\\\\").replace("\"", "\\\"") + "\"" }
+        jsonBuilder.append(argEntries.joinToString(","))
+        jsonBuilder.append("}}")
+        
+        return ToolSegment(
+            startIndex = match.range.first,
+            endIndexExclusive = match.range.last + 1,
+            json = jsonBuilder.toString(),
+            isXml = false
+        )
     }
 
     private fun parseQuotedJsonToolCall(text: String): ParsedToolCall? {

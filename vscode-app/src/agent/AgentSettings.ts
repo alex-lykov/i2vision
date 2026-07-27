@@ -207,25 +207,102 @@ export class AgentSettingsManager {
   }
   
   /**
-   * Load settings from file
+   * Load settings from file and VSCode configuration
    */
   private loadSettings(): void {
     try {
+      // Start with defaults
+      let mergedSettings = { ...DEFAULT_SETTINGS };
+
+      // Layer 1: Load from custom JSON file (legacy support)
       if (fs.existsSync(this.settingsPath)) {
         const content = fs.readFileSync(this.settingsPath, 'utf-8');
         const userSettings = JSON.parse(content);
-        
-        // Deep merge with defaults
-        this.settings = this.deepMerge(DEFAULT_SETTINGS, userSettings);
-        
+        mergedSettings = this.deepMerge(mergedSettings, userSettings);
         console.log(`[AgentSettings] Loaded settings from ${this.settingsPath}`);
-      } else {
-        console.log(`[AgentSettings] No settings file found, using defaults`);
       }
+
+      // Layer 2: Override with VSCode settings (highest priority)
+      const vscodeConfig = vscode.workspace.getConfiguration('i2vision');
+      const vscodeOverrides = this.extractVSCodeSettings(vscodeConfig);
+      if (Object.keys(vscodeOverrides).length > 0) {
+        mergedSettings = this.deepMerge(mergedSettings, vscodeOverrides);
+        console.log(`[AgentSettings] VSCode settings applied: ${JSON.stringify(vscodeOverrides)}`);
+      }
+
+      this.settings = mergedSettings;
+      console.log(`[AgentSettings] Final maxIterations: ${this.settings.agent.maxIterations}`);
     } catch (error: any) {
       console.error(`[AgentSettings] Error loading settings: ${error.message}`);
       vscode.window.showWarningMessage(`Failed to load i2-Vision settings: ${error.message}`);
     }
+  }
+
+  /**
+   * Extract settings from VSCode configuration
+   */
+  private extractVSCodeSettings(config: vscode.WorkspaceConfiguration): Partial<AgentSettings> {
+    const overrides: any = {};
+
+    // Agent settings
+    const maxIterations = config.get<number>('agent.maxIterations');
+    if (maxIterations !== undefined && maxIterations > 0) {
+      overrides.agent = overrides.agent || {};
+      overrides.agent.maxIterations = maxIterations;
+    }
+
+    const maxConsecutiveToolCalls = config.get<number>('agent.maxConsecutiveToolCalls');
+    if (maxConsecutiveToolCalls !== undefined && maxConsecutiveToolCalls > 0) {
+      overrides.agent = overrides.agent || {};
+      overrides.agent.maxConsecutiveToolCalls = maxConsecutiveToolCalls;
+    }
+
+    // Streaming settings
+    const streamingEnabled = config.get<boolean>('streaming.enabled');
+    if (streamingEnabled !== undefined) {
+      overrides.streaming = overrides.streaming || {};
+      overrides.streaming.enabled = streamingEnabled;
+    }
+
+    const chunkSize = config.get<number>('streaming.chunkSize');
+    if (chunkSize !== undefined && chunkSize > 0) {
+      overrides.streaming = overrides.streaming || {};
+      overrides.streaming.chunkSize = chunkSize;
+    }
+
+    const chunkDelayMs = config.get<number>('streaming.chunkDelayMs');
+    if (chunkDelayMs !== undefined && chunkDelayMs >= 0) {
+      overrides.streaming = overrides.streaming || {};
+      overrides.streaming.chunkDelayMs = chunkDelayMs;
+    }
+
+    // Terminal settings
+    const autoCloseDelay = config.get<number>('terminal.autoCloseDelay');
+    if (autoCloseDelay !== undefined && autoCloseDelay > 0) {
+      overrides.terminal = overrides.terminal || {};
+      overrides.terminal.autoCloseDelayMs = autoCloseDelay;
+    }
+
+    const terminalMode = config.get<string>('terminal.mode');
+    if (terminalMode !== undefined) {
+      overrides.terminal = overrides.terminal || {};
+      overrides.terminal.mode = terminalMode as any;
+    }
+
+    // Model settings
+    const contextLength = config.get<number>('model.contextLength');
+    if (contextLength !== undefined && contextLength > 0) {
+      overrides.model = overrides.model || {};
+      overrides.model.contextLength = contextLength;
+    }
+
+    const temperature = config.get<number>('model.temperature');
+    if (temperature !== undefined) {
+      overrides.model = overrides.model || {};
+      overrides.model.temperature = temperature;
+    }
+
+    return overrides;
   }
   
   /**

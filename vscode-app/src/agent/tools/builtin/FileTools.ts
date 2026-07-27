@@ -166,41 +166,49 @@ export const fileTools: ToolDefinition[] = [
         };
       }
       
+      // TOKEN-EFFICIENT: Limit results to prevent context overflow
+      const MAX_RESULTS = 8; // Reduced from 10 to save tokens
+      const MAX_SNIPPETS_PER_FILE = 2; // Reduced from 3 to save tokens
+      const MAX_SNIPPET_LENGTH = 80; // Truncate long snippets
+
       // Format detailed results with line numbers and snippets
       const formatResult = (result: any): string => {
         const relativePath = result.path.replace(ctx.workspaceRoot, '').replace(/^[/\\]/, '');
         let output = `📄 ${relativePath}`;
         if (result.matchedByName) {
-          output += ' (file name matches)';
+          output += ' (name match)';
         } else {
           output += ` — ${result.matchCount} match(es)`;
         }
-        
+
         if (result.matches && result.matches.length > 0 && !result.matchedByName) {
-          for (const match of result.matches.slice(0, 3)) { // Show top 3 matches
-            output += `\n  Line ${match.line}: ${match.text}`;
-            if (match.snippet) {
-              output += `\n${match.snippet.split('\\n').map((l: string) => '    ' + l).join('\\n')}`;
-            }
+          const snippetCount = Math.min(result.matches.length, MAX_SNIPPETS_PER_FILE);
+          for (let i = 0; i < snippetCount; i++) {
+            const match = result.matches[i];
+            const truncatedText = match.text.length > MAX_SNIPPET_LENGTH
+              ? match.text.substring(0, MAX_SNIPPET_LENGTH) + '...'
+              : match.text;
+            output += `\n  L${match.line}: ${truncatedText}`;
           }
-          if (result.matches.length > 3) {
-            output += `\n  ... and ${result.matches.length - 3} more match(es)`;
+          if (result.matches.length > MAX_SNIPPETS_PER_FILE) {
+            output += `\n  +${result.matches.length - MAX_SNIPPETS_PER_FILE} more`;
           }
         }
         return output;
       };
-      
-      const formatted = results.slice(0, 10).map(formatResult);
-      
-      if (results.length > 10) {
-        return { 
-          result: `Found ${results.length} files matching "${pattern}". Here are the first 10:\n${formatted.join('\\n\\n')}\n\nTIP: You found ${results.length} results. Read one of these files with read_file (offset line) to see full context, or use apply_edits directly on the line numbers shown above.`, 
-          error: 'MANY_RESULTS' 
+
+      const displayedCount = Math.min(results.length, MAX_RESULTS);
+      const formatted = results.slice(0, MAX_RESULTS).map(formatResult);
+
+      if (results.length > MAX_RESULTS) {
+        return {
+          result: `Found ${results.length} files matching "${pattern}". Top ${displayedCount}:\n${formatted.join('\\n\\n')}\n\n💡 TIP: ${results.length - MAX_RESULTS} more files not shown. Read specific files with read_file, or refine your search pattern to be more specific.`,
+          error: 'MANY_RESULTS'
         };
       }
-      
-      return { 
-        result: `Found ${results.length} file(s):\n\n${formatted.join('\\n\\n')}\n\nTIP: You found the files! Use apply_edits on the shown line numbers, or read_file with offset for more context.` 
+
+      return {
+        result: `Found ${results.length} file(s):\n\n${formatted.join('\\n\\n')}\n\n💡 TIP: Use apply_edits on the line numbers shown, or read_file with offset for more context.`
       };
     }
   },

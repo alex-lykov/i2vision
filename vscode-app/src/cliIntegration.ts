@@ -608,6 +608,27 @@ export class CLI {
   /**
    * Call 3D LLM proxy API (FreeDeepseekAPI)
    */
+  /** Sanitize messages before sending to 3D LLM proxy to prevent format contamination */
+  private sanitizeMessages(messages: LLMMessage[]): LLMMessage[] {
+    return messages.map(m => {
+      if (!m.content || typeof m.content !== 'string') return m;
+      let content = m.content;
+      // Remove XML tags that teach the model wrong format
+      content = content.replace(/<\/?file_action\b[^>]*>/gi, '');
+      content = content.replace(/<\/?action\b[^>]*>/gi, '');
+      content = content.replace(/<\/?invoke\b[^>]*>/gi, '');
+      content = content.replace(/<\/?parameter\b[^>]*>/gi, '');
+      content = content.replace(/<\/?DSML\b[^>]*>/gi, '');
+      // Remove markdown code blocks containing tool calls
+      content = content.replace(/```(?:json)?\s*\n?\s*\{\s*"name"[\s\S]*?```/g, '');
+      // Remove "Calling:" patterns
+      content = content.replace(/Calling:\s*\w+\s*\n?\s*```[\s\S]*?```/gi, '');
+      // Clean up multiple consecutive blank lines
+      content = content.replace(/\n{3,}/g, '\n\n');
+      return { ...m, content };
+    });
+  }
+
   private async call3DLlm(
     modelId: string,
     messages: LLMMessage[],
@@ -618,9 +639,11 @@ export class CLI {
     const startTime = Date.now();
 
     try {
+      // Sanitize messages before sending to prevent XML/markdown contamination
+      const sanitizedMessages = this.sanitizeMessages(messages);
       const body: any = {
         model: modelId,
-        messages,
+        messages: sanitizedMessages,
         stream: stream,
         temperature: options?.temperature || 0.2,
         top_p: options?.top_p || 0.95,
@@ -978,7 +1001,33 @@ export class CLI {
   private extractToolCallsFromText(text: string): LLMToolCall[] {
     const toolCalls: LLMToolCall[] = [];
 
-    // Strategy 1: JSON objects inside markdown code blocks
+    // Strategy 1: Parse <file_action> XML format (DeepSeek v4-pro specific)
+    const fileActionPattern = /<file_action>\s*<action>([^<]+)<\/action>(.*?)<\/file_action>/gs;
+    let faMatch;
+    while ((faMatch = fileActionPattern.exec(text)) !== null) {
+      try {
+        const toolName = faMatch[1].trim();
+        const innerContent = faMatch[2];
+        const args: any = {};
+        const paramPattern = /<([a-zA-Z_][a-zA-Z0-9_]*)\s*>(.*?)<\/\1\s*>/gs;
+        let pmMatch;
+        while ((pmMatch = paramPattern.exec(innerContent)) !== null) {
+          const key = pmMatch[1].trim();
+          const value = pmMatch[2].trim();
+          if (key && key !== 'action') {
+            args[key] = value;
+          }
+        }
+        toolCalls.push({
+          id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          name: toolName,
+          arguments: args
+        });
+      } catch (e: any) {}
+    }
+    if (toolCalls.length > 0) return toolCalls;
+
+    // Strategy 2: JSON objects inside markdown code blocks
     const codeBlockPattern = /```(?:json)?\s*\n?([\s\S]*?)```/g;
     let cbMatch;
     while ((cbMatch = codeBlockPattern.exec(text)) !== null) {
@@ -1007,7 +1056,7 @@ export class CLI {
 
     if (toolCalls.length > 0) return toolCalls;
 
-    // Strategy 2: Balance-brace JSON extraction (handles nested objects)
+    // Strategy 3: Balance-brace JSON extraction (handles nested objects)
     const lines = text.split('\n');
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
@@ -1041,7 +1090,7 @@ export class CLI {
 
     if (toolCalls.length > 0) return toolCalls;
 
-    // Strategy 3: "Calling:" format
+    // Strategy 4: "Calling:" format
     const callingPattern = /Calling:\s*(\w+)\s*\n?\s*```(?:json)?\s*\n?([\s\S]*?)```|Calling:\s*(\w+)\s*\n?\s*(\{[\s\S]*?\})/gi;
     let cmatch;
     while ((cmatch = callingPattern.exec(text)) !== null) {
@@ -1061,7 +1110,7 @@ export class CLI {
 
     if (toolCalls.length > 0) return toolCalls;
 
-    // Strategy 4: Fallback for LLM outputs that contain tool parameters without name/arguments wrapper
+    // Strategy 5: Fallback for LLM outputs that contain tool parameters without name/arguments wrapper
     const inlineJsonPattern = /\{["']path["']\s*:\s*["'][^"']+["'][^}]*["']edits["']\s*:\s*\[/g;
     let jsonMatch;
     while ((jsonMatch = inlineJsonPattern.exec(text)) !== null) {

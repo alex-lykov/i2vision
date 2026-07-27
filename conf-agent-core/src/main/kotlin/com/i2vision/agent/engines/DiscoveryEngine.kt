@@ -166,6 +166,32 @@ class DiscoveryEngine(
     }
 
     private fun extractToolSegment(text: String): ToolSegment? {
+        // 0. Strip markdown code blocks and try parsing inside
+        val codeBlockPattern = Regex("```(?:json)?\\s*\\n?([\\s\\S]*?)\\n?```")
+        val codeBlockMatch = codeBlockPattern.find(text)
+        if (codeBlockMatch != null) {
+            val blockContent = codeBlockMatch.groupValues[1].trim()
+            log.debug("[DISCOVERY][TRACE] extractToolSegment; found markdown code block, content length={}", blockContent.length)
+            // Try to extract JSON from inside the code block
+            val jsonStart = blockContent.indexOf("{").takeIf { it >= 0 }
+                ?: blockContent.indexOf("[").takeIf { it >= 0 }
+            if (jsonStart != null) {
+                val seg = extractFirstJsonObject(blockContent, jsonStart)
+                if (seg != null) {
+                    log.info(
+                        "[DISCOVERY][TRACE] extractToolSegment; strategy=markdown_codeblock, segmentFound=true"
+                    )
+                    // Convert to absolute positions in original text
+                    return ToolSegment(
+                        startIndex = codeBlockMatch.range.first,
+                        endIndexExclusive = codeBlockMatch.range.last + 1,
+                        json = seg.json,
+                        isXml = false
+                    )
+                }
+            }
+        }
+
         // 1. JSON with explicit tool_call: header
         val headerMatch = toolHeaderRegex.find(text)
         if (headerMatch != null) {

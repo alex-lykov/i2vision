@@ -656,16 +656,19 @@ export class AgentBridge {
   /** Format tool definitions for embedding in the system prompt (3D LLM text-based tool calling) */
   private formatToolsForSystemPrompt(tools: LLMTool[]): string {
     let text = '--- AVAILABLE TOOLS ---\n';
-    text += 'IMPORTANT: YOU MUST call tools using the JSON format below. NEVER describe what you will do - CALL THE TOOL IMMEDIATELY.\n';
-    text += 'Output EXACTLY one line of raw JSON with NO markdown, NO code blocks, NO explanation, NO "I will", NO "Let me", NO "Calling:".\n';
-    text += 'JUST the JSON, NOTHING ELSE.\n';
-    text += 'Example:\n';
+    text += 'CRITICAL: YOU MUST call tools using ONLY raw JSON format. ANY OTHER FORMAT IS WRONG AND WILL FAIL.\n';
+    text += 'Output EXACTLY one line of raw JSON with NO markdown, NO code blocks, NO XML tags, NO <file_action>, NO <invoke>, NO explanation, NO "I will", NO "Let me", NO "Calling:".\n';
+    text += 'JUST the JSON, NOTHING ELSE. If you output XML, markdown, or any other format, the tool WILL NOT execute.\n';
+    text += 'Example (COPY THIS FORMAT EXACTLY):\n';
     text += '{"name":"list_directory","arguments":{"path":".","recursive":false}}\n\n';
     text += 'RULES:\n';
     text += '- NEVER write "I will call" or "Let me call" - JUST CALL IT\n';
     text += '- NEVER wrap in ```json or markdown - JUST raw JSON\n';
+    text += '- NEVER use XML tags like <file_action>, <invoke>, <action> - these formats are WRONG and will FAIL\n';
     text += '- NEVER add explanation before or after - JUST the tool call\n';
-    text += '- ALWAYS call tools immediately when you know what to do\n\n';
+    text += '- ALWAYS call tools immediately when you know what to do\n';
+    text += '- WRONG FORMATS: <file_action>...,</invoke>..., ```json {...}```, "I will call..."\n';
+    text += '- CORRECT FORMAT: {"name":"tool_name","arguments":{"param":"value"}}\n\n';
     text += 'Available tools:\n';
     for (const tool of tools) {
       const fn = tool.function;
@@ -2967,6 +2970,7 @@ DO NOT include large content in arguments. Just reference files by path.`;
       prompt += '\n• SEARCH TIP: If search_files finds files, READ them immediately. Do NOT search again with different patterns.';
       prompt += '\n• FOCUS: Fix source files (src/main), NOT test files (src/test), unless user specifically asks about tests.';
       prompt += '\n• Paths: relative to workspace root, use forward slashes (/).';
+      prompt += '\n• CRITICAL FORMAT RULE: Tool calls MUST be raw JSON only. XML tags like <file_action>, <invoke> will FAIL. Markdown blocks ```json will FAIL. Only this format works: {"name":"tool","arguments":{"param":"value"}}';
     }
     return prompt;
   }

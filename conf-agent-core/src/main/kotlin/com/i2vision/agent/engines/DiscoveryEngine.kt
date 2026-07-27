@@ -242,15 +242,19 @@ class DiscoveryEngine(
      * Format: <file_action><action>tool_name</action><param1>value1</param1>...</file_action>
      */
     private fun extractFileAction(text: String): ToolSegment? {
-        val pattern = Regex("<file_action>\\s*<action>([^<]+)</action>(.*?)</file_action>", RegexOption.DOT_MATCHES_ALL)
+        // First check if the text contains a file_action block
+        if (!text.contains("<file_action>")) return null
+        
+        val pattern = Regex("<file_action>\\s*<action>([^<]+)</action>(.*?)\s*</file_action>", RegexOption.DOT_MATCHES_ALL)
         val match = pattern.find(text) ?: return null
         
         val toolName = match.groupValues[1].trim()
         val innerContent = match.groupValues[2]
         
         // Build a JSON-like representation from the inner XML
+        // Use a more robust pattern: match <tag>...content...</tag> where tag is a simple name
         val args = linkedMapOf<String, Any>()
-        val paramPattern = Regex("<([^>]+)>([^<]*)</\\1>")
+        val paramPattern = Regex("<([a-zA-Z_][a-zA-Z0-9_]*)\s*>(.*?)\s*</\\1\s*>", RegexOption.DOT_MATCHES_ALL)
         paramPattern.findAll(innerContent).forEach { m ->
             val key = m.groupValues[1].trim()
             val value = m.groupValues[2].trim()
@@ -259,10 +263,12 @@ class DiscoveryEngine(
             }
         }
         
-        // Create a JSON representation
+        // Create a JSON representation with proper escaping
         val jsonBuilder = StringBuilder()
-        jsonBuilder.append("{\"name\":\"").append(toolName).append("\",\"arguments\":{")
-        val argEntries = args.entries.map { "\"" + it.key + "\":\"" + it.value.toString().replace("\\", "\\\\").replace("\"", "\\\"") + "\"" }
+        jsonBuilder.append("{\"name\":\"").append(escapeJson(toolName)).append("\",\"arguments\":{")
+        val argEntries = args.entries.map { 
+            "\"" + escapeJson(it.key) + "\":\"" + escapeJson(it.value.toString()) + "\"" 
+        }
         jsonBuilder.append(argEntries.joinToString(","))
         jsonBuilder.append("}}")
         
@@ -272,6 +278,16 @@ class DiscoveryEngine(
             json = jsonBuilder.toString(),
             isXml = false
         )
+    }
+
+    /** Escape a string for JSON */
+    private fun escapeJson(str: String): String {
+        return str
+            .replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
     }
 
     private fun parseQuotedJsonToolCall(text: String): ParsedToolCall? {

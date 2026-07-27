@@ -657,7 +657,40 @@ export class CLI {
 
         // Fallback: if proxy returned text with embedded tool calls but no tool_calls array
         if (toolCallsData.length === 0 && content) {
-          // Try 1: Parse JSON objects inside markdown code blocks (most common DeepSeek format)
+          // Try 1: Parse <file_action> XML format (DeepSeek v4-pro specific format)
+          if (toolCallsData.length === 0) {
+            const fileActionPattern = /<file_action>\s*<action>([^<]+)<\/action>(.*?)<\/file_action>/gs;
+            let faMatch;
+            while ((faMatch = fileActionPattern.exec(content)) !== null) {
+              try {
+                const toolName = faMatch[1].trim();
+                const innerContent = faMatch[2];
+                
+                // Extract parameters
+                const args: any = {};
+                const paramPattern = /<([a-zA-Z_][a-zA-Z0-9_]*)\s*>(.*?)<\/\1\s*>/gs;
+                let pmMatch;
+                while ((pmMatch = paramPattern.exec(innerContent)) !== null) {
+                  const key = pmMatch[1].trim();
+                  const value = pmMatch[2].trim();
+                  if (key && key !== 'action') {
+                    args[key] = value;
+                  }
+                }
+                
+                toolCallsData.push({
+                  id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                  type: 'function',
+                  function: {
+                    name: toolName,
+                    arguments: JSON.stringify(args)
+                  }
+                });
+              } catch (e: any) {}
+            }
+          }
+
+          // Try 2: Parse JSON objects inside markdown code blocks (most common DeepSeek format)
           const codeBlockPattern = /```(?:json)?\s*\n?([\s\S]*?)```/g;
           let cbMatch;
           while ((cbMatch = codeBlockPattern.exec(content)) !== null) {

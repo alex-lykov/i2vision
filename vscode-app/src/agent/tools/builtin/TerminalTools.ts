@@ -158,6 +158,11 @@ Example:
           const errorOutput = output.slice(-1000);
           let errorMessage = 'Command failed';
           
+          // Log detailed error information
+          ctx.log(`[run_terminal] Command failed: ${command.substring(0, 200)}...`);
+          ctx.log(`[run_terminal] Exit code: ${result.exitCode}`);
+          ctx.log(`[run_terminal] Error output: ${errorOutput}`);
+          
           // Provide specific guidance based on command type
           if (command.includes('git')) {
             if (errorOutput.includes('not a git repository') || errorOutput.includes('fatal: not a git repository')) {

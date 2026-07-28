@@ -56,6 +56,9 @@ export interface AgentSessionState {
     retryAttempts: number;
   };
 
+  /** Last known token usage for context meter restoration */
+  lastTokenUsage?: { prompt: number; completion: number; total: number };
+
   /** Serialized SessionManager state for restoration */
   sessionManagerState?: object;
 }

@@ -551,6 +551,8 @@ export class AgentBridge {
       forceActionMode: this._forceActionMode,
       failedSearchCount: this._failedSearchCount,
       lastSearchPattern: this._lastSearchPattern || undefined,
+      // Include token usage for context meter restoration
+      lastTokenUsage: this._lastTokenUsage,
       proxySession: this.sessionManager?.getSessionState() ?? undefined,
       sessionManagerState: this.sessionManager?.serialize() ?? undefined,
     };
@@ -868,11 +870,20 @@ export class AgentBridge {
 
     let iteration = 0;
     
+    // Initialize token usage tracking
+    // For resumed conversations, try to restore from session state
+    if (!isFreshConversation && this._sessionState?.lastTokenUsage) {
+      this._lastTokenUsage = this._sessionState.lastTokenUsage;
+      this.log(`Restored token usage from session: prompt=${this._lastTokenUsage.prompt}, completion=${this._lastTokenUsage.completion}`);
+    } else {
+      this._lastTokenUsage = undefined; // Fresh conversation starts with no token usage
+    }
+    
     while (true) {
       iteration++;
       this._autoNudge = null;
-      this._lastTokenUsage = undefined; // Reset per-iteration so stale usage isn't carried forward
-      // Remove ephemeral nudge messages from previous iterations to prevent accumulation
+      // Don't reset token usage - it should persist across iterations
+      // Only reset at the start of fresh conversations
       messages = messages.filter(m => !m._isNudge);
       this.stateMachine.incrementIteration();
       

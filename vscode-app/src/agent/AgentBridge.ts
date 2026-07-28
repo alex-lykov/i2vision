@@ -805,6 +805,14 @@ export class AgentBridge {
     this._lastUserInput = userInput;
 
     let maxIterations = this.config.iterationSettings.maxIterations;
+    // Override with VSCode settings if available (highest priority)
+    if (this.settingsManager) {
+      const settings = this.settingsManager.getSettings();
+      if (settings.agent?.maxIterations && settings.agent.maxIterations > 0) {
+        maxIterations = settings.agent.maxIterations;
+        this.log(`Max iterations overridden by VSCode settings: ${maxIterations}`);
+      }
+    }
     if (typeof maxIterations !== 'number' || maxIterations < 0 || maxIterations > 100) maxIterations = 20;
     
     // Reset state only if no session state was restored (first conversation)

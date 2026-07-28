@@ -279,6 +279,14 @@ export const editTools: ToolDefinition[] = [
       if (editResult.appliedCount === 0 && editResult.failures.every(f => f.reason === 'NOT_FOUND')) {
         ctx.log(`[apply_edits] All edits failed (NOT_FOUND), attempting automatic fixes...`);
         
+        // Log full search strings for debugging when they fail
+        cleanedEdits.forEach((edit, index) => {
+          const fullSearch = edit.search != null && typeof edit.search === 'string' 
+            ? edit.search 
+            : (edit.search != null ? String(edit.search) : 'null');
+          ctx.log(`[apply_edits] DEBUG: Full search string ${index + 1}: "${fullSearch}"`);
+        });
+        
         // Try removing any remaining line number prefixes that might have been missed
         const retryEdits = cleanedEdits.map(e => ({
           search: aggressiveStripLineNumbers(e.search),

@@ -810,12 +810,20 @@ export class AgentBridge {
     // Override with VSCode settings if available (highest priority)
     if (this.settingsManager) {
       const settings = this.settingsManager.getSettings();
+      this.log(`[DEBUG] Settings manager available, agent settings: ${JSON.stringify(settings.agent)}`);
       if (settings.agent?.maxIterations && settings.agent.maxIterations > 0) {
         maxIterations = settings.agent.maxIterations;
         this.log(`Max iterations overridden by VSCode settings: ${maxIterations}`);
+      } else {
+        this.log(`[DEBUG] No maxIterations in VSCode settings or value is 0`);
       }
+    } else {
+      this.log(`[DEBUG] Settings manager is null - using YAML config value: ${maxIterations}`);
     }
-    if (typeof maxIterations !== 'number' || maxIterations < 0 || maxIterations > 100) maxIterations = 20;
+    if (typeof maxIterations !== 'number' || maxIterations < 0 || maxIterations > 100) {
+      this.log(`[DEBUG] maxIterations ${maxIterations} is invalid, resetting to 20`);
+      maxIterations = 20;
+    }
     
     // Reset state only if no session state was restored (first conversation)
     const isFreshConversation = !this._sessionState;

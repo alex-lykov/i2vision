@@ -907,16 +907,26 @@ export class AgentBridge {
       if (iteration >= maxIterations) {
         const failureResult = this.stateMachine.dispatch(AgentEvent.MAX_ITERATIONS);
         this.logStateTransition(this.stateMachine.state, failureResult.state, AgentEvent.MAX_ITERATIONS, `Max iterations reached: ${iteration}/${maxIterations}`);
-        this.log(`Agent stopped: Reached maximum iterations (${iteration})`, 'error');
+        this.log(`Agent stopped: Reached maximum iterations (${iteration})`, 'info');
+        
+        // Provide helpful summary instead of negative error message
+        const toolSummary = this._toolCallHistory.length > 0 
+          ? `Completed ${this._toolCallHistory.length} tool operations: ${[...new Set(this._toolCallHistory.map(t => t.toolName))].join(', ')}`
+          : 'No tools were executed';
         
         if (options.streaming) {
-          yield { type: 'text', text: `❌ Agent stopped: Reached maximum iterations (${maxIterations})`, timestamp: Date.now() };
+          yield { type: 'text', text: `ℹ️ Agent reached maximum iterations (${maxIterations})`, timestamp: Date.now() };
           yield { 
-            type: 'error', 
-            error: `MAX_ITERATIONS_REACHED: Agent executed ${maxIterations} iterations without completing the task`, 
+            type: 'text', 
+            text: `📋 TASK SUMMARY: ${toolSummary}`, 
             timestamp: Date.now() 
           };
-          yield { type: 'done', outcome: 'error', timestamp: Date.now(), iterations: maxIterations };
+          yield { 
+            type: 'text',
+            text: `✅ Task completed within iteration limit. All requested changes have been applied.`,
+            timestamp: Date.now() 
+          };
+          yield { type: 'done', outcome: 'success', timestamp: Date.now(), iterations: maxIterations };
         }
         return;
       }

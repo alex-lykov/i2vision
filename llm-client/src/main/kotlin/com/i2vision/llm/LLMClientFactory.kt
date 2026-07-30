@@ -22,6 +22,11 @@ enum class LLMProvider {
     DEEPSEEK,
 
     /**
+     * Mistral AI cloud API (paid, high-quality language models)
+     */
+    MISTRAL,
+
+    /**
      * 3D LLM proxy (FreeDeepseekAPI - DeepSeek Web V3 via OpenAI-compatible endpoint)
      */
     THREED_LLM
@@ -72,6 +77,17 @@ object LLMClientFactory {
                     apiKey = apiKey,
                     baseUrl = config.baseUrl ?: "https://api.deepseek.com",
                     defaultModel = config.model ?: "deepseek-chat"
+                )
+            }
+
+            LLMProvider.MISTRAL -> {
+                val apiKey = config.apiKey
+                    ?: throw IllegalArgumentException("Mistral API key is required")
+
+                MistralClient(
+                    apiKey = apiKey,
+                    baseUrl = config.baseUrl ?: "https://api.mistral.ai",
+                    defaultModel = config.model ?: "mistral-tiny"
                 )
             }
 
@@ -140,6 +156,14 @@ fun deepseekConfig(
     apiKey: String,
     baseUrl: String = "https://api.deepseek.com",
     model: String = "deepseek-chat"
+): ProviderConfig {
+    return ProviderConfig(apiKey = apiKey, baseUrl = baseUrl, model = model)
+}
+
+fun mistralConfig(
+    apiKey: String,
+    baseUrl: String = "https://api.mistral.ai",
+    model: String = "mistral-tiny"
 ): ProviderConfig {
     return ProviderConfig(apiKey = apiKey, baseUrl = baseUrl, model = model)
 }

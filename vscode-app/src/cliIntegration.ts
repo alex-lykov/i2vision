@@ -61,6 +61,8 @@ export interface LLMOptions {
   temperature?: number;
   top_p?: number;
   max_tokens?: number;
+  thinking_enabled?: boolean;
+  search_enabled?: boolean;
 }
 
 /**
@@ -510,6 +512,14 @@ export class CLI {
         max_tokens: options?.max_tokens || 4096
       };
 
+      // Forward thinking/search toggles (supported by DeepSeek's chat completions API)
+      if (options?.thinking_enabled !== undefined) {
+        body.thinking_enabled = options.thinking_enabled;
+      }
+      if (options?.search_enabled !== undefined) {
+        body.search_enabled = options.search_enabled;
+      }
+
       // Skip tools array for 3D LLM — tool definitions are embedded in system prompt by AgentBridge.
       // The proxy parses TOOL_CALL: patterns from DeepSeek's text response.
 
@@ -649,6 +659,14 @@ export class CLI {
         top_p: options?.top_p || 0.95,
         max_tokens: options?.max_tokens || 4096
       };
+
+      // Forward thinking/search toggle if specified (supported by DeepSeek Web API proxy)
+      if (options?.thinking_enabled !== undefined) {
+        body.thinking_enabled = options.thinking_enabled;
+      }
+      if (options?.search_enabled !== undefined) {
+        body.search_enabled = options.search_enabled;
+      }
 
       // Skip tools array — proxy handles tool calling via text parsing from system prompt
 

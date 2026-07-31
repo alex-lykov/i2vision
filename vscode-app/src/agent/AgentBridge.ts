@@ -529,9 +529,7 @@ export class AgentBridge {
   /**
    * Get current session state for persistence
    */
-  getSessionState(): AgentSessionState | undefined {
-    if (!this._sessionState) return undefined;
-    
+  getSessionState(): AgentSessionState {
     return {
       visitedPaths: Array.from(this._autoReadFiles),
       searchCache: Array.from(this._searchCache.entries()).map(([query, data]) => ({
@@ -551,7 +549,6 @@ export class AgentBridge {
       forceActionMode: this._forceActionMode,
       failedSearchCount: this._failedSearchCount,
       lastSearchPattern: this._lastSearchPattern || undefined,
-      // Include token usage for context meter restoration
       lastTokenUsage: this._lastTokenUsage,
       proxySession: this.sessionManager?.getSessionState() ?? undefined,
       sessionManagerState: this.sessionManager?.serialize() ?? undefined,
@@ -725,7 +722,7 @@ export class AgentBridge {
     return { finalText, toolCalls, iterations, durationMs: Date.now() - startTime, success: !error, error };
   }
 
-  async *processStreaming(userInput: string, currentFile?: string, history?: ChatMessage[], sessionState?: AgentSessionState): AsyncGenerator<AgentChunk> {
+  async *processStreaming(userInput: string, currentFile?: string, history?: ChatMessage[], sessionState?: AgentSessionState, forceFreshSession: boolean = false): AsyncGenerator<AgentChunk> {
     if (!this.isInitialized) await this.initialize();
     
     // Restore session state if provided
@@ -734,13 +731,13 @@ export class AgentBridge {
     try {
       const templateVars = { ...this.config.templateVariables, currentFile: currentFile || this.config.templateVariables.currentFile || '', task: userInput };
       const systemPrompt = this.buildSystemPrompt(templateVars);
-      for await (const chunk of this.executeAgentLoop(userInput, systemPrompt, { streaming: true }, history)) yield chunk;
+      for await (const chunk of this.executeAgentLoop(userInput, systemPrompt, { streaming: true }, history, sessionState, forceFreshSession)) yield chunk;
     } catch (error: any) {
       yield { type: 'error', error: error.message, timestamp: Date.now() };
     }
   }
 
-  async *executeAgentLoop(userInput: string, systemPrompt: string, options: AgentLoopOptions = { streaming: false }, history?: ChatMessage[]): AsyncGenerator<AgentChunk> {
+  async *executeAgentLoop(userInput: string, systemPrompt: string, options: AgentLoopOptions = { streaming: false }, history?: ChatMessage[], sessionState?: AgentSessionState, forceFreshSession: boolean = false): AsyncGenerator<AgentChunk> {
     // STATE MACHINE FLOW: Intent → Plan → Constraints → Sequence → Execute → Verify → Output
     
     // DOMAIN DETECTION: Only run if not already resolved (restored from session state)
@@ -825,8 +822,11 @@ export class AgentBridge {
       maxIterations = 20;
     }
     
-    // Reset state only if no session state was restored (first conversation)
-    const isFreshConversation = !this._sessionState;
+    // Reset state only if no session state was restored AND no history exists (truly fresh conversation)
+    // Also check if this is explicitly a new chat by checking forceFreshSession flag
+    // NOTE: If history is provided (even without sessionState), it's NOT a fresh conversation
+    const hasExistingHistory = history && history.length > 0;
+    const isFreshConversation = forceFreshSession || (!hasExistingHistory && !this._sessionState);
     
     if (isFreshConversation) {
       this.log('Fresh conversation - resetting all state');
@@ -883,6 +883,17 @@ export class AgentBridge {
     if (!isFreshConversation && this._sessionState?.lastTokenUsage) {
       this._lastTokenUsage = this._sessionState.lastTokenUsage;
       this.log(`Restored token usage from session: prompt=${this._lastTokenUsage.prompt}, completion=${this._lastTokenUsage.completion}`);
+      
+      // Also restore to session manager if available
+      if (this.sessionManager && this.sessionManager.name !== 'Null' && this._sessionState.lastTokenUsage) {
+        const sessionManagerAny = this.sessionManager as any;
+        if (sessionManagerAny.updateTokenUsage) {
+          sessionManagerAny.updateTokenUsage(
+            this._sessionState.lastTokenUsage.prompt,
+            this._sessionState.lastTokenUsage.completion
+          );
+        }
+      }
     } else {
       this._lastTokenUsage = undefined; // Fresh conversation starts with no token usage
     }
@@ -1073,6 +1084,8 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
         } catch (e: any) {
           messages.push({ role: 'tool', content: `Error: ${e.message}` });
         }
+
+        
       }
 
       if (options.streaming) yield { type: 'thinking', message: `Processing...`, timestamp: Date.now() };
@@ -1108,10 +1121,17 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
       // SESSION MANAGEMENT: Sync and manage provider-specific session
       if (this.sessionManager && this.sessionManager.name !== 'Null') {
         if (iteration === 1) {
-          await this.sessionManager.syncSession(this.config.model.id);
-          const sessionState = this.sessionManager.getSessionState();
-          if (sessionState) {
-            this.log(`Session ${sessionState.id || 'new'} — ${sessionState.messageCount} msgs, ${Math.round((Date.now() - sessionState.createdAt) / 60000)} min old`);
+          // SKIP sync on fresh conversations: resetSession() already cleared
+          // local state above, and syncing from the proxy would re-discover the
+          // old session by agent ID, defeating the purpose of a new chat.
+          if (isFreshConversation) {
+            this.log('Skipping session sync — fresh conversation, using reset state');
+          } else {
+            await this.sessionManager.syncSession(this.config.model.id);
+            const sessionState = this.sessionManager.getSessionState();
+            if (sessionState) {
+              this.log(`Session ${sessionState.id || 'new'} — ${sessionState.messageCount} msgs, ${Math.round((Date.now() - sessionState.createdAt) / 60000)} min old`);
+            }
           }
         }
 
@@ -1128,6 +1148,26 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
 
         // Manage messages (compact if approaching limits)
         messages = await this.sessionManager.manageMessages(messages);
+        
+        // Check for context exhaustion and reset if needed
+        if (this.sessionManager && this.sessionManager.name !== 'Null') {
+          const sessionManagerAny = this.sessionManager as any;
+          const isExhausted = sessionManagerAny.isContextExhausted ? sessionManagerAny.isContextExhausted() : false;
+          if (isExhausted) {
+            this.log('Context exhaustion detected - triggering automatic session reset');
+            yield { type: 'thinking', message: 'Context limit reached - resetting session for stability', timestamp: Date.now() };
+            const sessionManagerAny = this.sessionManager as any;
+            const resetOk = await sessionManagerAny.resetSession(this.config.model.id, 'token_limit');
+            if (resetOk) {
+              this.log('Session reset successfully due to context exhaustion');
+              // Clear token tracking after reset
+              this._lastTokenUsage = undefined;
+              this._lastKnownPromptTokens = 0;
+            } else {
+              this.log('Session reset failed - continuing with current context');
+            }
+          }
+        }
       }
 
       let responseText = '';
@@ -1153,6 +1193,17 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
           if (nonStreamResponse.tokenUsage) {
             this._lastTokenUsage = nonStreamResponse.tokenUsage;
             this._lastKnownPromptTokens = nonStreamResponse.tokenUsage.prompt;
+            
+            // Update session manager token tracking
+            if (this.sessionManager && this.sessionManager.name !== 'Null') {
+              const sessionManagerAny = this.sessionManager as any;
+              if (sessionManagerAny.updateTokenUsage) {
+                sessionManagerAny.updateTokenUsage(
+                  nonStreamResponse.tokenUsage.prompt,
+                  nonStreamResponse.tokenUsage.completion
+                );
+              }
+            }
           } else {
             const promptTokens = this.estimateTokens(messages);
             const completionTokens = Math.ceil(responseText.length / 4);
@@ -1202,6 +1253,17 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
             if (chunk.tokenUsage) {
               this._lastTokenUsage = chunk.tokenUsage;
               this._lastKnownPromptTokens = chunk.tokenUsage.prompt;
+              
+              // Update session manager token tracking
+              if (this.sessionManager && this.sessionManager.name !== 'Null') {
+                const sessionManagerAny = this.sessionManager as any;
+                if (sessionManagerAny.updateTokenUsage) {
+                  sessionManagerAny.updateTokenUsage(
+                    chunk.tokenUsage.prompt,
+                    chunk.tokenUsage.completion
+                  );
+                }
+              }
             }
             if (chunk.done) break;
           }
@@ -2007,7 +2069,20 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
         // If tool executed but returned an error indicating session issues
         if (result.error && this.isSessionError(result.error)) {
           this.log(`Session error in tool result (attempt ${attempt}/${maxRetries})`);
-          if (this.sessionManager && attempt < maxRetries) {
+          
+          // Special handling for context exhaustion errors
+          if (this.isContextExhaustionError(result.error)) {
+            this.log(`Context exhaustion detected in tool result: ${result.error}`);
+            if (this.sessionManager && attempt < maxRetries) {
+              const resetOk = await (this.sessionManager as any).resetSession(this.config.model.id, 'token_limit');
+              if (resetOk) {
+                this.log('Context exhaustion - session reset successful, retrying with clean context...');
+                this.sessionManager?.recordRetry();
+                // Force a context cleanup by rebuilding messages
+                continue;
+              }
+            }
+          } else if (this.sessionManager && attempt < maxRetries) {
             const resetOk = await this.sessionManager.resetSession(this.config.model.id);
             if (resetOk) {
               this.log('Session reset after tool error, retrying...');
@@ -2024,7 +2099,19 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
         // Session-level errors: reset and retry
         if (this.isSessionError(lastError)) {
           this.log(`Session-level error (attempt ${attempt}/${maxRetries}): ${lastError}`);
-          if (this.sessionManager && attempt < maxRetries) {
+          
+          // Special handling for context exhaustion errors
+          if (this.isContextExhaustionError(lastError)) {
+            this.log(`Context exhaustion detected in exception: ${lastError}`);
+            if (this.sessionManager && attempt < maxRetries) {
+              const resetOk = await (this.sessionManager as any).resetSession(this.config.model.id, 'token_limit');
+              if (resetOk) {
+                this.log('Context exhaustion - session reset successful, retrying tool with clean context...');
+                this.sessionManager?.recordRetry();
+                continue;
+              }
+            }
+          } else if (this.sessionManager && attempt < maxRetries) {
             const resetOk = await this.sessionManager.resetSession(this.config.model.id);
             if (resetOk) {
               this.log('Session reset, retrying tool...');
@@ -2058,8 +2145,25 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
       'session_reset',
       'expired',
       'invalid session',
+      'exceeds_limit',
+      'too long',
+      'context_length',
+      'token limit',
     ];
     return sessionIndicators.some((ind) => errorText.toLowerCase().includes(ind));
+  }
+
+  private isContextExhaustionError(errorText: string): boolean {
+    const contextIndicators = [
+      'exceeds_limit',
+      'too long',
+      'content too long',
+      'context_length',
+      'token limit',
+      'содержание слишком длинное', // Russian: "content too long"
+      'предел длины', // Russian: "length limit"
+    ];
+    return contextIndicators.some((ind) => errorText.toLowerCase().includes(ind));
   }
 
   private injectSimplifiedToolPrompt(toolCall: LLMToolCall): void {

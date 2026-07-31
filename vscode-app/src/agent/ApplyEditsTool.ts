@@ -50,7 +50,8 @@ export interface EditFailure {
  */
 export function applyEditsToContent(
   content: string,
-  edits: EditOperation[]
+  edits: EditOperation[],
+  options: { originalContent?: string } = {}
 ): ApplyEditsResult {
   const failures: EditFailure[] = [];
   let currentContent = content;
@@ -62,11 +63,21 @@ export function applyEditsToContent(
 
     // Validate uniqueness
     if (occurrences === 0) {
+      let suggestion = 'Check if the text was already modified by a previous edit, or verify the exact whitespace/indentation. Common issues: line number prefixes not stripped, extra spaces, or content already changed.';
+      
+      // Enhanced suggestion when original content is available
+      if (options.originalContent && edit.search) {
+        const originalOccurrences = countOccurrences(options.originalContent, edit.search);
+        if (originalOccurrences > 0) {
+          suggestion = `This search string existed in the original file but was modified by a previous edit. The text was found ${originalOccurrences} time(s) in the original content. Try checking what previous edits might have changed this section.`;
+        }
+      }
+      
       failures.push({
         edit,
         reason: 'NOT_FOUND',
         occurrences: 0,
-        suggestion: 'Check if the text was already modified by a previous edit, or verify the exact whitespace/indentation. Common issues: line number prefixes not stripped, extra spaces, or content already changed.'
+        suggestion
       });
       continue;
     }

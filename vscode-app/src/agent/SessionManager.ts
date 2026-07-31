@@ -30,6 +30,18 @@ export interface ProxySessionState {
 
   /** Retry / reset attempts this session */
   retryAttempts: number;
+
+  /** Token usage tracking */
+  tokenUsage?: {
+    prompt: number;
+    completion: number;
+    total: number;
+    lastUpdated: number;
+  };
+
+  /** Context exhaustion flags */
+  contextExhausted?: boolean;
+  lastContextWarning?: number;
 }
 
 export interface SessionHealth {
@@ -51,6 +63,8 @@ export interface SessionLimits {
     messageCount: number;
     ageMinutes: number;
     continuationLimit: number;
+    tokenUsagePercentage?: number;
+    maxTokenUsage?: number;
   };
 }
 

@@ -47,6 +47,8 @@ const DEFAULT_3D_LLM_LIMITS: SessionLimits = {
     messageCount: 85,
     ageMinutes: 90,
     continuationLimit: 2,
+    tokenUsagePercentage: 90, // Reset when 90% of context tokens are used
+    maxTokenUsage: 57600, // 90% of 64000 token context window
   },
 };
 
@@ -164,7 +166,30 @@ export class ProxySessionManager implements SessionManager {
       return this.compactMessages(messages);
     }
 
-    // 2. Proactive age reset
+    // 2. Token-based reset (if token usage tracking is available)
+    if (this.proxySession.tokenUsage && triggers.tokenUsagePercentage && triggers.maxTokenUsage) {
+      const tokenUsagePercentage = (this.proxySession.tokenUsage.total / triggers.maxTokenUsage) * 100;
+      if (tokenUsagePercentage >= triggers.tokenUsagePercentage) {
+        this.log(
+          `Token usage at ${this.proxySession.tokenUsage.total}/${triggers.maxTokenUsage} (${tokenUsagePercentage.toFixed(1)}%) - context exhaustion imminent`
+        );
+        this.proxySession.contextExhausted = true;
+        this.proxySession.lastContextWarning = now;
+        // Return compacted messages and mark for reset
+        const compacted = this.compactMessages(messages);
+        return compacted;
+      } else if (tokenUsagePercentage >= 80) {
+        // Warning threshold
+        if (!this.proxySession.lastContextWarning || now - this.proxySession.lastContextWarning > 300000) { // 5 minutes
+          this.log(
+            `Token usage warning: ${this.proxySession.tokenUsage.total}/${triggers.maxTokenUsage} (${tokenUsagePercentage.toFixed(1)}%)`
+          );
+          this.proxySession.lastContextWarning = now;
+        }
+      }
+    }
+
+    // 3. Proactive age reset
     if (
       this.proxySession.createdAt > 0 &&
       now - this.proxySession.createdAt > triggers.ageMinutes * 60000
@@ -173,7 +198,7 @@ export class ProxySessionManager implements SessionManager {
       // We can't reset here without agentId; the caller should call resetSession first
     }
 
-    // 3. Auto-continuation reset
+    // 4. Auto-continuation reset
     if (this.proxySession.continuityCounter >= triggers.continuationLimit) {
       this.log(`Auto-continuation limit ${this.proxySession.continuityCounter}/${triggers.continuationLimit} reached`);
       // Caller should reset before this point
@@ -239,17 +264,18 @@ export class ProxySessionManager implements SessionManager {
     return points.slice(0, 5).join('; ');
   }
 
-  async resetSession(agentId: string): Promise<boolean> {
+  async resetSession(agentId: string, reason?: 'message_limit' | 'token_limit' | 'age_limit' | 'manual'): Promise<boolean> {
     const resetUrl = `${this.baseUrl}/reset-session?agent=${encodeURIComponent(agentId)}`;
     try {
       const response = await fetch(resetUrl, { method: 'POST' });
       if (!response.ok) {
-        this.log(`Reset failed: ${response.status}`);
-        return false;
+        this.log(`Proxy reset failed (${response.status}), attempting local reset only`);
+        // Continue with local reset even if proxy reset failed
+      } else {
+        const data: ProxyResetResponse = await response.json();
+        const resetReason = reason || 'manual';
+        this.log(`Session reset (${resetReason}): ${data.status}, preserved ${data.history_preserved} items`);
       }
-
-      const data: ProxyResetResponse = await response.json();
-      this.log(`Session reset: ${data.status}, preserved ${data.history_preserved} items`);
 
       // Reset local state
       this.proxySession.id = null;
@@ -259,11 +285,32 @@ export class ProxySessionManager implements SessionManager {
       this.proxySession.retryAttempts = 0;
       this.proxySession.history = [];
 
+      // Reset token tracking
+      this.proxySession.tokenUsage = {
+        prompt: 0,
+        completion: 0,
+        total: 0,
+        lastUpdated: Date.now(),
+      };
+      this.proxySession.contextExhausted = false;
+      this.proxySession.lastContextWarning = undefined;
+
       return true;
     } catch (error: any) {
-      this.log(`Reset error: ${error.message}`);
-      return false;
+      this.log(`Proxy reset error: ${error.message}, attempting local reset only`);
+      // Continue with local reset even if proxy reset failed
     }
+
+    // Always perform local reset regardless of proxy reset success
+    const resetReason = reason || 'manual';
+    this.log(`Performing local session reset (${resetReason}) due to ${this.proxySession.contextExhausted ? 'context exhaustion' : 'limit reached'}`);
+
+    // Additional context cleanup for token limit resets
+    if (resetReason === 'token_limit') {
+      this.log('Context exhaustion reset - clearing all context state');
+    }
+
+    return true;
   }
 
   recordContinuation(): void {
@@ -273,6 +320,52 @@ export class ProxySessionManager implements SessionManager {
 
   recordRetry(): void {
     this.proxySession.retryAttempts++;
+  }
+
+  /**
+   * Update token usage tracking
+   */
+  updateTokenUsage(promptTokens: number, completionTokens: number): void {
+    if (!this.proxySession.tokenUsage) {
+      this.proxySession.tokenUsage = {
+        prompt: 0,
+        completion: 0,
+        total: 0,
+        lastUpdated: Date.now(),
+      };
+    }
+
+    this.proxySession.tokenUsage.prompt += promptTokens;
+    this.proxySession.tokenUsage.completion += completionTokens;
+    this.proxySession.tokenUsage.total = this.proxySession.tokenUsage.prompt + this.proxySession.tokenUsage.completion;
+    this.proxySession.tokenUsage.lastUpdated = Date.now();
+
+    const triggers = this.limits.autoResetTriggers;
+    if (triggers.tokenUsagePercentage && triggers.maxTokenUsage) {
+      const usagePercentage = (this.proxySession.tokenUsage.total / triggers.maxTokenUsage) * 100;
+      this.log(`Token usage updated: ${this.proxySession.tokenUsage.total}/${triggers.maxTokenUsage} (${usagePercentage.toFixed(1)}%)`);
+    }
+  }
+
+  /**
+   * Check if context is exhausted and needs reset
+   */
+  isContextExhausted(): boolean {
+    if (this.proxySession.contextExhausted) {
+      return true;
+    }
+
+    if (this.proxySession.tokenUsage && this.limits.autoResetTriggers.tokenUsagePercentage && this.limits.autoResetTriggers.maxTokenUsage) {
+      const maxTokenUsage = this.limits.autoResetTriggers.maxTokenUsage;
+      const tokenUsagePercentage = this.limits.autoResetTriggers.tokenUsagePercentage;
+      const usagePercentage = (this.proxySession.tokenUsage.total / maxTokenUsage) * 100;
+      if (usagePercentage >= tokenUsagePercentage) {
+        this.proxySession.contextExhausted = true;
+        return true;
+      }
+    }
+
+    return false;
   }
 
   getMessagesRemaining(): number | null {

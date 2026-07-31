@@ -71,7 +71,7 @@ function aggressiveStripLineNumbers(text: string): string {
 export const editTools: ToolDefinition[] = [
   {
     name: 'apply_edits',
-    description: 'Apply targeted edits to an existing file. MAX 50 edits per call. For small changes (1-5 lines each). For large rewrites (>50 edits), use write_file instead.',
+    description: 'Apply targeted edits to an existing file. MAX 50 edits per call. For small changes (1-5 lines each). For large rewrites (>50 edits), use write_file instead. Supports multiple formats: {search: "old", replace: "new"} OR {old_string: "old", new_string: "new"}.',
     category: 'edit',
     isReadOnly: false,
     requiresConfirmation: false,
@@ -85,11 +85,11 @@ export const editTools: ToolDefinition[] = [
           items: {
             type: 'object',
             properties: {
-              search: { type: 'string', description: 'Exact text to find (must be unique in file)' },
-              replace: { type: 'string', description: 'Replacement text' },
+              search: { type: 'string', description: 'Exact text to find (must be unique in file). Alternative: use old_string instead of search.' },
+              replace: { type: 'string', description: 'Replacement text. Alternative: use new_string instead of replace.' },
               lineHint: { type: 'number', description: 'Optional: approximate line number' }
             },
-            required: ['search', 'replace']
+            required: [] // Handled dynamically to support both search/replace and old_string/new_string formats
           }
         }
       },
@@ -130,17 +130,77 @@ export const editTools: ToolDefinition[] = [
       
       const filePath = ctx.resolvePath(args.path);
       
-      // Handle both direct array format and proxy-corrected object format
+      // Handle multiple input formats adaptively
       let edits: EditOperation[] = [];
+      
+      // Format 1: Direct array format (standard)
       if (Array.isArray(args.edits)) {
         edits = args.edits;
-      } else if (typeof args.edits === 'object' && args.edits !== null && Array.isArray(args.edits.edits)) {
+        ctx.log(`[apply_edits] Using direct array format`);
+      }
+      // Format 2: Proxy-corrected format {edits: array}
+      else if (typeof args.edits === 'object' && args.edits !== null && Array.isArray(args.edits.edits)) {
         ctx.log(`[apply_edits] Using proxy-corrected format: edits.edits`);
         edits = args.edits.edits;
-      } else {
+      }
+      // Format 3: JSON string format (common from 3D-LLM tools)
+      else if (typeof args.edits === 'string') {
+        try {
+          const parsed = JSON.parse(args.edits);
+          if (Array.isArray(parsed)) {
+            edits = parsed;
+            ctx.log(`[apply_edits] Parsed JSON string format successfully`);
+          } else if (typeof parsed === 'object' && parsed !== null && Array.isArray(parsed.edits)) {
+            edits = parsed.edits;
+            ctx.log(`[apply_edits] Parsed JSON string with edits.edits format`);
+          } else {
+            // Try to handle old_string/new_string format
+            if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].old_string !== undefined) {
+              edits = parsed.map((edit: any) => ({
+                search: edit.old_string,
+                replace: edit.new_string,
+                lineHint: edit.lineHint || edit.line_number
+              }));
+              ctx.log(`[apply_edits] Converted old_string/new_string format to search/replace`);
+            } else {
+              return {
+                result: '',
+                error: `Invalid JSON format in edits string. Expected array with search/replace or old_string/new_string format.`
+              };
+            }
+          }
+        } catch (parseError) {
+          return {
+            result: '',
+            error: `Failed to parse edits string as JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`
+          };
+        }
+      }
+      // Format 4: Direct object with edits property
+      else if (typeof args.edits === 'object' && args.edits !== null && args.edits.edits !== undefined) {
+        if (Array.isArray(args.edits.edits)) {
+          edits = args.edits.edits;
+          ctx.log(`[apply_edits] Using object with edits property`);
+        } else {
+          return {
+            result: '',
+            error: `Invalid edits format: edits.edits is not an array, got ${typeof args.edits.edits}`
+          };
+        }
+      }
+      // Unsupported format
+      else {
         return {
           result: '',
-          error: `Invalid edits parameter: expected array or {edits: array}, got ${typeof args.edits}`
+          error: `❌ Invalid edits format. Supported formats:
+• Array: [{search: "old", replace: "new"}]
+• Array (alternative): [{old_string: "old", new_string: "new"}]
+• Object: {edits: [{search: "old", replace: "new"}]}
+• JSON string: "[{search: \"old\", replace: \"new\"}]"
+• JSON string (alternative): "[{old_string: \"old\", new_string: \"new\"}]"
+
+Received: ${typeof args.edits}
+Tip: Check if your tool call is properly formatted as an array or valid JSON string.`
         };
       }
       
@@ -189,8 +249,21 @@ export const editTools: ToolDefinition[] = [
         }
       }
       
+      // Normalize edit format (handle old_string/new_string -> search/replace)
+      const normalizedEdits = edits.map((edit: any) => {
+        if (edit.old_string !== undefined && edit.new_string !== undefined) {
+          // Convert old_string/new_string format to search/replace
+          return {
+            search: edit.old_string,
+            replace: edit.new_string,
+            lineHint: edit.lineHint || edit.line_number
+          };
+        }
+        return edit;
+      });
+
       // Validate each edit has required fields before processing
-      const invalidEdits = edits.filter((e, i) => 
+      const invalidEdits = normalizedEdits.filter((e, i) => 
         typeof e?.search !== 'string' || typeof e?.replace !== 'string' || e.search === null || e.replace === null
       );
       if (invalidEdits.length > 0) {
@@ -202,12 +275,12 @@ export const editTools: ToolDefinition[] = [
         }).join('; ');
         return {
           result: '',
-          error: `Invalid edits at ${indices}: each edit must have non-null string 'search' and 'replace' fields. Details: ${details}`
+          error: `Invalid edits at ${indices}: each edit must have non-null string 'search' and 'replace' fields (or 'old_string' and 'new_string'). Details: ${details}`
         };
       }
       
       // Additional validation for empty search strings
-      const emptySearchEdits = edits.filter(e => e.search.trim() === '');
+      const emptySearchEdits = normalizedEdits.filter(e => e.search.trim() === '');
       if (emptySearchEdits.length > 0) {
         const indices = emptySearchEdits.map((_, i) => `#${i + 1}`).join(', ');
         return {
@@ -219,7 +292,7 @@ export const editTools: ToolDefinition[] = [
       // Strip line number prefixes that read_file injects for display.
       // The model often copies text directly from read_file output which
       // includes "N | " prefixes. Without stripping, the search fails.
-      const cleanedEdits: EditOperation[] = edits.map(e => {
+      const cleanedEdits: EditOperation[] = normalizedEdits.map(e => {
         // Final safety check - ensure search and replace are defined
         if (e.search === undefined || e.search === null) {
           ctx.log(`[apply_edits] WARNING: Edit search is undefined/null, using empty string`);
@@ -273,7 +346,7 @@ export const editTools: ToolDefinition[] = [
       ctx.log(`[apply_edits] File content preview: ${contentPreview}`);
       
       // Apply edits with retry logic for common failure patterns
-      let editResult = applyEditsToContent(currentContent, cleanedEdits);
+      let editResult = applyEditsToContent(currentContent, cleanedEdits, { originalContent: ctx.fileSnapshots.get(filePath) });
       
       // If all edits failed due to NOT_FOUND, try some common fixes
       if (editResult.appliedCount === 0 && editResult.failures.every(f => f.reason === 'NOT_FOUND')) {
@@ -295,7 +368,7 @@ export const editTools: ToolDefinition[] = [
         }));
         
         // Try again with more aggressive cleaning
-        const retryResult = applyEditsToContent(currentContent, retryEdits);
+        const retryResult = applyEditsToContent(currentContent, retryEdits, { originalContent: ctx.fileSnapshots.get(filePath) });
         
         if (retryResult.appliedCount > 0) {
           ctx.log(`[apply_edits] Retry successful: applied ${retryResult.appliedCount} edits`);

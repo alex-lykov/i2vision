@@ -203,4 +203,23 @@ line 5`;
     assert.ok(result.finalContent.includes('console.log("after");'));
     assert.ok(result.finalContent.includes('    if (true)'));
   });
+
+  test('should provide enhanced suggestion when original content shows text existed', () => {
+    const originalContent = `const x = 1;
+const y = 2;`;
+    const modifiedContent = `const x = 10;
+const y = 2;`;
+
+    const edits: EditOperation[] = [
+      { search: 'const x = 1;', replace: 'const x = 100;' }
+    ];
+
+    const result = applyEditsToContent(modifiedContent, edits, { originalContent });
+
+    assert.strictEqual(result.appliedCount, 0);
+    assert.strictEqual(result.failures.length, 1);
+    assert.strictEqual(result.failures[0].reason, 'NOT_FOUND');
+    assert.ok(result.failures[0].suggestion?.includes('existed in the original file'));
+    assert.ok(result.failures[0].suggestion?.includes('modified by a previous edit'));
+  });
 });

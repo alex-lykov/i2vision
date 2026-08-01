@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * CLI Integration - Multi-provider LLM calls
  * 
@@ -12,10 +19,10 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import {exec} from 'child_process';
+import {promisify} from 'util';
 import * as vscode from 'vscode';
-import { ProjectArchitecture, getExtensionsFromArchitecture } from './agent/tools/DomainDetector';
+import {getExtensionsFromArchitecture, ProjectArchitecture} from './agent/tools/DomainDetector';
 
 const execAsync = promisify(exec);
 
@@ -617,6 +624,25 @@ export class CLI {
 
   /**
    * Call 3D LLM proxy API (FreeDeepseekAPI)
+   * 
+   * This method connects to the FreeDeepseekAPI proxy server which provides
+   * free access to DeepSeek LLM models. The proxy handles tool calling via
+   * text parsing from the system prompt, unlike the official DeepSeek API
+   * which uses the tools array.
+   * 
+   * Setup Instructions:
+   * 1. Install and run the FreeDeepseekAPI server from:
+   *    https://github.com/ForgetMeAI/FreeDeepseekAPI
+   * 2. Configure the 3D LLM URL in VSCode settings:
+   *    - Open VSCode settings (Ctrl+, or Cmd+,)
+   *    - Search for "i2vision.3dLlmUrl"
+   *    - Set the URL to your FreeDeepseekAPI server (default: http://localhost:9655)
+   * 3. Use model ID "deepseek-chat" for the best results
+   * 
+   * Common Issues:
+   * - Connection refused: Server not running or wrong URL
+   * - 404 Not Found: Invalid endpoint or server not configured correctly
+   * - Network errors: Check firewall and network connectivity
    */
   /** Sanitize messages before sending to 3D LLM proxy to prevent format contamination */
   private sanitizeMessages(messages: LLMMessage[]): LLMMessage[] {
@@ -671,6 +697,12 @@ export class CLI {
       // Skip tools array — proxy handles tool calling via text parsing from system prompt
 
       this.log(`POST ${this.threeDLlmUrl}/v1/chat/completions`);
+      
+      // Log helpful setup information for first-time users
+      if (this.threeDLlmUrl === 'http://localhost:9655') {
+        this.log(`[INFO] Using default 3D LLM URL: ${this.threeDLlmUrl}`);
+        this.log(`[INFO] To use FreeDeepseekAPI: 1) Run the server, 2) Set i2vision.3dLlmUrl in VSCode settings`);
+      }
 
       const res = await fetch(`${this.threeDLlmUrl}/v1/chat/completions`, {
         method: 'POST',
@@ -684,7 +716,23 @@ export class CLI {
       if (!res.ok) {
         const errorText = await res.text();
         this.log(`Error body: ${errorText.substring(0, 500)}`);
-        throw new Error(`3D LLM API error: ${res.status} ${res.statusText}`);
+        
+        // Provide more specific error messages for common issues
+        let errorMessage = `3D LLM API error: ${res.status} ${res.statusText}`;
+        
+        if (res.status === 404) {
+          errorMessage = '3D LLM API error: 404 Not Found - The FreeDeepseekAPI server is not running or the URL is incorrect. Please check your 3D LLM URL configuration.';
+        } else if (res.status === 500) {
+          errorMessage = '3D LLM API error: 500 Internal Server Error - The FreeDeepseekAPI server encountered an error. Please check the server logs.';
+        } else if (res.status === 0) {
+          errorMessage = '3D LLM API error: Connection refused - Cannot connect to the FreeDeepseekAPI server. Please ensure the server is running and the URL is correct.';
+        } else if (errorText.includes('ECONNREFUSED')) {
+          errorMessage = '3D LLM API error: Connection refused - Cannot connect to the FreeDeepseekAPI server. Please ensure the server is running and the URL is correct.';
+        } else if (errorText.includes('ENOTFOUND') || errorText.includes('getaddrinfo')) {
+          errorMessage = '3D LLM API error: Host not found - The FreeDeepseekAPI server URL is invalid or the host cannot be resolved.';
+        }
+        
+        throw new Error(errorMessage);
       }
 
       if (stream) {
@@ -1004,8 +1052,22 @@ export class CLI {
       this.log(`Error after ${elapsed}ms: ${error.message}`);
       this.log(`=== LLM CALL FAILED ===`);
 
+      // Provide more helpful error message for 3D LLM issues
+      let userErrorMessage = error.message;
+      
+      if (error.message.includes('ECONNREFUSED') || error.message.includes('Connection refused')) {
+        userErrorMessage = `3D LLM connection failed: Cannot connect to FreeDeepseekAPI server at ${this.threeDLlmUrl}. ` +
+                          `Please ensure the server is running and the URL is correctly configured in VSCode settings.`;
+      } else if (error.message.includes('ENOTFOUND') || error.message.includes('Host not found')) {
+        userErrorMessage = `3D LLM connection failed: Invalid server URL ${this.threeDLlmUrl}. ` +
+                          `Please check your 3D LLM URL configuration in VSCode settings.`;
+      } else if (error.message.includes('fetch failed')) {
+        userErrorMessage = `3D LLM connection failed: Network error when trying to connect to ${this.threeDLlmUrl}. ` +
+                          `Please check your network connection and server status.`;
+      }
+
       return {
-        content: `Error: LLM call failed - ${error.message}`,
+        content: `Error: LLM call failed - ${userErrorMessage}`,
         toolCalls: []
       };
     }

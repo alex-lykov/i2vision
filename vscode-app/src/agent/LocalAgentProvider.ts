@@ -31,9 +31,9 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as yaml from 'js-yaml';
-import { LocalI2VisionAgent, VslfcLayer } from './LocalI2VisionAgent';
-import { AgentConfig, ContextProfile, TaskContextProfile } from './AgentBridge';
-import { AgentSettingsManager } from './AgentSettings';
+import {LocalI2VisionAgent, VslfcLayer} from './LocalI2VisionAgent';
+import {AgentConfig, ContextProfile, TaskContextProfile} from './AgentBridge';
+import {AgentSettingsManager} from './AgentSettings';
 
 /**
  * LocalAgentProvider - Creates and manages LocalI2VisionAgent instances
@@ -586,7 +586,9 @@ export class LocalAgentProvider {
         contextLength: 32768,
         maxOutputTokens: 4096,
         temperature: 0.7,
-        topP: 0.9
+        topP: 0.9,
+        thinkingEnabled: false,
+        searchEnabled: false
       },
       llm: {
         timeoutSeconds: 120,

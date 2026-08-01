@@ -240,8 +240,19 @@ export class AgentBridge {
   private _consecutiveToolCallsWithoutResponse: number = 0;
   private static readonly MAX_CONSECUTIVE_TOOL_CALLS = 8; // Force synthesis after N tool calls
   
+  // Tool execution rate limiting
+  private _toolExecutionQueue: Array<{ toolCall: LLMToolCall; resolve: (result: any) => void; reject: (error: any) => void }> = [];
+  private _activeToolExecutions: number = 0;
+  private static readonly MAX_CONCURRENT_TOOLS = 3; // Max simultaneous tool executions
+  private _toolExecutionRateLimit: number = 1000; // Min 1 second between tool executions
+  private _lastToolExecutionTime: number = 0;
+  
   // Track tool call history for pattern detection
-  private _toolCallHistory: Array<{ toolName: string; iteration: number }> = [];
+  private _toolCallHistory: Array<{ toolName: string; iteration: number; timestamp?: number; hasError?: boolean; resultLength?: number }> = [];
+  
+  // Tool execution monitoring
+  private _consecutiveToolErrors: number = 0;
+  private _toolExecutionStartTimes: Map<string, number> = new Map();
 
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000;
   private static readonly MAX_LIST_FILES_RESULTS = 100;
@@ -1030,7 +1041,7 @@ export class AgentBridge {
           if (this._autoReadFiles.has(normalizedPath)) continue;
           
           try {
-            const result = await this.executeTool({ toolName: 'read_file', args: { path: cleanPath } });
+            const result = await this.executeTool({ id: `auto_${Date.now()}`, name: 'read_file', arguments: { path: cleanPath } });
             this._autoReadFiles.add(normalizedPath);
             messages.push({ role: 'assistant', content: `Reading ${cleanPath} to understand the compilation error.` });
             messages.push({ role: 'tool', content: `[AUTO-READ] ${cleanPath}:\n${result.result?.substring(0, 3000) || result.error}`, tool_call_id: `auto_fix_${Date.now()}_${cleanPath}` });
@@ -1078,7 +1089,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
         const buildCmd = process.platform === 'win32' ? '.\\gradlew :app:server:compileKotlin --console=plain' : './gradlew :app:server:compileKotlin --console=plain';
 
         try {
-          const buildResult = await this.executeTool({ toolName: 'run_terminal', args: { command: buildCmd, workingDir: this.workspaceRoot } });
+          const buildResult = await this.executeTool({ id: `auto_${Date.now()}`, name: 'run_terminal', arguments: { command: buildCmd, workingDir: this.workspaceRoot } });
           const buildOutput = buildResult.result || buildResult.error || 'No output';
           messages.push({ role: 'tool', content: `[AUTO BUILD VERIFICATION]\n${buildOutput}`, tool_call_id: `auto_build_${Date.now()}` });
           messages.push({ role: 'user', content: 'Build verification complete. Review results. If build passed, task is complete. If errors, fix them.', _isNudge: true });
@@ -1618,7 +1629,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
 
         try {
           this.log(`Executing tool: ${toolCall.name}`, 'info');
-          const result = await this.executeToolWithRetry(toolCall, 3);
+          const result = await this.executeToolRateLimited(toolCall);
           toolCallObj.result = result.result;
           if (result.error) toolCallObj.error = result.error;
           toolResult = result;
@@ -1942,36 +1953,36 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
     return result as LLMResponse;
   }
 
-  private async executeTool(toolCall: ToolCall): Promise<{ result: string; error?: string }> {
+  private async executeTool(toolCall: LLMToolCall): Promise<{ result: string; error?: string }> {
     try {
       // TOOL FILTER ENFORCEMENT: When action_only mode is active, reject disallowed tools
       if (this._forceActionMode) {
         const allowedTools = ['apply_edits', 'write_file', 'read_file', 'get_file_context', 'run_terminal', 'run_build', 'git_commit'];
-        if (!allowedTools.includes(toolCall.toolName)) {
-          this.log(`TOOL FILTER BLOCKED: ${toolCall.toolName} not in action_only set. Allowed: ${allowedTools.join(', ')}`);
+        if (!allowedTools.includes(toolCall.name)) {
+          this.log(`TOOL FILTER BLOCKED: ${toolCall.name} not in action_only set. Allowed: ${allowedTools.join(', ')}`);
           return {
             result: '',
-            error: `⚠️ TOOL NOT AVAILABLE: "${toolCall.toolName}" is blocked in action-only mode. You must use one of the following allowed tools: ${allowedTools.join(', ')}. Stop exploring and take action now.`
+            error: `⚠️ TOOL NOT AVAILABLE: "${toolCall.name}" is blocked in action-only mode. You must use one of the following allowed tools: ${allowedTools.join(', ')}. Stop exploring and take action now.`
           };
         }
       }
 
       // PRE-FLIGHT CHECK: Re-read limit - block repeated reads of same file
-      if (toolCall.toolName === 'read_file') {
-        const filePath = this.resolvePath(toolCall.args.path);
+      if (toolCall.name === 'read_file') {
+        const filePath = this.resolvePath(toolCall.arguments.path);
         const count = this._readFileCount.get(filePath) || 0;
         if (count >= AgentBridge.MAX_READS_PER_FILE) {
           this.log(`READ LIMIT: "${filePath}" already read ${count} times. Forcing action.`);
           return {
             result: '',
-            error: `⚠️ READ LIMIT: "${toolCall.args.path}" has been read ${count} times already. You have enough information. Use apply_edits or write_file to make changes. Stop reading and take action now.`
+            error: `⚠️ READ LIMIT: "${toolCall.arguments.path}" has been read ${count} times already. You have enough information. Use apply_edits or write_file to make changes. Stop reading and take action now.`
           };
         }
       }
 
       // PRE-FLIGHT CHECK: Before starting servers, check what's already running
-      if (toolCall.toolName === 'run_terminal') {
-        const command = toolCall.args.command as string;
+      if (toolCall.name === 'run_terminal') {
+        const command = toolCall.arguments.command as string;
         const isServerStartCommand = /gradlew.*:run|npm\s+(run\s+)?(dev|start)|yarn\s+(dev|start)|vite|next\s+dev|react-scripts\s+start/i.test(command);
 
         if (isServerStartCommand && !this._hasCheckedRunningServers) {
@@ -2037,14 +2048,17 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
       };
 
       // Delegate to tool registry
-      const rawResult = await this.toolRegistry.execute(toolCall.toolName, toolCall.args, context);
+      const rawResult = await this.toolRegistry.execute(toolCall.name, toolCall.arguments, context);
 
       // Track successful read_file calls for per-file limit
-      if (toolCall.toolName === 'read_file' && !rawResult.error) {
-        const filePath = this.resolvePath(toolCall.args.path);
+      if (toolCall.name === 'read_file' && !rawResult.error) {
+        const filePath = this.resolvePath(toolCall.arguments.path);
         const currentCount = this._readFileCount.get(filePath) || 0;
         this._readFileCount.set(filePath, currentCount + 1);
       }
+      
+      // Enhanced tool execution monitoring
+      this.monitorToolExecution(toolCall, rawResult);
 
       // Compress large tool results before sending to LLM
       if (rawResult.result && this.config.model.provider === '3d-llm') {
@@ -2058,10 +2072,168 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
         };
       }
 
-      return rawResult;
+      
+      // Validate tool result
+      const validatedResult = this.validateToolResult(rawResult, toolCall);
+      return validatedResult;
     } catch (error: any) {
       this.log(`  Tool error: ${error.message}`);
       return { result: '', error: error.message };
+    }
+  }
+
+  /**
+   * Enhanced tool execution monitoring and analytics
+   */
+  private monitorToolExecution(toolCall: LLMToolCall, result: { result: string; error?: string }): void {
+    const now = Date.now();
+    const toolName = toolCall.name;
+    const hasError = !!result.error;
+    const resultLength = result.result?.length || 0;
+    
+    // Track tool execution statistics
+    if (!this._toolCallHistory) {
+      this._toolCallHistory = [];
+    }
+    
+    this._toolCallHistory.push({
+      toolName,
+      timestamp: now,
+      hasError,
+      resultLength,
+      iteration: this.currentIteration
+    });
+    
+    // Keep only recent history to prevent memory issues
+    if (this._toolCallHistory.length > 50) {
+      this._toolCallHistory = this._toolCallHistory.slice(-50);
+    }
+    
+    // Log tool execution metrics
+    const status = hasError ? 'ERROR' : 'SUCCESS';
+    const sizeInfo = resultLength > 1000 ? `${(resultLength / 1000).toFixed(1)}KB` : `${resultLength}B`;
+    this.log(`[TOOL_MONITOR] ${status} | ${toolName} | ${sizeInfo} | Iteration ${this.currentIteration}`);
+    
+    // Detect patterns that might indicate issues
+    if (!hasError && resultLength === 0) {
+      this.log(`[TOOL_MONITOR] ⚠️ Empty result from ${toolName} - potential issue`);
+    }
+    
+    if (hasError && this._consecutiveToolErrors >= 3) {
+      this.log(`[TOOL_MONITOR] ⚠️ Multiple consecutive tool errors (${this._consecutiveToolErrors}) - consider changing approach`);
+    }
+    
+    // Update consecutive error counter
+    if (hasError) {
+      this._consecutiveToolErrors = (this._consecutiveToolErrors || 0) + 1;
+    } else {
+      this._consecutiveToolErrors = 0;
+    }
+  }
+
+  /**
+   * Validate tool results to ensure they are meaningful
+   */
+  private validateToolResult(result: { result: string; error?: string }, toolCall: LLMToolCall): { result: string; error?: string } {
+    // Don't validate if there's already an error
+    if (result.error) {
+      return result;
+    }
+    
+    // Check for empty results that should have content
+    if (!result.result || result.result.trim().length === 0) {
+      const emptyResultTools = ['read_file', 'list_directory', 'search_files'];
+      if (emptyResultTools.includes(toolCall.name)) {
+        this.log(`⚠️ Empty result from tool ${toolCall.name} - this may indicate a file not found or permission issue`);
+        return {
+          result: result.result,
+          error: `Empty result from ${toolCall.name} - file may not exist or may be inaccessible`
+        };
+      }
+    }
+    
+    // Check for common error patterns in results
+    const errorPatterns = [
+      'ENOENT', 'no such file', 'not found', 'permission denied',
+      'access denied', 'command not found', 'not recognized'
+    ];
+    
+    const resultLower = result.result.toLowerCase();
+    for (const pattern of errorPatterns) {
+      if (resultLower.includes(pattern)) {
+        this.log(`⚠️ Potential error detected in tool result: ${result.result}`);
+        return {
+          result: result.result,
+          error: `Tool ${toolCall.name} returned potential error: ${result.result}`
+        };
+      }
+    }
+    
+    return result;
+  }
+
+  /**
+   * Rate-limited tool execution wrapper
+   * Prevents overwhelming the system with too many concurrent tool calls
+   */
+  private async executeToolRateLimited(toolCall: LLMToolCall): Promise<{ result: string; error?: string }> {
+    const now = Date.now();
+    const timeSinceLastExecution = now - this._lastToolExecutionTime;
+    
+    // Enforce minimum time between tool executions
+    if (timeSinceLastExecution < this._toolExecutionRateLimit) {
+      const delay = this._toolExecutionRateLimit - timeSinceLastExecution;
+      this.log(`Rate limiting: delaying tool execution by ${delay}ms`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+    
+    // Use queue system if we have too many concurrent executions
+    if (this._activeToolExecutions >= AgentBridge.MAX_CONCURRENT_TOOLS) {
+      this.log(`Concurrency limit reached (${this._activeToolExecutions}/${AgentBridge.MAX_CONCURRENT_TOOLS}), queuing tool call`);
+      
+      return new Promise((resolve, reject) => {
+        this._toolExecutionQueue.push({ toolCall, resolve, reject });
+        this.processToolQueue();
+      });
+    }
+    
+    // Execute directly if under concurrency limit
+    this._activeToolExecutions++;
+    this._lastToolExecutionTime = Date.now();
+    
+    try {
+      const result = await this.executeToolWithRetry(toolCall);
+      return result;
+    } finally {
+      this._activeToolExecutions--;
+      this.processToolQueue();
+    }
+  }
+
+  /**
+   * Process the tool execution queue
+   */
+  private processToolQueue() {
+    if (this._toolExecutionQueue.length === 0) return;
+    
+    if (this._activeToolExecutions < AgentBridge.MAX_CONCURRENT_TOOLS) {
+      const nextItem = this._toolExecutionQueue.shift();
+      if (nextItem) {
+        this._activeToolExecutions++;
+        this._lastToolExecutionTime = Date.now();
+        
+        this.executeToolWithRetry(nextItem.toolCall)
+          .then(result => {
+            nextItem.resolve(result);
+            this._activeToolExecutions--;
+            this.processToolQueue();
+          })
+          .catch(error => {
+            nextItem.reject(error);
+            this._activeToolExecutions--;
+            this.processToolQueue();
+          });
+      }
     }
   }
 
@@ -2079,7 +2251,7 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
     while (attempt < maxRetries) {
       attempt++;
       try {
-        const result = await this.executeTool({ toolName: toolCall.name, args: toolCall.arguments });
+        const result = await this.executeTool({ id: `retry_${Date.now()}`, name: toolCall.name, arguments: toolCall.arguments });
 
         // If tool executed but returned an error indicating session issues
         if (result.error && this.isSessionError(result.error)) {
@@ -3117,5 +3289,79 @@ DO NOT include large content in arguments. Just reference files by path.`;
       prompt += '\n• Paths: relative to workspace root, use forward slashes (/).';
     }
     return prompt;
+  }
+
+  /**
+   * Get tool execution statistics for debugging
+   */
+  public getToolExecutionStats(): {
+    totalToolsExecuted: number;
+    errorRate: number;
+    recentTools: Array<{ toolName: string; success: boolean; durationMs?: number }>;
+    consecutiveErrors: number;
+    queueLength: number;
+    activeExecutions: number;
+  } {
+    const totalTools = this._toolCallHistory.length;
+    const errorCount = this._toolCallHistory.filter(t => t.hasError).length;
+    
+    // Get recent tool executions (last 10)
+    const recentTools = this._toolCallHistory.slice(-10).map(t => ({
+      toolName: t.toolName,
+      success: !t.hasError,
+      durationMs: t.timestamp ? Date.now() - t.timestamp : undefined
+    }));
+    
+    return {
+      totalToolsExecuted: totalTools,
+      errorRate: totalTools > 0 ? errorCount / totalTools : 0,
+      recentTools,
+      consecutiveErrors: this._consecutiveToolErrors || 0,
+      queueLength: this._toolExecutionQueue.length,
+      activeExecutions: this._activeToolExecutions
+    };
+  }
+
+  /**
+   * Get current tool execution status for monitoring
+   */
+  public getCurrentToolStatus(): string {
+    const stats = this.getToolExecutionStats();
+    return `Tools: ${stats.totalToolsExecuted} executed, ${(stats.errorRate * 100).toFixed(1)}% error rate, ` +
+           `${stats.activeExecutions} active, ${stats.queueLength} queued, ` +
+           `${stats.consecutiveErrors} consecutive errors`;
+  }
+
+  /**
+   * Get detailed tool execution report for debugging
+   */
+  public getToolExecutionReport(): string {
+    const stats = this.getToolExecutionStats();
+    
+    let report = `=== TOOL EXECUTION REPORT ===\n`;
+    report += `Total Tools Executed: ${stats.totalToolsExecuted}\n`;
+    report += `Error Rate: ${(stats.errorRate * 100).toFixed(1)}%\n`;
+    report += `Consecutive Errors: ${stats.consecutiveErrors}\n`;
+    report += `Active Executions: ${stats.activeExecutions}\n`;
+    report += `Queue Length: ${stats.queueLength}\n\n`;
+    
+    if (stats.recentTools.length > 0) {
+      report += `Recent Tool Executions:\n`;
+      stats.recentTools.forEach((tool, index) => {
+        const status = tool.success ? '✅' : '❌';
+        const duration = tool.durationMs ? `${tool.durationMs}ms` : 'N/A';
+        report += `  ${index + 1}. ${status} ${tool.toolName} (${duration})\n`;
+      });
+    }
+    
+    // Add queue information if there are queued tools
+    if (stats.queueLength > 0) {
+      report += `\nQueued Tools (${stats.queueLength}):\n`;
+      this._toolExecutionQueue.forEach((item, index) => {
+        report += `  ${index + 1}. ${item.toolCall.name}\n`;
+      });
+    }
+    
+    return report;
   }
 }

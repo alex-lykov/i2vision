@@ -253,6 +253,9 @@ export class AgentBridge {
   // Tool execution monitoring
   private _consecutiveToolErrors: number = 0;
   private _toolExecutionStartTimes: Map<string, number> = new Map();
+  
+  // Session management
+  private _needsFreshSession: boolean = false;
 
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000;
   private static readonly MAX_LIST_FILES_RESULTS = 100;
@@ -300,6 +303,10 @@ export class AgentBridge {
       provider,
       provider === '3d-llm' ? threeDLlmUrl : undefined
     );
+    
+    // Mark that this session manager needs fresh session initialization
+    this._needsFreshSession = provider === '3d-llm';
+    
     if (this.sessionManager && this.sessionManager.name !== 'Null') {
       this.log(`Session manager initialized: ${this.sessionManager.name}`);
     }
@@ -336,6 +343,38 @@ export class AgentBridge {
   async initialize(): Promise<void> { 
     this.isInitialized = true;
     this.stateMachine.reset();
+    
+    // Initialize fresh session if needed (for 3D LLM provider)
+    if (this._needsFreshSession && this.sessionManager && this.sessionManager.name !== 'Null') {
+      this._needsFreshSession = false; // Clear flag
+      this.log('Initializing fresh session for new agent instance');
+      
+      try {
+        const resetSuccess = await this.sessionManager.resetSession(this.config.model.id);
+        if (resetSuccess) {
+          this.log('✅ Fresh session initialized - previous session context cleared');
+        } else {
+          this.log('⚠️ Could not clear existing session - may continue with previous context');
+        }
+      } catch (error: any) {
+        this.log(`Session initialization error: ${error.message}`);
+      }
+    }
+    
+    // Reset session manager for new chats to prevent session reuse
+    if (this.sessionManager && this.sessionManager.name !== 'Null') {
+      this.log('Resetting session manager for new chat to prevent session reuse');
+      try {
+        const resetSuccess = await this.sessionManager.resetSession(this.config.model.id);
+        if (resetSuccess) {
+          this.log('Session manager reset successful - new chat will use fresh session');
+        } else {
+          this.log('Session manager reset failed - this may cause session reuse issues');
+        }
+      } catch (error: any) {
+        this.log(`Session manager reset error: ${error.message} - continuing with potential session reuse`);
+      }
+    }
     
     // Load YAML tool configuration
     if (this.toolConfigLoader) {
@@ -752,6 +791,24 @@ export class AgentBridge {
 
   async *executeAgentLoop(userInput: string, systemPrompt: string, options: AgentLoopOptions = { streaming: false }, history?: ChatMessage[], sessionState?: AgentSessionState, forceFreshSession: boolean = false): AsyncGenerator<AgentChunk> {
     // STATE MACHINE FLOW: Intent → Plan → Constraints → Sequence → Execute → Verify → Output
+    
+    // FORCE FRESH SESSION: Reset session manager if requested
+    if (forceFreshSession && this.sessionManager && this.sessionManager.name !== 'Null') {
+      this.log('Forcing fresh session as requested (forceFreshSession=true)');
+      try {
+        const resetSuccess = await this.sessionManager.resetSession(this.config.model.id);
+        if (resetSuccess) {
+          this.log('Fresh session initialized - old session context cleared');
+          yield { type: 'text', text: '🔄 Starting with fresh session - previous context cleared\n\n', timestamp: Date.now() };
+        } else {
+          this.log('Failed to force fresh session - may still use old context');
+          yield { type: 'text', text: '⚠️ Could not clear old session - may continue with previous context\n\n', timestamp: Date.now() };
+        }
+      } catch (error: any) {
+        this.log(`Fresh session error: ${error.message}`);
+        yield { type: 'text', text: `❌ Error clearing session: ${error.message}\n\n`, timestamp: Date.now() };
+      }
+    }
     
     // DOMAIN DETECTION: Only run if not already resolved (restored from session state)
     if (!this._domainResolution) {

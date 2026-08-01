@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * AgentTabManager - Manages agent tabs in the VSCode webview
  */
@@ -5,12 +12,12 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import { AgentBridge, ToolCall } from './AgentBridge';
-import { LocalAgentProvider } from './LocalAgentProvider';
-import { LocalI2VisionAgent, VslfcLayer } from './LocalI2VisionAgent';
-import { ConversationHistoryManager, ChatMessage, AgentSessionState } from './ConversationHistoryManager';
-import { AgentSettingsManager } from './AgentSettings';
-import { ContextMeter } from './ContextMeter';
+import {AgentBridge, ToolCall} from './AgentBridge';
+import {LocalAgentProvider} from './LocalAgentProvider';
+import {LocalI2VisionAgent, VslfcLayer} from './LocalI2VisionAgent';
+import {AgentSessionState, ChatMessage, ConversationHistoryManager} from './ConversationHistoryManager';
+import {AgentSettingsManager} from './AgentSettings';
+import {ContextMeter} from './ContextMeter';
 
 interface AgentTabState {
   tabId: string;
@@ -349,11 +356,18 @@ export class AgentTabManager {
       let responseText = '';
       let startTime = Date.now();
       if (showThinking) this.sendToWebview({ command: 'thinking', message: 'Agent is thinking...', timestamp: Date.now() });
+      // Force fresh session for new chats to prevent session reuse
+      const isNewChat = tabState.history.length <= 1; // First user message = new chat
+      const forceFreshSession = isNewChat;
+      
+      this.log(`Processing user input - ${forceFreshSession ? 'NEW CHAT' : 'continuing'} (history: ${tabState.history.length} messages)`);
+      
       const streamGenerator = this.currentAgentBridge.processStreaming(
         userInput, 
         currentFile,
         tabState.history,  // Pass conversation history
-        tabState.sessionState  // Pass session state
+        tabState.sessionState,  // Pass session state
+        forceFreshSession  // Force fresh session for new chats
       );
       for await (const chunk of streamGenerator) {
         if (this.cancelTokenSource.token.isCancellationRequested) {

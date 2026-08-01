@@ -356,7 +356,9 @@ export class LocalAgentProvider {
         contextLength: yamlConfig.model?.contextLength || 32768,
         maxOutputTokens: yamlConfig.model?.maxOutputTokens || 4096,
         temperature: yamlConfig.model?.temperature || 0.7,
-        topP: yamlConfig.model?.topP || 0.9
+        topP: yamlConfig.model?.topP || 0.9,
+        thinkingEnabled: yamlConfig.model?.thinkingEnabled ?? false,
+        searchEnabled: yamlConfig.model?.searchEnabled ?? false
       },
       
       // LLM behavior section
@@ -748,13 +750,13 @@ export class LocalAgentProvider {
   /**
    * Update configuration for a layer (provider/model changes)
    */
-  async updateConfig(layer: string, updates: { provider?: string; model?: string }): Promise<void> {
+  async updateConfig(layer: string, updates: { provider?: string; model?: string; thinkingEnabled?: boolean; searchEnabled?: boolean }): Promise<void> {
     const layerName = layer.toLowerCase();
     const cacheKey = `agent-${layerName}`;
-    
+
     // Get current config
     const config = this.getConfig(layer);
-    
+
     // Apply updates
     if (updates.provider) {
       config.model.provider = updates.provider;
@@ -762,14 +764,20 @@ export class LocalAgentProvider {
     if (updates.model) {
       config.model.id = updates.model;
     }
-    
+    if (updates.thinkingEnabled !== undefined) {
+      config.model.thinkingEnabled = updates.thinkingEnabled;
+    }
+    if (updates.searchEnabled !== undefined) {
+      config.model.searchEnabled = updates.searchEnabled;
+    }
+
     // Update cache
     this.configCache.set(cacheKey, config);
-    
+
     // Save to YAML file
     await this.saveConfig(layerName, config);
-    
-    this.log(`Updated config for ${layerName}: provider=${config.model.provider}, model=${config.model.id}`);
+
+    this.log(`Updated config for ${layerName}: provider=${config.model.provider}, model=${config.model.id}, thinking=${config.model.thinkingEnabled}, search=${config.model.searchEnabled}`);
   }
 
   /**

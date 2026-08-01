@@ -19,6 +19,9 @@
     .selector-group select{padding:3px 8px;border:1px solid var(--vscode-input-border);border-radius:4px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);font-family:var(--vscode-font-family);font-size:0.8em;cursor:pointer;min-width:120px}
     .selector-group select:hover{border-color:var(--vscode-focusBorder)}
     .selector-group select:focus{outline:2px solid var(--vscode-focusBorder);outline-offset:-2px}
+    .toggle-group{display:flex;align-items:center;gap:4px;font-size:0.8em;color:var(--vscode-descriptionForeground);cursor:pointer;user-select:none}
+    .toggle-group input[type="checkbox"]{width:14px;height:14px;cursor:pointer;accent-color:var(--vscode-focusBorder)}
+    .toggle-group label{cursor:pointer;white-space:nowrap}
     .token-meter{display:flex;align-items:center;gap:8px;font-size:0.75em;color:var(--vscode-descriptionForeground)}
     .token-bar{width:100px;height:4px;background-color:var(--vscode-input-border);border-radius:2px;overflow:hidden}
     .token-fill{height:100%;background:linear-gradient(90deg,var(--vscode-terminal-successBackground) 0%,var(--vscode-terminal-successBackground) 50%,var(--vscode-terminal-ansiYellow) 75%,var(--vscode-errorForeground) 100%);transition:width 0.3s ease}
@@ -234,6 +237,14 @@
             <option value="{currentModel}" selected>{currentModel}</option>
           </select>
         </div>
+        <div class="toggle-group" title="Enable DeepSeek thinking/reasoning (R1 style)">
+          <input type="checkbox" id="thinkingToggle" onchange="onThinkingToggle()" {thinkingChecked}>
+          <label for="thinkingToggle">Thinking</label>
+        </div>
+        <div class="toggle-group" title="Enable web search for up-to-date information">
+          <input type="checkbox" id="searchToggle" onchange="onSearchToggle()" {searchChecked}>
+          <label for="searchToggle">Search</label>
+        </div>
       </div>
       <div class="context-meter-row" id="contextMeterRow">
         <div class="token-meter" id="tokenMeter">
@@ -323,6 +334,8 @@
     const tokenText = document.getElementById('tokenText');
     const providerSelect = document.getElementById('providerSelect');
     const modelSelect = document.getElementById('modelSelect');
+    const thinkingToggle = document.getElementById('thinkingToggle');
+    const searchToggle = document.getElementById('searchToggle');
     const autoScrollToggle = document.getElementById('autoScrollToggle');
 
     let streamingElement = null;
@@ -457,6 +470,14 @@
       const model = modelSelect.value;
       vscode.postMessage({ command: 'change_model', model: model });
     }
+
+    function onThinkingToggle() {
+      vscode.postMessage({ command: 'change_thinking', enabled: thinkingToggle.checked });
+    }
+
+    function onSearchToggle() {
+      vscode.postMessage({ command: 'change_search', enabled: searchToggle.checked });
+    }
     
     function openSettings() {
       vscode.postMessage({ command: 'open_settings' });
@@ -486,8 +507,10 @@
         case 'context_meter_update': updateTokenMeter(message.summary); break;
         case 'error': appendErrorMessage(message.error); setProcessingState(false); break;
         case 'stopped': hideThinkingIndicator(); setProcessingState(false); appendStoppedMessage(); break;
-        case 'provider_changed': providerSelect.value = message.provider; vscode.postMessage({ command: 'fetch_models' }); break;
+        case 'provider_changed': providerSelect.value = message.provider; thinkingToggle.checked = message.thinkingEnabled || false; searchToggle.checked = message.searchEnabled || false; vscode.postMessage({ command: 'fetch_models' }); break;
         case 'model_changed': modelSelect.value = message.model; break;
+        case 'thinking_changed': thinkingToggle.checked = message.enabled; break;
+        case 'search_changed': searchToggle.checked = message.enabled; break;
         case 'models_list': populateModelDropdown(message.models, message.currentModel, message.currentProvider); break;
         case 'context_title':
           const titleEl = document.getElementById('conversationTitle');

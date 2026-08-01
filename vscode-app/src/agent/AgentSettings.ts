@@ -71,6 +71,8 @@ export interface AgentSettings {
     maxOutputTokens: number;
     temperature: number;
     topP: number;
+    thinkingEnabled: boolean;
+    searchEnabled: boolean;
   };
 
   // ===== 3D LLM PROXY =====
@@ -138,7 +140,9 @@ const DEFAULT_SETTINGS: AgentSettings = {
     contextLength: 8192,
     maxOutputTokens: 4096,
     temperature: 0.7,
-    topP: 0.9
+    topP: 0.9,
+    thinkingEnabled: false,
+    searchEnabled: false
   },
 
   proxy: {
@@ -300,6 +304,18 @@ export class AgentSettingsManager {
     if (temperature !== undefined) {
       overrides.model = overrides.model || {};
       overrides.model.temperature = temperature;
+    }
+
+    const thinkingEnabled = config.get<boolean>('model.thinkingEnabled');
+    if (thinkingEnabled !== undefined) {
+      overrides.model = overrides.model || {};
+      overrides.model.thinkingEnabled = thinkingEnabled;
+    }
+
+    const searchEnabled = config.get<boolean>('model.searchEnabled');
+    if (searchEnabled !== undefined) {
+      overrides.model = overrides.model || {};
+      overrides.model.searchEnabled = searchEnabled;
     }
 
     return overrides;

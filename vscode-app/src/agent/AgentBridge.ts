@@ -65,7 +65,7 @@ export interface AgentConfig {
   templateVariables: Record<string, string>;
   ruleSetKeys?: string[];
   parserTemplateName?: string;
-  model: { id: string; provider: string; contextLength: number; maxOutputTokens: number; temperature: number; topP: number };
+  model: { id: string; provider: string; contextLength: number; maxOutputTokens: number; temperature: number; topP: number; thinkingEnabled: boolean; searchEnabled: boolean };
   llm: { timeoutSeconds: number; modificationTimeoutSeconds: number; finalTurnBonusSeconds: number; maxRetries: number; retryBackoffMs: number[] };
   formattingRules: { rules: string; brief: string; reasoningHeader: string; toolCallHeader: string; eosMarker: string };
   iterationSettings: { maxIterations: number; maxConsecutiveToolCalls: number; enableKickstart: boolean; kickstartMinInvalidOutputs: number };
@@ -364,6 +364,8 @@ export class AgentBridge {
     if (updates.maxOutputTokens !== undefined) this.config.model.maxOutputTokens = updates.maxOutputTokens;
     if (updates.temperature !== undefined) this.config.model.temperature = updates.temperature;
     if (updates.topP !== undefined) this.config.model.topP = updates.topP;
+    if (updates.thinkingEnabled !== undefined) this.config.model.thinkingEnabled = updates.thinkingEnabled;
+    if (updates.searchEnabled !== undefined) this.config.model.searchEnabled = updates.searchEnabled;
 
     // Hardcode context length for 3D LLM provider since the proxy doesn't expose
     // the actual model's context window over its API.
@@ -1178,7 +1180,14 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
       let streamBuffer = '';
 
       if (options.streaming) {
-        const rawResponse = await this.cli.callLLM(this.config.model.id, messages, { temperature: this.config.model.temperature, top_p: this.config.model.topP, max_tokens: this.config.model.maxOutputTokens }, tools, true, this.config.model.provider);
+        const llmOptions = { 
+          temperature: this.config.model.temperature, 
+          top_p: this.config.model.topP, 
+          max_tokens: this.config.model.maxOutputTokens,
+          thinking_enabled: this.config.model.thinkingEnabled,
+          search_enabled: this.config.model.searchEnabled
+        };
+        const rawResponse = await this.cli.callLLM(this.config.model.id, messages, llmOptions, tools, true, this.config.model.provider);
         
         // Check if response is actually an AsyncGenerator (streaming supported)
         const isAsyncGenerator = rawResponse && typeof (rawResponse as any)[Symbol.asyncIterator] === 'function';
@@ -1186,7 +1195,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
         if (!isAsyncGenerator) {
           // Streaming not supported, fall back to non-streaming
           this.log(`Streaming not available, falling back to non-streaming mode`);
-          const nonStreamResponse = await this.cli.callLLM(this.config.model.id, messages, { temperature: this.config.model.temperature, top_p: this.config.model.topP, max_tokens: this.config.model.maxOutputTokens }, tools, false, this.config.model.provider) as LLMResponse;
+          const nonStreamResponse = await this.cli.callLLM(this.config.model.id, messages, llmOptions, tools, false, this.config.model.provider) as LLMResponse;
           responseText = nonStreamResponse.content;
           streamingToolCalls = nonStreamResponse.toolCalls.map(tc => ({ id: tc.id, name: tc.name, arguments: tc.arguments }));
           // Carry forward real or estimated token usage from non-streaming response
@@ -1922,7 +1931,13 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
   }
 
   private async callLLM(messages: LLMMessage[], tools: LLMTool[]): Promise<LLMResponse> {
-    const result = await this.cli.callLLM(this.config.model.id, messages, { temperature: this.config.model.temperature, top_p: this.config.model.topP, max_tokens: this.config.model.maxOutputTokens }, tools, false, this.config.model.provider);
+    const result = await this.cli.callLLM(this.config.model.id, messages, { 
+      temperature: this.config.model.temperature, 
+      top_p: this.config.model.topP, 
+      max_tokens: this.config.model.maxOutputTokens,
+      thinking_enabled: this.config.model.thinkingEnabled,
+      search_enabled: this.config.model.searchEnabled
+    }, tools, false, this.config.model.provider);
     if (Symbol.asyncIterator in result) throw new Error('Expected non-streaming response but got streaming generator');
     return result as LLMResponse;
   }

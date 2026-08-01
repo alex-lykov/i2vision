@@ -498,6 +498,8 @@ export class AgentTabManager {
         case 'stop_agent': await this.stopAgent(); break;
         case 'change_provider': await this.changeProvider(message.provider); break;
         case 'change_model': await this.changeModel(message.model); break;
+        case 'change_thinking': await this.changeThinking(message.enabled); break;
+        case 'change_search': await this.changeSearch(message.enabled); break;
         case 'fetch_models': await this.fetchAndSendModels(); break;
         case 'open_settings':
           try {
@@ -670,7 +672,13 @@ export class AgentTabManager {
 
       this.log('Provider changed to ' + provider);
       vscode.window.showInformationMessage('Provider changed to ' + provider);
-      this.sendToWebview({ command: 'provider_changed', provider, model: defaultModel });
+      this.sendToWebview({ 
+        command: 'provider_changed', 
+        provider, 
+        model: defaultModel,
+        thinkingEnabled: agentConfig.model.thinkingEnabled ?? false,
+        searchEnabled: agentConfig.model.searchEnabled ?? false
+      });
     } catch (error: any) {
       this.log('Error changing provider: ' + error.message);
       vscode.window.showErrorMessage('Failed to change provider: ' + error.message);
@@ -692,6 +700,42 @@ export class AgentTabManager {
     } catch (error: any) {
       this.log('Error changing model: ' + error.message);
       vscode.window.showErrorMessage('Failed to change model: ' + error.message);
+    }
+  }
+
+  private async changeThinking(enabled: boolean): Promise<void> {
+    if (!this.activeTabId) { vscode.window.showErrorMessage('No active agent tab'); return; }
+    const tabState = this.tabs.get(this.activeTabId);
+    if (!tabState) { vscode.window.showErrorMessage('Active tab not found'); return; }
+    this.log('Changing thinking_enabled to ' + enabled + ' for ' + tabState.layer + ' agent...');
+    try {
+      const agentConfig = this.agentProvider.getConfig(tabState.layer);
+      agentConfig.model.thinkingEnabled = enabled;
+      await this.agentProvider.updateConfig(tabState.layer, { thinkingEnabled: enabled });
+      if (this.currentAgentBridge) {
+        this.currentAgentBridge.updateConfig({ thinkingEnabled: enabled });
+      }
+      this.sendToWebview({ command: 'thinking_changed', enabled });
+    } catch (error: any) {
+      this.log('Error changing thinking: ' + error.message);
+    }
+  }
+
+  private async changeSearch(enabled: boolean): Promise<void> {
+    if (!this.activeTabId) { vscode.window.showErrorMessage('No active agent tab'); return; }
+    const tabState = this.tabs.get(this.activeTabId);
+    if (!tabState) { vscode.window.showErrorMessage('Active tab not found'); return; }
+    this.log('Changing search_enabled to ' + enabled + ' for ' + tabState.layer + ' agent...');
+    try {
+      const agentConfig = this.agentProvider.getConfig(tabState.layer);
+      agentConfig.model.searchEnabled = enabled;
+      await this.agentProvider.updateConfig(tabState.layer, { searchEnabled: enabled });
+      if (this.currentAgentBridge) {
+        this.currentAgentBridge.updateConfig({ searchEnabled: enabled });
+      }
+      this.sendToWebview({ command: 'search_changed', enabled });
+    } catch (error: any) {
+      this.log('Error changing search: ' + error.message);
     }
   }
 
@@ -760,12 +804,16 @@ export class AgentTabManager {
     const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name || 'Unknown';
     let currentProvider = 'ollama';
     let currentModel = 'llama3.2:3b';
+    let thinkingEnabled = false;
+    let searchEnabled = false;
     if (this.activeTabId) {
       const tabState = this.tabs.get(this.activeTabId);
       if (tabState) {
         const config = this.agentProvider.getConfig(tabState.layer);
         currentProvider = config.model.provider;
         currentModel = config.model.id;
+        thinkingEnabled = config.model.thinkingEnabled ?? false;
+        searchEnabled = config.model.searchEnabled ?? false;
       }
     }
     const settings = this.settingsManager.getSettings();
@@ -788,6 +836,8 @@ export class AgentTabManager {
     html = html.replace(/{selectedProvider3DLlm}/g, selectedProvider3DLlm);
     html = html.replace(/{streamingEnabled}/g, String(streamingEnabled));
     html = html.replace(/{showThinking}/g, String(showThinking));
+    html = html.replace(/{thinkingChecked}/g, thinkingEnabled ? 'checked' : '');
+    html = html.replace(/{searchChecked}/g, searchEnabled ? 'checked' : '');
 
     return html;
   }

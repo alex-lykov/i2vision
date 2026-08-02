@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * Mistral Cloud API Provider implementation with unified error handling
  * 
@@ -10,9 +17,9 @@
  * - Automatic retry logic for rate limits and network issues
  */
 
-import { LLMProvider, LLMRequest, LLMResponse } from '../../types/provider-types';
-import { ErrorHandler } from '../../core/ErrorHandler';
-import { ErrorContext } from '../../core/types';
+import {LLMProvider, LLMRequest, LLMResponse} from '../../types/provider-types';
+import {ErrorHandler} from '../../core/ErrorHandler';
+import {ErrorContext} from '../../core/types';
 
 export class MistralProvider implements LLMProvider {
   private apiKey: string;
@@ -69,7 +76,7 @@ export class MistralProvider implements LLMProvider {
 
         // Add tool calling support if tools are provided
         if (request.tools && request.tools.length > 0) {
-          body['tools'] = request.tools;
+          (body as any)['tools'] = request.tools;
         }
 
         const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {

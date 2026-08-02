@@ -203,6 +203,10 @@ export class CLI {
   private deepSeekBaseUrl: string = 'https://api.deepseek.com';
   private threeDLlmUrl: string = 'http://localhost:9655';
   private workspaceRoot: string;
+  private serverErrorCount: number = 0;
+  private lastServerErrorTime: number = 0;
+  private readonly MAX_SERVER_ERRORS: number = 3;
+  private readonly SERVER_ERROR_COOLDOWN: number = 300000; // 5 minutes
   private cliPath?: string;
   private projectArchitecture?: ProjectArchitecture;
   private fileExtensions: string[] = [];
@@ -724,12 +728,15 @@ export class CLI {
           errorMessage = '3D LLM API error: 404 Not Found - The FreeDeepseekAPI server is not running or the URL is incorrect. Please check your 3D LLM URL configuration.';
         } else if (res.status === 500) {
           errorMessage = '3D LLM API error: 500 Internal Server Error - The FreeDeepseekAPI server encountered an error. Please check the server logs.';
+          this.recordServerError();
         } else if (res.status === 0) {
           errorMessage = '3D LLM API error: Connection refused - Cannot connect to the FreeDeepseekAPI server. Please ensure the server is running and the URL is correct.';
         } else if (errorText.includes('ECONNREFUSED')) {
           errorMessage = '3D LLM API error: Connection refused - Cannot connect to the FreeDeepseekAPI server. Please ensure the server is running and the URL is correct.';
+          this.recordServerError();
         } else if (errorText.includes('ENOTFOUND') || errorText.includes('getaddrinfo')) {
           errorMessage = '3D LLM API error: Host not found - The FreeDeepseekAPI server URL is invalid or the host cannot be resolved.';
+          this.recordServerError();
         }
         
         throw new Error(errorMessage);
@@ -1052,6 +1059,11 @@ export class CLI {
       this.log(`Error after ${elapsed}ms: ${error.message}`);
       this.log(`=== LLM CALL FAILED ===`);
 
+      // Track server connectivity errors
+      if (this.isServerConnectivityError(error)) {
+        this.recordServerError();
+      }
+
       // Provide more helpful error message for 3D LLM issues
       let userErrorMessage = error.message;
       
@@ -1064,6 +1076,13 @@ export class CLI {
       } else if (error.message.includes('fetch failed')) {
         userErrorMessage = `3D LLM connection failed: Network error when trying to connect to ${this.threeDLlmUrl}. ` +
                           `Please check your network connection and server status.`;
+      }
+
+      // If we've had too many server errors, provide a more specific message
+      if (!this.shouldRetryAfterServerError() && this.isServerConnectivityError(error)) {
+        userErrorMessage = `3D LLM server unavailable: The FreeDeepseekAPI proxy server at ${this.threeDLlmUrl} appears to be down or experiencing connectivity issues. ` +
+                          `Please check the server status, verify the URL configuration, and try again later. ` +
+                          `Server errors detected: ${this.serverErrorCount}/${this.MAX_SERVER_ERRORS}`;
       }
 
       return {
@@ -1843,5 +1862,58 @@ export class CLI {
       this.log(`Error: ${e.message}`);
       return [];
     }
+  }
+
+  /**
+   * Check if we should continue retrying based on server error history
+   */
+  private shouldRetryAfterServerError(): boolean {
+    const now = Date.now();
+    
+    // Reset error count if we're past the cooldown period
+    if (now - this.lastServerErrorTime > this.SERVER_ERROR_COOLDOWN) {
+      this.serverErrorCount = 0;
+      this.lastServerErrorTime = 0;
+    }
+    
+    // If we've had too many recent server errors, stop retrying
+    if (this.serverErrorCount >= this.MAX_SERVER_ERRORS) {
+      return false;
+    }
+    
+    return true;
+  }
+
+  /**
+   * Record a server error for tracking purposes
+   */
+  private recordServerError(): void {
+    const now = Date.now();
+    
+    // Reset count if we're past the cooldown period
+    if (now - this.lastServerErrorTime > this.SERVER_ERROR_COOLDOWN) {
+      this.serverErrorCount = 0;
+    }
+    
+    this.serverErrorCount++;
+    this.lastServerErrorTime = now;
+    this.log(`Server error recorded (count: ${this.serverErrorCount}/${this.MAX_SERVER_ERRORS})`);
+  }
+
+  /**
+   * Check if an error indicates a server connectivity issue
+   */
+  private isServerConnectivityError(error: any): boolean {
+    if (!error || !error.message) return false;
+    
+    const message = error.message.toLowerCase();
+    return message.includes('500 internal server error') ||
+           message.includes('connection refused') ||
+           message.includes('econnrefused') ||
+           message.includes('fetch failed') ||
+           message.includes('host not found') ||
+           message.includes('enotfound') ||
+           message.includes('getaddrinfo') ||
+           message.includes('network error');
   }
 }

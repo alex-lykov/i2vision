@@ -32,6 +32,7 @@ interface AgentTabState {
   workspaceRoot: string; // Persist workspace path to prevent context loss on resume
   sessionState?: AgentSessionState; // Persist session state across agent recreation
   contextMeter: ContextMeter; // Comprehensive context usage tracking
+  isFirstUserInput?: boolean; // Track if this is the first user input after tab creation
 }
 
 export class AgentTabManager {
@@ -245,7 +246,18 @@ export class AgentTabManager {
       config.model.contextLength
     );
 
-    const tabState: AgentTabState = { tabId, agent, layer, history: [], accumulatedToolCalls: [], isActive: true, createdAt: Date.now(), lastActivityAt: Date.now(), lastAutoSaveAt: undefined, workspaceRoot, contextMeter };
+    const tabState: AgentTabState = { 
+      tabId, agent, layer, 
+      history: [], 
+      accumulatedToolCalls: [], 
+      isActive: true, 
+      createdAt: Date.now(), 
+      lastActivityAt: Date.now(), 
+      lastAutoSaveAt: undefined, 
+      workspaceRoot, 
+      contextMeter,
+      isFirstUserInput: true // Track if this is the first user input after creation
+    };
     this.tabs.set(tabId, tabState);
     this.activeTabId = tabId;
     this.currentAgentBridge = new AgentBridge(config, this.outputChannel, this.context.extensionPath, workspaceRoot, this.settingsManager, agent.id);
@@ -357,8 +369,16 @@ export class AgentTabManager {
       let startTime = Date.now();
       if (showThinking) this.sendToWebview({ command: 'thinking', message: 'Agent is thinking...', timestamp: Date.now() });
       // Force fresh session for new chats to prevent session reuse
-      const isNewChat = tabState.history.length <= 1; // First user message = new chat
+      // Use the first input flag to distinguish truly new chats from continuations
+      // Check the flag FIRST before considering history, as webview may add current message to history
+      const isFirstUserInput = tabState.isFirstUserInput === true;
+      const isNewChat = isFirstUserInput || tabState.history.length === 0;
       const forceFreshSession = isNewChat;
+      
+      // Clear the flag after first use
+      if (tabState.isFirstUserInput === true) {
+        tabState.isFirstUserInput = false;
+      }
       
       this.log(`Processing user input - ${forceFreshSession ? 'NEW CHAT' : 'continuing'} (history: ${tabState.history.length} messages)`);
       
@@ -675,11 +695,27 @@ export class AgentTabManager {
         this.log('AgentBridge config updated: provider=' + provider + ', model=' + defaultModel);
 
         const { createSessionManager } = require('./SessionManager');
-        const threeDLlmUrl = vscode.workspace.getConfiguration('i2vision').get<string>('3dLlmUrl') || 'http://localhost:9655';
-        const newSessionMgr = createSessionManager(
-          provider,
-          provider === '3d-llm' ? threeDLlmUrl : undefined
-        );
+        const settings = AgentSettingsManager.getInstance((vscode.extensions.getExtension('i2vision')?.extensionContext)).getSettings();
+        
+        // Get provider URL based on provider type
+        let providerUrl: string | undefined;
+        switch (provider) {
+          case '3d-llm':
+            providerUrl = settings.mistral.baseUrl; // Using mistral baseUrl for now
+            break;
+          case 'mistral':
+            providerUrl = settings.mistral.baseUrl;
+            break;
+          case 'deepseek':
+            // DeepSeek URL would come from settings if available
+            break;
+          case 'ollama':
+          default:
+            // Ollama uses default local URL
+            break;
+        }
+        
+        const newSessionMgr = createSessionManager(provider, providerUrl);
         this.currentAgentBridge.setSessionManager(newSessionMgr);
         this.log('Session manager reconfigured: ' + newSessionMgr.name);
       }
@@ -791,7 +827,8 @@ export class AgentTabManager {
 
   private async fetchThreeDLlmModels(): Promise<string[]> {
     try {
-      const url = vscode.workspace.getConfiguration('i2vision').get<string>('3dLlmUrl') || 'http://localhost:9655';
+      const settings = AgentSettingsManager.getInstance((vscode.extensions.getExtension('i2vision')?.extensionContext)).getSettings();
+      const url = settings.mistral.baseUrl || 'http://localhost:9655';
       const response = await fetch(`${url}/v1/models`);
       if (!response.ok) {
         this.log(`3D LLM models fetch failed: ${response.status}`);

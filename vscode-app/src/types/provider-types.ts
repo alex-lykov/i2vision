@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * Type definitions for LLM providers
  */
@@ -10,6 +17,8 @@ export interface LLMRequest {
   topK?: number;
   maxTokens?: number;
   timeoutSeconds?: number;
+  tools?: any[]; // Tool definitions for function calling
+  random_seed?: number; // Random seed for reproducibility
   [key: string]: any; // Allow provider-specific options
 }
 

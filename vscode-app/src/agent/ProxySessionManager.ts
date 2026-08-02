@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * ProxySessionManager - Session manager for the 3D LLM proxy (FreeDeepseekAPI).
  *
@@ -8,7 +15,7 @@
  * - Continuation and retry tracking
  */
 
-import { SessionManager, SessionHealth, SessionLimits, ProxySessionState } from './SessionManager';
+import {ProxySessionState, SessionHealth, SessionLimits, SessionManager} from './SessionManager';
 
 interface ProxySessionApiEntry {
   agent: string;
@@ -98,15 +105,28 @@ export class ProxySessionManager implements SessionManager {
       const entry = data.agents?.find((a) => a.agent === agentId);
 
       if (entry) {
-        this.proxySession.id = entry.session_id;
-        this.proxySession.messageCount = entry.message_count || 0;
-        this.proxySession.createdAt = Date.now() - (entry.age_min || 0) * 60000;
-        if (entry.account) {
-          this.proxySession.accountId = entry.account;
+        // Check if this is a fresh agent that should not reuse old sessions
+        const sessionAgeMinutes = entry.age_min || 0;
+        const isStaleSession = sessionAgeMinutes > 5; // Consider sessions older than 5 minutes as stale
+
+        if (isStaleSession) {
+          this.log(`Found stale session ${entry.session_id} (${sessionAgeMinutes} min old) - creating fresh session instead`);
+          // Treat as fresh session to avoid reusing stale sessions
+          this.proxySession.id = null;
+          this.proxySession.messageCount = 0;
+          this.proxySession.createdAt = Date.now();
+        } else {
+          // Reuse recent session
+          this.proxySession.id = entry.session_id;
+          this.proxySession.messageCount = entry.message_count || 0;
+          this.proxySession.createdAt = Date.now() - (entry.age_min || 0) * 60000;
+          if (entry.account) {
+            this.proxySession.accountId = entry.account;
+          }
+          this.log(
+            `Synced session ${entry.session_id} — ${entry.message_count} msgs, ${entry.age_min} min old`
+          );
         }
-        this.log(
-          `Synced session ${entry.session_id} — ${entry.message_count} msgs, ${entry.age_min} min old`
-        );
       } else {
         this.log(`No session found for agent ${agentId}`);
         // Treat as fresh session
@@ -131,10 +151,21 @@ export class ProxySessionManager implements SessionManager {
     try {
       const response = await fetch(`${this.baseUrl}/health`);
       if (!response.ok) {
+        const errorBody = await response.text().catch(() => 'Unknown error');
+        
+        // Special handling for proxy connectivity issues
+        if (response.status === 500 && errorBody.includes('fetch failed')) {
+          return {
+            healthy: false,
+            diagnostics: { statusCode: response.status, error: 'FreeDeepseekAPI proxy cannot connect to DeepSeek servers' },
+            warnings: [`FreeDeepseekAPI proxy cannot connect to DeepSeek servers. Please check proxy connectivity and authentication.`],
+          };
+        }
+        
         return {
           healthy: false,
-          diagnostics: { statusCode: response.status },
-          warnings: [`Proxy health check failed: ${response.status}`],
+          diagnostics: { statusCode: response.status, error: errorBody },
+          warnings: [`Proxy health check failed: ${response.status} - ${errorBody}`],
         };
       }
 

@@ -65,7 +65,7 @@ export interface AgentSettings {
   
   // ===== MODEL SETTINGS =====
   model: {
-    defaultProvider: 'ollama' | 'deepseek' | '3d-llm';
+    defaultProvider: 'ollama' | 'deepseek' | '3d-llm' | 'mistral';
     defaultModel: string;
     contextLength: number;
     maxOutputTokens: number;
@@ -73,6 +73,12 @@ export interface AgentSettings {
     topP: number;
     thinkingEnabled: boolean;
     searchEnabled: boolean;
+  };
+
+  // ===== MISTRAL API =====
+  mistral: {
+    apiKey: string;
+    baseUrl: string;
   };
 
   // ===== 3D LLM PROXY =====
@@ -143,6 +149,11 @@ const DEFAULT_SETTINGS: AgentSettings = {
     topP: 0.9,
     thinkingEnabled: false,
     searchEnabled: false
+  },
+
+  mistral: {
+    apiKey: '',
+    baseUrl: 'https://api.mistral.ai'
   },
 
   proxy: {
@@ -318,6 +329,19 @@ export class AgentSettingsManager {
       overrides.model.searchEnabled = searchEnabled;
     }
 
+    // Mistral API settings
+    const mistralApiKey = config.get<string>('mistral.apiKey');
+    if (mistralApiKey !== undefined) {
+      overrides.mistral = overrides.mistral || {};
+      overrides.mistral.apiKey = mistralApiKey;
+    }
+
+    const mistralBaseUrl = config.get<string>('mistral.baseUrl');
+    if (mistralBaseUrl !== undefined) {
+      overrides.mistral = overrides.mistral || {};
+      overrides.mistral.baseUrl = mistralBaseUrl;
+    }
+
     return overrides;
   }
   
@@ -424,7 +448,9 @@ export class AgentSettingsManager {
       'i2vision.agent.maxIterations': this.settings.agent.maxIterations,
       'i2vision.model.provider': this.settings.model.defaultProvider,
       'i2vision.model.model': this.settings.model.defaultModel,
-      'i2vision.advanced.debugLogging': this.settings.advanced.debugLogging
+      'i2vision.advanced.debugLogging': this.settings.advanced.debugLogging,
+      'i2vision.mistral.apiKey': this.settings.mistral.apiKey,
+      'i2vision.mistral.baseUrl': this.settings.mistral.baseUrl
     };
   }
 }

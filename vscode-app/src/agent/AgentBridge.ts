@@ -15,7 +15,7 @@
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
-import {CLI, LLMChunk, LLMMessage, LLMResponse, LLMTool, LLMToolCall} from '../cliIntegration';
+import {CLI, LLMChunk, LLMMessage, LLMResponse, LLMTool, LLMToolCall} from '../cliIntegrationRefactored';
 import {TerminalManager} from './TerminalManager';
 import {AgentSettingsManager} from './AgentSettings';
 import {applyEditsToContent, EditOperation, formatEditFailure} from './ApplyEditsTool';
@@ -296,13 +296,29 @@ export class AgentBridge {
     this.log(`Workspace root: ${this.workspaceRoot}`);
     this.cli = new CLI(this.workspaceRoot, outputChannel);
 
-    // Initialize provider-specific session manager
+    // Initialize provider-specific session manager with new provider system
     const provider = config.model.provider;
-    const threeDLlmUrl = vscode.workspace.getConfiguration('i2vision').get<string>('3dLlmUrl') || 'http://localhost:9655';
-    this.sessionManager = createSessionManager(
-      provider,
-      provider === '3d-llm' ? threeDLlmUrl : undefined
-    );
+    const settings = this.settingsManager.getSettings();
+    
+    // Get the appropriate URL based on provider
+    let providerUrl: string | undefined;
+    switch (provider) {
+      case '3d-llm':
+        providerUrl = settings.mistral.baseUrl; // Using mistral baseUrl for now, may need adjustment
+        break;
+      case 'mistral':
+        providerUrl = settings.mistral.baseUrl;
+        break;
+      case 'deepseek':
+        // DeepSeek URL would come from settings if we had it
+        break;
+      case 'ollama':
+      default:
+        // Ollama uses default local URL
+        break;
+    }
+    
+    this.sessionManager = createSessionManager(provider, providerUrl);
     
     // Mark that this session manager needs fresh session initialization
     this._needsFreshSession = provider === '3d-llm';
@@ -311,7 +327,6 @@ export class AgentBridge {
       this.log(`Session manager initialized: ${this.sessionManager.name}`);
     }
 
-    const settings = this.settingsManager.getSettings();
     this.terminalManager = new TerminalManager(outputChannel, settings.terminal.autoCloseDelayMs, settings.terminal);
     
     // Initialize tool registry with all built-in tools

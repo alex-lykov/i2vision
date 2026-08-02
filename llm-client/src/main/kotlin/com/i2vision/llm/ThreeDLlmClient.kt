@@ -9,13 +9,7 @@ package com.i2vision.llm
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.put
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.*
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -75,8 +69,22 @@ class ThreeDLlmClient(
             val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
 
             if (response.statusCode() != 200) {
+                val errorBody = try {
+                    response.body()
+                } catch (e: Exception) {
+                    "Unknown error"
+                }
+
+                // Special handling for proxy connectivity issues
+                if (response.statusCode() == 500 && errorBody.contains("fetch failed")) {
+                    throw ThreeDLlmApiException(
+                        "FreeDeepseekAPI proxy cannot connect to DeepSeek servers. Please check proxy connectivity and authentication.",
+                        response.statusCode()
+                    )
+                }
+
                 throw ThreeDLlmApiException(
-                    "3D LLM API returned status ${response.statusCode()}",
+                    "3D LLM API returned status ${response.statusCode()}: $errorBody",
                     response.statusCode()
                 )
             }
@@ -140,8 +148,22 @@ class ThreeDLlmClient(
             val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
 
             if (response.statusCode() != 200) {
+                val errorBody = try {
+                    response.body()
+                } catch (e: Exception) {
+                    "Unknown error"
+                }
+                
+                // Special handling for proxy connectivity issues
+                if (response.statusCode() == 500 && errorBody.contains("fetch failed")) {
+                    throw ThreeDLlmApiException(
+                        "FreeDeepseekAPI proxy cannot connect to DeepSeek servers. Please check proxy connectivity and authentication.",
+                        response.statusCode()
+                    )
+                }
+                
                 throw ThreeDLlmApiException(
-                    "3D LLM API returned status ${response.statusCode()}",
+                    "3D LLM API returned status ${response.statusCode()}: $errorBody",
                     response.statusCode()
                 )
             }

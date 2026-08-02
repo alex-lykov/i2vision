@@ -1,9 +1,16 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * Retry strategy for LLM API calls
  * Implements exponential backoff with cooldown periods
  */
 
-import { StandardizedError, RetryConfig } from './types';
+import {RetryConfig, StandardizedError} from './types';
 
 export class RetryStrategy {
   public maxAttempts: number;
@@ -37,8 +44,8 @@ export class RetryStrategy {
   }
 
   public getRetryDelay(error: StandardizedError, attemptNumber: number): number {
-    if (error.type === 'RateLimitError' && error.retryAfter) {
-      return error.retryAfter * 1000;
+    if (error.type === 'RateLimitError' && (error as any).retryAfter !== undefined) {
+      return (error as any).retryAfter * 1000;
     }
 
     const index = Math.min(attemptNumber - 1, this.backoffPattern.length - 1);

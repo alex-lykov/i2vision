@@ -226,9 +226,10 @@
         <div class="selector-group">
           <label for="providerSelect">Provider:</label>
           <select id="providerSelect" onchange="onProviderChange()">
-            <option value="ollama" {selectedProvider}>Ollama</option>
+            <option value="ollama" {selectedProviderOllama}>Ollama</option>
             <option value="deepseek" {selectedProviderDeepSeek}>DeepSeek</option>
             <option value="3d-llm" {selectedProvider3DLlm}>3D LLM</option>
+            <option value="mistral" {selectedProviderMistral}>Mistral</option>
           </select>
         </div>
         <div class="selector-group">

@@ -679,6 +679,8 @@ export class AgentTabManager {
         defaultModel = 'deepseek-chat';
       } else if (provider === '3d-llm') {
         defaultModel = 'deepseek-chat';
+      } else if (provider === 'mistral') {
+        defaultModel = 'mistral-tiny';
       } else {
         defaultModel = 'llama3.2:3b';
       }
@@ -702,7 +704,7 @@ export class AgentTabManager {
         let providerUrl: string | undefined;
         switch (provider) {
           case '3d-llm':
-            providerUrl = settings.mistral.baseUrl; // Using mistral baseUrl for now
+            providerUrl = settings.proxy.baseUrl;
             break;
           case 'mistral':
             providerUrl = settings.mistral.baseUrl;
@@ -801,6 +803,7 @@ export class AgentTabManager {
       if (providerId === 'ollama') models = await this.fetchOllamaModels();
       else if (providerId === 'deepseek') models = ['deepseek-chat', 'deepseek-coder'];
       else if (providerId === '3d-llm') models = await this.fetchThreeDLlmModels();
+      else if (providerId === 'mistral') models = ['mistral-tiny', 'mistral-small', 'mistral-medium', 'mistral-large', 'mistral-embed'];
       this.sendToWebview({ command: 'models_list', models, currentModel: agentConfig.model.id, currentProvider: providerId });
     } catch (error: any) {
       this.log('Error fetching models: ' + error.message);
@@ -830,7 +833,7 @@ export class AgentTabManager {
     try {
       const extension = vscode.extensions.getExtension('i2vision') as any;
       const settings = AgentSettingsManager.getInstance(extension?.extensionContext).getSettings();
-      const url = settings.mistral.baseUrl || 'http://localhost:9655';
+      const url = settings.proxy.baseUrl || 'http://localhost:9655';
       const response = await fetch(`${url}/v1/models`);
       if (!response.ok) {
         this.log(`3D LLM models fetch failed: ${response.status}`);
@@ -872,9 +875,10 @@ export class AgentTabManager {
     const settings = this.settingsManager.getSettings();
     const streamingEnabled = settings.streaming.enabled;
     const showThinking = settings.streaming.showThinkingIndicator;
-    const selectedProvider = currentProvider === 'ollama' ? 'selected' : '';
+    const selectedProviderOllama = currentProvider === 'ollama' ? 'selected' : '';
     const selectedProviderDeepSeek = currentProvider === 'deepseek' ? 'selected' : '';
     const selectedProvider3DLlm = currentProvider === '3d-llm' ? 'selected' : '';
+    const selectedProviderMistral = currentProvider === 'mistral' ? 'selected' : '';
 
     // Read HTML template from file
     const templatePath = path.join(this.context.extensionPath, 'resources', 'agent-tab.html');
@@ -884,9 +888,10 @@ export class AgentTabManager {
     html = html.replace(/{workspaceName}/g, workspaceName);
     html = html.replace(/{currentProvider}/g, currentProvider);
     html = html.replace(/{currentModel}/g, currentModel);
-    html = html.replace(/{selectedProvider}/g, selectedProvider);
+    html = html.replace(/{selectedProviderOllama}/g, selectedProviderOllama);
     html = html.replace(/{selectedProviderDeepSeek}/g, selectedProviderDeepSeek);
     html = html.replace(/{selectedProvider3DLlm}/g, selectedProvider3DLlm);
+    html = html.replace(/{selectedProviderMistral}/g, selectedProviderMistral);
     html = html.replace(/{streamingEnabled}/g, String(streamingEnabled));
     html = html.replace(/{showThinking}/g, String(showThinking));
     html = html.replace(/{thinkingChecked}/g, thinkingEnabled ? 'checked' : '');

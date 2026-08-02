@@ -440,26 +440,24 @@ export class CLI {
     }
   }
 
+  /**
+   * Simulate streaming by yielding chunks of the complete response.
+   * Uses sentence boundaries for natural flow. Real SSE streaming from providers
+   * should replace this once the LLMProvider interface is extended with streamAPI().
+   */
   private async *createStreamingResponse(text: string): AsyncGenerator<LLMChunk> {
-    // Simple streaming implementation - chunk the text
-    const chunkSize = 50;
-    for (let i = 0; i < text.length; i += chunkSize) {
-      const chunk = text.substring(i, i + chunkSize);
-      yield {
-        text: chunk,
-        done: false
-      };
-      // Small delay to simulate streaming
-      await new Promise(resolve => setTimeout(resolve, 10));
+    // Split on sentence/clause boundaries for natural chunking
+    const chunks = text.split(/(?<=[.!?\n])\s*/);
+    for (const chunk of chunks) {
+      if (chunk.length > 0) {
+        yield {text: chunk, done: false};
+        await new Promise(resolve => setTimeout(resolve, 5));
+      }
     }
-    yield {
-      text: '',
-      done: true
-    };
+    yield {text: '', done: true};
   }
 
-  // ... [Rest of the existing CLI methods can be kept as-is or gradually refactored]
-  
+
   // === File system methods ===
 
   /** Read a file from disk, relative to workspace root */
@@ -510,22 +508,177 @@ export class CLI {
     return results;
   }
 
-  async searchFiles(query: string, dirPath?: string): Promise<SearchResult[]> {
-    return [];
+  async searchFiles(pattern: string, dirPath?: string): Promise<SearchResult[]> {
+    this.log(`Searching: ${pattern}`);
+    let searchDir = dirPath || this.workspaceRoot || process.cwd();
+
+    // If searchDir points to a file, search in its parent directory instead
+    try {
+      const stat = await fs.promises.stat(searchDir);
+      if (stat.isFile()) {
+        const parentDir = path.dirname(searchDir);
+        this.log(`Search path is a file, searching parent directory: ${parentDir}`);
+        searchDir = parentDir;
+      }
+    } catch {
+      // If stat fails, continue with the original path
+    }
+
+    const results: SearchResult[] = [];
+    const resultsMap = new Map<string, SearchResult>();
+    const regex = new RegExp(pattern, 'i');
+
+    const textExtensions = this.fileExtensions.length > 0
+      ? this.fileExtensions
+      : this.getDefaultExtensions();
+
+    const extractSnippet = (lines: string[], matchLine: number): string => {
+      const start = Math.max(0, matchLine - 2);
+      const end = Math.min(lines.length, matchLine + 3);
+      return lines.slice(start, end).map((line, i) => {
+        const lineNum = start + i + 1;
+        const prefix = lineNum === matchLine ? '>>>' : '   ';
+        return `${prefix} ${String(lineNum).padStart(4)} | ${line}`;
+      }).join('\n');
+    };
+
+    const searchInDir = async (dir: string): Promise<void> => {
+      try {
+        const entries = await fs.promises.readdir(dir, {withFileTypes: true});
+        for (const entry of entries) {
+          if (entry.isDirectory() && ['build', '.gradle', '.idea', 'node_modules', '.git', 'out', 'bin', 'target', 'dist'].includes(entry.name)) {
+            continue;
+          }
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory() && !entry.name.startsWith('.')) {
+            await searchInDir(fullPath);
+          } else if (entry.isFile()) {
+            if (regex.test(entry.name)) {
+              if (!resultsMap.has(fullPath)) {
+                const result: SearchResult = {
+                  path: fullPath,
+                  matchCount: 1,
+                  matches: [{line: 0, text: `File name matches "${pattern}"`, snippet: ''}],
+                  matchedByName: true
+                };
+                resultsMap.set(fullPath, result);
+                results.push(result);
+                if (results.length >= 50) return;
+              }
+            } else {
+              const ext = path.extname(entry.name).toLowerCase();
+              if (textExtensions.includes(ext)) {
+                try {
+                  const content = await fs.promises.readFile(fullPath, 'utf8');
+                  const lines = content.split('\n');
+                  const matches: SearchMatch[] = [];
+
+                  for (let i = 0; i < lines.length; i++) {
+                    if (regex.test(lines[i])) {
+                      matches.push({
+                        line: i + 1,
+                        text: lines[i].trim().substring(0, 120),
+                        snippet: extractSnippet(lines, i + 1)
+                      });
+                    }
+                  }
+
+                  if (matches.length > 0) {
+                    if (!resultsMap.has(fullPath)) {
+                      results.push({
+                        path: fullPath,
+                        matchCount: matches.length,
+                        matches: matches.slice(0, 5),
+                        matchedByName: false
+                      });
+                      resultsMap.set(fullPath, result);
+                      if (results.length >= 50) return;
+                    }
+                  }
+                } catch {
+                  // Skip files that can't be read (binary, permissions, etc.)
+                }
+              }
+            }
+          }
+        }
+      } catch {
+        // Directory doesn't exist or can't be read
+      }
+    };
+
+    await searchInDir(searchDir);
+    return results;
   }
 
   async runDiscovery(): Promise<DiscoveryResult> {
-    return {
-      projectName: 'unknown',
-      version: '1.0.0',
-      components: [],
-      relationships: [],
-      layers: [],
-      violations: []
-    };
+    this.log('Running discovery...');
+    try {
+      const rootDir = this.workspaceRoot || process.cwd();
+      const entries = await fs.promises.readdir(rootDir, {withFileTypes: true});
+
+      const directories = entries.filter(e => e.isDirectory()).map(e => e.name);
+      const components: ComponentInfo[] = directories.map(dir => ({
+        name: dir,
+        type: 'module',
+        path: path.join(rootDir, dir),
+        layer: this.inferLayer(dir),
+        dependencies: []
+      }));
+
+      const violations = await this.analyzeViolations(components);
+
+      return {
+        projectName: path.basename(rootDir),
+        version: '1.0.0',
+        components,
+        relationships: [],
+        layers: [],
+        violations
+      };
+    } catch (error: any) {
+      this.log(`Discovery failed: ${error.message}`);
+      return {
+        projectName: 'unknown',
+        version: '0.0.0',
+        components: [],
+        relationships: [],
+        layers: [],
+        violations: []
+      };
+    }
   }
 
-  async getContext(filePath: string): Promise<FileContext | null> {
+  async analyzeViolations(components?: ComponentInfo[]): Promise<Violation[]> {
+    const violations: Violation[] = [];
+    const comps = components || (await this.runDiscovery()).components;
+
+    for (const component of comps) {
+      if (component.layer === 'VISION' && component.dependencies?.some(d => d.includes('Logic'))) {
+        violations.push({
+          type: 'LAYER_VIOLATION',
+          message: `Vision component '${component.name}' should not depend on Logic layer`,
+          severity: 'warning',
+          component: component.name,
+          layer: component.layer,
+          source: component.name,
+          target: 'Logic',
+          rule: 'LayerDependency'
+        });
+      }
+    }
+
+    return violations;
+  }
+
+  private inferLayer(dirName: string): string {
+    const lower = dirName.toLowerCase();
+    if (lower.includes('vision') || lower.includes('ui') || lower.includes('view')) return 'VISION';
+    if (lower.includes('struct') || lower.includes('model') || lower.includes('entity')) return 'STRUCTURE';
+    if (lower.includes('logic') || lower.includes('service') || lower.includes('business')) return 'LOGIC';
+    if (lower.includes('flow') || lower.includes('control') || lower.includes('router')) return 'FLOW';
+    return 'CODE';
+  }
     const resolvedPath = path.isAbsolute(filePath) ? filePath : path.join(this.workspaceRoot, filePath);
     try {
       const stat = await fs.promises.stat(resolvedPath);
@@ -572,7 +725,4 @@ export class CLI {
     return results;
   }
 
-  async analyzeViolations(components?: ComponentInfo[]): Promise<Violation[]> {
-    return [];
-  }
 }

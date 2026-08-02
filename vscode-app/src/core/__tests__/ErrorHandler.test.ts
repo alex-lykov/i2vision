@@ -50,8 +50,9 @@ describe('ErrorHandler', () => {
     it('should retry on failure when shouldRetry returns true', async () => {
       let attempt = 0;
       mockErrorClassifier.classify.mockReturnValue(new NetworkError('Network error', 'TestProvider'));
-      mockRetryStrategy.shouldRetry.mockImplementation((error, attemptNum) => attemptNum < 2);
-      mockRetryStrategy.getRetryDelay.mockReturnValue(0); // No delay for testing
+      mockRetryStrategy.shouldRetry.mockImplementation((error, attemptNum) => attemptNum < 3);
+      mockRetryStrategy.getRetryDelay.mockReturnValue(0);
+      mockUserFeedbackGenerator.formatMessage.mockReturnValue('User-friendly message');
 
       const result = await errorHandler.handleError(
         async () => {
@@ -131,8 +132,7 @@ describe('ErrorHandler', () => {
       }
 
       expect(consoleErrorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('[TestProvider]'),
-        expect.stringContaining('[NetworkError]')
+        expect.stringContaining('[TestProvider] [NetworkError] Test network error')
       );
     });
   });

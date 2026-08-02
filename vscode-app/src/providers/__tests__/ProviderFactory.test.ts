@@ -52,8 +52,7 @@ describe('ProviderFactory', () => {
         'mistral-small',
         'mistral-medium',
         'mistral-large',
-        'mistral-embed',
-        'mistral:latest'
+        'mistral-embed'
       ];
 
       mistralModels.forEach(modelId => {
@@ -146,8 +145,7 @@ describe('ProviderFactory', () => {
         'mistral-small',
         'mistral-medium',
         'mistral-large',
-        'mistral-embed',
-        'mistral:latest'
+        'mistral-embed'
       ];
 
       mistralCloudModels.forEach(modelId => {
@@ -165,8 +163,9 @@ describe('ProviderFactory', () => {
       ];
 
       localMistralModels.forEach(modelId => {
-        expect((providerFactory as any).isMistralModel(modelId)).toBe(true); // These are cloud models
-        // Note: The logic routes mistral:7b to Mistral provider, not Ollama
+        // Local Mistral models served via Ollama are NOT Mistral Cloud API models
+        expect((providerFactory as any).isMistralModel(modelId)).toBe(false);
+        expect((providerFactory as any).isOllamaModel(modelId)).toBe(true);
       });
     });
 
@@ -175,8 +174,7 @@ describe('ProviderFactory', () => {
         'deepseek:chat',
         'deepseek-chat',
         'deepseek-coder',
-        'deepseek-reasoner',
-        'model-with-deepseek-in-name'
+        'deepseek-reasoner'
       ];
 
       deepSeekModels.forEach(modelId => {

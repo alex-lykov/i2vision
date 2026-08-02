@@ -36,6 +36,11 @@ export class UserFeedbackGenerator {
 
     const messages = [baseMessage];
     
+    // Include original error message if it differs from the base
+    if (error.message && !baseMessage.includes(error.message)) {
+      messages.push(`(${error.message})`);
+    }
+
     if (providerMessage) {
       messages.push(providerMessage);
     }

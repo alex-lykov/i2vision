@@ -95,8 +95,9 @@ describe('RetryStrategy', () => {
     });
 
     it('should have correct default delays', () => {
-      expect(retryStrategy.minDelay).toBe(1000);
-      expect(retryStrategy.maxDelay).toBe(30000);
+      // Default backoff pattern is [1000, 2000, 4000]
+      expect(retryStrategy.backoffPattern[0]).toBe(1000);
+      expect(retryStrategy.backoffPattern[2]).toBe(4000);
     });
   });
 });

@@ -239,12 +239,15 @@ export class MistralProvider implements LLMProvider {
    * Check if a model ID is a Mistral model
    */
   static isMistralModel(modelId: string): boolean {
-    return modelId.startsWith('mistral:') ||
-           modelId.includes('mistral-') ||
-           modelId === 'mistral-tiny' ||
+    return modelId === 'mistral-tiny' ||
            modelId === 'mistral-small' ||
            modelId === 'mistral-medium' ||
            modelId === 'mistral-large' ||
-           modelId === 'mistral-embed';
+           modelId === 'mistral-embed' ||
+           modelId.startsWith('mistral:tiny') ||
+           modelId.startsWith('mistral:small') ||
+           modelId.startsWith('mistral:medium') ||
+           modelId.startsWith('mistral:large') ||
+           modelId.startsWith('mistral:embed');
   }
 }

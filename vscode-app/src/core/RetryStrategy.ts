@@ -35,7 +35,7 @@ export class RetryStrategy {
       return false;
     }
 
-    if (attemptNumber >= this.maxAttempts) {
+    if (attemptNumber > this.maxAttempts) {
       this.startCooldown();
       return false;
     }
@@ -45,7 +45,8 @@ export class RetryStrategy {
 
   public getRetryDelay(error: StandardizedError, attemptNumber: number): number {
     if (error.type === 'RateLimitError' && (error as any).retryAfter !== undefined) {
-      return (error as any).retryAfter * 1000;
+      const delay = (error as any).retryAfter * 1000;
+      return Math.max(1000, Math.min(30000, delay)); // Clamp between 1s and 30s
     }
 
     const index = Math.min(attemptNumber - 1, this.backoffPattern.length - 1);

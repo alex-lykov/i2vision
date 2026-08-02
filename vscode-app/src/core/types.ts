@@ -125,7 +125,7 @@ export class ResponseError implements StandardizedError {
 
 export class GenericError implements StandardizedError {
   type = 'GenericError';
-  isRetryable = false;
+  isRetryable = true;
 
   constructor(
     public message: string,

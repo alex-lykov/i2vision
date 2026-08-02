@@ -7,7 +7,7 @@
 
 import * as vscode from 'vscode';
 import { I2VisionTreeProvider, I2VisionTreeItem } from './treeViewProvider';
-import { CLI as I2VisionCLI } from './cliIntegration';
+import { CLI as I2VisionCLI } from './cliIntegrationRefactored';
 import { FileSystemIntegration, FSUtils } from './fileSystemIntegration';
 import { AgentTabManager } from './agent/AgentTabManager';
 import { LocalAgentProvider } from './agent/LocalAgentProvider';

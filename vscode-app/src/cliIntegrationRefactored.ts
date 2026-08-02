@@ -460,9 +460,54 @@ export class CLI {
 
   // ... [Rest of the existing CLI methods can be kept as-is or gradually refactored]
   
-  // Placeholder for existing methods - these would be kept from the original file
+  // === File system methods ===
+
+  /** Read a file from disk, relative to workspace root */
+  async readFile(filePath: string): Promise<string> {
+    const resolvedPath = path.isAbsolute(filePath) ? filePath : path.join(this.workspaceRoot, filePath);
+    return fs.promises.readFile(resolvedPath, 'utf-8');
+  }
+
+  /** Write content to a file, creating parent directories as needed */
+  async writeFile(filePath: string, content: string): Promise<void> {
+    const resolvedPath = path.isAbsolute(filePath) ? filePath : path.join(this.workspaceRoot, filePath);
+    await fs.promises.mkdir(path.dirname(resolvedPath), {recursive: true});
+    await fs.promises.writeFile(resolvedPath, content, 'utf-8');
+  }
+
+  /** Run a shell command and return stdout/stderr */
+  async runCommand(command: string): Promise<{stdout: string; stderr: string}> {
+    try {
+      return await execAsync(command, {cwd: this.workspaceRoot});
+    } catch (error: any) {
+      return {
+        stdout: error.stdout || '',
+        stderr: error.stderr || error.message || ''
+      };
+    }
+  }
+
+  // === Other CLI methods ===
+
   async listFiles(dirPath?: string, recursive?: boolean): Promise<string[]> {
-    return [];
+    const searchPath = dirPath ? path.resolve(this.workspaceRoot, dirPath) : this.workspaceRoot;
+    const results: string[] = [];
+    try {
+      const entries = await fs.promises.readdir(searchPath, {withFileTypes: true});
+      for (const entry of entries) {
+        const fullPath = path.join(searchPath, entry.name);
+        const relativePath = path.relative(this.workspaceRoot, fullPath);
+        if (entry.isFile()) {
+          results.push(relativePath);
+        } else if (entry.isDirectory() && recursive) {
+          const subResults = await this.listFiles(fullPath, recursive);
+          results.push(...subResults);
+        }
+      }
+    } catch {
+      // Directory doesn't exist or can't be read
+    }
+    return results;
   }
 
   async searchFiles(query: string, dirPath?: string): Promise<SearchResult[]> {
@@ -481,7 +526,26 @@ export class CLI {
   }
 
   async getContext(filePath: string): Promise<FileContext | null> {
-    return null;
+    const resolvedPath = path.isAbsolute(filePath) ? filePath : path.join(this.workspaceRoot, filePath);
+    try {
+      const stat = await fs.promises.stat(resolvedPath);
+      const content = await fs.promises.readFile(resolvedPath, 'utf-8');
+      const ext = path.extname(resolvedPath);
+      return {
+        path: path.relative(this.workspaceRoot, resolvedPath),
+        filePath: resolvedPath,
+        name: path.basename(resolvedPath),
+        language: ext.replace('.', ''),
+        content,
+        size: stat.size,
+        lines: content.split('\n').length,
+        imports: [],
+        classes: [],
+        functions: []
+      };
+    } catch {
+      return null;
+    }
   }
 
   async listTemplates(): Promise<TemplateInfo[]> {
@@ -493,7 +557,19 @@ export class CLI {
   }
 
   async listDirectories(dirPath?: string): Promise<string[]> {
-    return [];
+    const searchPath = dirPath ? path.resolve(this.workspaceRoot, dirPath) : this.workspaceRoot;
+    const results: string[] = [];
+    try {
+      const entries = await fs.promises.readdir(searchPath, {withFileTypes: true});
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          results.push(path.relative(this.workspaceRoot, path.join(searchPath, entry.name)));
+        }
+      }
+    } catch {
+      // Directory doesn't exist or can't be read
+    }
+    return results;
   }
 
   async analyzeViolations(components?: ComponentInfo[]): Promise<Violation[]> {

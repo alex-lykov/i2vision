@@ -695,7 +695,8 @@ export class AgentTabManager {
         this.log('AgentBridge config updated: provider=' + provider + ', model=' + defaultModel);
 
         const { createSessionManager } = require('./SessionManager');
-        const settings = AgentSettingsManager.getInstance((vscode.extensions.getExtension('i2vision')?.extensionContext)).getSettings();
+        const extension = vscode.extensions.getExtension('i2vision') as any;
+        const settings = AgentSettingsManager.getInstance(extension?.extensionContext).getSettings();
         
         // Get provider URL based on provider type
         let providerUrl: string | undefined;
@@ -827,7 +828,8 @@ export class AgentTabManager {
 
   private async fetchThreeDLlmModels(): Promise<string[]> {
     try {
-      const settings = AgentSettingsManager.getInstance((vscode.extensions.getExtension('i2vision')?.extensionContext)).getSettings();
+      const extension = vscode.extensions.getExtension('i2vision') as any;
+      const settings = AgentSettingsManager.getInstance(extension?.extensionContext).getSettings();
       const url = settings.mistral.baseUrl || 'http://localhost:9655';
       const response = await fetch(`${url}/v1/models`);
       if (!response.ok) {

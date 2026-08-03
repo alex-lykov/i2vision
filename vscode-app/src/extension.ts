@@ -44,47 +44,58 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.showWarningMessage('No workspace folder open. Some i2-Vision features may not work.');
     }
 
-    // Initialize file system integration
-    fileSystem = new FileSystemIntegration(workspaceRoot, outputChannel);
-    
-    // Initialize tree provider with CLI and file system integration
-    treeProvider = new I2VisionTreeProvider(workspaceRoot, outputChannel);
-    
-    // Initialize agent provider first, then agent tab manager
-    const agentProvider = new LocalAgentProvider(context, outputChannel);
-    await agentProvider.initialize();
-    
-    // Initialize agent tab manager with provider
-    agentManager = new AgentTabManager(context, outputChannel, agentProvider);
-    
-    // Initialize the agent manager - non-blocking
-    agentManager.initialize().catch(err => {
-        outputChannel.appendLine(`Warning: Agent manager initialization failed: ${err.message}`);
-    });
-    
-    // Register tree view
-    const treeView = vscode.window.createTreeView('i2visionTreeView', {
-        treeDataProvider: treeProvider,
-        showCollapseAll: true
-    });
-    context.subscriptions.push(treeView);
+    // REGISTER COMMANDS FIRST — even if initialization fails, commands must be
+    // available so users don't get "command not found" errors.
+    try {
+        registerCommands(context, workspaceRoot);
+    } catch (error: any) {
+        outputChannel.appendLine(`Command registration failed: ${error.message}`);
+    }
 
-    // Register commands
-    registerCommands(context, workspaceRoot);
+    try {
+        // Initialize file system integration
+        fileSystem = new FileSystemIntegration(workspaceRoot, outputChannel);
 
-    // NON-BLOCKING CLI check - moved to background to prevent extension host hang
-    // This was causing "Extension host is unresponsive" errors
-    checkCLIAvailability(workspaceRoot).catch(err => {
-        outputChannel.appendLine(`CLI check failed (non-blocking): ${err.message}`);
-    });
+        // Initialize tree provider with CLI and file system integration
+        treeProvider = new I2VisionTreeProvider(workspaceRoot, outputChannel);
 
-    // Scan workspace on startup (optional)
-    scanWorkspaceOnStartup(workspaceRoot);
+        // Initialize agent provider first, then agent tab manager
+        const agentProvider = new LocalAgentProvider(context, outputChannel);
+        await agentProvider.initialize();
 
-    // Show welcome message
-    vscode.window.showInformationMessage('i2-Vision extension is now active! 🚀');
-    
-    outputChannel.appendLine('Extension initialization complete');
+        // Initialize agent tab manager with provider
+        agentManager = new AgentTabManager(context, outputChannel, agentProvider);
+
+        // Initialize the agent manager - non-blocking
+        agentManager.initialize().catch(err => {
+            outputChannel.appendLine(`Warning: Agent manager initialization failed: ${err.message}`);
+        });
+
+        // Register tree view
+        const treeView = vscode.window.createTreeView('i2visionTreeView', {
+            treeDataProvider: treeProvider,
+            showCollapseAll: true
+        });
+        context.subscriptions.push(treeView);
+
+        // NON-BLOCKING CLI check - moved to background to prevent extension host hang
+        // This was causing "Extension host is unresponsive" errors
+        checkCLIAvailability(workspaceRoot).catch(err => {
+            outputChannel.appendLine(`CLI check failed (non-blocking): ${err.message}`);
+        });
+
+        // Scan workspace on startup (optional)
+        scanWorkspaceOnStartup(workspaceRoot);
+
+        // Show welcome message
+        vscode.window.showInformationMessage('i2-Vision extension is now active! 🚀');
+
+        outputChannel.appendLine('Extension initialization complete');
+    } catch (error: any) {
+        outputChannel.appendLine(`Extension initialization error: ${error.message}`);
+        console.error(`i2-Vision activation error:`, error);
+        vscode.window.showErrorMessage(`i2-Vision: Initialization error — ${error.message}`);
+    }
 }
 
 /**

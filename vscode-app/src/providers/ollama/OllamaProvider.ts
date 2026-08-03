@@ -2,7 +2,7 @@
  * Ollama Provider implementation with unified error handling
  */
 
-import { LLMProvider, LLMRequest, LLMResponse } from '../../types/provider-types';
+import { LLMProvider, LLMProviderCapabilities, LLMRequest, LLMResponse } from '../../types/provider-types';
 import { ErrorHandler } from '../../core/ErrorHandler';
 import { ErrorContext } from '../../core/types';
 
@@ -19,6 +19,19 @@ export class OllamaProvider implements LLMProvider {
 
   getProviderName(): string {
     return 'Ollama';
+  }
+
+  getCapabilities(): LLMProviderCapabilities {
+    return {
+      streaming: false,
+      nativeToolCalls: false,
+      structuredMessages: false, // uses flat prompt via legacy /api/generate
+      sessionManagement: false,
+      authRequired: false,
+      maxContextLength: 8192,    // conservative default; varies by model
+      chatEndpoint: '/api/generate',
+      healthEndpoint: '/api/tags',
+    };
   }
 
   validateConfiguration(): void {

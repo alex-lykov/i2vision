@@ -7,7 +7,7 @@
  *  - Server error tracking with cooldown
  */
 
-import { LLMProvider, LLMRequest, LLMResponse } from '../../types/provider-types';
+import { LLMProvider, LLMProviderCapabilities, LLMRequest, LLMResponse } from '../../types/provider-types';
 import { ErrorHandler } from '../../core/ErrorHandler';
 import { ErrorContext } from '../../core/types';
 
@@ -28,6 +28,19 @@ export class ThreeDLlmProvider implements LLMProvider {
 
   getProviderName(): string {
     return '3D LLM';
+  }
+
+  getCapabilities(): LLMProviderCapabilities {
+    return {
+      streaming: true,
+      nativeToolCalls: true,   // SSE delta.tool_calls supported
+      structuredMessages: true,
+      sessionManagement: true, // proxy sessions via /v1/sessions
+      authRequired: false,
+      maxContextLength: 64000,
+      chatEndpoint: '/v1/chat/completions',
+      healthEndpoint: '/v1/models',
+    };
   }
 
   validateConfiguration(): void {
@@ -520,6 +533,48 @@ export class ThreeDLlmProvider implements LLMProvider {
             type: 'function',
             function: { name: toolName, arguments: JSON.stringify(args) }
           }];
+        }
+      } catch (e: any) {}
+    }
+
+    // Strategy 8: Inline JSON tool call prefixed by prose (e.g. "Executed: {\"name\":...}")
+    // The DeepSeek model sometimes outputs prose followed by a JSON object with
+    // "name" and "arguments" keys directly in the text (not in code fences).
+    // Match: word-boundary, "name":, optional whitespace, "toolName", then
+    // capture everything from the opening { to the balancing }.
+    const prosePrefixJsonPattern = /\b(Executed|Calling|Running|I(?:'ll| will)\s+(?:call|run|use))\s*[:\s]*(\{\s*"name"\s*:\s*"([^"]+)"[\s\S]+?\})/gi;
+    let ppMatch;
+    while ((ppMatch = prosePrefixJsonPattern.exec(text)) !== null) {
+      try {
+        const jsonCandidate = ppMatch[2];
+        const toolName = ppMatch[3];
+        // Balance braces to extract the complete JSON object
+        let braceCount = 0;
+        let jsonStr = '';
+        let foundBrace = false;
+        const startIndex = text.indexOf(jsonCandidate);
+        if (startIndex === -1) continue;
+        for (let i = startIndex; i < text.length; i++) {
+          const char = text[i];
+          if (char === '{') { braceCount++; foundBrace = true; }
+          if (char === '}') braceCount--;
+          jsonStr += char;
+          if (foundBrace && braceCount === 0) break;
+        }
+        if (jsonStr && jsonStr.includes('"arguments"')) {
+          const toolCallObj = JSON.parse(jsonStr);
+          if (toolCallObj.name && typeof toolCallObj.name === 'string') {
+            let toolArgs = toolCallObj.arguments || {};
+            let finalArgs = toolArgs;
+            if (typeof toolArgs === 'object') {
+              finalArgs = JSON.stringify(toolArgs);
+            }
+            return [{
+              id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'function',
+              function: { name: toolCallObj.name, arguments: finalArgs }
+            }];
+          }
         }
       } catch (e: any) {}
     }

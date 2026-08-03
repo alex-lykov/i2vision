@@ -50,11 +50,41 @@ export interface LLMResponse {
   [key: string]: any; // Allow provider-specific response data
 }
 
+/**
+ * Declares what a provider supports. AgentBridge reads these capabilities to
+ * adapt its behavior (streaming, tool injection, session management, etc.)
+ * instead of checking provider strings.
+ */
+export interface LLMProviderCapabilities {
+  /** Whether the provider supports SSE streaming via callAPI */
+  streaming: boolean;
+  /** Whether the LLM API natively returns tool_calls in structured format */
+  nativeToolCalls: boolean;
+  /** Whether the provider accepts structured messages[] instead of flat prompt */
+  structuredMessages: boolean;
+  /** Whether the provider maintains server-side session state */
+  sessionManagement: boolean;
+  /** Whether the provider requires an API key / Bearer token */
+  authRequired: boolean;
+  /** Maximum token count for the model's context window */
+  maxContextLength: number;
+  /** The chat completions endpoint path (e.g. '/v1/chat/completions') */
+  chatEndpoint: string;
+  /** The health/models endpoint for liveness checks */
+  healthEndpoint?: string;
+}
+
 export interface LLMProvider {
   /**
    * Get the name of the provider
    */
   getProviderName(): string;
+
+  /**
+   * Declare what this provider supports so AgentBridge can adapt without
+   * provider-specific branches.
+   */
+  getCapabilities(): LLMProviderCapabilities;
 
   /**
    * Validate provider configuration

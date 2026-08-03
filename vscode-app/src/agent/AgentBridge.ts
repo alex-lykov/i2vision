@@ -16,6 +16,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import {CLI, LLMChunk, LLMMessage, LLMResponse, LLMTool, LLMToolCall} from '../cliIntegrationRefactored';
+import {LLMProviderCapabilities} from '../types/provider-types';
 import {TerminalManager} from './TerminalManager';
 import {AgentSettingsManager} from './AgentSettings';
 import {applyEditsToContent, EditOperation, formatEditFailure} from './ApplyEditsTool';
@@ -256,6 +257,9 @@ export class AgentBridge {
   
   // Session management
   private _needsFreshSession: boolean = false;
+  
+  // Cached provider capabilities (set after first LLM call)
+  private _lastProviderCapabilities?: LLMProviderCapabilities;
 
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000;
   private static readonly MAX_LIST_FILES_RESULTS = 100;
@@ -320,8 +324,10 @@ export class AgentBridge {
     
     this.sessionManager = createSessionManager(provider, providerUrl);
     
-    // Mark that this session manager needs fresh session initialization
-    this._needsFreshSession = provider === '3d-llm';
+    // Providers that support session management (e.g. 3D LLM via ProxySessionManager)
+    // need a fresh session on first use. Stateless providers get NullSessionManager
+    // which is a no-op.
+    this._needsFreshSession = this.sessionManager?.name !== 'Null';
     
     if (this.sessionManager && this.sessionManager.name !== 'Null') {
       this.log(`Session manager initialized: ${this.sessionManager.name}`);
@@ -433,12 +439,16 @@ export class AgentBridge {
     if (updates.thinkingEnabled !== undefined) this.config.model.thinkingEnabled = updates.thinkingEnabled;
     if (updates.searchEnabled !== undefined) this.config.model.searchEnabled = updates.searchEnabled;
 
-    // Hardcode context length for 3D LLM provider since the proxy doesn't expose
-    // the actual model's context window over its API.
-    if (this.config.model.provider === '3d-llm' && this.config.model.contextLength < 64000) {
-      const oldCtx = this.config.model.contextLength;
-      this.config.model.contextLength = 64000;
-      this.log(`3D LLM provider detected — contextLength overridden: ${oldCtx} -> 64000`);
+    // Apply provider's declared context window if the YAML config understates it.
+    // The proxy doesn't expose the actual model's context window over its API,
+    // so we use the provider's capability declaration as the authoritative value.
+    if (this._lastProviderCapabilities) {
+      const maxCtx = this._lastProviderCapabilities.maxContextLength;
+      if (this.config.model.contextLength < maxCtx) {
+        const oldCtx = this.config.model.contextLength;
+        this.config.model.contextLength = maxCtx;
+        this.log(`Context length overridden from capabilities: ${oldCtx} -> ${maxCtx}`);
+      }
     }
 
     this.log(`Config updated: model=${this.config.model.id}, provider=${this.config.model.provider}`);
@@ -652,10 +662,11 @@ export class AgentBridge {
     }
 
     if (toolFilter === 'action_only') {
-      // ACTION-ONLY: prioritize edit/write tools but keep reads available.
-      // Read tools are included so the model can reference files when applying edits.
-      const actionTools = this.toolRegistry.getLLMToolsByName(['apply_edits', 'write_file', 'read_file', 'get_file_context', 'run_terminal', 'run_build', 'git_commit']);
-      this.log(`Tool filter: action_only (${actionTools.length}/${allTools.length} tools) - forcing action mode (NO reads)`);
+      // ACTION-ONLY: only tools that directly modify the project state.
+      // NO read_file, get_file_context, search_files, or list_directory —
+      // the model has read enough and must act now.
+      const actionTools = this.toolRegistry.getLLMToolsByName(['apply_edits', 'write_file', 'run_terminal', 'run_build', 'git_commit']);
+      this.log(`Tool filter: action_only (${actionTools.length}/${allTools.length} tools) - write/execute tools only, NO reads`);
       return actionTools;
     }
 
@@ -851,10 +862,11 @@ export class AgentBridge {
     const loadedContext = contextProfile ? await this.loadEagerContext(contextProfile, this.config.templateVariables.currentFile) : undefined;
     let contextEnhancedPrompt = this.injectContextIntoPrompt(systemPrompt, loadedContext);
 
-    // When using 3D LLM proxy, embed tool definitions directly in system prompt
-    // because the proxy's tool injection conflicts with i2-Vision's instructions
+    // When the provider doesn't natively handle tool_calls, embed tool definitions
+    // directly in the system prompt so the model knows how to call tools.
     const tools = this.getTools(contextProfile?.lazy, this.stateMachine.getToolFilter());
-    if (this.config.model.provider === '3d-llm' && tools.length > 0) {
+    const caps = this._lastProviderCapabilities;
+    if (caps && !caps.nativeToolCalls && tools.length > 0) {
       contextEnhancedPrompt += '\n\n' + this.formatToolsForSystemPrompt(tools);
     }
 
@@ -954,6 +966,7 @@ export class AgentBridge {
       this._autoNudge = null;
       this._consecutiveToolCallsWithoutResponse = 0;
       this._toolCallHistory = [];
+      this._forceActionMode = false; // Fresh start for new message — don't carry over mode
     }
 
     const toolCalls: ToolCall[] = [];
@@ -1479,7 +1492,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
           // Don't add a nudge — the corrupted proxy history is the problem.
           if (this._consecutiveTextResponsesWithoutToolCalls >= 1) {
             this.log('Misbehavior detected — resetting proxy session and rebuilding clean context');
-            if (this.sessionManager && this.sessionManager.provider === '3d-llm') {
+            if (this.sessionManager && this.sessionManager.name !== 'Null') {
               const resetOk = await this.sessionManager.resetSession(this.config.model.id);
               if (resetOk) {
                 this.log('Proxy session reset successfully, re-attempting with clean history');
@@ -1498,6 +1511,10 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
               messages.push({ role: 'user', content: this._lastUserInput });
             }
             this.log(`Rebuilt messages: ${messages.length} items (system + original user task)`);
+            
+            // Reset forceActionMode after context rebuild — the model starts fresh
+            // and should have a clean slate for exploration.
+            this._forceActionMode = false;
           }
 
           this._consecutiveTextResponsesWithoutToolCalls = 0;
@@ -2131,8 +2148,8 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
       // Enhanced tool execution monitoring
       this.monitorToolExecution(toolCall, rawResult);
 
-      // Compress large tool results before sending to LLM
-      if (rawResult.result && this.config.model.provider === '3d-llm') {
+      // Compress large tool results before sending to LLM — apply for any provider with known capabilities
+      if (rawResult.result && this._lastProviderCapabilities) {
         const compressed = this.toolCompressor.compress(rawResult.result);
         if (compressed.wasCompressed) {
           this.log(`Tool result compressed: ${compressed.originalLength} → ${compressed.compressedLength} chars (${compressed.technique})`);

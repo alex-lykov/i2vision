@@ -11,18 +11,7 @@
         "Other"
     ],
     "activationEvents": [
-        "onView:i2visionTreeView",
-        "onCommand:i2vision.newCodingAgent",
-        "onCommand:i2vision.newVisionAgent",
-        "onCommand:i2vision.newStructureAgent",
-        "onCommand:i2vision.newLogicAgent",
-        "onCommand:i2vision.newFlowAgent",
-        "onCommand:i2vision.debugToolCalls",
-        "onCommand:i2vision.verifyTools",
-        "onCommand:i2vision.checkAgentConfig",
-        "onCommand:i2vision.quickDiagnostic",
-        "onCommand:i2vision.reloadAgentConfig",
-        "onCommand:i2vision.init"
+        "*"
     ],
     "main": "./out/extension.js",
     "contributes": {

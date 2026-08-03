@@ -2,7 +2,7 @@
  * DeepSeek Provider implementation with unified error handling
  */
 
-import { LLMProvider, LLMRequest, LLMResponse } from '../../types/provider-types';
+import { LLMProvider, LLMProviderCapabilities, LLMRequest, LLMResponse } from '../../types/provider-types';
 import { ErrorHandler } from '../../core/ErrorHandler';
 import { ErrorContext } from '../../core/types';
 
@@ -19,6 +19,19 @@ export class DeepSeekProvider implements LLMProvider {
 
   getProviderName(): string {
     return 'DeepSeek';
+  }
+
+  getCapabilities(): LLMProviderCapabilities {
+    return {
+      streaming: false,
+      nativeToolCalls: false,
+      structuredMessages: false, // uses flat prompt string
+      sessionManagement: false,
+      authRequired: true,
+      maxContextLength: 65536,    // DeepSeek V3 context
+      chatEndpoint: '/chat/completions', // NOTE: bare path, no /v1/ prefix
+      healthEndpoint: '/v1/models',
+    };
   }
 
   validateConfiguration(): void {

@@ -17,7 +17,7 @@
  * - Automatic retry logic for rate limits and network issues
  */
 
-import {LLMProvider, LLMRequest, LLMResponse} from '../../types/provider-types';
+import {LLMProvider, LLMProviderCapabilities, LLMRequest, LLMResponse} from '../../types/provider-types';
 import {ErrorHandler} from '../../core/ErrorHandler';
 import {ErrorContext} from '../../core/types';
 
@@ -34,6 +34,19 @@ export class MistralProvider implements LLMProvider {
 
   getProviderName(): string {
     return 'Mistral';
+  }
+
+  getCapabilities(): LLMProviderCapabilities {
+    return {
+      streaming: false,
+      nativeToolCalls: true,    // choice.message.tool_calls
+      structuredMessages: false, // uses flat prompt string
+      sessionManagement: false,
+      authRequired: true,
+      maxContextLength: 32768,
+      chatEndpoint: '/v1/chat/completions',
+      healthEndpoint: '/v1/models',
+    };
   }
 
   validateConfiguration(): void {

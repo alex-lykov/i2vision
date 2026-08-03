@@ -371,20 +371,29 @@ export class CLI {
       
       this.log(`[LLM] ${modelId} | ${providerName} | ${messages.length} msg | ${tools?.length || 0} tools | stream=${stream}`);
 
-      // Convert messages to the format expected by the new provider system
+      // Build prompt string for logging/fallback, but pass structured messages to provider
       const prompt = this.convertMessagesToPrompt(messages);
       
-      // Call the provider with error handling built into the provider
+      // Call the provider with structured messages (preferred) and flat prompt as fallback
       const result = await llmProvider.callAPI({
         prompt: prompt,
+        messages: messages,
         model: modelId,
         temperature: options?.temperature,
         topP: options?.top_p,
-        maxTokens: options?.max_tokens
+        maxTokens: options?.max_tokens,
+        stream: stream,
+        thinking_enabled: options?.thinking_enabled,
+        search_enabled: options?.search_enabled
       });
 
       const elapsed = Date.now() - startTime;
-      this.log(`[LLM SUCCESS] Completed in ${elapsed}ms | ${result.text?.length || 0} chars`);
+      const rawTextLen = result.text?.length || 0;
+      const toolCallsLen = (result as any).tool_calls?.length || 0;
+      this.log(`[LLM SUCCESS] Completed in ${elapsed}ms | text: ${rawTextLen} chars | tool_calls: ${toolCallsLen}`);
+      if (rawTextLen === 0 && toolCallsLen === 0) {
+        this.log(`[LLM WARN] Empty response from provider — raw result: ${JSON.stringify(result).substring(0, 200)}`);
+      }
 
       // Convert provider response to expected format
       return this.convertProviderResponseToLLMResponse(result, stream);
@@ -421,12 +430,12 @@ export class CLI {
     providerResponse: any,
     stream: boolean
   ): LLMResponse | AsyncGenerator<LLMChunk> {
-    // Convert the provider response to the expected LLMResponse format
     if (stream) {
-      // For streaming responses, we need to create an async generator
-      // This is a placeholder - actual implementation would depend on how
-      // the provider implements streaming
-      return this.createStreamingResponse(providerResponse.text || '');
+      return this.createStreamingResponse(
+        providerResponse.text || '',
+        providerResponse.tool_calls || [],
+        providerResponse.usage
+      );
     } else {
       return {
         content: providerResponse.text || '',
@@ -445,7 +454,11 @@ export class CLI {
    * Uses sentence boundaries for natural flow. Real SSE streaming from providers
    * should replace this once the LLMProvider interface is extended with streamAPI().
    */
-  private async *createStreamingResponse(text: string): AsyncGenerator<LLMChunk> {
+  private async *createStreamingResponse(
+    text: string,
+    toolCalls: any[],
+    usage?: any
+  ): AsyncGenerator<LLMChunk> {
     // Split on sentence/clause boundaries for natural chunking
     const chunks = text.split(/(?<=[.!?\n])\s*/);
     for (const chunk of chunks) {
@@ -454,7 +467,25 @@ export class CLI {
         await new Promise(resolve => setTimeout(resolve, 5));
       }
     }
-    yield {text: '', done: true};
+    // Emit tool calls in the final chunk
+    const finalChunk: LLMChunk = {text: '', done: true};
+    if (toolCalls && toolCalls.length > 0) {
+      finalChunk.toolCalls = toolCalls.map((tc: any) => ({
+        id: tc.id || `call_${Date.now()}`,
+        name: tc.name || '',
+        arguments: typeof tc.arguments === 'string'
+          ? (() => { try { return JSON.parse(tc.arguments); } catch { return tc.arguments; } })()
+          : (tc.arguments || {})
+      }));
+    }
+    if (usage) {
+      finalChunk.tokenUsage = {
+        prompt: usage.promptTokens || 0,
+        completion: usage.completionTokens || 0,
+        total: (usage.promptTokens || 0) + (usage.completionTokens || 0)
+      };
+    }
+    yield finalChunk;
   }
 
 
@@ -591,7 +622,7 @@ export class CLI {
                         matches: matches.slice(0, 5),
                         matchedByName: false
                       });
-                      resultsMap.set(fullPath, result);
+                      resultsMap.set(fullPath, results[results.length - 1]);
                       if (results.length >= 50) return;
                     }
                   }
@@ -679,6 +710,8 @@ export class CLI {
     if (lower.includes('flow') || lower.includes('control') || lower.includes('router')) return 'FLOW';
     return 'CODE';
   }
+
+  async readSourceFile(filePath: string): Promise<any> {
     const resolvedPath = path.isAbsolute(filePath) ? filePath : path.join(this.workspaceRoot, filePath);
     try {
       const stat = await fs.promises.stat(resolvedPath);
@@ -725,4 +758,33 @@ export class CLI {
     return results;
   }
 
+  async getContext(filePath: string): Promise<FileContext | null> {
+    this.log(`Getting context: ${filePath}`);
+    try {
+      const resolvedPath = path.isAbsolute(filePath) ? filePath : path.join(this.workspaceRoot, filePath);
+      const content = await fs.promises.readFile(resolvedPath, 'utf8');
+      const lines = content.split('\n');
+      const imports = content.match(/import.*from.*['"].*['"]/g) || [];
+      const classes = content.match(/(class|interface|type)\s+\w+/g) || [];
+      const functions = content.match(/(function|const|let|var)\s+\w+\s*=\s*\(.*\)/g) || [];
+
+      return {
+        path: resolvedPath,
+        filePath: resolvedPath,
+        name: path.basename(resolvedPath),
+        language: path.extname(resolvedPath).slice(1),
+        content,
+        size: content.length,
+        lines: lines.length,
+        imports,
+        classes,
+        functions,
+        component: path.basename(path.dirname(resolvedPath)),
+        layer: this.inferLayer(path.basename(path.dirname(resolvedPath)))
+      };
+    } catch (error: any) {
+      this.log(`Error getting context: ${error.message}`);
+      return null;
+    }
+  }
 }

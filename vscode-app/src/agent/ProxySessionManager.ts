@@ -161,6 +161,34 @@ export class ProxySessionManager implements SessionManager {
             warnings: [`FreeDeepseekAPI proxy cannot connect to DeepSeek servers. Please check proxy connectivity and authentication.`],
           };
         }
+
+        // 404 on /health: the proxy lacks a health endpoint but may still be functional.
+        // Fall back to checking /v1/models as a liveness test.
+        if (response.status === 404) {
+          try {
+            const modelsResponse = await fetch(`${this.baseUrl}/v1/models`);
+            if (modelsResponse.ok) {
+              return {
+                healthy: true,
+                diagnostics: { statusCode: 200, note: '/health returned 404 but /v1/models is reachable' },
+                warnings: [],
+              };
+            }
+            // /v1/models also returned an error — try a simple connectivity check
+            return {
+              healthy: false,
+              diagnostics: { statusCode: response.status, modelsStatusCode: modelsResponse.status, error: errorBody },
+              warnings: [`Proxy /health returned 404 and /v1/models returned ${modelsResponse.status}. The proxy may not be running.`],
+            };
+          } catch (modelsError: any) {
+            // /v1/models threw — check if we can at least connect to the base URL
+            return {
+              healthy: false,
+              diagnostics: { statusCode: response.status, modelsError: modelsError.message },
+              warnings: [`Proxy /health returned 404 and /v1/models is unreachable: ${modelsError.message}`],
+            };
+          }
+        }
         
         return {
           healthy: false,

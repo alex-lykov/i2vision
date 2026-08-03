@@ -1,4 +1,11 @@
-import { ToolDefinition, ToolContext } from '../ToolTypes';
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
+import {ToolContext, ToolDefinition} from '../ToolTypes';
 
 /**
  * Get recovery suggestions for failed commands
@@ -136,16 +143,23 @@ Example:
         }
       }
       
-      // Classify command as long-running or short
+      // Classify command as long-running or short (build vs server)
       const isLongRunning = isBuildCommand(command) || isServerCommand(command);
       
       if (isLongRunning) {
         const terminalName = generateTerminalName(command);
+        // Only server/watch commands should auto-restart on file changes.
+        // Build commands (e.g., npm run build, tsc --noEmit) are one-shot
+        // invocations — the agent decides when to re-run them. Auto-restart
+        // on build commands creates a feedback loop: the agent edits a file
+        // → watcher fires → terminal restarts → agent calls run_terminal
+        // again → terminal killed/recreated → no build output captured.
+        const shouldAutoRestart = isServerCommand(command) && !isBuildCommand(command);
         const result = await ctx.terminalManager.runInTerminal(
           terminalName, 
           command, 
           workingDir, 
-          true // auto-restart
+          shouldAutoRestart
         );
         
         return { result };
@@ -452,6 +466,14 @@ function generateTerminalName(command: string): string {
   const match = command.match(/gradlew\s+(:[a-z:]+)/i);
   if (match) {
     return `i2-Vision: ${match[1].replace(/:/g, '-')}`;
+  }
+  
+  // For build commands, include a timestamp to prevent name collisions.
+  // Each run_terminal call should start a fresh build, not kill the previous
+  // one that hasn't finished yet.
+  if (isBuildCommand(command)) {
+    const simple = command.split(/\s+/)[0];
+    return `i2-Vision: ${simple.substring(0, 10)}-build-${Date.now().toString(36)}`;
   }
   
   const simple = command.split(/\s+/)[0];

@@ -174,7 +174,20 @@ export class ProxySessionManager implements SessionManager {
                 warnings: [],
               };
             }
-            // /v1/models also returned an error — try a simple connectivity check
+            // 401/403 on /v1/models: the proxy is alive but /v1/models requires
+            // authentication. /v1/chat/completions works without auth, so the proxy
+            // is healthy — it just has a restricted models endpoint.
+            if (modelsResponse.status === 401 || modelsResponse.status === 403) {
+              return {
+                healthy: true,
+                diagnostics: {
+                  statusCode: modelsResponse.status,
+                  note: `/health returned 404, /v1/models returned ${modelsResponse.status} (auth required — chat completions work without auth)`,
+                },
+                warnings: [],
+              };
+            }
+            // /v1/models also returned an error for another reason
             return {
               healthy: false,
               diagnostics: { statusCode: response.status, modelsStatusCode: modelsResponse.status, error: errorBody },

@@ -376,8 +376,9 @@ export class AgentBridge {
       }
     }
     
-    // Reset session manager for new chats to prevent session reuse
-    if (this.sessionManager && this.sessionManager.name !== 'Null') {
+    // Reset session manager for new chats to prevent session reuse.
+    // Skip if already done above via _needsFreshSession to avoid double reset.
+    if (this.sessionManager && this.sessionManager.name !== 'Null' && !this._needsFreshSession) {
       this.log('Resetting session manager for new chat to prevent session reuse');
       try {
         const resetSuccess = await this.sessionManager.resetSession(this.config.model.id);
@@ -814,14 +815,11 @@ export class AgentBridge {
         const resetSuccess = await this.sessionManager.resetSession(this.config.model.id);
         if (resetSuccess) {
           this.log('Fresh session initialized - old session context cleared');
-          yield { type: 'text', text: '🔄 Starting with fresh session - previous context cleared\n\n', timestamp: Date.now() };
         } else {
           this.log('Failed to force fresh session - may still use old context');
-          yield { type: 'text', text: '⚠️ Could not clear old session - may continue with previous context\n\n', timestamp: Date.now() };
         }
       } catch (error: any) {
         this.log(`Fresh session error: ${error.message}`);
-        yield { type: 'text', text: `❌ Error clearing session: ${error.message}\n\n`, timestamp: Date.now() };
       }
     }
     
@@ -1220,14 +1218,15 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
           }
         }
 
-        // Proactive health check and reset
-        const health = await this.sessionManager.checkHealth();
-        if (!health.healthy) {
-          this.log(`Session unhealthy: ${health.warnings.join('; ')}`);
-          const resetOk = await this.sessionManager.resetSession(this.config.model.id);
-          if (resetOk) {
-            this.log('Session reset due to health check failure');
-            yield { type: 'thinking', message: 'Session reset for reliability', timestamp: Date.now() };
+        // Proactive health check and reset (first iteration only — proxy doesn't change mid-task)
+        if (iteration === 1) {
+          const health = await this.sessionManager.checkHealth();
+          if (!health.healthy) {
+            this.log(`Session unhealthy: ${health.warnings.join('; ')}`);
+            const resetOk = await this.sessionManager.resetSession(this.config.model.id);
+            if (resetOk) {
+              this.log('Session reset due to health check failure');
+            }
           }
         }
 

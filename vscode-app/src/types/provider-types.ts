@@ -9,9 +9,25 @@
  * Type definitions for LLM providers
  */
 
+export interface LLMMessage {
+  role: string;
+  content: string;
+  tool_call_id?: string;
+  tool_calls?: {
+    id: string;
+    type: string;
+    function: {
+      name: string;
+      arguments: string;
+    };
+  }[];
+}
+
 export interface LLMRequest {
   prompt: string;
   model?: string;
+  /** Structured messages array — preferred over flat prompt string when available */
+  messages?: LLMMessage[];
   temperature?: number;
   topP?: number;
   topK?: number;

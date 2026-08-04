@@ -77,6 +77,8 @@ export interface CardContent {
   buildOutput?: string;
   codeBlocks?: CodeBlock[];
   error?: string;
+  /** DeepSeek/OpenAI reasoning/thinking stream content — shown in collapsible section */
+  thinkingStream?: string;
 }
 
 /**

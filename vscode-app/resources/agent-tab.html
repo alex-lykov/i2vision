@@ -181,7 +181,7 @@
     .proxy-metric-fill.crit{background:#f85149}
     .proxy-close-btn{position:absolute;top:8px;right:8px;background:transparent;border:none;color:var(--vscode-foreground);cursor:pointer;font-size:1.1em}
     .proxy-close-btn:hover{color:var(--vscode-errorForeground)}
-  </style>
+  .auto-scroll-btn{position:sticky;bottom:12px;float:right;margin-right:8px;width:36px;height:36px;border-radius:50%;background:var(--vscode-button-background,#007acc);color:var(--vscode-button-foreground,white);border:none;cursor:pointer;font-size:18px;display:none;z-index:100;box-shadow:0 2px 8px rgba(0,0,0,0.3);transition:opacity 0.2s,transform 0.2s;align-items:center;justify-content:center;line-height:1}.auto-scroll-btn.visible{display:inline-flex}.auto-scroll-btn:hover{transform:scale(1.1)}</style>
 </head>
 <body>
   <div class="header">
@@ -1135,5 +1135,5 @@
       return category ? categoryIcons[category] : undefined;
     }
   </script>
-</body>
+<script>(function(){var p=document.querySelector('.center-panel');if(!p)return;var b=document.createElement('button');b.className='auto-scroll-btn';b.innerHTML='\u2193';b.title='Scroll to bottom';p.appendChild(b);var n=true;var t=50;function c(){var h=p.scrollHeight-p.scrollTop-p.clientHeight;n=h<t;b.classList.toggle('visible',!n)}p.addEventListener('scroll',c,{passive:true});window.addEventListener('resize',c);window.autoScrollOnContentAdded=function(){if(n){p.scrollTop=p.scrollHeight;n=true;b.classList.remove('visible')}};window.autoScrollToBottom=function(){p.scrollTop=p.scrollHeight;n=true;b.classList.remove('visible')};b.addEventListener('click',function(){window.autoScrollToBottom()});c()})();</script></body>
 </html>

@@ -127,7 +127,7 @@ export function getProviderCapabilities(provider: string): LLMProviderCapabiliti
     case '3d-llm':
       return {
         streaming: true,
-        nativeToolCalls: true,
+        nativeToolCalls: false,  // Proxy prompt-emulates tools; inject into system prompt
         structuredMessages: true,
         sessionManagement: true,
         contextCompaction: true,

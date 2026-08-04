@@ -40,7 +40,7 @@ export class ThreeDLlmProvider implements LLMProvider {
   getCapabilities(): LLMProviderCapabilities {
     return {
       streaming: true,
-      nativeToolCalls: true,   // SSE delta.tool_calls supported
+      nativeToolCalls: false,  // Proxy prompt-emulates tools; inject into system prompt
       structuredMessages: true,
       sessionManagement: true, // proxy sessions via /v1/sessions
       contextCompaction: true, // POST /reset-session + compactMessages()
@@ -100,6 +100,11 @@ export class ThreeDLlmProvider implements LLMProvider {
           max_tokens: request.maxTokens || 4096
         };
 
+        // Forward tools if provided (OpenAI-compatible tools parameter)
+        if (request.tools && request.tools.length > 0) {
+          body.tools = request.tools;
+        }
+
         // Forward thinking/search toggle if specified (supported by DeepSeek Web API proxy)
         const options = request as any;
         if (options.thinking_enabled !== undefined) {
@@ -110,7 +115,8 @@ export class ThreeDLlmProvider implements LLMProvider {
         }
 
         const bodyStr = JSON.stringify(body);
-        console.log(`[3D LLM] Body size: ${bodyStr.length} chars`);
+        const toolNames = body.tools?.map((t: any) => t.function?.name || t.name).join(',') || 'none';
+        console.log(`[3D LLM] Body size: ${bodyStr.length} chars, tools: [${toolNames}]`);
 
         const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
           method: 'POST',
@@ -150,8 +156,13 @@ export class ThreeDLlmProvider implements LLMProvider {
           const decoder = new TextDecoder('utf-8');
           let buffer = '';
           let accumulatedText = '';
+          let accumulatedReasoning = '';
           let promptTokens = 0;
           let completionTokens = 0;
+          let reasoningTokens = 0;
+
+          // Index-based accumulator for SSE tool_call deltas (OpenAI streaming protocol)
+          const toolCallAccumulator = new Map<number, { id: string; name: string; argsStr: string }>();
 
           while (true) {
             const { done, value } = await reader.read();
@@ -169,40 +180,62 @@ export class ThreeDLlmProvider implements LLMProvider {
                 const chunkStr = line.startsWith('data: ') ? line.slice(6) : line;
                 const chunk = JSON.parse(chunkStr);
                 const choice = chunk.choices?.[0];
-                const deltaContent = choice?.delta?.content || '';
+                const delta = choice?.delta || {};
+                const deltaContent = delta.content || '';
+                const deltaReasoning = delta.reasoning_content || '';
 
                 if (deltaContent) {
                   accumulatedText += deltaContent;
                 }
+                if (deltaReasoning) {
+                  accumulatedReasoning += deltaReasoning;
+                }
 
-                // Track native tool_calls from SSE delta
+                // Track native tool_calls from SSE delta with index-based accumulation
                 if (choice?.delta?.tool_calls) {
                   for (const tc of choice.delta.tool_calls) {
-                    let args = tc.function?.arguments || {};
-                    if (typeof args === 'string') {
-                      try { args = JSON.parse(args); } catch { /* not complete yet */ }
+                    const index = tc.index ?? 0;
+                    if (!toolCallAccumulator.has(index)) {
+                      toolCallAccumulator.set(index, { id: '', name: '', argsStr: '' });
                     }
-                    toolCallsData.push({
-                      id: tc.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-                      type: 'function',
-                      function: {
-                        name: tc.function?.name || '',
-                        arguments: typeof args === 'string' ? args : JSON.stringify(args)
-                      }
-                    });
+                    const acc = toolCallAccumulator.get(index)!;
+                    if (tc.id) acc.id = tc.id;
+                    if (tc.function?.name) acc.name = tc.function.name;
+                    if (tc.function?.arguments) acc.argsStr += tc.function.arguments;
                   }
                 }
 
-                // Track usage from SSE chunks
+                // Track usage from SSE chunks (including reasoning_tokens)
                 if (chunk.usage?.prompt_tokens) {
                   promptTokens = chunk.usage.prompt_tokens;
                 }
                 if (chunk.usage?.completion_tokens) {
                   completionTokens = chunk.usage.completion_tokens;
                 }
+                if (chunk.usage?.completion_tokens_details?.reasoning_tokens) {
+                  reasoningTokens = chunk.usage.completion_tokens_details.reasoning_tokens;
+                }
               } catch {
                 // Skip unparseable chunks
               }
+            }
+          }
+
+          // Convert accumulated tool calls from the map to toolCallsData
+          for (const [, acc] of toolCallAccumulator) {
+            if (acc.name) {
+              let parsedArgs: any = {};
+              if (acc.argsStr) {
+                try { parsedArgs = JSON.parse(acc.argsStr); } catch { parsedArgs = acc.argsStr; }
+              }
+              toolCallsData.push({
+                id: acc.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                type: 'function',
+                function: {
+                  name: acc.name,
+                  arguments: JSON.stringify(parsedArgs)
+                }
+              });
             }
           }
 
@@ -211,7 +244,8 @@ export class ThreeDLlmProvider implements LLMProvider {
             usage = {
               promptTokens: promptTokens,
               completionTokens: completionTokens,
-              totalTokens: promptTokens + completionTokens
+              totalTokens: promptTokens + completionTokens + reasoningTokens,
+              reasoningTokens: reasoningTokens
             };
           }
         } else {
@@ -296,6 +330,102 @@ export class ThreeDLlmProvider implements LLMProvider {
   // ---- Tool call extraction from text (from cliIntegration.ts) ----
 
   private extractToolCallsFromText(text: string): any[] {
+    // Strategy 0: Numbered list with code blocks (deepseek-v4-pro conversational style)
+    // Matches patterns like:
+    //   1. Read the file
+    //   bash
+    //   type "path/to/file"
+    // or:
+    //   1. Search for something
+    //   ```bash
+    //   dir /s pattern
+    //   ```
+    const numberedListPattern = /(?:\d+[\.)]\s*[^\n]*\n)(?:```(?:bash|shell|sh|cmd|powershell|bat)?\s*\n?([\s\S]*?)```|(?:bash|shell|cmd)\s*\n([\s\S]*?)(?=\n\n|\n\d+[\.)]|$))/gi;
+    let nlMatch;
+    const results: any[] = [];
+    while ((nlMatch = numberedListPattern.exec(text)) !== null) {
+      try {
+        let cmd = (nlMatch[1] || nlMatch[2] || '').trim();
+        if (!cmd) continue;
+
+        // Split multiple commands in a single code block
+        const commands = cmd.split('\n').map(c => c.trim()).filter(c => c && !c.startsWith('#') && !c.startsWith('//'));
+
+        for (const command of commands) {
+          // Detect the tool type from the command
+          let toolName: string | null = null;
+          let toolArgs: any = {};
+
+          // type / cat / more -> read_file
+          if (/^(type|cat|more|get-content)\s+/i.test(command)) {
+            toolName = 'read_file';
+            const pathMatch = command.match(/^(?:type|cat|more|get-content)\s+["']?([^"'\n]+)["']?/i);
+            if (pathMatch) toolArgs.file_path = pathMatch[1].trim();
+          }
+          // dir / ls -> list_directory
+          else if (/^(dir|ls)\s+/i.test(command)) {
+            toolName = 'list_directory';
+            const pathMatch = command.match(/^(?:dir|ls)\s+([^/\n]+)/i);
+            if (pathMatch) toolArgs.path = pathMatch[1].trim();
+            else toolArgs.path = '.';
+            toolArgs.recursive = /\/s|-R|--recursive/i.test(command);
+          }
+          // find / grep / findstr / search -> search_files
+          else if (/^(find|findstr|grep|rg|ag)\s+/i.test(command)) {
+            toolName = 'search_files';
+            const patternMatch = command.match(/(?:find|findstr|grep|rg|ag)\s+["']?([^"'\s]+)["']?/i);
+            if (patternMatch) toolArgs.pattern = patternMatch[1].trim();
+            else toolArgs.pattern = command.split(/\s+/)[1] || '';
+          }
+          // cd + cat/type pattern -> read_file with path
+          // npm / gradle / mvn / make / go -> run_build
+          else if (/^(npm|yarn|pnpm|gradle|mvn|make|go|cargo|dotnet)\s+/i.test(command)) {
+            toolName = 'run_build';
+            toolArgs.command = command;
+          }
+          // git commands -> git_status / git_diff / etc
+          else if (/^git\s+/i.test(command)) {
+            if (/\b(status|st)\b/i.test(command)) {
+              toolName = 'git_status';
+            } else if (/\b(diff|d)\b/i.test(command)) {
+              toolName = 'git_diff';
+            } else if (/\b(log|l)\b/i.test(command)) {
+              toolName = 'git_log';
+            } else if (/\b(branch|br)\b/i.test(command)) {
+              toolName = 'git_branch';
+            } else if (/\bcommit\b/i.test(command)) {
+              toolName = 'git_commit';
+              const msgMatch = command.match(/-m\s+["']([^"']+)["']/);
+              if (msgMatch) toolArgs.message = msgMatch[1];
+            }
+          }
+          // Everything else that looks like a terminal command -> run_terminal
+          else if (command.length > 3 && /^[a-zA-Z_./\\]/.test(command)) {
+            // Filter out explanatory prose lines (must look like a real command)
+            const looksLikeCommand = /^[a-zA-Z_./\\][a-zA-Z0-9_.\-\/\\]+(\s+|$)/.test(command) ||
+                                     /^(echo|exit|set|export|cd|copy|del|move|xcopy|robocopy|mkdir|rmdir|ren|call|start|pause)\s/i.test(command) ||
+                                     /^(python|node|java|ruby|perl|php)\s/i.test(command);
+            if (looksLikeCommand) {
+              toolName = 'run_terminal';
+              toolArgs.command = command;
+            }
+          }
+
+          if (toolName) {
+            results.push({
+              id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+              type: 'function',
+              function: {
+                name: toolName,
+                arguments: JSON.stringify(toolArgs)
+              }
+            });
+          }
+        }
+      } catch (e: any) {}
+    }
+    if (results.length > 0) return results;
+
     // Strategy 1: <file_action> XML format (DeepSeek v4-pro)
     const fileActionPattern = /<file_action>\s*<action>([^<]+)<\/action>(.*?)<\/file_action>/gs;
     let faMatch;

@@ -753,10 +753,22 @@ export class AgentBridge {
           const required = req.includes(key) ? ' (required)' : '';
           text += `  - ${key}: ${desc}${required}\n`;
         }
+        // Show an example call for this specific tool
+        const exampleArgs: any = {};
+        for (const [key, val] of Object.entries(props)) {
+          const prop = val as any;
+          if (prop.type === 'string') exampleArgs[key] = req.includes(key) ? '<value>' : '';
+          else if (prop.type === 'boolean') exampleArgs[key] = false;
+          else if (prop.type === 'number') exampleArgs[key] = 0;
+          else if (prop.type === 'array') exampleArgs[key] = [];
+          else exampleArgs[key] = '';
+        }
+        text += `Example: {"name":"${fn.name}","arguments":${JSON.stringify(exampleArgs)}}\n`;
       }
       text += '\n';
     }
-    text += '--- END TOOLS ---';
+    text += '--- END TOOLS ---\n';
+    text += 'REMEMBER: Output ONLY the JSON tool call line. Nothing else. No explanations.\n';
     return text;
   }
 
@@ -1479,6 +1491,21 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
         const response = await this.callLLM(messages, tools);
         responseText = response.content;
         streamingToolCalls = response.toolCalls.map(tc => ({ id: tc.id, name: tc.name, arguments: tc.arguments }));
+      }
+
+      // Detect LLM communication failures (proxy 500, fetch failed, etc.)
+      // The CLI catches provider errors and returns them as text content like
+      // "Error: LLM call failed - ...". Surface these to the user immediately.
+      const isLLMError = responseText.startsWith('Error: LLM call failed') ||
+                         responseText.startsWith('Error:');
+      if (isLLMError && streamingToolCalls.length === 0) {
+        this.log(`LLM communication error detected — yielding to user: ${responseText.substring(0, 200)}`);
+        if (options.streaming) {
+          yield { type: 'text', text: `❌ ${responseText}`, timestamp: Date.now() };
+          yield { type: 'error', error: responseText, timestamp: Date.now() };
+          yield { type: 'done', outcome: 'error', timestamp: Date.now(), iterations: iteration };
+        }
+        return;
       }
 
       // STATE: PLAN → CONSTRAINTS/COMPLETE

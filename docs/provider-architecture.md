@@ -109,8 +109,164 @@ function createSessionManager(provider: string, baseUrl?: string): SessionManage
 }
 ```
 
-`AgentBridge` always calls the session manager methods — `NullSessionManager`
-is a safe no-op, so no conditional checks are needed in the agent loop.
+`AgentBridge` gates session behavior via two capability flags:
+
+- `sessionManagement` — controls sync, health checks, and fresh-session initialization
+- `contextCompaction` — controls `manageMessages()`, `isContextExhausted()`, and `updateTokenUsage()`
+
+Only `3d-llm` has both flags set to `true`. All other providers gate through via
+`NullSessionManager` as a safe no-op.
+
+### 3D LLM Session Compaction Flow
+
+The compaction pipeline uses a two-layer defense model — local token-budget trimming
+in AgentBridge, and proxy-aware compaction in ProxySessionManager.
+
+```
+                         ┌───────────────────┐
+                         │   User sends task  │
+                         └─────────┬─────────┘
+                                   │
+                                   ▼
+                         ┌───────────────────┐
+                         │  AgentBridge.init │
+                         │  resetSession()   │  ← POST /reset-session?agent=...
+                         │  clear all state  │
+                         └─────────┬─────────┘
+                                   │
+              ╔════════════════════╧════════════════════╗
+              ║        PER-ITERATION LOOP               ║
+              ║  (gated by caps.contextCompaction)      ║
+              ╚════════════════════╤════════════════════╝
+                                   │
+              ┌────────────────────┼────────────────────┐
+              │                    ▼                    │
+              │    ┌───────────────────────────────┐    │
+              │    │ LAYER 1: AgentBridge local     │    │
+              │    │ trimMessagesToBudget()         │    │
+              │    │                                │    │
+              │    │ Trigger: estimatedTokens       │    │
+              │    │   > 80% contextWindow          │    │
+              │    │                                │    │
+              │    │ Action: keep system + last 8   │    │
+              │    │   summarize middle into [Ctx]  │    │
+              │    │   invalidate token baseline    │    │
+              │    └───────────────┬───────────────┘    │
+              │                    │                    │
+              │                    ▼                    │
+              │    ┌───────────────────────────────┐    │
+              │    │ LAYER 2: ProxySessionManager  │    │
+              │    │ manageMessages(messages)      │    │
+              │    │                               │    │
+              │    │ Checks 5 triggers in order:   │    │
+              │    │                               │    │
+              │    │  ┌─ messages >= 85? ──yes──┐  │    │
+              │    │  │  COMPACT (keep last 30)  │  │    │
+              │    │  │  summarize old → [Prev]  │  │    │
+              │    │  └──────────────────────────┘  │    │
+              │    │                                │    │
+              │    │  ┌─ tokens >= 57600 (90%)?    │    │
+              │    │  │  → set contextExhausted    │    │
+              │    │  │  → COMPACT + flag          │    │
+              │    │  └────────────────────────────┘  │    │
+              │    │                                │    │
+              │    │  ┌─ tokens >= 80%? (warn only)│    │
+              │    │  │  → log, cooldown 5 min     │    │
+              │    │  └────────────────────────────┘  │    │
+              │    │                                │    │
+              │    │  ┌─ age > 90 min?  (warn only)│    │
+              │    │  └────────────────────────────┘  │    │
+              │    │                                │    │
+              │    │  ┌─ continuations >= 2?        │    │
+              │    │  │  → warn only                │    │
+              │    │  └────────────────────────────┘  │    │
+              │    └───────────────┬───────────────┘    │
+              │                    │                    │
+              │                    ▼                    │
+              │    ┌───────────────────────────────┐    │
+              │    │ isContextExhausted()?          │    │
+              │    │                               │    │
+              │    │ YES → resetSession(token_limit)│   │
+              │    │   POST /reset-session          │    │
+              │    │   clear all local state        │    │
+              │    │   clear token tracking         │    │
+              │    └───────────────┬───────────────┘    │
+              │                    │                    │
+              │                    ▼                    │
+              │    ┌───────────────────────────────┐    │
+              │    │ POST-LLM: updateTokenUsage()   │    │
+              │    │ accumulate prompt+completion   │    │
+              │    │ tokens into session totals     │    │
+              │    └───────────────────────────────┘    │
+              │                                         │
+              │    ┌──── OTHER RESET TRIGGERS ────┐     │
+              │    │  • misbehavior detection      │     │
+              │    │  • forceFreshSession flag     │     │
+              │    │  • health check failure       │     │
+              │    │  • tool execution errors      │     │
+              │    │  • fresh conversation start   │     │
+              │    │                               │     │
+              │    │  All → resetSession()         │     │
+              │    │  clear messages, tokens,      │     │
+              │    │  counters, exhaust flags      │     │
+              │    └───────────────────────────────┘     │
+              │                                         │
+              └─────────────────────────────────────────┘
+```
+
+#### Compaction Detail
+
+When `compactMessages()` fires (message count ≥ 85 or tokens ≥ 90%):
+
+```
+Input:  messages[] (e.g. 52 total: 1 system + 51 user/assistant/tool)
+                          │
+          1. Extract system prompt
+          2. Separate non-system messages
+          3. non-system > maxHistoryLength*2 (30)?
+             │  YES — proceed         │  NO — return as-is
+             ▼                        ▼
+          4. Split: recent = last 30, old = remainder
+                          │
+          5. summarizeConversation(old):
+             • Pair messages (user, assistant)
+             • Extract: user first 80 chars of line 1
+             • Extract: assistant first 80 chars of line 1
+             • "Q: <question> → A: <answer>; ..." (max 5 pairs)
+                          │
+          6. Rebuild:
+             [system prompt,
+              "[Previous conversation summary: ...]",
+              ...recent 30 non-system messages]
+
+Output: compacted messages (e.g. 52 → 32)
+```
+
+#### Limits Reference
+
+From `ProxySessionManager.DEFAULT_3D_LLM_LIMITS`:
+
+| Limit | Value | Description |
+|-------|-------|-------------|
+| `maxMessages` | 100 | Proxy hard cap per session |
+| `ttlMs` | 2 hours | Proxy session lifetime |
+| `maxHistoryLength` | 15 | Keep last 15 exchanges after compaction |
+| `maxHistoryChars` | 10000 | Reserved (not actively enforced) |
+| **Auto-reset triggers** | | |
+| `messageCount` | 85 | Compact when ≥85 messages (85% of 100) |
+| `ageMinutes` | 90 | Warn when session >90 min old |
+| `continuationLimit` | 2 | Warn after 2 auto-continuations |
+| `tokenUsagePercentage` | 90% | Exhaustion at 90% of context |
+| `maxTokenUsage` | 57600 | 90% of 64000 token window |
+
+#### Reset vs Compaction
+
+| Mechanism | Trigger | Action | Side Effects |
+|-----------|---------|--------|--------------|
+| **Local trim** (`trimMessagesToBudget`) | >80% token budget | Summarize middle, keep last 8 | Invalidates token baseline |
+| **Compaction** (`compactMessages`) | ≥85 messages or ≥90% tokens | Keep system + last 30, summarize old | Preserves recent context |
+| **Exhaustion** (`isContextExhausted`) | tokenUsage ≥ 57600 | Flag + triggers `resetSession('token_limit')` | Clears all tracking |
+| **Full reset** (`resetSession`) | startup / exhaustion / health / misbehavior / errors | POST `/reset-session` + clear all local state | Fresh start, all counters zeroed |
 
 ## Provider Dispatch
 
@@ -138,6 +294,7 @@ Model ID patterns determine the provider:
 | Text-based tool extraction | 8 strategies    | —               | —                | —              |
 | Structured messages      | ✅                | ❌ (flat prompt) | ❌ (flat prompt) | ❌ (flat prompt) |
 | Session management       | ✅ (proxy)        | ❌              | ❌               | ❌             |
+| Context compaction       | ✅ (ProxySessionManager) | ❌      | ❌               | ❌             |
 | Auth required            | None              | Bearer token    | Bearer token     | None           |
 | Chat endpoint            | `/v1/chat/completions` | `/v1/chat/completions` | `/chat/completions` ⚠️ | `/api/generate` (legacy) |
 | Health endpoint          | `/v1/models`      | `/v1/models`    | `/v1/models`     | `/api/tags`    |
@@ -161,25 +318,26 @@ for extracting tools from text. These live in `extractToolCallsFromText()`:
 
 ## Current Limitations & Migration Path
 
-### Stage 1 (current): Provider-specific branches in AgentBridge
+### Stage 1 (completed): Provider-specific branches in AgentBridge
 
-`AgentBridge` has scattered `if (provider === '3d-llm')` checks for:
-- Context length override (line 438)
-- Tool injection into system prompt (line 858)
-- Fresh session flag (line 324)
-- Session manager URL selection (lines 300–307)
+`AgentBridge` had scattered `if (provider === '3d-llm')` checks for:
+- Context length override
+- Tool injection into system prompt
+- Fresh session flag
+- Session manager URL selection
 
-### Stage 2 (planned): Capabilities-driven adaptation
+### Stage 2 (completed): Capabilities-driven adaptation
 
-Replace hardcoded provider checks with capability queries:
+All 5 provider-string checks replaced with capability queries:
 
 ```typescript
-// Add to LLMProvider interface:
+// LLMProviderCapabilities interface in provider-types.ts:
 interface LLMProviderCapabilities {
   streaming: boolean;
   nativeToolCalls: boolean;
   structuredMessages: boolean;
   sessionManagement: boolean;
+  contextCompaction: boolean;   // NEW — separates compaction from session
   authRequired: boolean;
   maxContextLength: number;
   chatEndpoint: string;
@@ -187,11 +345,15 @@ interface LLMProviderCapabilities {
 }
 
 // AgentBridge reads capabilities instead of provider string:
-this.config.model.contextLength = provider.getCapabilities().maxContextLength;
-if (!provider.getCapabilities().nativeToolCalls) {
-  contextEnhancedPrompt += formatToolsForSystemPrompt(tools);
-}
+this.config.model.contextLength = caps.maxContextLength;           // was: provider === '3d-llm'
+if (!caps.nativeToolCalls) { inject tools into prompt }            // was: provider === '3d-llm'
+this._needsFreshSession = caps.sessionManagement;                 // was: provider === '3d-llm'
+if (caps.contextCompaction) { delegate to session manager }       // was: provider === '3d-llm'
 ```
+
+A `getProviderCapabilities(provider)` helper in `provider-types.ts` resolves
+capabilities by provider string without needing a live `LLMProvider` instance,
+so `_lastProviderCapabilities` is available from AgentBridge constructor onward.
 
 ### Stage 3 (future): ProviderRegistry
 

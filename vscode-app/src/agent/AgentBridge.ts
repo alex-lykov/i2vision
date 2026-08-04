@@ -662,11 +662,10 @@ export class AgentBridge {
     }
 
     if (toolFilter === 'action_only') {
-      // ACTION-ONLY: only tools that directly modify the project state.
-      // NO read_file, get_file_context, search_files, or list_directory —
-      // the model has read enough and must act now.
-      const actionTools = this.toolRegistry.getLLMToolsByName(['apply_edits', 'write_file', 'run_terminal', 'run_build', 'git_commit']);
-      this.log(`Tool filter: action_only (${actionTools.length}/${allTools.length} tools) - write/execute tools only, NO reads`);
+      // ACTION-ONLY: prioritize edit/write tools but keep reads available.
+      // Read tools are included so the model can reference files when applying edits.
+      const actionTools = this.toolRegistry.getLLMToolsByName(['apply_edits', 'write_file', 'read_file', 'get_file_context', 'run_terminal', 'run_build', 'git_commit']);
+      this.log(`Tool filter: action_only (${actionTools.length}/${allTools.length} tools) - forcing action mode (NO reads)`);
       return actionTools;
     }
 

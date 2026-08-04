@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * 3D LLM Provider implementation (FreeDeepseekAPI proxy) with unified error handling.
  *
@@ -7,9 +14,9 @@
  *  - Server error tracking with cooldown
  */
 
-import { LLMProvider, LLMProviderCapabilities, LLMRequest, LLMResponse } from '../../types/provider-types';
-import { ErrorHandler } from '../../core/ErrorHandler';
-import { ErrorContext } from '../../core/types';
+import {LLMProvider, LLMProviderCapabilities, LLMRequest, LLMResponse} from '../../types/provider-types';
+import {ErrorHandler} from '../../core/ErrorHandler';
+import {ErrorContext} from '../../core/types';
 
 export class ThreeDLlmProvider implements LLMProvider {
   private baseUrl: string;
@@ -36,6 +43,7 @@ export class ThreeDLlmProvider implements LLMProvider {
       nativeToolCalls: true,   // SSE delta.tool_calls supported
       structuredMessages: true,
       sessionManagement: true, // proxy sessions via /v1/sessions
+      contextCompaction: true, // POST /reset-session + compactMessages()
       authRequired: false,
       maxContextLength: 64000,
       chatEndpoint: '/v1/chat/completions',

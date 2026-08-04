@@ -64,6 +64,11 @@ export interface LLMProviderCapabilities {
   structuredMessages: boolean;
   /** Whether the provider maintains server-side session state */
   sessionManagement: boolean;
+  /** Whether the provider supports server-side context compaction/reset
+   *  (e.g. POST /reset-session, message summarization). When true,
+   *  AgentBridge delegates compaction to the session manager rather than
+   *  trimming locally via trimMessagesToBudget. */
+  contextCompaction: boolean;
   /** Whether the provider requires an API key / Bearer token */
   authRequired: boolean;
   /** Maximum token count for the model's context window */
@@ -110,4 +115,63 @@ export interface LLMProvider {
    * @returns Promise with list of model names
    */
   listModels?(): Promise<string[]>;
+}
+
+/**
+ * Returns LLMProviderCapabilities for a given provider string.
+ * Used by AgentBridge to resolve capabilities without needing
+ * a live LLMProvider instance.
+ */
+export function getProviderCapabilities(provider: string): LLMProviderCapabilities {
+  switch (provider) {
+    case '3d-llm':
+      return {
+        streaming: true,
+        nativeToolCalls: true,
+        structuredMessages: true,
+        sessionManagement: true,
+        contextCompaction: true,
+        authRequired: false,
+        maxContextLength: 64000,
+        chatEndpoint: '/v1/chat/completions',
+        healthEndpoint: '/v1/models',
+      };
+    case 'mistral':
+      return {
+        streaming: false,
+        nativeToolCalls: true,
+        structuredMessages: false,
+        sessionManagement: false,
+        contextCompaction: false,
+        authRequired: true,
+        maxContextLength: 32768,
+        chatEndpoint: '/v1/chat/completions',
+        healthEndpoint: '/v1/models',
+      };
+    case 'deepseek':
+      return {
+        streaming: false,
+        nativeToolCalls: false,
+        structuredMessages: false,
+        sessionManagement: false,
+        contextCompaction: false,
+        authRequired: true,
+        maxContextLength: 65536,
+        chatEndpoint: '/chat/completions',
+        healthEndpoint: '/v1/models',
+      };
+    case 'ollama':
+    default:
+      return {
+        streaming: false,
+        nativeToolCalls: false,
+        structuredMessages: false,
+        sessionManagement: false,
+        contextCompaction: false,
+        authRequired: false,
+        maxContextLength: 8192,
+        chatEndpoint: '/api/generate',
+        healthEndpoint: '/api/tags',
+      };
+  }
 }

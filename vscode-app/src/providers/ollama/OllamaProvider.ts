@@ -1,10 +1,17 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * Ollama Provider implementation with unified error handling
  */
 
-import { LLMProvider, LLMProviderCapabilities, LLMRequest, LLMResponse } from '../../types/provider-types';
-import { ErrorHandler } from '../../core/ErrorHandler';
-import { ErrorContext } from '../../core/types';
+import {LLMProvider, LLMProviderCapabilities, LLMRequest, LLMResponse} from '../../types/provider-types';
+import {ErrorHandler} from '../../core/ErrorHandler';
+import {ErrorContext} from '../../core/types';
 
 export class OllamaProvider implements LLMProvider {
   private baseUrl: string;
@@ -27,6 +34,7 @@ export class OllamaProvider implements LLMProvider {
       nativeToolCalls: false,
       structuredMessages: false, // uses flat prompt via legacy /api/generate
       sessionManagement: false,
+      contextCompaction: false,
       authRequired: false,
       maxContextLength: 8192,    // conservative default; varies by model
       chatEndpoint: '/api/generate',

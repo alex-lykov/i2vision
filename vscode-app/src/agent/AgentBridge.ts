@@ -16,7 +16,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import {CLI, LLMChunk, LLMMessage, LLMResponse, LLMTool, LLMToolCall} from '../cliIntegrationRefactored';
-import {LLMProviderCapabilities} from '../types/provider-types';
+import {getProviderCapabilities, LLMProviderCapabilities} from '../types/provider-types';
 import {TerminalManager} from './TerminalManager';
 import {AgentSettingsManager} from './AgentSettings';
 import {applyEditsToContent, EditOperation, formatEditFailure} from './ApplyEditsTool';
@@ -332,6 +332,10 @@ export class AgentBridge {
     if (this.sessionManager && this.sessionManager.name !== 'Null') {
       this.log(`Session manager initialized: ${this.sessionManager.name}`);
     }
+
+    // Cache provider capabilities for capability-driven branching
+    this._lastProviderCapabilities = getProviderCapabilities(provider);
+    this.log(`Provider capabilities loaded: streaming=${this._lastProviderCapabilities.streaming}, nativeToolCalls=${this._lastProviderCapabilities.nativeToolCalls}, sessionManagement=${this._lastProviderCapabilities.sessionManagement}, contextCompaction=${this._lastProviderCapabilities.contextCompaction}, maxContextLength=${this._lastProviderCapabilities.maxContextLength}`);
 
     this.terminalManager = new TerminalManager(outputChannel, settings.terminal.autoCloseDelayMs, settings.terminal);
     
@@ -979,8 +983,8 @@ export class AgentBridge {
       this._lastTokenUsage = this._sessionState.lastTokenUsage;
       this.log(`Restored token usage from session: prompt=${this._lastTokenUsage.prompt}, completion=${this._lastTokenUsage.completion}`);
       
-      // Also restore to session manager if available
-      if (this.sessionManager && this.sessionManager.name !== 'Null' && this._sessionState.lastTokenUsage) {
+      // Also restore to session manager if compaction is available
+      if (this._lastProviderCapabilities?.contextCompaction && this.sessionManager && this._sessionState.lastTokenUsage) {
         const sessionManagerAny = this.sessionManager as any;
         if (sessionManagerAny.updateTokenUsage) {
           sessionManagerAny.updateTokenUsage(
@@ -1213,7 +1217,11 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
         }
       }
 
-      // SESSION MANAGEMENT: Sync and manage provider-specific session
+      // SESSION MANAGEMENT: Sync, health check, compaction, and context exhaustion
+      // Sync + health check require sessionManagement
+      // Compaction + exhaustion tracking require contextCompaction
+      const sessionCaps = this._lastProviderCapabilities;
+
       if (this.sessionManager && this.sessionManager.name !== 'Null') {
         if (iteration === 1) {
           // SKIP sync on fresh conversations: resetSession() already cleared
@@ -1241,27 +1249,27 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
             }
           }
         }
+      }
 
-        // Manage messages (compact if approaching limits)
+      // Context compaction: delegate to session manager when supported,
+      // otherwise rely on AgentBridge's own trimMessagesToBudget (done above)
+      if (sessionCaps?.contextCompaction && this.sessionManager) {
         messages = await this.sessionManager.manageMessages(messages);
-        
-        // Check for context exhaustion and reset if needed
-        if (this.sessionManager && this.sessionManager.name !== 'Null') {
-          const sessionManagerAny = this.sessionManager as any;
-          const isExhausted = sessionManagerAny.isContextExhausted ? sessionManagerAny.isContextExhausted() : false;
-          if (isExhausted) {
-            this.log('Context exhaustion detected - triggering automatic session reset');
-            yield { type: 'thinking', message: 'Context limit reached - resetting session for stability', timestamp: Date.now() };
-            const sessionManagerAny = this.sessionManager as any;
-            const resetOk = await sessionManagerAny.resetSession(this.config.model.id, 'token_limit');
-            if (resetOk) {
-              this.log('Session reset successfully due to context exhaustion');
-              // Clear token tracking after reset
-              this._lastTokenUsage = undefined;
-              this._lastKnownPromptTokens = 0;
-            } else {
-              this.log('Session reset failed - continuing with current context');
-            }
+
+        // Check for context exhaustion (provider-specific token tracking)
+        const sessionManagerAny = this.sessionManager as any;
+        const isExhausted = sessionManagerAny.isContextExhausted ? sessionManagerAny.isContextExhausted() : false;
+        if (isExhausted) {
+          this.log('Context exhaustion detected - triggering automatic session reset');
+          yield { type: 'thinking', message: 'Context limit reached - resetting session for stability', timestamp: Date.now() };
+          const resetOk = await sessionManagerAny.resetSession(this.config.model.id, 'token_limit');
+          if (resetOk) {
+            this.log('Session reset successfully due to context exhaustion');
+            // Clear token tracking after reset
+            this._lastTokenUsage = undefined;
+            this._lastKnownPromptTokens = 0;
+          } else {
+            this.log('Session reset failed - continuing with current context');
           }
         }
       }
@@ -1297,8 +1305,8 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
             this._lastTokenUsage = nonStreamResponse.tokenUsage;
             this._lastKnownPromptTokens = nonStreamResponse.tokenUsage.prompt;
             
-            // Update session manager token tracking
-            if (this.sessionManager && this.sessionManager.name !== 'Null') {
+            // Update session manager token tracking (only when contextCompaction is supported)
+            if (this._lastProviderCapabilities?.contextCompaction && this.sessionManager) {
               const sessionManagerAny = this.sessionManager as any;
               if (sessionManagerAny.updateTokenUsage) {
                 sessionManagerAny.updateTokenUsage(
@@ -1357,8 +1365,8 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
               this._lastTokenUsage = chunk.tokenUsage;
               this._lastKnownPromptTokens = chunk.tokenUsage.prompt;
               
-              // Update session manager token tracking
-              if (this.sessionManager && this.sessionManager.name !== 'Null') {
+              // Update session manager token tracking (only when contextCompaction is supported)
+              if (this._lastProviderCapabilities?.contextCompaction && this.sessionManager) {
                 const sessionManagerAny = this.sessionManager as any;
                 if (sessionManagerAny.updateTokenUsage) {
                   sessionManagerAny.updateTokenUsage(

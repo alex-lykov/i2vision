@@ -42,6 +42,7 @@ export class MistralProvider implements LLMProvider {
       nativeToolCalls: true,    // choice.message.tool_calls
       structuredMessages: false, // uses flat prompt string
       sessionManagement: false,
+      contextCompaction: false,
       authRequired: true,
       maxContextLength: 32768,
       chatEndpoint: '/v1/chat/completions',

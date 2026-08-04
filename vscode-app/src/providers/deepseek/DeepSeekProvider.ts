@@ -1,10 +1,17 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * DeepSeek Provider implementation with unified error handling
  */
 
-import { LLMProvider, LLMProviderCapabilities, LLMRequest, LLMResponse } from '../../types/provider-types';
-import { ErrorHandler } from '../../core/ErrorHandler';
-import { ErrorContext } from '../../core/types';
+import {LLMProvider, LLMProviderCapabilities, LLMRequest, LLMResponse} from '../../types/provider-types';
+import {ErrorHandler} from '../../core/ErrorHandler';
+import {ErrorContext} from '../../core/types';
 
 export class DeepSeekProvider implements LLMProvider {
   private apiKey: string;
@@ -27,6 +34,7 @@ export class DeepSeekProvider implements LLMProvider {
       nativeToolCalls: false,
       structuredMessages: false, // uses flat prompt string
       sessionManagement: false,
+      contextCompaction: false,
       authRequired: true,
       maxContextLength: 65536,    // DeepSeek V3 context
       chatEndpoint: '/chat/completions', // NOTE: bare path, no /v1/ prefix

@@ -1,12 +1,5 @@
-/*
- * Copyright (c) 2026. Oleksii Lykov.
- *
- * Licensed under the MIT License.
- * SPDX-License-Identifier: MIT
- */
-
 /**
- * ProxySessionManager - Session manager for the 3D LLM proxy (FreeDeepseekAPI).
+ * Session manager for the 3D LLM proxy (FreeDeepseekAPI).
  *
  * Handles:
  * - Session discovery via /v1/sessions and /health
@@ -48,20 +41,15 @@ const DEFAULT_3D_LLM_LIMITS: SessionLimits = {
   maxMessages: 100,
   ttlMs: 2 * 60 * 60 * 1000, // 2 hours
   maxPromptChars: 80000,
-  maxHistoryLength: 15,
-  maxHistoryChars: 10000,
-  autoResetTriggers: {
-    messageCount: 85,
-    ageMinutes: 90,
-    continuationLimit: 2,
-    tokenUsagePercentage: 90, // Reset when 90% of context tokens are used
-    maxTokenUsage: 57600, // 90% of 64000 token context window
-  },
+  maxHistoryLength: 30,
+  maxCompactionRounds: 3,
+  maxRetries: 3,
+  tokenWarningThreshold: 0.85,
 };
 
 export class ProxySessionManager implements SessionManager {
-  readonly name = '3D LLM Proxy';
-  readonly provider = '3d-llm';
+  readonly name: string = '3d-llm-proxy';
+  readonly provider: string = '3d-llm';
 
   private baseUrl: string = 'http://localhost:9655';
   private limits: SessionLimits = DEFAULT_3D_LLM_LIMITS;
@@ -93,8 +81,29 @@ export class ProxySessionManager implements SessionManager {
     }
   }
 
-  async syncSession(agentId: string): Promise<void> {
+  /**
+   * Sync session state with the proxy server.
+   * @param agentId - The agent identifier
+   * @param forceNew - If true, skip reusing any existing session and force a fresh one via reset
+   */
+  async syncSession(agentId: string, forceNew: boolean = false): Promise<void> {
     try {
+      // If forceNew is set, proactively reset the session on the proxy server first
+      if (forceNew) {
+        this.log(`Force new session requested for ${agentId}, resetting proxy session first`);
+        await this.resetSession(agentId, 'manual');
+        // After reset, treat as fresh session locally
+        this.proxySession.id = null;
+        this.proxySession.messageCount = 0;
+        this.proxySession.createdAt = Date.now();
+        this.proxySession.history = [];
+        this.proxySession.continuityCounter = 0;
+        this.proxySession.retryAttempts = 0;
+        this.proxySession.contextExhausted = false;
+        this.log(`Proxy session reset complete for ${agentId}, ready for fresh chat`);
+        return;
+      }
+
       const response = await fetch(`${this.baseUrl}/v1/sessions`);
       if (!response.ok) {
         this.log(`Failed to sync sessions: ${response.status}`);
@@ -105,16 +114,22 @@ export class ProxySessionManager implements SessionManager {
       const entry = data.agents?.find((a) => a.agent === agentId);
 
       if (entry) {
-        // Check if this is a fresh agent that should not reuse old sessions
-        const sessionAgeMinutes = entry.age_min || 0;
-        const isStaleSession = sessionAgeMinutes > 5; // Consider sessions older than 5 minutes as stale
+        // Check if existing session is near limits and should be reset
+        const nearLimit = entry.message_count >= this.limits.maxMessages * 0.9;
+        const nearAge = (entry.age_min || 0) >= (this.limits.ttlMs / 60000) * 0.9;
 
-        if (isStaleSession) {
-          this.log(`Found stale session ${entry.session_id} (${sessionAgeMinutes} min old) - creating fresh session instead`);
-          // Treat as fresh session to avoid reusing stale sessions
+        if (nearLimit || nearAge) {
+          this.log(
+            `Existing session for ${agentId} near limits (msgs: ${entry.message_count}, age: ${entry.age_min}min), resetting`
+          );
+          await this.resetSession(agentId, nearLimit ? 'message_limit' : 'age_limit');
           this.proxySession.id = null;
           this.proxySession.messageCount = 0;
           this.proxySession.createdAt = Date.now();
+          this.proxySession.history = [];
+          this.proxySession.continuityCounter = 0;
+          this.proxySession.retryAttempts = 0;
+          this.proxySession.contextExhausted = false;
         } else {
           // Reuse recent session
           this.proxySession.id = entry.session_id;
@@ -158,26 +173,15 @@ export class ProxySessionManager implements SessionManager {
           return {
             healthy: false,
             diagnostics: { statusCode: response.status, error: 'FreeDeepseekAPI proxy cannot connect to DeepSeek servers' },
-            warnings: [`FreeDeepseekAPI proxy cannot connect to DeepSeek servers. Please check proxy connectivity and authentication.`],
+            warnings: ['Proxy is running but cannot reach DeepSeek API. Check your network or proxy configuration.'],
           };
         }
 
-        // 404 on /health: the proxy lacks a health endpoint but may still be functional.
-        // Fall back to checking /v1/models as a liveness test.
+        // If /health returns 404, try /v1/models as a fallback health check
         if (response.status === 404) {
           try {
             const modelsResponse = await fetch(`${this.baseUrl}/v1/models`);
             if (modelsResponse.ok) {
-              return {
-                healthy: true,
-                diagnostics: { statusCode: 200, note: '/health returned 404 but /v1/models is reachable' },
-                warnings: [],
-              };
-            }
-            // 401/403 on /v1/models: the proxy is alive but /v1/models requires
-            // authentication. /v1/chat/completions works without auth, so the proxy
-            // is healthy — it just has a restricted models endpoint.
-            if (modelsResponse.status === 401 || modelsResponse.status === 403) {
               return {
                 healthy: true,
                 diagnostics: {
@@ -198,81 +202,129 @@ export class ProxySessionManager implements SessionManager {
             return {
               healthy: false,
               diagnostics: { statusCode: response.status, modelsError: modelsError.message },
-              warnings: [`Proxy /health returned 404 and /v1/models is unreachable: ${modelsError.message}`],
+              warnings: ['Proxy /health returned 404. The proxy may be running an older version without /health endpoint.'],
             };
           }
         }
-        
+
         return {
           healthy: false,
           diagnostics: { statusCode: response.status, error: errorBody },
-          warnings: [`Proxy health check failed: ${response.status} - ${errorBody}`],
+          warnings: [`Proxy returned ${response.status}.`],
         };
       }
 
       const data: ProxyHealthResponse = await response.json();
-      const healthy = data.status === 'ok';
       return {
-        healthy,
-        diagnostics: data,
-        warnings: healthy ? [] : [`Proxy status: ${data.status}`],
+        healthy: data.status === 'ok',
+        diagnostics: { statusCode: response.status, model: data.model, agents: data.agents },
+        warnings: [],
       };
     } catch (error: any) {
       return {
         healthy: false,
         diagnostics: { error: error.message },
-        warnings: [`Proxy unreachable: ${error.message}`],
+        warnings: ['Cannot connect to 3D LLM proxy. Is it running on port 9655?'],
       };
     }
   }
 
-  async manageMessages<T extends { role: string; content: string }>(messages: T[]): Promise<T[]> {
-    const now = Date.now();
-    const triggers = this.limits.autoResetTriggers;
+  recordMessage(role: string, content: string): void {
+    this.proxySession.messageCount++;
+    this.proxySession.history.push({ role, content, timestamp: Date.now() });
+  }
 
-    // 1. Proactive message-count reset
-    if (this.proxySession.messageCount >= triggers.messageCount) {
-      this.log(
-        `Message count at ${this.proxySession.messageCount}/${this.limits.maxMessages}, compacting...`
+  checkLimits(triggers?: {
+    messageWarningPercentage?: number;
+    tokenWarningPercentage?: number;
+    ageMinutes?: number;
+    continuationLimit?: number;
+  }): string[] {
+    const warnings: string[] = [];
+
+    if (!triggers) {
+      triggers = {
+        messageWarningPercentage: 0.85,
+        tokenWarningPercentage: 0.85,
+        ageMinutes: 90,
+        continuationLimit: 5,
+      };
+    }
+
+    // 1. Message count warning
+    const msgPct = this.proxySession.messageCount / this.limits.maxMessages;
+    if (msgPct >= (triggers.messageWarningPercentage || 0.85)) {
+      warnings.push(
+        `Message count ${this.proxySession.messageCount}/${this.limits.maxMessages} (${(msgPct * 100).toFixed(0)}%)`
       );
-      return this.compactMessages(messages);
     }
 
-    // 2. Token-based reset (if token usage tracking is available)
-    if (this.proxySession.tokenUsage && triggers.tokenUsagePercentage && triggers.maxTokenUsage) {
-      const tokenUsagePercentage = (this.proxySession.tokenUsage.total / triggers.maxTokenUsage) * 100;
-      if (tokenUsagePercentage >= triggers.tokenUsagePercentage) {
-        this.log(
-          `Token usage at ${this.proxySession.tokenUsage.total}/${triggers.maxTokenUsage} (${tokenUsagePercentage.toFixed(1)}%) - context exhaustion imminent`
-        );
-        this.proxySession.contextExhausted = true;
-        this.proxySession.lastContextWarning = now;
-        // Return compacted messages and mark for reset
-        const compacted = this.compactMessages(messages);
-        return compacted;
-      } else if (tokenUsagePercentage >= 80) {
-        // Warning threshold
-        if (!this.proxySession.lastContextWarning || now - this.proxySession.lastContextWarning > 300000) { // 5 minutes
-          this.log(
-            `Token usage warning: ${this.proxySession.tokenUsage.total}/${triggers.maxTokenUsage} (${tokenUsagePercentage.toFixed(1)}%)`
-          );
-          this.proxySession.lastContextWarning = now;
-        }
-      }
+    // 2. Session age warning
+    const ageMs = Date.now() - this.proxySession.createdAt;
+    const ageMin = ageMs / 60000;
+    if (triggers.ageMinutes && ageMin > triggers.ageMinutes) {
+      warnings.push(`Session age ${ageMin.toFixed(1)} min > ${triggers.ageMinutes} min limit`);
     }
 
-    // 3. Proactive age reset
+    // 3. Continuity counter warning
     if (
-      this.proxySession.createdAt > 0 &&
-      now - this.proxySession.createdAt > triggers.ageMinutes * 60000
+      triggers.continuationLimit &&
+      this.proxySession.continuityCounter >= triggers.continuationLimit
     ) {
-      this.log(`Session age > ${triggers.ageMinutes} min, reset required`);
-      // We can't reset here without agentId; the caller should call resetSession first
+      warnings.push(
+        `Continuation limit ${this.proxySession.continuityCounter}/${triggers.continuationLimit} reached`
+      );
     }
+
+    return warnings;
+  }
+
+  checkExhaustion(triggers?: {
+    messageLimitPercentage?: number;
+    tokenUsagePercentage?: number;
+  }): boolean {
+    if (!triggers) {
+      triggers = { messageLimitPercentage: 0.95, tokenUsagePercentage: 0.95 };
+    }
+
+    const msgPct = this.proxySession.messageCount / this.limits.maxMessages;
+    if (msgPct >= (triggers.messageLimitPercentage || 0.95)) {
+      this.proxySession.contextExhausted = true;
+      return true;
+    }
+
+    if (this.proxySession.contextExhausted) {
+      return true;
+    }
+
+    return false;
+  }
+
+  processMessages<T extends { role: string; content: string }>(
+    messages: T[],
+    triggers?: { continuationLimit?: number }
+  ): T[] {
+    // 1. Check for forced new session (caller already reset)
+    if (!this.proxySession.id) {
+      this.log('No active session, treating as fresh conversation');
+      this.proxySession.continuityCounter = 0;
+      return messages;
+    }
+
+    // 2. Compact if too many messages
+    messages = this.compactMessages(messages);
+
+    // 3. Increment continuity counter
+    this.proxySession.continuityCounter++;
 
     // 4. Auto-continuation reset
-    if (this.proxySession.continuityCounter >= triggers.continuationLimit) {
-      this.log(`Auto-continuation limit ${this.proxySession.continuityCounter}/${triggers.continuationLimit} reached`);
+    if (
+      triggers?.continuationLimit &&
+      this.proxySession.continuityCounter >= triggers.continuationLimit
+    ) {
+      this.log(
+        `Auto-reset: continuation limit ${this.proxySession.continuityCounter}/${triggers.continuationLimit} reached`
+      );
       // Caller should reset before this point
     }
 
@@ -298,146 +350,21 @@ export class ProxySessionManager implements SessionManager {
 
     if (old.length === 0) return messages;
 
-    const summary = this.summarizeConversation(old);
-    const compacted: T[] = [];
+    const summary = old
+      .map((m) => `${m.role}: ${m.content.substring(0, 100)}`)
+      .join('\n');
+    const compactionMsg = {
+      role: 'system' as T['role'],
+      content: `[Earlier conversation summarized]: ${summary}`,
+    };
 
-    if (systemMsg) {
-      compacted.push(systemMsg as T);
-    }
-    compacted.push({
-      role: 'user',
-      content: `[Previous conversation summary: ${summary}]\n\nContinue from the recent messages below.`,
-    } as T);
-    compacted.push(...recent);
+    this.log(`Compacted ${old.length} messages into summary (${recent.length} recent kept)`);
 
-    this.log(`Compacted: ${messages.length} → ${compacted.length} messages`);
-    return compacted;
-  }
-
-  /**
-   * Simple extractive summarization of old conversation turns.
-   */
-  private summarizeConversation(
-    messages: Array<{ role: string; content: string }>
-  ): string {
-    // Keep user questions + first line of assistant responses
-    const points: string[] = [];
-    for (let i = 0; i < messages.length; i += 2) {
-      const userMsg = messages[i];
-      const assistantMsg = messages[i + 1];
-      if (!userMsg || userMsg.role !== 'user') continue;
-
-      const question = userMsg.content.trim().split('\n')[0].substring(0, 80);
-      const answer = assistantMsg
-        ? assistantMsg.content.trim().split('\n')[0].substring(0, 80)
-        : '';
-      points.push(`Q: ${question}${answer ? ` → A: ${answer}` : ''}`);
-    }
-    return points.slice(0, 5).join('; ');
-  }
-
-  async resetSession(agentId: string, reason?: 'message_limit' | 'token_limit' | 'age_limit' | 'manual'): Promise<boolean> {
-    const resetUrl = `${this.baseUrl}/reset-session?agent=${encodeURIComponent(agentId)}`;
-    try {
-      const response = await fetch(resetUrl, { method: 'POST' });
-      if (!response.ok) {
-        this.log(`Proxy reset failed (${response.status}), attempting local reset only`);
-        // Continue with local reset even if proxy reset failed
-      } else {
-        const data: ProxyResetResponse = await response.json();
-        const resetReason = reason || 'manual';
-        this.log(`Session reset (${resetReason}): ${data.status}, preserved ${data.history_preserved} items`);
-      }
-
-      // Reset local state
-      this.proxySession.id = null;
-      this.proxySession.messageCount = 0;
-      this.proxySession.createdAt = Date.now();
-      this.proxySession.continuityCounter = 0;
-      this.proxySession.retryAttempts = 0;
-      this.proxySession.history = [];
-
-      // Reset token tracking
-      this.proxySession.tokenUsage = {
-        prompt: 0,
-        completion: 0,
-        total: 0,
-        lastUpdated: Date.now(),
-      };
-      this.proxySession.contextExhausted = false;
-      this.proxySession.lastContextWarning = undefined;
-
-      return true;
-    } catch (error: any) {
-      this.log(`Proxy reset error: ${error.message}, attempting local reset only`);
-      // Continue with local reset even if proxy reset failed
-    }
-
-    // Always perform local reset regardless of proxy reset success
-    const resetReason = reason || 'manual';
-    this.log(`Performing local session reset (${resetReason}) due to ${this.proxySession.contextExhausted ? 'context exhaustion' : 'limit reached'}`);
-
-    // Additional context cleanup for token limit resets
-    if (resetReason === 'token_limit') {
-      this.log('Context exhaustion reset - clearing all context state');
-    }
-
-    return true;
-  }
-
-  recordContinuation(): void {
-    this.proxySession.continuityCounter++;
-    this.log(`Continuation ${this.proxySession.continuityCounter}/${this.limits.autoResetTriggers.continuationLimit}`);
-  }
-
-  recordRetry(): void {
-    this.proxySession.retryAttempts++;
-  }
-
-  /**
-   * Update token usage tracking
-   */
-  updateTokenUsage(promptTokens: number, completionTokens: number): void {
-    if (!this.proxySession.tokenUsage) {
-      this.proxySession.tokenUsage = {
-        prompt: 0,
-        completion: 0,
-        total: 0,
-        lastUpdated: Date.now(),
-      };
-    }
-
-    this.proxySession.tokenUsage.prompt += promptTokens;
-    this.proxySession.tokenUsage.completion += completionTokens;
-    this.proxySession.tokenUsage.total = this.proxySession.tokenUsage.prompt + this.proxySession.tokenUsage.completion;
-    this.proxySession.tokenUsage.lastUpdated = Date.now();
-
-    const triggers = this.limits.autoResetTriggers;
-    if (triggers.tokenUsagePercentage && triggers.maxTokenUsage) {
-      const usagePercentage = (this.proxySession.tokenUsage.total / triggers.maxTokenUsage) * 100;
-      this.log(`Token usage updated: ${this.proxySession.tokenUsage.total}/${triggers.maxTokenUsage} (${usagePercentage.toFixed(1)}%)`);
-    }
-  }
-
-  /**
-   * Check if context is exhausted and needs reset
-   */
-  isContextExhausted(): boolean {
-    if (this.proxySession.contextExhausted) {
-      return true;
-    }
-
-    if (this.proxySession.tokenUsage && this.limits.autoResetTriggers.tokenUsagePercentage && this.limits.autoResetTriggers.maxTokenUsage) {
-      const maxTokenUsage = this.limits.autoResetTriggers.maxTokenUsage;
-      const tokenUsagePercentage = this.limits.autoResetTriggers.tokenUsagePercentage;
-      const usagePercentage = (this.proxySession.tokenUsage.total / maxTokenUsage) * 100;
-      if (usagePercentage >= tokenUsagePercentage) {
-        this.proxySession.contextExhausted = true;
-        return true;
-      }
-    }
-
-    return false;
+    const result: T[] = [];
+    if (systemMsg) result.push(systemMsg);
+    result.push(compactionMsg);
+    result.push(...recent);
+    return result;
   }
 
   getMessagesRemaining(): number | null {
@@ -447,6 +374,36 @@ export class ProxySessionManager implements SessionManager {
   getTimeRemaining(): number | null {
     if (this.proxySession.createdAt <= 0) return null;
     return Math.max(0, this.limits.ttlMs - (Date.now() - this.proxySession.createdAt));
+  }
+
+  async resetSession(
+    agentId: string,
+    reason?: 'message_limit' | 'token_limit' | 'age_limit' | 'manual'
+  ): Promise<boolean> {
+    const resetUrl = `${this.baseUrl}/reset-session?agent=${encodeURIComponent(agentId)}`;
+    try {
+      const response = await fetch(resetUrl, { method: 'POST' });
+      if (!response.ok) {
+        this.log(`Reset failed: ${response.status} ${response.statusText}`);
+        return false;
+      }
+      const data: ProxyResetResponse = await response.json();
+      this.log(`Session reset for ${agentId}: ${data.history_preserved} history items preserved`);
+      
+      // Reset local state
+      this.proxySession.id = null;
+      this.proxySession.messageCount = 0;
+      this.proxySession.createdAt = Date.now();
+      this.proxySession.history = [];
+      this.proxySession.continuityCounter = 0;
+      this.proxySession.retryAttempts = 0;
+      this.proxySession.contextExhausted = false;
+      
+      return true;
+    } catch (error: any) {
+      this.log(`Reset error: ${error.message}`);
+      return false;
+    }
   }
 
   serialize(): object {
@@ -473,5 +430,3 @@ export class ProxySessionManager implements SessionManager {
     }
   }
 }
-
-

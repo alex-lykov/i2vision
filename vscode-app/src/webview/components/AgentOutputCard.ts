@@ -32,6 +32,7 @@ import {
   shouldAutoCollapse,
   ToolCallData,
 } from './AgentOutputCard.types';
+import { AutoScroll } from './AutoScroll';
 
 /**
  * Escape HTML to prevent XSS

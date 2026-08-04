@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * Session manager for the 3D LLM proxy (FreeDeepseekAPI).
  *
@@ -42,9 +49,12 @@ const DEFAULT_3D_LLM_LIMITS: SessionLimits = {
   ttlMs: 2 * 60 * 60 * 1000, // 2 hours
   maxPromptChars: 80000,
   maxHistoryLength: 30,
-  maxCompactionRounds: 3,
-  maxRetries: 3,
-  tokenWarningThreshold: 0.85,
+  maxHistoryChars: 80000,
+  autoResetTriggers: {
+    messageCount: 90,
+    ageMinutes: 100,
+    continuationLimit: 5,
+  },
 };
 
 export class ProxySessionManager implements SessionManager {
@@ -229,9 +239,34 @@ export class ProxySessionManager implements SessionManager {
     }
   }
 
+  async manageMessages<T extends { role: string; content: string }>(messages: T[]): Promise<T[]> {
+    return this.processMessages(messages);
+  }
+
+  recordContinuation(): void {
+    this.proxySession.continuityCounter++;
+  }
+
+  recordRetry(): void {
+    this.proxySession.retryAttempts++;
+  }
+
   recordMessage(role: string, content: string): void {
     this.proxySession.messageCount++;
-    this.proxySession.history.push({ role, content, timestamp: Date.now() });
+    // Store as user/assistant pair per ProxySessionState schema
+    if (role === 'user') {
+      this.proxySession.history.push({ user: content, assistant: '' });
+    } else if (role === 'assistant') {
+      // Update the last entry if it's a user message with empty assistant
+      const last = this.proxySession.history[this.proxySession.history.length - 1];
+      if (last && last.assistant === '') {
+        last.assistant = content;
+      } else {
+        this.proxySession.history.push({ user: '', assistant: content });
+      }
+    } else {
+      this.proxySession.history.push({ user: '', assistant: `[${role}]: ${content}` });
+    }
   }
 
   checkLimits(triggers?: {
@@ -354,9 +389,9 @@ export class ProxySessionManager implements SessionManager {
       .map((m) => `${m.role}: ${m.content.substring(0, 100)}`)
       .join('\n');
     const compactionMsg = {
-      role: 'system' as T['role'],
+      role: 'system',
       content: `[Earlier conversation summarized]: ${summary}`,
-    };
+    } as unknown as T;
 
     this.log(`Compacted ${old.length} messages into summary (${recent.length} recent kept)`);
 

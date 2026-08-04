@@ -666,10 +666,10 @@ export class AgentBridge {
     }
 
     if (toolFilter === 'action_only') {
-      // ACTION-ONLY: prioritize edit/write tools but keep reads available.
-      // Read tools are included so the model can reference files when applying edits.
-      const actionTools = this.toolRegistry.getLLMToolsByName(['apply_edits', 'write_file', 'read_file', 'get_file_context', 'run_terminal', 'run_build', 'git_commit']);
-      this.log(`Tool filter: action_only (${actionTools.length}/${allTools.length} tools) - forcing action mode (NO reads)`);
+      // ACTION-ONLY: only write/edit/execute tools. No read/explore tools.
+      // The model has enough information — it must take action now.
+      const actionTools = this.toolRegistry.getLLMToolsByName(['apply_edits', 'write_file', 'run_terminal', 'run_build', 'git_commit']);
+      this.log(`Tool filter: action_only (${actionTools.length}/${allTools.length} tools) - forcing action mode (write/edit/execute only, NO reads)`);
       return actionTools;
     }
 
@@ -2079,7 +2079,7 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
     try {
       // TOOL FILTER ENFORCEMENT: When action_only mode is active, reject disallowed tools
       if (this._forceActionMode) {
-        const allowedTools = ['apply_edits', 'write_file', 'read_file', 'get_file_context', 'run_terminal', 'run_build', 'git_commit'];
+        const allowedTools = ['apply_edits', 'write_file', 'run_terminal', 'run_build', 'git_commit'];
         if (!allowedTools.includes(toolCall.name)) {
           this.log(`TOOL FILTER BLOCKED: ${toolCall.name} not in action_only set. Allowed: ${allowedTools.join(', ')}`);
           return {
@@ -2090,11 +2090,11 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
       }
 
       // PRE-FLIGHT CHECK: Re-read limit - block repeated reads of same file
-      if (toolCall.name === 'read_file') {
+      if (toolCall.name === 'read_file' || toolCall.name === 'get_file_context') {
         const filePath = this.resolvePath(toolCall.arguments.path);
         const count = this._readFileCount.get(filePath) || 0;
         if (count >= AgentBridge.MAX_READS_PER_FILE) {
-          this.log(`READ LIMIT: "${filePath}" already read ${count} times. Forcing action.`);
+          this.log(`READ LIMIT: "${filePath}" already read ${count} times (via ${toolCall.name}). Forcing action.`);
           return {
             result: '',
             error: `⚠️ READ LIMIT: "${toolCall.arguments.path}" has been read ${count} times already. You have enough information. Use apply_edits or write_file to make changes. Stop reading and take action now.`
@@ -2172,8 +2172,8 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
       // Delegate to tool registry
       const rawResult = await this.toolRegistry.execute(toolCall.name, toolCall.arguments, context);
 
-      // Track successful read_file calls for per-file limit
-      if (toolCall.name === 'read_file' && !rawResult.error) {
+      // Track successful read_file / get_file_context calls for per-file limit
+      if ((toolCall.name === 'read_file' || toolCall.name === 'get_file_context') && !rawResult.error) {
         const filePath = this.resolvePath(toolCall.arguments.path);
         const currentCount = this._readFileCount.get(filePath) || 0;
         this._readFileCount.set(filePath, currentCount + 1);

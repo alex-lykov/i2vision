@@ -32,6 +32,7 @@ import {
   getChangeTypeClass,
   DEFAULT_DIFF_DISPLAY_CONFIG,
 } from './DiffCard.types';
+import { ICONS } from './AgentIcons';
 
 /**
  * Escape HTML to prevent XSS

@@ -187,13 +187,9 @@ export function getProviderColor(provider: ProviderType): string {
  * Get status icon
  */
 export function getStatusIcon(status: AgentStatus): string {
-  const icons: Record<AgentStatus, string> = {
-    success: '✅',
-    error: '❌',
-    partial: '⚠️',
-    stopped: '⏹️',
-  };
-  return icons[status];
+  // Return empty placeholder; actual SVG icons are injected by AgentOutputCard.
+  // This function is kept for backward compatibility.
+  return `<span class="status-icon-placeholder" data-status="${status}"></span>`;
 }
 
 /**

@@ -33,6 +33,7 @@ import {
   ToolCallData,
 } from './AgentOutputCard.types';
 import { AutoScroll } from './AutoScroll';
+import { getToolStatusIcon, getSectionIcon, getExpandToggle, ICONS } from './AgentIcons';
 
 /**
  * Escape HTML to prevent XSS
@@ -98,51 +99,100 @@ function createStatusBanner(status: AgentStatus): string {
     return '';
   }
   
-  const bannerClasses = `status-banner ${status}`;
-  const bannerIcons = {
-    'error': '❌',
-    'partial': '⚠️',
-    'stopped': ''
-  };
-  const bannerMessages = {
-    'error': 'Agent encountered an error',
-    'partial': 'Agent completed partially',
-    'stopped': 'Agent was stopped'
+  const statusMessages: Record<string, string> = {
+    'error': 'This run encountered an error',
+    'warning': 'This run completed with warnings',
+    'pending': 'This run is still in progress',
+    'running': 'Agent is currently running',
   };
   
+  const message = statusMessages[status] || '';
+  if (!message) return '';
+  
   return `
-    <div class="${bannerClasses}">
-      <span class="banner-icon">${bannerIcons[status] || 'ℹ️'}</span>
-      <span class="banner-message">${bannerMessages[status] || 'Agent status updated'}</span>
+    <div class="status-banner status-${status}">
+      ${message}
     </div>
   `;
 }
 
 /**
- * Create card content section with collapsing support
+ * Create card content section
  */
 function createCardContent(content: CardContent, display: DisplayConfig): string {
-  const shouldCollapse = shouldAutoCollapse(content.text, display);
-  const previewText = shouldCollapse ? getPreviewText(content.text, display.maxPreviewLines) : content.text;
+  const parts: string[] = [];
+
+  // Thinking/reasoning stream section (DeepSeek thinking/reasoning_content)
+  if (content.thinkingStream && display.showReasoning) {
+    parts.push(createThinkingRawSection(content.thinkingStream, display));
+  }
+
+  // Main response text
+  if (content.text) {
+    parts.push(createResponseTextSection(content.text, display));
+  }
+
+  // Tool calls
+  if (content.toolCalls && content.toolCalls.length > 0 && display.showToolDetails) {
+    parts.push(createToolCallsSection(content.toolCalls, display));
+  }
+
+  // Code blocks
+  if (content.codeBlocks && content.codeBlocks.length > 0 && display.showToolDetails) {
+    parts.push(createCodeBlocksSection(content.codeBlocks, display));
+  }
+
+  // Build output
+  if (content.buildOutput && display.showToolDetails) {
+    parts.push(createBuildOutputSection(content.buildOutput));
+  }
 
   return `
     <div class="output-card-content">
-      ${content.error ? createErrorSection(content.error) : ''}
-      
-      ${content.thinkingStream ? createThinkingStreamSection(content.thinkingStream, display) : ''}
-      
-      <div class="response-text-section ${shouldCollapse && display.collapsed ? 'collapsed' : ''}">
-        <div class="response-text">
-          ${formatResponseText(previewText, display)}
-        </div>
-        ${shouldCollapse ? createExpandButton(shouldCollapse && display.collapsed) : ''}
-      </div>
+      ${parts.join('\n')}
+    </div>
+  `;
+}
 
-      ${content.toolCalls.length > 0 ? createToolCallsSection(content.toolCalls, display) : ''}
-      
-      ${content.buildOutput ? createBuildOutputSection(content.buildOutput) : ''}
-      
-      ${content.codeBlocks && content.codeBlocks.length > 0 ? createCodeBlocksSection(content.codeBlocks, display) : ''}
+/**
+ * Create thinking/reasoning stream section
+ */
+function createThinkingSection(thinkingText: string, display: DisplayConfig): string {
+  if (!thinkingText || !thinkingText.trim()) return '';
+  
+  const isLong = thinkingText.length > 500;
+  const openAttr = display.showReasoning && !isLong ? 'open' : '';
+
+  return `
+    <details class="thinking-stream-section" ${openAttr}>
+      <summary class="thinking-stream-summary">
+        ${getSectionIcon('thinking')}
+        <span class="thinking-label">Thinking</span>
+        <span class="thinking-chars">(${thinkingText.length} chars)</span>
+      </summary>
+      <div class="thinking-stream-content">
+        <pre>${escapeHtml(thinkingText)}</pre>
+      </div>
+    </details>
+  `;
+}
+
+/**
+ * Create response text section with collapsible content
+ */
+function createResponseTextSection(text: string, display: DisplayConfig): string {
+  if (!text || !text.trim()) return '';
+
+  const previewText = getPreviewText(text, 10);
+  const isLong = text.length > 1000;
+  const collapsedClass = shouldAutoCollapse(text, display) ? 'collapsed' : '';
+
+  return `
+    <div class="response-text-section ${collapsedClass}">
+      <div class="response-text-full">
+        <pre>${escapeHtml(text)}</pre>
+      </div>
+      ${isLong ? createExpandButton(true) : ''}
     </div>
   `;
 }
@@ -161,7 +211,7 @@ function createThinkingStreamSection(thinkingText: string, display: DisplayConfi
   return `
     <details class="thinking-stream-section" ${openAttr}>
       <summary class="thinking-stream-summary">
-        <span class="thinking-icon"></span>
+        ${getSectionIcon('thinking')}
         <span class="thinking-label">Thinking</span>
         <span class="thinking-chars">(${thinkingText.length} chars)</span>
       </summary>
@@ -173,140 +223,59 @@ function createThinkingStreamSection(thinkingText: string, display: DisplayConfi
 }
 
 /**
- * Create error section
+ * Create thinking section with markdown (for main thinking stream)
  */
-function createErrorSection(error: string): string {
-  // Parse error to extract meaningful information
-  const errorMessage = extractErrorMessage(error);
-  const errorType = extractErrorType(error);
+function createThinkingMarkdownSection(thinkingText: string, display: DisplayConfig): string {
+  if (!thinkingText || !thinkingText.trim()) return '';
   
+  const isLong = thinkingText.length > 500;
+  const openAttr = display.showReasoning && !isLong ? 'open' : '';
+
   return `
-    <div class="error-section">
-      <span class="error-icon">❌</span>
-      <div class="error-content">
-        ${errorType ? `<div class="error-type">${escapeHtml(errorType)}</div>` : ''}
-        <div class="error-text">${escapeHtml(errorMessage)}</div>
-        ${shouldShowErrorDetails(error) ? createErrorDetailsSection(error) : ''}
+    <details class="thinking-stream-section thinking-markdown" ${openAttr}>
+      <summary class="thinking-stream-summary">
+        ${getSectionIcon('thinking')}
+        <span class="thinking-label">Thinking</span>
+        <span class="thinking-chars">(${thinkingText.length} chars)</span>
+      </summary>
+      <div class="thinking-stream-content">
+        <pre>${escapeHtml(thinkingText)}</pre>
       </div>
-    </div>
-  `;
-}
-
-function extractErrorMessage(error: string): string {
-  // Extract the main error message from common error patterns
-  const patterns = [
-    /^(ERROR|FAILED|TOOL_EXECUTION_FAILED|MAX_ITERATIONS_REACHED|BUILD_FIX_CYCLE_FAILED|TOOL_LOOP_DETECTED):\s*(.+)$/i,
-    /^(Error:\s*)(.+)$/i,
-    /^([^:]+:\s*)(.+)$/
-  ];
-  
-  for (const pattern of patterns) {
-    const match = error.match(pattern);
-    if (match && match[2]) {
-      return match[2].trim();
-    }
-  }
-  
-  return error;
-}
-
-function extractErrorType(error: string): string | null {
-  // Extract error type from common patterns
-  const typePatterns = [
-    /^(ERROR|FAILED|TOOL_EXECUTION_FAILED|MAX_ITERATIONS_REACHED|BUILD_FIX_CYCLE_FAILED|TOOL_LOOP_DETECTED)/i,
-    /^(Error|Exception|Failure)/i
-  ];
-  
-  for (const pattern of typePatterns) {
-    const match = error.match(pattern);
-    if (match && match[1]) {
-      return match[1].toUpperCase();
-    }
-  }
-  
-  return null;
-}
-
-function shouldShowErrorDetails(error: string): boolean {
-  // Show details for specific error types that benefit from more context
-  return error.includes('TOOL_EXECUTION_FAILED') || 
-         error.includes('BUILD_FIX_CYCLE_FAILED') || 
-         error.includes('MAX_ITERATIONS_REACHED') ||
-         error.includes('TOOL_LOOP_DETECTED');
-}
-
-function createErrorDetailsSection(error: string): string {
-  // Extract additional details from error
-  let details = '';
-  
-  if (error.includes('TOOL_EXECUTION_FAILED')) {
-    const toolMatch = error.match(/TOOL_EXECUTION_FAILED:\s*(\w+)/i);
-    if (toolMatch) {
-      details = `Tool: <strong>${escapeHtml(toolMatch[1])}</strong>`;
-    }
-  } else if (error.includes('MAX_ITERATIONS_REACHED')) {
-    const iterationMatch = error.match(/(\d+)\s*iterations/i);
-    if (iterationMatch) {
-      details = `Iterations: <strong>${escapeHtml(iterationMatch[1])}</strong>`;
-    }
-  } else if (error.includes('BUILD_FIX_CYCLE_FAILED')) {
-    const failureMatch = error.match(/(\d+)\s*consecutive\s*build\s*failures/i);
-    if (failureMatch) {
-      details = `Build failures: <strong>${escapeHtml(failureMatch[1])}</strong>`;
-    }
-  } else if (error.includes('TOOL_LOOP_DETECTED')) {
-    const toolMatch = error.match(/detected\s*tool:\s*(\w+)/i);
-    if (toolMatch) {
-      details = `Looping tool: <strong>${escapeHtml(toolMatch[1])}</strong>`;
-    }
-  }
-  
-  if (!details) return '';
-  
-  return `
-    <div class="error-details">
-      ${details}
-    </div>
+    </details>
   `;
 }
 
 /**
- * Format response text with basic Markdown-like styling
+ * Create thinking section with raw pre (for reasoning_content)
  */
-function formatResponseText(text: string, display: DisplayConfig): string {
-  if (!text) return '';
+function createThinkingRawSection(thinkingText: string, display: DisplayConfig): string {
+  if (!thinkingText || !thinkingText.trim()) return '';
+  const escaped = escapeHtml(thinkingText);
+  const isLong = thinkingText.length > 500;
+  const openAttr = display.showReasoning && !isLong ? 'open' : '';
   
-  let formatted = escapeHtml(text);
-  
-  // Convert code blocks (```...```)
-  formatted = formatted.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-    const langClass = lang ? ` class="language-${escapeHtml(lang)}"` : '';
-    return `<pre><code${langClass}>${code}</code></pre>`;
-  });
-  
-  // Convert inline code (`...`)
-  formatted = formatted.replace(/`([^`]+)`/g, '<code>$1</code>');
-  
-  // Convert bold (**...**)
-  formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  
-  // Convert italic (*...*)
-  formatted = formatted.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-  
-  // Convert newlines to <br>
-  formatted = formatted.replace(/\n/g, '<br>');
-  
-  return formatted;
+  return `
+    <details class="thinking-stream-section" ${openAttr}>
+      <summary class="thinking-stream-summary">
+        ${getSectionIcon('thinking')}
+        <span class="thinking-label">Thinking</span>
+        <span class="thinking-chars">(${thinkingText.length} chars)</span>
+      </summary>
+      <div class="thinking-stream-content">
+        <pre>${escaped}</pre>
+      </div>
+    </details>
+  `;
 }
 
 /**
  * Create expand/collapse button
  */
 function createExpandButton(isCollapsed: boolean): string {
-  const label = isCollapsed ? '▼ Expand' : '▲ Collapse';
+  const toggleHtml = getExpandToggle(isCollapsed);
   return `
-    <button class="expand-button" onclick="this.closest('.response-text-section').classList.toggle('collapsed'); this.textContent = this.closest('.response-text-section').classList.contains('collapsed') ? '▼ Expand' : '▲ Collapse';">
-      ${label}
+    <button class="expand-button" onclick="this.closest('.response-text-section').classList.toggle('collapsed'); const btn = this; const collapsed = this.closest('.response-text-section').classList.contains('collapsed'); btn.innerHTML = collapsed ? '${getExpandToggle(true).replace(/'/g, "\\'")}' : '${getExpandToggle(false).replace(/'/g, "\\'")}';">
+      ${toggleHtml}
     </button>
   `;
 }
@@ -322,7 +291,7 @@ function createToolCallsSection(toolCalls: ToolCallData[], display: DisplayConfi
   return `
     <div class="tool-calls-section">
       <div class="section-header">
-        <span class="section-icon"></span>
+        ${getSectionIcon('toolCalls')}
         <span class="section-title">Tool Calls (${toolCalls.length})</span>
       </div>
       <div class="tool-calls-list">
@@ -333,14 +302,14 @@ function createToolCallsSection(toolCalls: ToolCallData[], display: DisplayConfi
 }
 
 function createToolCallCard(toolCall: ToolCallData, index: number, display: DisplayConfig): string {
-  const statusIcon = toolCall.error ? '❌' : toolCall.success !== false ? '✅' : '⚠️';
+  const statusIconHtml = getToolStatusIcon(toolCall.error, toolCall.success);
   const durationStr = toolCall.durationMs ? ` (${toolCall.durationMs}ms)` : '';
   const detailsOpen = display.showToolDetails ? 'open' : '';
   
   return `
     <details class="tool-call-card" ${detailsOpen}>
       <summary class="tool-call-summary">
-        <span class="tool-status">${statusIcon}</span>
+        ${statusIconHtml}
         <span class="tool-name">${escapeHtml(toolCall.toolName)}</span>
         <span class="tool-duration">${durationStr}</span>
       </summary>
@@ -375,7 +344,7 @@ function createBuildOutputSection(buildOutput: string): string {
   return `
     <details class="build-output-section">
       <summary class="build-output-summary">
-        <span class="section-icon">️</span>
+        ${getSectionIcon('buildOutput')}
         <span class="section-title">Build Output</span>
       </summary>
       <div class="build-output-content">
@@ -405,13 +374,15 @@ function createCodeBlocksSection(codeBlocks: { language: string; code: string; f
   }).join('');
   
   return `
-    <div class="code-blocks-section">
-      <div class="section-header">
-        <span class="section-icon"></span>
+    <details class="code-blocks-section">
+      <summary class="code-blocks-summary">
+        ${getSectionIcon('codeBlocks')}
         <span class="section-title">Code Blocks (${codeBlocks.length})</span>
+      </summary>
+      <div class="code-blocks-list">
+        ${blocks}
       </div>
-      ${blocks}
-    </div>
+    </details>
   `;
 }
 
@@ -430,14 +401,14 @@ function createCardFooter(footer: CardFooter): string {
   
   const tokenInfo = footer.tokensUsed ? `
     <span class="tokens-info">
-      <span class="token-icon"></span>
+      <span class="token-icon">${ICONS.tokens}</span>
       ${footer.tokensUsed.toLocaleString()} tokens
     </span>
   ` : '';
   
   const confidenceInfo = footer.confidence !== undefined ? `
     <span class="confidence-info">
-      <span class="confidence-icon"></span>
+      <span class="confidence-icon">${ICONS.confidence}</span>
       ${(footer.confidence * 100).toFixed(0)}% confidence
     </span>
   ` : '';

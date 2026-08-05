@@ -190,7 +190,7 @@ export abstract class UniversalAgentBridge {
     if (layer) {
       return path.join(configPath, `${layer.toLowerCase()}-agent.yaml`);
     }
-    return path.join(configPath, 'coding-agent.yaml');
+    return path.join(configPath, 'code-agent.yaml');
   }
 
   /**

@@ -389,7 +389,7 @@ export class ProxySessionManager implements SessionManager {
       .map((m) => `${m.role}: ${m.content.substring(0, 100)}`)
       .join('\n');
     const compactionMsg = {
-      role: 'system',
+      role: 'user',
       content: `[Earlier conversation summarized]: ${summary}`,
     } as unknown as T;
 

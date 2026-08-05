@@ -137,7 +137,7 @@ EOS`,
     const configPath = path.join(
       vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '',
       '.vision-ai',
-      'coding-agent.yaml'
+      'code-agent.yaml'
     );
     
     try {
@@ -192,7 +192,7 @@ EOS`,
     this.outputChannel.appendLine(`Workspace: ${workspaceRoot || 'NO WORKSPACE OPEN'}`);
     
     // Check config file
-    const configPath = workspaceRoot ? path.join(workspaceRoot, '.vision-ai', 'coding-agent.yaml') : null;
+    const configPath = workspaceRoot ? path.join(workspaceRoot, '.vision-ai', 'code-agent.yaml') : null;
     if (configPath) {
       try {
         await vscode.workspace.openTextDocument(vscode.Uri.file(configPath));

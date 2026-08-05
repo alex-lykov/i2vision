@@ -22,34 +22,33 @@ systemPromptTemplate: |
   ## UNIVERSAL RULES (STRICT - NEVER IGNORE)
 
   ### NEVER
-  - **Edit files** with Python/PowerShell/`edit_file` → Use **`write_file` ONLY**
-  - **Kill processes** with `taskkill` → User handles this
-  - **Use relative paths** or `working_dir` → **Absolute paths only**
+  - **Edit files** with Python/PowerShell — Use **`write_file`** or **`apply_edits`**
+  - **Kill processes** with `taskkill` — User handles this
+  - **Use relative paths** — Always use **absolute paths**
   - **Commit** without being asked
-  - **Run `read_file`** → It returns "File not found" on this system
-  - **List directories one level at a time** → Use `list_files` with `recursive:true`
   - **Run tests** unless explicitly asked
   - **Explore beyond 10 calls** without making an edit
 
   ## ✅ WORKFLOW
 
-  ### Build/Test Failure Limits
-  - If the same build or test command fails 3 times with the same error, STOP. Output "BUILD FAILED: [error]" and wait for instructions.
-  - Do NOT try different flags, filters, or workarounds. Three identical failures = the problem is outside your ability to fix.
-  - If tests compile but aren't discovered, it's a JUnit/Gradle config issue. Do not debug it.
-
   ### Reading Files
-  - For Kotlin/TypeScript: `document_symbols` to see file structure
-  - For raw content: `run_command type path\to\file`
-  - For finding code: `search_files` or `find_references`
+  - Use **`read_file`** (with absolute path) to read file contents
+  - For file structure overview: use **`get_file_context`**
+  - For finding code: use **`search_files`** with pattern matching
+  - For directory listings: use **`list_directory`** with `recursive:true`
 
   ### Editing Files
-  1. Read with `run_command type`
-  2. Write with `write_file path="relative/path" content="..."`
-  3. Build, fix errors if any, rebuild
+  1. Read with `read_file` to see current content
+  2. Modify with `write_file` or `apply_edits`
+  3. Build (`run_build`), fix errors if any, rebuild
+
+  ### Build Verification
+  - Use `run_build` with the compile command (e.g., `.\gradlew compileKotlin`)
+  - If the same build command fails 3 times with the same error, STOP and report
+  - Fix source files (src/main), NOT test files (src/test), unless user asks
 
   ### Pre-Existing Errors
-  - If build fails on files you didn't edit, output "BUILD FAILED with pre-existing errors only"
+  - If build fails on files you didn't edit, report "BUILD FAILED with pre-existing errors only"
 
   ### Restart Servers
   1. Ask user to close the terminal
@@ -86,17 +85,16 @@ templateVariables:
   currentFile: ""
   task: ""
 
-ruleSetKeys: ["code-style-kotlin", "minimal-changes"]
-parserTemplateName: "json-output"
-
 # --- 3. MODEL ---
 model:
-  id: minimax-m2.1:cloud
-  provider: ollama
-  contextLength: 8192
+  id: deepseek-v4-pro
+  provider: 3d-llm
+  contextLength: 64000
   maxOutputTokens: 4096
   temperature: 0.2
   topP: 0.95
+  thinkingEnabled: false
+  searchEnabled: true
 
 # --- 4. LLM BEHAVIOR ---
 llm:
@@ -108,8 +106,8 @@ llm:
 
 # --- 5. FORMATTING RULES ---
 formattingRules:
-  rules: "OUTPUT FORMAT (STRICT): Use header lines: reasoning: <text> and tool_call: <json>"
-  brief: "reasoning: <text> | tool_call: {\"tool\":\"...\",\"args\":{...}} | EOS"
+  rules: 'OUTPUT FORMAT: Use reasoning for explanation, then output ONE JSON tool call per response.'
+  brief: '{"name":"tool_name","arguments":{"param":"value"}}'
   reasoningHeader: "reasoning:"
   toolCallHeader: "tool_call:"
   eosMarker: "EOS"
@@ -123,7 +121,7 @@ iterationSettings:
 
 # --- 7. TOOL SELECTION ---
 toolSelection:
-  requiredToolsForModification: [read_file, write_file, edit_file]
+  requiredToolsForModification: [read_file, write_file, apply_edits]
   defaultRelevanceThreshold: 0.6
   maxToolsPerTask: 10
   toolTimeoutSeconds: 30

@@ -231,8 +231,11 @@ export class AgentTabManager {
   }
 
   async createTab(layer: string, conversationId?: string): Promise<string> {
-    this.log('Creating ' + layer + ' agent tab...');
-    const layerEnum = layer.toUpperCase() as VslfcLayer;
+    // HARDCODED: Until VSLFC layer support is fully implemented, all agent sessions
+    // use only the CODE layer with .vision-ai/code-agent.yaml.
+    const effectiveLayer = 'code';
+    this.log('Creating ' + effectiveLayer + ' agent tab (hardcoded — CODE layer only at current implementation stage)...');
+    const layerEnum = effectiveLayer.toUpperCase() as VslfcLayer;
     const agent = await this.agentProvider.createAgent(layerEnum);
     const tabId = conversationId || 'tab-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';

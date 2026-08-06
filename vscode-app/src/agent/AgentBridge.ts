@@ -324,6 +324,23 @@ export class AgentBridge {
     
     this.sessionManager = createSessionManager(provider, providerUrl);
     
+    // Resolve the actual proxy agent ID early so that resetSession/syncSession
+    // calls use the correct identifier even when the proxy assigns a different
+    // agent name than the model ID (e.g., model "deepseek-v4-pro" → proxy "dev-agent").
+    if (this.sessionManager.name !== 'Null') {
+      try {
+        // Use dynamic access since resolveAgentId is specific to ProxySessionManager
+        const mgr = this.sessionManager as any;
+        if (typeof mgr.resolveAgentId === 'function') {
+          mgr.resolveAgentId(this.config.model.id).then((resolvedId: string) => {
+            if (resolvedId && resolvedId !== this.config.model.id) {
+              this.log(`Proxy agent ID resolved: "${this.config.model.id}" → "${resolvedId}"`);
+            }
+          }).catch(() => { /* non-blocking */ });
+        }
+      } catch {}
+    }
+    
     // Providers that support session management (e.g. 3D LLM via ProxySessionManager)
     // need a fresh session on first use. Stateless providers get NullSessionManager
     // which is a no-op.

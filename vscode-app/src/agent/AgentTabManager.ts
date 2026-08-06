@@ -617,7 +617,7 @@ export class AgentTabManager {
       const saved = await this.historyManager?.load(conversationId);
       const contextTitle = saved?.contextTitle || 'Untitled';
       // Send loaded conversation after a delay to ensure webview is ready
-      setTimeout(() => {
+      this.loadedConversationTimeout = setTimeout(() => {
         if (this.activeTabId) {
           this.sendLoadedConversation(this.activeTabId);
           this.sendToWebview({ command: 'conversation_resumed', conversationId, contextTitle });

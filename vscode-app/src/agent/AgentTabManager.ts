@@ -176,11 +176,11 @@ export class AgentTabManager {
   }
 
   /**
-   * Dispose the tab manager — save all tabs and stop timers.
+   * Dispose the tab manager â€” save all tabs and stop timers.
    * Called from extension deactivate().
    */
   async dispose(): Promise<void> {
-    this.log('Disposing AgentTabManager — saving all tabs...');
+    this.log('Disposing AgentTabManager â€” saving all tabs...');
     this.stopProxyHealthTimer();
     if (this.historyManager) {
       for (const [tabId, tabState] of this.tabs.entries()) {
@@ -228,7 +228,7 @@ export class AgentTabManager {
     // HARDCODED: Until VSLFC layer support is fully implemented, all agent sessions
     // use only the CODE layer with .vision-ai/code-agent.yaml.
     const effectiveLayer = 'code';
-    this.log('Creating ' + effectiveLayer + ' agent tab (hardcoded — CODE layer only at current implementation stage)...');
+    this.log('Creating ' + effectiveLayer + ' agent tab (hardcoded â€” CODE layer only at current implementation stage)...');
     const layerEnum = effectiveLayer.toUpperCase() as VslfcLayer;
     const agent = await this.agentProvider.createAgent(layerEnum);
     const tabId = conversationId || 'tab-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4);
@@ -317,7 +317,7 @@ export class AgentTabManager {
   }
   
   /**
-   * Estimate token count from messages (rough approximation: 1 token ≈ 4 characters for code)
+   * Estimate token count from messages (rough approximation: 1 token â‰ˆ 4 characters for code)
    * Uses more conservative estimate to avoid inflated numbers
    */
   private estimateTokensFromMessages(messages: ChatMessage[]): number {
@@ -328,7 +328,7 @@ export class AgentTabManager {
       }
       return sum + msgChars;
     }, 0);
-    // Conservative estimate: 1 token ≈ 6 characters for code (includes whitespace, brackets, etc.)
+    // Conservative estimate: 1 token â‰ˆ 6 characters for code (includes whitespace, brackets, etc.)
     return Math.round(totalChars / 6);
   }
 
@@ -470,7 +470,9 @@ export class AgentTabManager {
         // Update session state from agent bridge
         tabState.sessionState = this.currentAgentBridge.getSessionState();
         
-        if (settings.agent.autoSaveConversation && this.historyManager) await this.saveTabQuietly(this.activeTabId!, tabState);
+        if (settings.agent.autoSaveConversation && this.historyManager) {
+        await this.historyManager.save(this.activeTabId!, tabState.history, tabState.layer, tabState.sessionState);
+      }
         const durationMs = Date.now() - startTime;
         this.sendToWebview({ command: 'assistant_response', content: cleanedResponse, durationMs, timestamp: Date.now() });
         this.log('Complete: ' + tabState.accumulatedToolCalls.length + ' tools, ' + (Date.now() - tabState.lastActivityAt) + 'ms');
@@ -924,22 +926,6 @@ export class AgentTabManager {
   async listConversations(): Promise<string[]> {
     if (!this.historyManager) return [];
     return this.historyManager.list();
-  }
-
-  getAllTabs(): AgentTabState[] { return Array.from(this.tabs.values()); }
-
-  async dispose(): Promise<void> {
-    this.stopAutoSaveTimer();
-    this.stopProxyHealthTimer();
-    if (this.webviewPanel) this.webviewPanel.dispose();
-    if (this.currentAgentBridge) { this.currentAgentBridge.dispose(); this.currentAgentBridge = null; }
-    const savePromises = Array.from(this.tabs.entries()).map(async ([tabId, tabState]) => {
-      if (this.historyManager && tabState.history.length > 0) await this.historyManager.save(tabId, tabState.history, tabState.layer, tabState.sessionState);
-      tabState.agent.dispose();
-    });
-    this.tabs.clear();
-    this.log('AgentTabManager disposed');
-    await Promise.all(savePromises);
     await this.enforceHistoryLimit();
   }
 }

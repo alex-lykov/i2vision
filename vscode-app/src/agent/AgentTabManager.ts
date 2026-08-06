@@ -67,7 +67,7 @@ export class AgentTabManager {
   async initialize(): Promise<void> {
     await this.agentProvider.initialize();
     this.startProxyHealthTimer();
-    await this.loadLastConversation();
+    // await this.loadLastConversation(); // DISABLED: new chat should start fresh
     this.log('AgentTabManager initialization complete');
   }
 

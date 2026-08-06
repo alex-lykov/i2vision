@@ -491,7 +491,7 @@
     window.addEventListener('message', function(event) {
       const message = event.data;
       switch(message.command) {
-        case 'clear_conversation': timeline.innerHTML = ''; streamingElement = null; thinkingEl = null; setProcessingState(false); document.getElementById('conversationIndicator').style.display = 'none'; break;
+        case 'clear_conversation': timeline.innerHTML = ''; streamingElement = null; thinkingEl = null; setProcessingState(false); document.getElementById('conversationIndicator').style.display = 'none'; document.getElementById('historyList').innerHTML = ''; document.getElementById('conversationTitle').textContent = 'New Chat'; break;
         case 'user_message': appendUserMessage(message.content); break;
         case 'restored_message': appendRestoredMessage(message.content, message.toolCalls, message.timestamp); break;
         case 'thinking': showThinkingIndicator(message.message); break;

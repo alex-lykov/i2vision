@@ -49,6 +49,7 @@ export class AgentTabManager {
   private cancelTokenSource: vscode.CancellationTokenSource | null = null;
   private autoSaveTimer: NodeJS.Timeout | null = null;
   private proxyHealthTimer: NodeJS.Timeout | null = null;
+  private loadedConversationTimeout: NodeJS.Timeout | null = null;
   private readonly AUTO_SAVE_INTERVAL_MS = 5 * 60 * 1000;
   private readonly PROXY_HEALTH_INTERVAL_MS = 10 * 1000;
 
@@ -72,38 +73,9 @@ export class AgentTabManager {
   }
 
   private async loadLastConversation(): Promise<void> {
-    if (!this.historyManager) return;
-    // Don't auto-load if user already has an active tab (e.g. from createTab during startup)
-    if (this.activeTabId) {
-      this.log('Skipping auto-load: user already has an active tab (' + this.activeTabId + ')');
-      return;
-    }
-    try {
-      const conversationIds = await this.historyManager.list();
-      if (conversationIds.length === 0) return;
-      
-      // Get the most recently updated conversation
-      const conversations = await Promise.all(conversationIds.map(async (id) => {
-        const saved = await this.historyManager!.load(id);
-        return { id, updatedAt: saved?.updatedAt || 0 };
-      }));
-      conversations.sort((a, b) => b.updatedAt - a.updatedAt);
-      
-      const lastConvId = conversations[0].id;
-      this.log('Auto-loading last conversation: ' + lastConvId);
-      
-      // Resume the last conversation
-      await this.resumeConversation(lastConvId);
-      
-      // Send loaded conversation to webview after delay
-      setTimeout(() => {
-        if (this.activeTabId) {
-          this.sendLoadedConversation(this.activeTabId);
-        }
-      }, 500);
-    } catch (error: any) {
-      this.log('Error loading last conversation: ' + error.message);
-    }
+    // DISABLED: new chat should start fresh. Conversations must be explicitly resumed.
+    // This method intentionally does nothing to prevent auto-loading old sessions.
+    this.log('loadLastConversation: disabled - new chats start fresh');
   }
 
   private startProxyHealthTimer(): void {
@@ -505,7 +477,7 @@ export class AgentTabManager {
       this.webviewPanel.webview.html = this.getWebviewContent();
       this.webviewPanel.reveal(vscode.ViewColumn.One);
       if (loadConversation && this.activeTabId) {
-        setTimeout(() => { if (this.activeTabId) this.sendLoadedConversation(this.activeTabId); }, 500);
+        this.loadedConversationTimeout = setTimeout(() => { if (this.activeTabId) this.sendLoadedConversation(this.activeTabId); }, 500);
       }
       return;
     }
@@ -516,7 +488,7 @@ export class AgentTabManager {
     });
     this.webviewPanel.webview.html = this.getWebviewContent();
     if (loadConversation && this.activeTabId) {
-      setTimeout(() => { if (this.activeTabId) this.sendLoadedConversation(this.activeTabId); }, 500);
+      this.loadedConversationTimeout = setTimeout(() => { if (this.activeTabId) this.sendLoadedConversation(this.activeTabId); }, 500);
     }
     this.webviewPanel.webview.onDidReceiveMessage(async (message) => {
       this.log('Webview message received: ' + message.command);
@@ -575,6 +547,11 @@ export class AgentTabManager {
             'Cancel'
           );
           if (confirmNew === 'New Chat') {
+            // Cancel any pending loaded conversation timeout from old session
+            if (this.loadedConversationTimeout) {
+              clearTimeout(this.loadedConversationTimeout);
+              this.loadedConversationTimeout = null;
+            }
             // Clear webview first to remove old conversation from UI
             this.sendToWebview({ command: 'clear_conversation' });
             if (this.activeTabId) {

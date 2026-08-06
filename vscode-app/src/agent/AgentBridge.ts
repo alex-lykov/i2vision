@@ -182,9 +182,6 @@ export class AgentBridge {
   private _fileReadCache: Map<string, { mtime: number; content: string }> = new Map();
   private static readonly FILE_CACHE_TTL_MS = 60 * 1000; // 1 minute TTL for mtime check
 
-  // Auto-inject build context tracking (per-workspace)
-  private _buildFileReadAttempts = new Map<string, number>();
-  private _hasReadBuildFiles = new Map<string, boolean>();
 
   // Domain detector - architecture-aware domain resolution
   private domainDetector: DomainDetector = new DomainDetector();
@@ -211,16 +208,7 @@ export class AgentBridge {
   private static readonly SIMILAR_SEARCH_THRESHOLD = 0.5; // Minimum overlap ratio to consider similar
 
   // Legacy state tracking (migrated to state machine context)
-  // These are kept for backward compatibility during transition
-  private _pendingFixes: string[] = [];
-  private _buildFailureCount: number = 0;
-  private _consecutivePlans: number = 0;
-  private _consecutiveSuccessfulEdits: number = 0;
-  private _fixMode: boolean = false;
   private _forceActionMode: boolean = false;
-  private _failedEditAttempts: number = 0;
-  private _lastBuildErrors: string = '';
-  private _serverJustStarted: string | null = null;
   private _lastSearchFiles: string[] = [];
   private _lastSearchIteration: number = 0;
   
@@ -958,15 +946,7 @@ export class AgentBridge {
     if (isFreshConversation) {
       this.log('Fresh conversation - resetting all state');
       this.stateMachine.reset();
-      this._pendingFixes = [];
-      this._buildFailureCount = 0;
       this._autoReadFiles.clear();
-      this._consecutivePlans = 0;
-      this._consecutiveSuccessfulEdits = 0;
-      this._fixMode = false;
-      this._failedEditAttempts = 0;
-      this._lastBuildErrors = '';
-      this._serverJustStarted = null;
       this._lastSearchFiles = [];
       this._lastSearchIteration = 0;
       this._failedSearchCount = 0;
@@ -1118,37 +1098,16 @@ export class AgentBridge {
           }
         }
       }
-      
-      if (this.stateMachine.isBuildFixCycleStuck()) {
-        this.log('Build-fix cycle stuck after 3 failures - stopping', 'error');
-        const failureResult = this.stateMachine.dispatch(AgentEvent.MAX_FAILURES);
-        this.logStateTransition(this.stateMachine.state, failureResult.state, AgentEvent.MAX_FAILURES, `Build failures: ${this._buildFailureCount}`);
-        
-        if (options.streaming) {
-          yield { 
-            type: 'text', 
-            text: `❌ Build-fix cycle failed: ${this._buildFailureCount} consecutive build failures. The agent cannot automatically fix these errors.`, 
-            timestamp: Date.now() 
-          };
-          yield { 
-            type: 'error', 
-            error: `BUILD_FIX_CYCLE_FAILED: ${this._buildFailureCount} consecutive build failures. Last errors: ${this._lastBuildErrors.substring(0, 200)}...`, 
-            timestamp: Date.now() 
-          };
-          yield { type: 'done', outcome: 'error', timestamp: Date.now(), iterations: iteration };
-        }
-        return;
-      }
-      
       this.currentIteration = iteration;
 
       // STATE: PLAN - Get tools based on current state
       const tools = this.getTools(contextProfile?.lazy, this.stateMachine.getToolFilter());
       
-      // AUTO-FIX WORKFLOW (when in build-fix cycle)
-      if (this._pendingFixes && this._pendingFixes.length > 0) {
-        const filesToRead = [...this._pendingFixes];
-        this._pendingFixes = [];
+      // AUTO-FIX WORKFLOW (when in build-fix cycle with pending fixes)
+      const smCtx = this.stateMachine.context;
+      if (smCtx.pendingFixes && smCtx.pendingFixes.length > 0) {
+        const filesToRead = [...smCtx.pendingFixes];
+        smCtx.pendingFixes = [];
         
         for (const file of filesToRead) {
           const cleanPath = file.replace(/^(e:\/\/\/|file:\/\/\/)/, '');
@@ -1165,7 +1124,7 @@ export class AgentBridge {
           }
         }
         
-        const compilerErrors = this._lastBuildErrors.split('\n').filter(l => l.includes('.kt:') || l.includes('.java:') || l.includes('Unresolved reference')).slice(0, 10);
+        const compilerErrors = smCtx.lastBuildErrors.split('\n').filter(l => l.includes('.kt:') || l.includes('.java:') || l.includes('Unresolved reference')).slice(0, 10);
         const fileList = filesToRead.slice(0, 5).map(f => `${path.basename(f)} → ${f}`).join('\n  ');
         const examplePath = filesToRead[0] || 'path/to/File.kt';
 
@@ -1196,10 +1155,10 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
 
       // FORCED BUILD VERIFICATION (after consecutive successful edits)
       if (this.stateMachine.shouldForceBuild()) {
-        this.log(`Consecutive edits (${this._consecutiveSuccessfulEdits}) - forcing build verification`);
-        this._consecutiveSuccessfulEdits = 0;
-        this._pendingFixes = [];
-        this._fixMode = false;
+        const editCount = smCtx.consecutiveEdits;
+        this.log(`Consecutive edits (${editCount}) - forcing build verification`);
+        smCtx.consecutiveEdits = 0;
+        smCtx.pendingFixes = [];
 
         const buildCmd = process.platform === 'win32' ? '.\\gradlew :app:server:compileKotlin --console=plain' : './gradlew :app:server:compileKotlin --console=plain';
 
@@ -1583,9 +1542,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
         const isPlanOnly = responseEvent === AgentEvent.PLAN_ONLY;
 
         if (isPlanOnly) {
-          this._consecutivePlans++;
           const lastBuildError = messages.filter(m => m.role === 'tool' && typeof m.content === 'string' && m.content.includes('BUILD FAILED')).pop();
-          if (lastBuildError) this._fixMode = true;
           
           let nudgeMessage = `STOP describing plans. Use tool calling API NOW.`;
           
@@ -1629,7 +1586,6 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
           this.stateMachine.dispatch(responseEvent);
           continue;
         } else {
-          this._consecutivePlans = 0;
         }
 
         // Complete naturally
@@ -2169,7 +2125,16 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
       const context: ToolContext = {
         workspaceRoot: this.workspaceRoot,
         resolvePath: (p: string) => this.resolvePath(p),
-        runCommand: (cmd: string, timeout: number, cwd?: string) => this.runCommandWithTimeout(cmd, timeout, cwd),
+        runCommand: (cmd: string, timeout: number, cwd?: string) => {
+          const { exec } = require('child_process');
+          const opts: any = { timeout: timeout > 0 ? timeout : undefined };
+          if (cwd) opts.cwd = cwd;
+          return new Promise<any>((resolve, reject) => {
+            const child = exec(cmd, opts, (error: any, stdout: string, stderr: string) => {
+              resolve({ stdout: stdout || '', stderr: stderr || '', exitCode: error?.code || 0 });
+            });
+          });
+        },
         readFile: (p: string) => this.readFileCached(p),
         writeFile: (p: string, c: string) => {
           this.invalidateFileCache(p);
@@ -2507,734 +2472,12 @@ DO NOT include large content in arguments. Just reference files by path.`;
     this.log(`Injected simplified tool prompt for ${toolCall.name}`);
   }
 
-  // Legacy executeTool implementation - replaced by ToolRegistry
-  // The switch statement below has been migrated to individual tool handlers in src/agent/tools/builtin/
-  private async executeToolLegacy(toolCall: ToolCall): Promise<{ result: string; error?: string }> {
-    try {
-      switch (toolCall.toolName) {
-        case 'list_directory': {
-          const dirPath = this.resolvePath(toolCall.args.path);
-          const recursive = toolCall.args.recursive === true;
-          this.log(`list_directory (legacy): args.path="${toolCall.args.path}" → resolved="${dirPath}", recursive=${recursive}`);
-          
-          // Track visited paths to prevent re-exploration
-          const visitedKey = `${dirPath}:${recursive}`;
-          if (this._autoReadFiles.has(visitedKey)) {
-            this.log(`list_directory: Already explored ${dirPath} (recursive=${recursive})`);
-          }
-          this._autoReadFiles.add(visitedKey);
-          
-          try {
-            const files = await this.cli.listFiles(dirPath, recursive);
-            this.log(`list_directory (legacy) result: ${files.length} files found`);
-            if (files.length === 0) {
-              try { fs.accessSync(dirPath); return { result: 'This directory is empty.' }; }
-              catch { return { result: `DIRECTORY_NOT_FOUND: '${toolCall.args.path}' does not exist.` }; }
-            }
-            return { result: files.join('\n') };
-          } catch (error: any) {
-            this.log(`list_directory (legacy) error: ${error.message}`);
-            if (error.code === 'ENOENT') return { result: `DIRECTORY_NOT_FOUND: '${toolCall.args.path}' does not exist.` };
-            throw error;
-          }
-        }
-        
-        case 'read_file': {
-          const filePath = this.resolvePath(toolCall.args.path);
-          const normalizedPath = filePath.toLowerCase();
-          
-          // Track visited file paths
-          if (this._autoReadFiles.has(normalizedPath)) {
-            return { result: '[Already read. Focus on proposing fixes with apply_edits or write_file.]' };
-          }
-          this._autoReadFiles.add(normalizedPath);
-          
-          if (this._autoReadFiles.has(normalizedPath)) return { result: '[Already auto-read. Focus on proposing fixes with apply_edits or write_file.]' };
-          try {
-            const result = await this.cli.readFile(filePath);
-            if (!result || result.trim() === '') return { result: 'The file exists but is empty.' };
-            return { result };
-          } catch (error: any) {
-            if (error.code === 'ENOENT') return { result: 'FILE_NOT_FOUND' };
-            throw error;
-          }
-        }
-        
-        case 'write_file': {
-          const filePath = this.resolvePath(toolCall.args.path);
-          const content = toolCall.args.content;
-          
-          // MODERN EDIT PIPELINE: Snapshot before edit
-          if (!this._fileSnapshots.has(filePath)) {
-            try {
-              const original = await this.cli.readFile(filePath);
-              this._fileSnapshots.set(filePath, original);
-              this.log(`$(save) Snapshot saved: ${filePath} (${original.length} chars)`);
-            } catch {
-              // New file - no snapshot needed
-              this.log(`$(file) New file: ${filePath}`);
-            }
-          }
-          
-          await this.cli.writeFile(filePath, content);
-          this._failedEditAttempts = 0;
-          this._consecutiveSuccessfulEdits++;
-          
-          if (this._pendingFixes && this._pendingFixes.length > 0) {
-            this._autoNudge = `Wrote ${filePath}. ${this._pendingFixes.length} fix(es) remaining. Next: ${this._pendingFixes[0]}`;
-          } else {
-            this._fixMode = false;
-            this._autoNudge = `Fix applied to ${filePath}. Re-run build: .\\gradlew :app:server:compileKotlin`;
-          }
-          return { result: `Successfully wrote ${content.length} characters to ${filePath}` };
-        }
-        
-        case 'apply_edits': {
-          const filePath = this.resolvePath(toolCall.args.path);
-          const edits: EditOperation[] = toolCall.args.edits;
-          
-          if (edits.length > AgentBridge.MAX_APPLY_EDITS) {
-            return { result: '', error: `Too many edits (${edits.length}). Maximum ${AgentBridge.MAX_APPLY_EDITS} edits per call. For large changes, use write_file to replace the entire file instead.` };
-          }
-          
-          // MODERN EDIT PIPELINE: Snapshot before edit
-          if (!this._fileSnapshots.has(filePath)) {
-            try {
-              const original = await this.cli.readFile(filePath);
-              this._fileSnapshots.set(filePath, original);
-              this.log(`📸 Snapshot saved: ${filePath} (${original.length} chars)`);
-            } catch {
-              this.log(`📄 Reading file for edits: ${filePath}`);
-            }
-          }
-          
-          const currentContent = await this.cli.readFile(filePath);
-          const editResult = applyEditsToContent(currentContent, edits);
-          
-          if (editResult.appliedCount === 0) {
-            this._failedEditAttempts++;
-            this._consecutiveSuccessfulEdits = 0;
-            const failureMessages = editResult.failures.map(f => formatEditFailure(f, filePath));
-            
-            if (this._failedEditAttempts >= 3) {
-              this.log(`Failed 3 times on ${filePath} - moving to next file`);
-              if (this._pendingFixes && this._pendingFixes.length > 0) this._pendingFixes.shift();
-              this._failedEditAttempts = 0;
-              if (this._pendingFixes && this._pendingFixes.length > 0) {
-                this._autoNudge = `Failed 3 attempts on ${filePath}. Next: ${this._pendingFixes[0]}`;
-              } else {
-                this._fixMode = false;
-                this._autoNudge = `Failed 3 attempts on ${filePath}. Re-run build to check other errors.`;
-              }
-            } else {
-              this._autoNudge = `Edit failed (${this._failedEditAttempts}/3). Read file for EXACT text, then retry apply_edits.`;
-            }
-            return { result: `❌ No edits applied\n\n${failureMessages.join('\n\n')}`, error: 'All edits failed' };
-          }
-          
-          this._failedEditAttempts = 0;
-          this._consecutiveSuccessfulEdits++;
-          await this.cli.writeFile(filePath, editResult.finalContent);
-          
-          let resultMessage = `✅ Applied ${editResult.appliedCount}/${editResult.totalCount} edits to ${filePath}`;
-          if (editResult.failures.length > 0) resultMessage += `\n⚠️ ${editResult.failures.length} edit(s) failed`;
-          
-          if (this._pendingFixes && this._pendingFixes.length > 0) {
-            this._autoNudge = `Edited ${filePath}. ${this._pendingFixes.length} fix(es) remaining. Next: ${this._pendingFixes[0]}`;
-          } else {
-            this._fixMode = false;
-            this._autoNudge = `Fix applied to ${filePath}. Re-run build: .\\gradlew :app:server:compileKotlin`;
-          }
-          return { result: resultMessage };
-        }
-        
-        case 'search_files': {
-          const pattern = toolCall.args.pattern;
-          const searchPath = toolCall.args.path ? this.resolvePath(toolCall.args.path) : undefined;
-          
-          // Check search cache first
-          const cacheKey = `${pattern}:${searchPath || '*'}`;
-          const cachedResult = this._searchCache.get(cacheKey);
-          const now = Date.now();
-          
-          if (cachedResult && now - cachedResult.timestamp < AgentBridge.SEARCH_CACHE_TTL_MS) {
-            this.log(`Search cache HIT for "${pattern}" (${cachedResult.results.length} files)`);
-            const results = cachedResult.results;
-            if (results.length === 0) {
-              return { result: `No files found matching pattern "${pattern}" (cached). Try a different search term.`, error: 'NO_RESULTS' };
-            }
-            // Format cached SearchResult objects
-            const formatted = results.slice(0, 10).map((r: any) => {
-              const rel = r.path.replace(this.workspaceRoot, '').replace(/^[/\\]/, '');
-              let out = `📄 ${rel}`;
-              if (!r.matchedByName && r.matches?.length) {
-                out += ` — ${r.matchCount} match(es)`;
-                for (const m of r.matches.slice(0, 3)) {
-                  out += `\n  Line ${m.line}: ${m.text}`;
-                }
-              }
-              return out;
-            });
-            return { result: `Found ${results.length} file(s) (cached):\n\n${formatted.join('\n\n')}\n\nTIP: You found the files! Now READ one of them instead of searching more.` };
-          }
-          
-          // Check for search loop - same pattern searched multiple times
-          if (this._lastSearchPattern === pattern && this._lastSearchFiles.length > 0) {
-            this.log(`SEARCH LOOP: Pattern "${pattern}" already searched. Found ${this._lastSearchFiles.length} files: ${this._lastSearchFiles.slice(0, 3).join(', ')}...`);
-            this.stateMachine.dispatch(AgentEvent.SEARCH_LOOP);
-            return {
-              result: `⚠️ You already searched for "${pattern}" and found ${this._lastSearchFiles.length} files. Instead of searching again, READ one of these files: ${this._lastSearchFiles.slice(0, 3).join(', ')}`,
-              error: 'SEARCH_LOOP_DETECTED'
-            };
-          }
-          
-          // TIP: If pattern looks like "class X" or "function Y", suggest simpler search
-          const classMatch = pattern.match(/class\s+(\w+)/);
-          const functionMatch = pattern.match(/function\s+(\w+)/);
-          const simplePattern = classMatch ? classMatch[1] : functionMatch ? functionMatch[1] : pattern;
-          
-          this.log(`Search cache MISS for "${pattern}" - executing search`);
-          const results = await this.cli.searchFiles(simplePattern, searchPath);
-          
-          // Cache the search results
-          this._searchCache.set(cacheKey, { results, timestamp: now });
-          
-          // Track this search for loop detection
-          this._lastSearchPattern = pattern;
-          this._lastSearchFiles = results.map((r: any) => r.path);
-          
-          if (results.length === 0) {
-            let suggestion = 'Try a different search term or use list_directory to explore.';
-            
-            // If searched for "class X", suggest searching just "X"
-            if (classMatch) {
-              suggestion = `TIP: Instead of searching for "class ${classMatch[1]}", try searching for just "${classMatch[1]}" (the class name without the keyword). Also check if the class exists in a different module or has a different name.`;
-            } else if (functionMatch) {
-              suggestion = `TIP: Instead of searching for "function ${functionMatch[1]}", try searching for just "${functionMatch[1]}" (the function name without the keyword).`;
-            }
-            
-            return { result: `No files found matching pattern "${pattern}". ${suggestion}`, error: 'NO_RESULTS' };
-          }
-          
-          // Format SearchResult objects for output
-          const formatted = results.slice(0, 10).map((r: any) => {
-            const rel = r.path.replace(this.workspaceRoot, '').replace(/^[/\\]/, '');
-            let out = `📄 ${rel}`;
-            if (r.matchedByName) {
-              out += ' (file name matches)';
-            } else {
-              out += ` — ${r.matchCount} match(es)`;
-              if (r.matches?.length) {
-                for (const m of r.matches.slice(0, 3)) {
-                  out += `\n  Line ${m.line}: ${m.text}`;
-                  if (m.snippet) {
-                    out += `\n${m.snippet.split('\\n').map((l: string) => '    ' + l).join('\\n')}`;
-                  }
-                }
-                if (r.matches.length > 3) {
-                  out += `\n  ... and ${r.matches.length - 3} more match(es)`;
-                }
-              }
-            }
-            return out;
-          });
-          
-          // If many results found, suggest reading instead of more searching
-          if (results.length > 10) {
-            return { result: `Found ${results.length} files matching "${simplePattern}". Here are the first 10:\n\n${formatted.join('\\n\\n')}\n\nTIP: You found many results. Use apply_edits on the shown line numbers, or read_file with offset for full context.`, error: 'MANY_RESULTS' };
-          }
-          
-          return { result: `Found ${results.length} file(s):\n\n${formatted.join('\\n\\n')}\n\nTIP: You found the files! Use apply_edits on the shown line numbers, or read_file with offset for full context.` };
-        }
-        
-        case 'get_file_context': {
-          const filePath = this.resolvePath(toolCall.args.path);
-          try {
-            const stat = fs.statSync(filePath);
-            if (stat.isDirectory()) return { result: '', error: 'PATH_IS_DIRECTORY: Use list_directory for folders.' };
-          } catch (e: any) {}
-          const context = await this.cli.getContext(filePath);
-          return { result: JSON.stringify(context, null, 2) };
-        }
-        
-        case 'git_status': {
-          const result = await this.cli.runCommand('git status --porcelain');
-          return { result: result.stdout.trim() || 'Working tree clean.' };
-        }
-        
-        case 'git_diff': {
-          const target = toolCall.args.target || 'unstaged';
-          const filePath = toolCall.args.path || '';
-          const flag = target === 'staged' ? '--staged' : '';
-          const result = await this.cli.runCommand(`git diff ${flag} ${filePath}`);
-          const diffOutput = result.stdout || 'No differences.';
-          
-          // If there are actual changes, format as diff card HTML
-          if (diffOutput !== 'No differences.' && diffOutput.trim()) {
-            // Return diff output with marker for webview to detect
-            return { 
-              result: `DIFF_CARD_START\n${diffOutput}\nDIFF_CARD_END`,
-              error: undefined
-            };
-          }
-          return { result: diffOutput };
-        }
-        
-        case 'git_log': {
-          const count = Math.min(toolCall.args.count || 10, 50);
-          const result = await this.cli.runCommand(`git log --oneline -${count}`);
-          return { result: result.stdout || 'No commits.' };
-        }
-        
-        case 'git_branch': {
-          const action = toolCall.args.action || 'current';
-          if (action === 'current') {
-            const result = await this.cli.runCommand('git branch --show-current');
-            return { result: result.stdout.trim() || 'Not in a git repository' };
-          } else {
-            const result = await this.cli.runCommand('git branch');
-            return { result: result.stdout || 'No branches found' };
-          }
-        }
-        
-        case 'git_commit': {
-          const message = toolCall.args.message;
-          const files = toolCall.args.files || ['.'];
-          for (const f of files) await this.cli.runCommand(`git add "${f}"`);
-          const safeMessage = message.replace(/"/g, '\\"');
-          const result = await this.cli.runCommand(`git commit -m "${safeMessage}"`);
-          return { result: result.stdout || result.stderr || 'Committed successfully.' };
-        }
-        
-        case 'run_build': {
-          let command = toolCall.args.command;
-          const timeout = 120000;
-          
-          // AUTO-INJECT BUILD CONTEXT: First build/run attempt - read build file
-          const workspaceKey = this.getWorkspaceKey();
-          if (!this._hasReadBuildFiles.get(workspaceKey) && (this._buildFileReadAttempts.get(workspaceKey) || 0) < 2) {
-            const attempts = (this._buildFileReadAttempts.get(workspaceKey) || 0) + 1;
-            this._buildFileReadAttempts.set(workspaceKey, attempts);
-            
-            const buildFile = await this.findBuildFile();
-            if (buildFile) {
-              try {
-                const content = await this.cli.readFile(buildFile);
-                const extractedInfo = this.extractBuildTasks(buildFile, content);
-                const contextMessage = `[AUTO-CONTEXT] Build configuration from ${buildFile}:\n${extractedInfo}`;
-                
-                // Inject context into messages for next LLM call
-                (this as any)._pendingMessages = (this as any)._pendingMessages || [];
-                (this as any)._pendingMessages.push({ 
-                  role: 'tool', 
-                  content: contextMessage,
-                  tool_call_id: `auto_context_${Date.now()}`
-                });
-                
-                this._hasReadBuildFiles.set(workspaceKey, true);
-                this.log(`Auto-injected build context from ${buildFile}`);
-              } catch (e: any) {
-                this.log(`Failed to read build file: ${e.message}`);
-              }
-            }
-          }
-          
-          if (process.platform === 'win32' && /^\.\//i.test(command)) {
-            command = command.replace(/^\.\//, '.\\');
-            this.log(`  Windows PowerShell fix: ./ -> .\\`);
-          }
-          
-          const settings = this.settingsManager.getSettings();
-          const showInWebview = settings.terminal.showOutputInWebview;
-          
-          const result = await this.runCommandWithTimeout(command, timeout, undefined, (output: string) => {
-            if (showInWebview) {
-              this.emitProgress({ type: 'tool_output', toolCall: { toolName: 'run_build', args: toolCall.args }, partialOutput: output.slice(-200), iteration: this.currentIteration });
-            }
-          });
-          
-          const output = (result.stdout || '') + '\n' + (result.stderr || '');
-          const exitCodeInfo = result.exitCode !== null ? ` (exit: ${result.exitCode})` : '';
-          const hasFailure = result.exitCode !== 0 || output.includes('BUILD FAILED') || output.includes('FAILED') || output.includes('error:');
-          
-          if (!hasFailure) {
-            this._buildFailureCount = 0;
-            this._autoReadFiles.clear();
-            this._fixMode = false;
-            this._consecutiveSuccessfulEdits = 0;
-            (this as any)._pendingMessages = (this as any)._pendingMessages || [];
-            (this as any)._pendingMessages.push({ role: 'user', content: '✅ BUILD SUCCESSFUL. The compilation completed without errors. Your task is complete. Provide a final summary and do NOT call any more tools.' });
-            this.log('Build success - injected completion signal');
-            return { result: `✅ BUILD SUCCESSFUL${exitCodeInfo}\n\nCompilation passed.\n\n${output.slice(-500)}` };
-          }
-          
-          const errors = this.extractCompilationErrors(output);
-          this._lastBuildErrors = errors;
-          this._buildFailureCount++;
-          this._consecutiveSuccessfulEdits = 0;
-          this._failedEditAttempts = 0;
-          
-          // Check for file lock errors (running server locking build files)
-          const isFileLockError = output.includes('Unable to delete') || output.includes('file has open') || output.includes('files has open') || output.includes('Access is denied') || output.includes('used by another process');
-          if (isFileLockError) {
-            this.log('File lock detected in build failure - guiding agent to kill running process');
-            (this as any)._pendingMessages = (this as any)._pendingMessages || [];
-            (this as any)._pendingMessages.push({ 
-              role: 'user', 
-              content: `[AUTO] Build failed because files are locked by a running process. Use list_all_terminals to find running servers, then kill_port to free the locked files. Then re-run the build.`
-            });
-          }
-          
-          // IMPORTANT: Do NOT set _fixMode = true here. The LLM needs all tools
-          // (including run_build and run_terminal) to diagnose and fix the issue.
-          // _fixMode should only be set by the plan-only detection logic.
-          
-          const fileMatch = errors.match(/FILES TO READ AND FIX:\s*\n([\s\S]*?)(?:\n\n|$)/);
-          if (fileMatch) {
-            const files = fileMatch[1].split('\n').map(f => f.replace(/^\s*-\s*/, '').trim()).filter(f => f.length > 0);
-            const cleanPaths = new Set<string>();
-            for (const file of files) cleanPaths.add(file.replace(/^(e:\/\/\/|file:\/\/\/)/, ''));
-            this._pendingFixes = Array.from(cleanPaths).slice(0, 5);
-            this.log(`Auto-fix: Queued ${this._pendingFixes.length} files`);
-          }
-          
-          return { result: `❌ BUILD FAILED (failure #${this._buildFailureCount})\n\nExit code: ${result.exitCode}\n\n${errors}\n\n⚠️ DO NOT re-run build. READ files above, FIX errors, THEN re-run.`, error: 'Build failed' };
-        }
-        
-        case 'run_terminal': {
-          let command = toolCall.args.command;
-          const workingDir = toolCall.args.workingDir ? this.resolvePath(toolCall.args.workingDir) : this.workspaceRoot;
-          
-          // AUTO-INJECT BUILD CONTEXT: First build/run attempt - read build file
-          const workspaceKey = this.getWorkspaceKey();
-          if (!this._hasReadBuildFiles.get(workspaceKey) && (this._buildFileReadAttempts.get(workspaceKey) || 0) < 2) {
-            const attempts = (this._buildFileReadAttempts.get(workspaceKey) || 0) + 1;
-            this._buildFileReadAttempts.set(workspaceKey, attempts);
-            
-            const buildFile = await this.findBuildFile();
-            if (buildFile) {
-              try {
-                const content = await this.cli.readFile(buildFile);
-                const extractedInfo = this.extractBuildTasks(buildFile, content);
-                const contextMessage = `[AUTO-CONTEXT] Build configuration from ${buildFile}:\n${extractedInfo}`;
-                
-                // Inject context into messages for next LLM call
-                (this as any)._pendingMessages = (this as any)._pendingMessages || [];
-                (this as any)._pendingMessages.push({ 
-                  role: 'tool', 
-                  content: contextMessage,
-                  tool_call_id: `auto_context_${Date.now()}`
-                });
-                
-                this._hasReadBuildFiles.set(workspaceKey, true);
-                this.log(`Auto-injected build context from ${buildFile}`);
-              } catch (e: any) {
-                this.log(`Failed to read build file: ${e.message}`);
-              }
-            }
-          }
-          
-          if (/^:/.test(command)) {
-            const gradleWrapper = process.platform === 'win32' ? '.\\gradlew' : './gradlew';
-            command = `${gradleWrapper} ${command}`;
-          }
-          
-          if (process.platform === 'win32') {
-            if (/^gradlew(\s|$)/i.test(command)) command = command.replace(/^gradlew/i, '.\\gradlew');
-            if (/^\.\//i.test(command)) command = command.replace(/^\.\//, '.\\');
-            
-            // FIRST: Handle cd "path" && command pattern - extract command, ignore cd (we use workingDir)
-            const cdMatch = command.match(/^cd\s+["']?([^"']+)["']?\s*&&\s*(.+)$/i);
-            if (cdMatch) {
-              command = cdMatch[2]; // Just use the actual command part
-            }
-            
-            // THEN: Fix any remaining bash && to PowerShell ;
-            if (command.includes(' && ')) command = command.replace(/ && /g, '; ');
-          }
-          
-          if (this.isDestructiveCommand(command)) return { result: '', error: 'BLOCKED: Dangerous command.' };
-          
-          if (this.isBuildCommand(command)) {
-            const timeout = 120000;
-            const result = await this.runCommandWithTimeout(command, timeout, workingDir);
-            const output = (result.stdout || '') + '\n' + (result.stderr || '');
-            
-            if (result.exitCode !== 0 || output.includes('BUILD FAILED') || output.includes('FAILED')) {
-              // Check for file lock errors (running server locking build files)
-              const isFileLockError = output.includes('Unable to delete') || output.includes('file has open') || output.includes('files has open') || output.includes('Access is denied') || output.includes('used by another process');
-              if (isFileLockError) {
-                this.log('File lock detected in run_terminal build failure - guiding agent to kill running process');
-                (this as any)._pendingMessages = (this as any)._pendingMessages || [];
-                (this as any)._pendingMessages.push({ 
-                  role: 'user', 
-                  content: `[AUTO] Build failed because files are locked by a running process. Use list_all_terminals to find running servers, then kill_port to free the locked files. Then re-run the build.`
-                });
-              }
-              
-              const errors = this.extractCompilationErrors(output);
-              this._lastBuildErrors = errors;
-              this._buildFailureCount++;
-              this._consecutiveSuccessfulEdits = 0;
-              this._failedEditAttempts = 0;
-              const fileMatch = errors.match(/FILES TO READ AND FIX:\s*\n([\s\S]*?)(?:\n\n|$)/);
-              if (fileMatch) {
-                const files = fileMatch[1].split('\n').map(f => f.replace(/^\s*-\s*/, '').trim()).filter(f => f.length > 0);
-                const cleanPaths = new Set<string>();
-                for (const file of files) cleanPaths.add(file.replace(/^(e:\/\/\/|file:\/\/\/)/, ''));
-                this._pendingFixes = Array.from(cleanPaths).slice(0, 5);
-              }
-              return { result: `❌ BUILD FAILED (failure #${this._buildFailureCount})\n\n${errors}\n\n⚠️ DO NOT re-run build. FIX errors first.`, error: 'Build failed' };
-            }
-            
-            this._buildFailureCount = 0;
-            this._autoReadFiles.clear();
-            this._fixMode = false;
-            this._consecutiveSuccessfulEdits = 0;
-            return { result: `✅ Build successful\n\n${output.slice(-1000)}` };
-          }
-          
-          const classification = this.classifyCommand(command);
-          if (classification === 'long') {
-            const terminalName = this.generateTerminalName(command);
-            const result = await this.terminalManager.runInTerminal(terminalName, command, workingDir, true);
-            
-            // Server commands capture output to detect build failures.
-            // If the build failed, return the errors to the LLM so it can fix them.
-            // IMPORTANT: Do NOT set _fixMode here - the LLM needs all tools (including
-            // run_build and run_terminal) to diagnose and fix the issue.
-            this._serverJustStarted = terminalName;
-            
-            if (result.includes('❌') || result.includes('BUILD FAILED') || result.includes('FAILED')) {
-              this.log(`Server build failed - returning errors to LLM without activating fixMode`);
-              return { result };
-            }
-            
-            (this as any)._pendingMessages = (this as any)._pendingMessages || [];
-            (this as any)._pendingMessages.push({ 
-              role: 'user', 
-              content: `Server started in terminal "${terminalName}". It's running in background with auto-restart. You can check status later with terminal_status.` 
-            });
-            return { result };
-          } else {
-            const terminalName = `i2-Vision: ${this.generateTerminalName(command).substring(0, 20)}`;
-            const terminal = vscode.window.createTerminal({ name: terminalName, cwd: workingDir, shellPath: process.platform === 'win32' ? 'powershell.exe' : undefined });
-            terminal.show(true);
-            terminal.sendText(command);
-            await new Promise(resolve => setTimeout(resolve, 3000));
-            setTimeout(() => terminal.dispose(), 5000);
-            return { result: `Command executed in terminal: ${command}` };
-          }
-        }
-        
-        case 'kill_terminal': return { result: this.terminalManager.killTerminal(toolCall.args.name) };
-        
-        case 'list_terminals': return { result: this.terminalManager.listTerminals() };
-        
-        case 'terminal_status': {
-          const name = toolCall.args.name;
-          const status = this.terminalManager.getTerminalStatus(name);
-          
-          if (!status) {
-            return { result: `Terminal "${name}" is not running.` };
-          }
-          
-          // Terminal is running - provide age info to help agent understand startup progress
-          const ageInfo = status.ageSeconds ? ` (started ${status.ageSeconds}s ago)` : '';
-          const startupNote = status.ageSeconds && status.ageSeconds < 30 
-            ? ` Server is still starting up - this is normal for Gradle servers.` 
-            : '';
-          
-          return { 
-            result: `Terminal "${name}" is running${ageInfo}. Auto-restart: ${status.autoRestart ? 'enabled' : 'disabled'}.${startupNote}` 
-          };
-        }
-        
-        case 'kill_port': {
-          const port = toolCall.args.port;
-          this.log(`Killing process on port ${port}...`);
-          
-          if (process.platform === 'win32') {
-            // Windows: find PID using port, then kill it
-            const findPidResult = await this.runCommandWithTimeout(
-              `netstat -ano | findstr :${port}`, 5000
-            );
-            const pidMatch = findPidResult.stdout.match(/\s+(\d+)\s*$/m);
-            if (pidMatch) {
-              const pid = pidMatch[1];
-              const killResult = await this.runCommandWithTimeout(
-                `taskkill /PID ${pid} /F`, 5000
-              );
-              if (killResult.exitCode === 0) {
-                return { result: `Killed process ${pid} on port ${port}.` };
-              } else {
-                return { result: `Failed to kill process ${pid}. ${killResult.stderr}` };
-              }
-            }
-            return { result: `No process found on port ${port}.` };
-          } else {
-            // Unix/Linux/Mac: lsof to find PID, then kill
-            const killResult = await this.runCommandWithTimeout(
-              `lsof -ti:${port} | xargs kill -9`, 5000
-            );
-            if (killResult.exitCode === 0 || killResult.stdout.trim()) {
-              return { result: `Killed process on port ${port}.` };
-            }
-            return { result: `No process found on port ${port}.` };
-          }
-        }
-        
-        // MODERN EDIT PIPELINE: Revert tools
-        case 'revert_file': {
-          const filePath = this.resolvePath(toolCall.args.path);
-          const original = this._fileSnapshots.get(filePath);
-          
-          if (!original) {
-            return { result: '', error: `No snapshot available for ${toolCall.args.path}. It may not have been edited in this session.` };
-          }
-          
-          await this.cli.writeFile(filePath, original);
-          this._fileSnapshots.delete(filePath);
-          this.log(`🔄 Reverted: ${filePath}`);
-          
-          return { result: `Reverted ${toolCall.args.path} to original state (${original.length} chars).` };
-        }
-        
-        case 'revert_all': {
-          let count = 0;
-          for (const [filePath, original] of this._fileSnapshots) {
-            await this.cli.writeFile(filePath, original);
-            count++;
-          }
-          const paths = Array.from(this._fileSnapshots.keys());
-          this._fileSnapshots.clear();
-          this.log(`🔄 Reverted all: ${count} files`);
-          
-          return { result: count > 0 
-            ? `Reverted ${count} file(s) to original state:\n${paths.map(p => `  - ${p}`).join('\n')}`
-            : 'No files were modified in this session.' };
-        }
-        
-        case 'list_snapshots': {
-          if (this._fileSnapshots.size === 0) {
-            return { result: 'No files have been modified in this session.' };
-          }
-          const files = Array.from(this._fileSnapshots.keys());
-          return { result: `Modified files (${files.length}):\n${files.map(f => `  - ${f}`).join('\n')}` };
-        }
-        
-        default: throw new Error(`Unknown tool: ${toolCall.toolName}`);
-      }
-    } catch (error: any) {
-      this.log(`  Tool error: ${error.message}`);
-      return { result: '', error: error.message };
-    }
-  }
 
-  private async runCommandWithTimeout(command: string, timeoutMs: number, workingDir?: string, onOutput?: (output: string) => void): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
-    const { spawn } = require('child_process');
-    return new Promise((resolve) => {
-      const proc = spawn(command, { shell: true, cwd: workingDir || this.workspaceRoot, timeout: timeoutMs });
-      let stdout = '', stderr = '', exitCode: number | null = null;
-      const timeout = setTimeout(() => { proc.kill(); stderr += '\n\n[TIMEOUT]'; resolve({ stdout, stderr, exitCode: null }); }, timeoutMs);
-      proc.stdout?.on('data', (data: Buffer) => { stdout += data.toString(); if (onOutput) onOutput(stdout); if (stdout.length > 50000) { stdout = stdout.slice(0, 50000) + '\n... (truncated)'; } });
-      proc.stderr?.on('data', (data: Buffer) => { stderr += data.toString(); if (onOutput) onOutput(stderr); });
-      proc.on('close', (code: number | null) => { clearTimeout(timeout); exitCode = code; resolve({ stdout, stderr, exitCode }); });
-      proc.on('error', (err: Error) => { 
-        clearTimeout(timeout);
-        const errorMessage = `Command execution failed: ${err.message}`;
-        const guidance = command.length > 1500 ? 
-          `\n\n💡 For complex commands, consider:\n- Breaking into smaller steps\n- Using write_file + run_terminal pattern\n- Writing scripts to temporary files` : '';
-        resolve({ stdout, stderr: errorMessage + guidance, exitCode: -1 });
-      });
-    });
-  }
 
-  private formatBuildResult(result: { stdout: string; stderr: string; exitCode: number | null }): string {
-    const hasError = result.exitCode !== 0 || result.stderr?.includes('FAILED') || result.stderr?.includes('BUILD FAILED') || result.stdout?.includes('FAILED');
-    let resultMessage = result.exitCode !== null ? `Exit code: ${result.exitCode}\n` : '';
-    if (hasError) {
-      resultMessage += `\n❌ Build FAILED\n\n${this.extractCompilationErrors(result.stderr || result.stdout)}\n\n⚠️ DO NOT re-run build. FIX errors first.`;
-    } else {
-      resultMessage += `\n✅ Build successful\n`;
-      if (result.stdout?.trim() || result.stderr?.trim()) resultMessage += `\n--- Output ---\n${(result.stdout || result.stderr || '').slice(-2000)}`;
-      else resultMessage += `\n⚠️ No output (likely cached)\n`;
-    }
-    return resultMessage;
-  }
 
-  private formatGitStatus(output: string): string {
-    if (!output.trim()) return 'No changes.';
-    const lines = output.trim().split('\n');
-    const staged = lines.filter(l => /^[MADRC]/.test(l.charAt(0)));
-    const unstaged = lines.filter(l => /^.[MADRC]/.test(l));
-    const untracked = lines.filter(l => l.startsWith('??'));
-    let result = '';
-    if (staged.length) result += `**Staged:**\n${staged.map(l => '  ' + l).join('\n')}\n\n`;
-    if (unstaged.length) result += `**Unstaged:**\n${unstaged.map(l => '  ' + l).join('\n')}\n\n`;
-    if (untracked.length) result += `**Untracked:**\n${untracked.map(l => '  ' + l).join('\n')}`;
-    return result || output;
-  }
 
-  private extractCompilationErrors(output: string): string {
-    if (!output) return 'No error output';
-    const errors: string[] = [];
-    const mentionedFiles = new Set<string>();
-    const kotlinErrorPattern = /e:\s*file:\/\/\/?([a-zA-Z]:[\\/].+?):(\d+):(\d+)\s+(.+)/g;
-    let match;
-    while ((match = kotlinErrorPattern.exec(output)) !== null) {
-      const [, filePath, lineNum, col, message] = match;
-      const normalizedPath = filePath.replace(/\\/g, '/');
-      mentionedFiles.add(normalizedPath);
-      errors.push(`${normalizedPath}:${lineNum}:${col} ${message}`);
-    }
-    const unresolvedErrors = output.match(/Unresolved reference[^\n]+/g);
-    if (unresolvedErrors) unresolvedErrors.forEach(err => errors.push(err.trim()));
-    const keywordPatterns = [/Type mismatch[^\n]+/g, /is not abstract[^\n]+/g, /must implement[^\n]+/g, /cannot find symbol[^\n]+/g, /Overload resolution[^\n]+/g, /Conflicting overloads[^\n]+/g];
-    for (const pattern of keywordPatterns) {
-      const matches = output.match(pattern);
-      if (matches) matches.forEach(err => errors.push(err.trim()));
-    }
-    const lines = output.split('\n');
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (line.includes('FAILED') && !line.includes('BUILD FAILED')) {
-        const contextLines = [];
-        for (let j = i; j < Math.min(i + 4, lines.length); j++) {
-          const contextLine = lines[j].trim();
-          if (contextLine && !contextLine.startsWith('> Task') && contextLine.length > 10) contextLines.push(contextLine);
-        }
-        if (contextLines.length > 0) errors.push(contextLines.slice(0, 3).join(' '));
-      }
-    }
-    let result = '';
-    if (mentionedFiles.size > 0) result += `FILES TO READ AND FIX:\n  - ${Array.from(mentionedFiles).slice(0, 5).join('\n  - ')}\n\n`;
-    if (errors.length > 0) result += `COMPILER ERRORS:\n${[...new Set(errors)].slice(0, 15).join('\n')}`;
-    else {
-      const eLines = lines.filter(l => l.trim().startsWith('e: '));
-      if (eLines.length > 0) result += `COMPILER ERRORS:\n${eLines.slice(0, 15).join('\n')}`;
-      else result = `Build output (last 1500 chars):\n${output.slice(-1500)}`;
-    }
-    return result;
-  }
 
-  private isDestructiveCommand(command: string): boolean {
-    return AgentBridge.BLOCKED_COMMAND_PATTERNS.some(b => command.includes(b));
-  }
 
-  private isBuildCommand(command: string): boolean {
-    if (/\b(run|serve|server|start|watch)\b/i.test(command)) return false;
-    return /gradlew|gradle|mvn|mvnw|npm run build|make|tsc|yarn build/i.test(command);
-  }
-
-  private classifyCommand(command: string): 'short' | 'long' {
-    const cmdLower = command.toLowerCase();
-    for (const pattern of this.longRunningPatterns) if (cmdLower.includes(pattern.toLowerCase())) return 'long';
-    if (/\b(watch|dev|server|serve)\b/i.test(command)) return 'long';
-    return 'short';
-  }
-
-  private generateTerminalName(command: string): string { return this.terminalManager.generateTerminalName(command); }
   private resolvePath(relativePath: string): string { return path.isAbsolute(relativePath) ? relativePath : path.join(this.workspaceRoot, relativePath); }
   
   /**
@@ -3269,134 +2512,6 @@ DO NOT include large content in arguments. Just reference files by path.`;
     if (hadCache) {
       this.log(`[CACHE INVALIDATED] ${filePath}`);
     }
-  }
-
-  /** Get workspace key for per-workspace tracking */
-  private getWorkspaceKey(): string {
-    return this.workspaceRoot || 'default';
-  }
-  
-  /** Find build file in workspace (root first, then common subdirs) */
-  private async findBuildFile(): Promise<string | null> {
-    const candidates = [
-      'build.gradle.kts',
-      'build.gradle',
-      'pom.xml',
-      'package.json',
-      'Makefile',
-      'CMakeLists.txt',
-      // Common subdirectories
-      'backend/build.gradle.kts',
-      'server/build.gradle.kts',
-      'app/build.gradle.kts',
-    ];
-    
-    for (const candidate of candidates) {
-      const candidatePath = this.resolvePath(candidate);
-      try {
-        await fs.promises.access(candidatePath);
-        return candidate;
-      } catch {
-        // File doesn't exist, try next
-      }
-    }
-    return null;
-  }
-  
-  /** Extract relevant task information from build file */
-  private extractBuildTasks(buildFile: string, content: string): string {
-    const fileExt = path.extname(buildFile).toLowerCase();
-    const extractedInfo: string[] = [];
-    
-    // For Gradle Kotlin DSL
-    if (fileExt === '.kts' || fileExt === '.gradle') {
-      // EXTRACT MAIN CLASS (highest priority - tells agent what to search for)
-      const mainClassMatch = content.match(/mainClass\.set\(["']([^"']+)["']\)/);
-      if (mainClassMatch) {
-        extractedInfo.push(`🎯 MAIN CLASS: ${mainClassMatch[1]}`);
-        extractedInfo.push(`   → This is the server entry point. Read this file to understand the startup.`);
-      }
-      
-      // Extract application block info
-      const applicationMatch = content.match(/application\s*\{[\s\S]*?mainClass[\s\S]*?\}/);
-      if (applicationMatch && !mainClassMatch) {
-        const mainInBlock = applicationMatch[0].match(/mainClass\s*=\s*["']([^"']+)["']/);
-        if (mainInBlock) {
-          extractedInfo.push(`🎯 MAIN CLASS: ${mainInBlock[1]}`);
-          extractedInfo.push(`   → This is the server entry point.`);
-        }
-      }
-      
-      // Extract available tasks
-      const taskMatches = content.match(/task\s*\(['"`]?(\w+)['"`]?\)/g);
-      if (taskMatches && taskMatches.length > 0) {
-        const tasks = taskMatches.map(m => {
-          const match = m.match(/task\s*\(['"`]?(\w+)['"`]?\)/);
-          return match ? match[1] : '';
-        }).filter(t => t);
-        extractedInfo.push(`Available Gradle tasks: ${tasks.join(', ')}`);
-      }
-      
-      // Look for run tasks in subprojects
-      const runTaskMatch = content.match(/:([\w:-]+):run/);
-      if (runTaskMatch) {
-        extractedInfo.push(`Server run task: gradlew :${runTaskMatch[1]}:run`);
-      }
-    }
-    
-    // For Maven
-    if (fileExt === '.xml') {
-      const pluginMatch = content.match(/<artifactId>(maven-[\w-]+|spring-boot-maven-plugin)<\/artifactId>/);
-      if (pluginMatch) {
-        extractedInfo.push(`Build system: Maven with ${pluginMatch[1]}`);
-      }
-      
-      // Extract main class from Maven
-      const mainClassMatch = content.match(/<mainClass>([^<]+)<\/mainClass>/);
-      if (mainClassMatch) {
-        extractedInfo.push(`🎯 MAIN CLASS: ${mainClassMatch[1]}`);
-        extractedInfo.push(`   → This is the server entry point.`);
-      }
-    }
-    
-    // For npm
-    if (fileExt === '.json') {
-      try {
-        const pkg = JSON.parse(content);
-        if (pkg.scripts) {
-          const scripts = Object.keys(pkg.scripts);
-          extractedInfo.push(`Available npm scripts: ${scripts.join(', ')}`);
-        }
-        if (pkg.main) {
-          extractedInfo.push(`🎯 MAIN ENTRY: ${pkg.main}`);
-        }
-      } catch {
-        // Invalid JSON, will return raw content
-      }
-    }
-    
-    // Return extracted info, or fallback to raw content
-    if (extractedInfo.length > 0) {
-      return extractedInfo.join('\n');
-    }
-    
-    // Default: return first 2000 chars
-    return content.substring(0, 2000);
-  }
-
-  private resolveImportPath(importPath: string, currentFile: string): string | null {
-    const match = importPath.match(/['"](.+?)['"]/);
-    if (!match) return null;
-    const importSpecifier = match[1];
-    if (!importSpecifier.startsWith('.') && !importSpecifier.startsWith('/')) return null;
-    const currentDir = path.dirname(currentFile);
-    const resolvedPath = path.resolve(currentDir, importSpecifier);
-    const extensions = ['', '.ts', '.tsx', '.js', '.jsx', '.kt', '.java'];
-    for (const ext of extensions) {
-      const candidate = resolvedPath + ext;
-      try { fs.accessSync(candidate); return candidate; } catch {  }
-    }
-    return null;
   }
 
   dispose(): void { this.terminalManager.dispose(); }

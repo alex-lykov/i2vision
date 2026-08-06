@@ -364,7 +364,7 @@
         "lint": "eslint src --ext ts",
         "test": "node ./out/test/runTest.js",
         "test:unit": "mocha ./out/test/suite/**/*.js",
-    "test:agent": "mocha ./out/test/suite/AgentBridge.test.js",
+    "test:agent": "node ./out/test/runTestAgent.js",
         "package": "vsce package",
         "publish": "vsce publish"
     },

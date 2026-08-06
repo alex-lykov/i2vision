@@ -66,7 +66,6 @@ export class AgentTabManager {
 
   async initialize(): Promise<void> {
     await this.agentProvider.initialize();
-    this.startAutoSaveTimer();
     this.startProxyHealthTimer();
     await this.loadLastConversation();
     this.log('AgentTabManager initialization complete');
@@ -104,20 +103,6 @@ export class AgentTabManager {
       }, 500);
     } catch (error: any) {
       this.log('Error loading last conversation: ' + error.message);
-    }
-  }
-
-  private startAutoSaveTimer(): void {
-    if (this.autoSaveTimer) clearInterval(this.autoSaveTimer);
-    this.autoSaveTimer = setInterval(() => this.autoSaveAllTabs(), this.AUTO_SAVE_INTERVAL_MS);
-    this.log('Auto-save timer started (interval: ' + (this.AUTO_SAVE_INTERVAL_MS / 1000) + 's)');
-  }
-
-  private stopAutoSaveTimer(): void {
-    if (this.autoSaveTimer) {
-      clearInterval(this.autoSaveTimer);
-      this.autoSaveTimer = null;
-      this.log('Auto-save timer stopped');
     }
   }
 
@@ -175,32 +160,41 @@ export class AgentTabManager {
     }
   }
 
-  private async autoSaveAllTabs(): Promise<void> {
-    const settings = this.settingsManager.getSettings();
-    if (!settings.agent.autoSaveConversation) return;
-    const now = Date.now();
-    const savePromises: Promise<void>[] = [];
-    for (const [tabId, tabState] of this.tabs.entries()) {
-      const shouldSave = !tabState.lastAutoSaveAt || (tabState.lastActivityAt > tabState.lastAutoSaveAt) || (now - tabState.createdAt > 10 * 60 * 1000);
-      if (shouldSave && tabState.history.length > 0) {
-        savePromises.push(this.saveTabQuietly(tabId, tabState));
-      }
-    }
-    if (savePromises.length > 0) {
-      await Promise.all(savePromises);
-      this.log('Auto-saved ' + savePromises.length + ' tab(s)');
+  /**
+   * Save the current active tab's conversation immediately.
+   * Called after every assistant response and on deactivate.
+   */
+  private async saveActiveTab(): Promise<void> {
+    if (!this.historyManager || !this.activeTabId) return;
+    const tabState = this.tabs.get(this.activeTabId);
+    if (!tabState || tabState.history.length === 0) return;
+    try {
+      await this.historyManager.save(this.activeTabId, tabState.history, tabState.layer, tabState.sessionState);
+    } catch (error: any) {
+      this.log('Save failed for ' + this.activeTabId + ': ' + error.message);
     }
   }
 
-  private async saveTabQuietly(tabId: string, tabState: AgentTabState): Promise<void> {
-    if (!this.historyManager) return;
-    try {
-      await this.historyManager.save(tabId, tabState.history, tabState.layer, tabState.sessionState);
-      tabState.lastAutoSaveAt = Date.now();
-      this.log('Auto-saved tab ' + tabId + ' (' + tabState.history.length + ' messages)');
-    } catch (error: any) {
-      this.log('Auto-save failed for ' + tabId + ': ' + error.message);
+  /**
+   * Dispose the tab manager — save all tabs and stop timers.
+   * Called from extension deactivate().
+   */
+  async dispose(): Promise<void> {
+    this.log('Disposing AgentTabManager — saving all tabs...');
+    this.stopProxyHealthTimer();
+    if (this.historyManager) {
+      for (const [tabId, tabState] of this.tabs.entries()) {
+        if (tabState.history.length > 0) {
+          try {
+            await this.historyManager.save(tabId, tabState.history, tabState.layer, tabState.sessionState);
+            this.log('Saved tab ' + tabId + ' (' + tabState.history.length + ' messages)');
+          } catch (error: any) {
+            this.log('Dispose save failed for ' + tabId + ': ' + error.message);
+          }
+        }
+      }
     }
+    this.log('AgentTabManager disposed');
   }
 
   private async enforceHistoryLimit(): Promise<void> {
@@ -471,6 +465,7 @@ export class AgentTabManager {
         const cleanedResponse = this.cleanResponseText(responseText);
         const assistantMessage: ChatMessage = { role: 'assistant', content: cleanedResponse, toolCalls: tabState.accumulatedToolCalls.map(tc => ({ toolName: tc.toolName, args: tc.args, result: tc.result })), timestamp: Date.now() };
         tabState.history.push(assistantMessage);
+      this.saveActiveTab(); // Persist immediately after each assistant response
         
         // Update session state from agent bridge
         tabState.sessionState = this.currentAgentBridge.getSessionState();

@@ -840,6 +840,10 @@ function formatFileSize(bytes: number): string {
 /**
  * Deactivate the extension
  */
-export function deactivate() {
+export async function deactivate() {
+    outputChannel.appendLine('i2-Vision extension deactivating...');
+    if (agentManager) {
+        await agentManager.dispose();
+    }
     outputChannel.appendLine('i2-Vision extension deactivated');
 }

@@ -39,6 +39,10 @@ import {
 import {AgentSessionState, ChatMessage} from './ConversationHistoryManager';
 import {createSessionManager, SessionManager} from './SessionManager';
 import {ToolResultCompressor} from './ToolResultCompressor';
+import {Diagnostics} from './AgentBridge.Diagnostics';
+import {LLMAdapter} from './AgentBridge.LLMAdapter';
+import {SearchCache} from './SearchCache';
+import {SessionManagerBridge} from './AgentBridge.SessionManagerBridge';
 
 export interface ContextProfile {
   eager: { currentFile?: boolean; projectMetadata?: boolean; gitStatus?: boolean; gitDiff?: boolean; relatedFiles?: boolean; directoryStructure?: boolean };
@@ -138,7 +142,6 @@ export class AgentBridge {
   private workspaceRoot: string;
   private extensionRoot: string;
   private currentIteration: number = 1;
-  private progressCallback?: ProgressCallback;
   
   // Tool Registry - declarative tool management
   private toolRegistry: ToolRegistry = new ToolRegistry();
@@ -166,15 +169,6 @@ export class AgentBridge {
   // Token usage tracking for context meter
   private _lastTokenUsage?: { prompt: number; completion: number; total: number };
   
-  // Persisted actual LLM prompt token count and message metrics for accurate
-  // pre-call estimation. We track the character/message count at the time
-  // the baseline was captured so we can estimate ONLY the delta (new content).
-  private _lastKnownPromptTokens: number = 0;
-  private _lastKnownMessageCount: number = 0;
-  private _lastKnownMessageChars: number = 0;
-  // Per-message overhead for role/formatting tokens
-  private static readonly PER_MESSAGE_OVERHEAD = 4;
-  
   // File snapshots for revert capability
   private _fileSnapshots: Map<string, string> = new Map();
   
@@ -196,16 +190,14 @@ export class AgentBridge {
   // Provider-specific session manager (3D LLM proxy, etc.)
   private sessionManager?: SessionManager;
 
+  // Extracted spoke modules
+  private diag!: Diagnostics;
+  private llmAdapter!: LLMAdapter;
+  private searchPatternCache!: SearchCache;
+  private sessionBridge!: SessionManagerBridge;
+
   // Tool result compressor for large outputs
   private toolCompressor: ToolResultCompressor = new ToolResultCompressor();
-
-  // Auto-explore on failed search tracking
-  private _failedSearchCount: number = 0;
-  private _lastSearchPattern: string | null = null;
-  
-  // Similar search detection - track previous search patterns to detect variants
-  private _previousSearches: string[] = [];
-  private static readonly SIMILAR_SEARCH_THRESHOLD = 0.5; // Minimum overlap ratio to consider similar
 
   // Legacy state tracking (migrated to state machine context)
   private _forceActionMode: boolean = false;
@@ -245,9 +237,6 @@ export class AgentBridge {
   
   // Session management
   private _needsFreshSession: boolean = false;
-  
-  // Cached provider capabilities (set after first LLM call)
-  private _lastProviderCapabilities?: LLMProviderCapabilities;
 
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000;
   private static readonly MAX_LIST_FILES_RESULTS = 100;
@@ -278,15 +267,23 @@ export class AgentBridge {
     this.config = config;
     this.outputChannel = outputChannel;
 
+    // Initialize diagnostics first (needed for logging)
+    this.diag = new Diagnostics(outputChannel);
+    this.searchPatternCache = new SearchCache();
+    this.sessionBridge = new SessionManagerBridge(this.diag);
+
     if (!workspaceRoot) throw new Error('workspaceRoot must be explicitly provided');
     if (extensionRoot && extensionRoot === workspaceRoot) throw new Error('workspaceRoot and extensionRoot cannot be the same path');
 
     this.workspaceRoot = workspaceRoot;
     this.extensionRoot = extensionRoot;
     this.settingsManager = settingsManager!;
-    
+
     this.log(`Workspace root: ${this.workspaceRoot}`);
     this.cli = new CLI(this.workspaceRoot, outputChannel);
+
+    // Initialize LLM adapter after CLI is created
+    this.llmAdapter = new LLMAdapter(this.cli, this.diag);
 
     // Initialize provider-specific session manager with new provider system
     const provider = config.model.provider;
@@ -339,10 +336,12 @@ export class AgentBridge {
     }
 
     // Cache provider capabilities for capability-driven branching
-    this._lastProviderCapabilities = getProviderCapabilities(provider);
-    this.log(`Provider capabilities loaded: streaming=${this._lastProviderCapabilities.streaming}, nativeToolCalls=${this._lastProviderCapabilities.nativeToolCalls}, sessionManagement=${this._lastProviderCapabilities.sessionManagement}, contextCompaction=${this._lastProviderCapabilities.contextCompaction}, maxContextLength=${this._lastProviderCapabilities.maxContextLength}`);
+    this.llmAdapter.providerCapabilities = getProviderCapabilities(provider);
+    const caps = this.llmAdapter.providerCapabilities;
+    this.log(`Provider capabilities loaded: streaming=${caps.streaming}, nativeToolCalls=${caps.nativeToolCalls}, sessionManagement=${caps.sessionManagement}, contextCompaction=${caps.contextCompaction}, maxContextLength=${caps.maxContextLength}`);
 
     this.terminalManager = new TerminalManager(outputChannel, settings.terminal.autoCloseDelayMs, settings.terminal);
+    this.diag.setTerminalManager(this.terminalManager);
     
     // Initialize tool registry with all built-in tools
     this.toolRegistry.registerAll(fileTools);
@@ -451,8 +450,8 @@ export class AgentBridge {
     // Apply provider's declared context window if the YAML config understates it.
     // The proxy doesn't expose the actual model's context window over its API,
     // so we use the provider's capability declaration as the authoritative value.
-    if (this._lastProviderCapabilities) {
-      const maxCtx = this._lastProviderCapabilities.maxContextLength;
+    if (this.llmAdapter.providerCapabilities) {
+      const maxCtx = this.llmAdapter.providerCapabilities.maxContextLength;
       if (this.config.model.contextLength < maxCtx) {
         const oldCtx = this.config.model.contextLength;
         this.config.model.contextLength = maxCtx;
@@ -499,27 +498,15 @@ export class AgentBridge {
   }
 
   private log(message: string, level: 'info' | 'warn' | 'error' = 'info'): void {
-    const timestamp = new Date().toISOString();
-    const levelPrefix = level === 'error' ? '❌' : level === 'warn' ? '⚠️' : 'ℹ️';
-    const formatted = `[${timestamp}] [AgentBridge] ${levelPrefix} ${message}`;
-    if (this.outputChannel) this.outputChannel.appendLine(formatted);
-    console[level](formatted);
+    this.diag.log(message, level);
   }
 
   private logStateTransition(from: AgentState, to: AgentState, event: AgentEvent, details?: string): void {
-    const timestamp = new Date().toISOString();
-    const stateInfo = `[${timestamp}] [StateMachine] ${from}───${event}───> ${to}`;
-    const fullMessage = details ? `${stateInfo} | ${details}` : stateInfo;
-    if (this.outputChannel) this.outputChannel.appendLine(fullMessage);
-    console.log(fullMessage);
+    this.diag.logStateTransition(from, to, event, details);
   }
 
   private logToolExecution(toolName: string, args: Record<string, any>, startTime: number): void {
-    const duration = Date.now() - startTime;
-    const argsSummary = Object.entries(args)
-      .map(([k, v]) => `${k}=${typeof v === 'string' && v.length > 50 ? `${v.substring(0, 47)}...` : v}`)
-      .join(', ');
-    this.log(`🔧 Tool executed: ${toolName}(${argsSummary}) [${duration}ms]`, 'info');
+    this.diag.logToolExecution(toolName, args, startTime);
   }
 
   /** Detect task type from user input */
@@ -593,10 +580,10 @@ export class AgentBridge {
       this._forceActionMode = sessionState.forceActionMode;
     }
     if (sessionState.failedSearchCount !== undefined) {
-      this._failedSearchCount = sessionState.failedSearchCount;
+      this.searchPatternCache.failedSearchCount = sessionState.failedSearchCount;
     }
     if (sessionState.lastSearchPattern) {
-      this._lastSearchPattern = sessionState.lastSearchPattern;
+      this.searchPatternCache.lastSearchPattern = sessionState.lastSearchPattern;
     }
 
     // Restore proxy session state
@@ -634,8 +621,8 @@ export class AgentBridge {
       workingDirectory: this.workspaceRoot,
       toolFilter: this._forceActionMode ? 'action_only' : 'all',
       forceActionMode: this._forceActionMode,
-      failedSearchCount: this._failedSearchCount,
-      lastSearchPattern: this._lastSearchPattern || undefined,
+      failedSearchCount: this.searchPatternCache.failedSearchCount,
+      lastSearchPattern: this.searchPatternCache.lastSearchPattern || undefined,
       lastTokenUsage: this._lastTokenUsage,
       proxySession: this.sessionManager?.getSessionState() ?? undefined,
       sessionManagerState: this.sessionManager?.serialize() ?? undefined,
@@ -682,99 +669,23 @@ export class AgentBridge {
   }
 
   private extractReasoning(text: string): string {
-    if (!text) return '';
-    // Try multiple patterns to extract reasoning/thinking content
-    const patterns = [
-      /reasoning:\s*([\s\S]*?)(?=tool_call:|EOS|$)/i,
-      /thinking:\s*([\s\S]*?)(?=tool_call:|EOS|$)/i,
-      /plan:\s*([\s\S]*?)(?=tool_call:|EOS|$)/i,
-      /<thinking>([\s\S]*?)<\/thinking>/i,
-      /<reasoning>([\s\S]*?)<\/reasoning>/i
-    ];
-    for (const pattern of patterns) {
-      const match = text.match(pattern);
-      if (match && match[1].trim()) {
-        return match[1].trim();
-      }
-    }
-    return '';
+    return this.llmAdapter.extractReasoning(text);
   }
 
   private extractFinalResponse(text: string): string {
-    if (!text) return '';
-    text = text.replace(/reasoning:\s*/gi, '');
-    text = text.replace(/\bEOS\b/gi, '');
-    text = text.replace(/tool_call:\s*\{[\s\S]*?\}(?=\n|$|tool_call:)/g, '');
-    text = text.replace(/^tool_calls:\s*/gmi, '');
-    const blocks = text.split(/\n\n+/).filter(b => b.trim().length > 20);
-    if (blocks.length > 1) return blocks.reduce((a, b) => a.length > b.length ? a : b).trim();
-    return text.trim();
+    return this.llmAdapter.extractFinalResponse(text);
+  }
+
+  private detectProxyMisbehavior(text: string): boolean {
+    return this.llmAdapter.detectProxyMisbehavior(text);
+  }
+
+  private formatToolsForSystemPrompt(tools: LLMTool[]): string {
+    return this.llmAdapter.formatToolsForSystemPrompt(tools);
   }
 
   private emitProgress(event: ProgressEvent): void {
-    if (this.progressCallback) this.progressCallback(event);
-  }
-
-  /**
-   * Detect when DeepSeek is outputting text/plan format instead of tool calls.
-   * Happens when proxy conversation history teaches the model the wrong format.
-   */
-  private detectProxyMisbehavior(text: string): boolean {
-    if (!text || text.length < 10) return false;
-    const lower = text.toLowerCase();
-    // Score based on misbehavior indicators
-    let score = 0;
-    // Model writes about calling tools (but doesn't actually call them)
-    if (/\b(calling|call)\s*[:\s]+\w+/.test(text)) score += 2;
-    if (/\b(will|i'll|i will|let me)\s+\w+/.test(text) && /\b(read|list|search|check)\b/.test(lower)) score += 1;
-    // Model outputs markdown code blocks for tools (wrong format)
-    if (/```\s*(json)?\s*\n?\s*\{\s*"path"/.test(text)) score += 2;
-    // Model describes what it would do
-    if (/\bfirst\s*,?\s*(i'll|i will|let me)/.test(text)) score += 1;
-    if (/\bnext\s*,?\s*(i'll|i will)/.test(text)) score += 1;
-    // Contains tool parameter names but no actual JSON call
-    const hasToolParams = /"path"|"recursive"|"command"|"pattern"/.test(text);
-    const hasJsonToolCall = /"name"\s*:\s*"\w+"/.test(text) && /"arguments"\s*:/.test(text);
-    if (hasToolParams && !hasJsonToolCall) score += 1;
-    return score >= 2;
-  }
-
-  /** Format tool definitions for embedding in the system prompt (3D LLM text-based tool calling) */
-  private formatToolsForSystemPrompt(tools: LLMTool[]): string {
-    let text = '--- AVAILABLE TOOLS ---\n';
-    text += 'Call tools using raw JSON on a single line: {"name":"tool_name","arguments":{"param":"value"}}\n';
-    text += 'Do not use markdown code blocks or XML tags.\n\n';
-    text += 'Available tools:\n';
-    for (const tool of tools) {
-      const fn = tool.function;
-      text += `### ${fn.name}\n`;
-      text += `${fn.description || 'No description'}\n`;
-      if (fn.parameters) {
-        const props = fn.parameters.properties || {};
-        const req = fn.parameters.required || [];
-        text += `Parameters:\n`;
-        for (const [key, val] of Object.entries(props)) {
-          const desc = (val as any).description || '';
-          const required = req.includes(key) ? ' (required)' : '';
-          text += `  - ${key}: ${desc}${required}\n`;
-        }
-        // Show an example call for this specific tool
-        const exampleArgs: any = {};
-        for (const [key, val] of Object.entries(props)) {
-          const prop = val as any;
-          if (prop.type === 'string') exampleArgs[key] = req.includes(key) ? '<value>' : '';
-          else if (prop.type === 'boolean') exampleArgs[key] = false;
-          else if (prop.type === 'number') exampleArgs[key] = 0;
-          else if (prop.type === 'array') exampleArgs[key] = [];
-          else exampleArgs[key] = '';
-        }
-        text += `Example: {"name":"${fn.name}","arguments":${JSON.stringify(exampleArgs)}}\n`;
-      }
-      text += '\n';
-    }
-    text += '--- END TOOLS ---\n';
-    text += 'REMEMBER: Output ONLY the JSON tool call line. Nothing else. No explanations.\n';
-    return text;
+    this.diag.emitProgress(event as any);
   }
 
   async process(userInput: string, currentFile?: string, onProgress?: ProgressCallback): Promise<AgentResponse> {
@@ -885,7 +796,7 @@ export class AgentBridge {
     // When the provider doesn't natively handle tool_calls, embed tool definitions
     // directly in the system prompt so the model knows how to call tools.
     const tools = this.getTools(contextProfile?.lazy, this.stateMachine.getToolFilter());
-    const caps = this._lastProviderCapabilities;
+    const caps = this.llmAdapter.providerCapabilities;
     if (caps && !caps.nativeToolCalls && tools.length > 0) {
       contextEnhancedPrompt += '\n\n' + this.formatToolsForSystemPrompt(tools);
     }
@@ -949,9 +860,8 @@ export class AgentBridge {
       this._autoReadFiles.clear();
       this._lastSearchFiles = [];
       this._lastSearchIteration = 0;
-      this._failedSearchCount = 0;
-      this._lastSearchPattern = null;
-      this._previousSearches = [];
+      this.searchPatternCache.failedSearchCount = 0;
+      this.searchPatternCache.lastSearchPattern = null;
       this._autoNudge = null;
       this._lastUserInput = '';
       this._triedStrategies = new Set<string>();
@@ -961,9 +871,9 @@ export class AgentBridge {
       this._consecutiveTextResponsesWithoutToolCalls = 0;
       this._toolCallHistory = [];
       this._forceActionMode = false;
-      this._lastKnownPromptTokens = 0; // Reset on fresh conversation
-      this._lastKnownMessageCount = 0;
-      this._lastKnownMessageChars = 0;
+      this.llmAdapter.lastKnownPromptTokens = 0; // Reset on fresh conversation
+      this.llmAdapter.lastKnownMessageCount = 0;
+      this.llmAdapter.lastKnownMessageChars = 0;
 
       // CRITICAL: Reset proxy session on fresh conversation so stale history
       // doesn't teach the model wrong formats (DSML XML, "Calling:", etc.)
@@ -993,7 +903,7 @@ export class AgentBridge {
       this.log(`Restored token usage from session: prompt=${this._lastTokenUsage.prompt}, completion=${this._lastTokenUsage.completion}`);
       
       // Also restore to session manager if compaction is available
-      if (this._lastProviderCapabilities?.contextCompaction && this.sessionManager && this._sessionState.lastTokenUsage) {
+      if (this.llmAdapter.providerCapabilities?.contextCompaction && this.sessionManager && this._sessionState.lastTokenUsage) {
         const sessionManagerAny = this.sessionManager as any;
         if (sessionManagerAny.updateTokenUsage) {
           sessionManagerAny.updateTokenUsage(
@@ -1178,11 +1088,11 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
       if (options.streaming) yield { type: 'thinking', message: `Processing...`, timestamp: Date.now() };
 
       // INJECT PENDING MESSAGES (auto-context, auto-fix, etc.)
-      const pendingMessages = (this as any)._pendingMessages as LLMMessage[] | undefined;
+      const pendingMessages = this.sessionBridge.pendingMessages;
       if (pendingMessages && pendingMessages.length > 0) {
         messages.push(...pendingMessages);
         this.log(`Injected ${pendingMessages.length} pending message(s) into conversation`);
-        (this as any)._pendingMessages = []; // Clear after injection
+        this.sessionBridge.pendingMessages = []; // Clear after injection
       }
 
       // TOKEN BUDGET CHECK: Trim conversation if approaching token limit
@@ -1198,9 +1108,9 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
           this.log(`Messages trimmed: ${messages.length} → ${trimmedMessages.length} (saved ~${this.estimateTokens(messages) - this.estimateTokens(trimmedMessages)} tokens)`);
           messages = trimmedMessages;
           // Invalidate baseline so next estimate uses a fresh full count
-          this._lastKnownPromptTokens = 0;
-          this._lastKnownMessageCount = 0;
-          this._lastKnownMessageChars = 0;
+this.llmAdapter.lastKnownPromptTokens = 0;
+this.llmAdapter.lastKnownMessageCount = 0;
+this.llmAdapter.lastKnownMessageChars = 0;
           this.log('Token baseline reset after trimming');
         }
       }
@@ -1208,7 +1118,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
       // SESSION MANAGEMENT: Sync, health check, compaction, and context exhaustion
       // Sync + health check require sessionManagement
       // Compaction + exhaustion tracking require contextCompaction
-      const sessionCaps = this._lastProviderCapabilities;
+      const sessionCaps = this.llmAdapter.providerCapabilities;
 
       if (this.sessionManager && this.sessionManager.name !== 'Null') {
         if (iteration === 1) {
@@ -1254,8 +1164,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
           if (resetOk) {
             this.log('Session reset successfully due to context exhaustion');
             // Clear token tracking after reset
-            this._lastTokenUsage = undefined;
-            this._lastKnownPromptTokens = 0;
+            this.llmAdapter.lastKnownPromptTokens = 0;
           } else {
             this.log('Session reset failed - continuing with current context');
           }
@@ -1291,10 +1200,10 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
           // Carry forward real or estimated token usage from non-streaming response
           if (nonStreamResponse.tokenUsage) {
             this._lastTokenUsage = nonStreamResponse.tokenUsage;
-            this._lastKnownPromptTokens = nonStreamResponse.tokenUsage.prompt;
+            this.llmAdapter.lastKnownPromptTokens = nonStreamResponse.tokenUsage.prompt;
             
             // Update session manager token tracking (only when contextCompaction is supported)
-            if (this._lastProviderCapabilities?.contextCompaction && this.sessionManager) {
+            if (this.llmAdapter.providerCapabilities?.contextCompaction && this.sessionManager) {
               const sessionManagerAny = this.sessionManager as any;
               if (sessionManagerAny.updateTokenUsage) {
                 sessionManagerAny.updateTokenUsage(
@@ -1307,11 +1216,11 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
             const promptTokens = this.estimateTokens(messages);
             const completionTokens = Math.ceil(responseText.length / 4);
             this._lastTokenUsage = { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens };
-            this._lastKnownPromptTokens = promptTokens;
+            this.llmAdapter.lastKnownPromptTokens = promptTokens;
             this.log(`Estimated token usage (non-streaming): prompt=${promptTokens}, completion=${completionTokens}`);
           }
-          this._lastKnownMessageCount = messages.length;
-          this._lastKnownMessageChars = messages.reduce((s, m) => s + m.content.length, 0);
+          this.llmAdapter.lastKnownMessageCount = messages.length;
+          this.llmAdapter.lastKnownMessageChars = messages.reduce((s, m) => s + m.content.length, 0);
         } else {
           const streamResponse = rawResponse as AsyncGenerator<LLMChunk>;
           let reasoningCaptured = false;
@@ -1351,10 +1260,10 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
             if (chunk.toolCalls) streamingToolCalls = chunk.toolCalls;
             if (chunk.tokenUsage) {
               this._lastTokenUsage = chunk.tokenUsage;
-              this._lastKnownPromptTokens = chunk.tokenUsage.prompt;
+              this.llmAdapter.lastKnownPromptTokens = chunk.tokenUsage.prompt;
               
               // Update session manager token tracking (only when contextCompaction is supported)
-              if (this._lastProviderCapabilities?.contextCompaction && this.sessionManager) {
+              if (this.llmAdapter.providerCapabilities?.contextCompaction && this.sessionManager) {
                 const sessionManagerAny = this.sessionManager as any;
                 if (sessionManagerAny.updateTokenUsage) {
                   sessionManagerAny.updateTokenUsage(
@@ -1373,13 +1282,13 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
             const promptTokens = this.estimateTokens(messages);
             const completionTokens = Math.ceil(responseText.length / 4);
             this._lastTokenUsage = { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens };
-            this._lastKnownPromptTokens = promptTokens;
+            this.llmAdapter.lastKnownPromptTokens = promptTokens;
             this.log(`Estimated token usage (provider omitted usage): prompt=${promptTokens}, completion=${completionTokens}`);
           }
           
           // Persist metrics after streaming response completes for delta estimation
-          this._lastKnownMessageCount = messages.length;
-          this._lastKnownMessageChars = messages.reduce((s, m) => s + m.content.length, 0);
+          this.llmAdapter.lastKnownMessageCount = messages.length;
+          this.llmAdapter.lastKnownMessageChars = messages.reduce((s, m) => s + m.content.length, 0);
 
           if (!toolCallDetected && streamBuffer.trim()) {
             textAlreadyStreamed = true;
@@ -1666,7 +1575,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
         thisIterationCalls.set(callKey, argsSignature);
         
         // Skip loop detection for search_files if we're in auto-explore mode (first failed search)
-        const isAutoExploreMode = toolCall.name === 'search_files' && this._failedSearchCount === 1;
+        const isAutoExploreMode = toolCall.name === 'search_files' && this.searchPatternCache.failedSearchCount === 1;
         
         if (!isAutoExploreMode && this.stateMachine.detectLoop(toolCall.name, normalizedArgs, iteration)) {
           this.log(`LOOP DETECTED: ${toolCall.name} with same arguments`, 'error');
@@ -1779,11 +1688,11 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
           
           // Check if search returned no results
           if (toolResult?.result && toolResult.result.includes('No files found')) {
-            this._failedSearchCount++;
-            this._lastSearchPattern = searchPattern;
+            this.searchPatternCache.failedSearchCount++;
+            this.searchPatternCache.lastSearchPattern = searchPattern;
             
             // First failed search - use domain knowledge to guide exploration
-            if (this._failedSearchCount === 1) {
+            if (this.searchPatternCache.failedSearchCount === 1) {
               // Use domain-aware directories if available
               const directoriesToList = this._suggestedDirectories.length > 0 
                 ? this._suggestedDirectories 
@@ -1809,17 +1718,17 @@ Example:
                 tool_call_id: `auto_explore_${Date.now()}`
               });
               this.log(`Auto-explore: Listed ${directoriesToList.length} directories after failed search for "${searchPattern}" (domain: ${this._domainResolution?.primaryDomain || 'unknown'})`);
-            } else if (this._failedSearchCount >= 2) {
+            } else if (this.searchPatternCache.failedSearchCount >= 2) {
               // Second failed search - stronger nudge
               const domainTip = this._domainResolution?.primaryDomain !== 'unknown'
                 ? ` Focus on ${this._domainResolution.primaryDomain} directories.`
                 : '';
-              this._autoNudge = `⚠️ You've searched ${this._failedSearchCount} times without finding results. STOP searching. Use list_directory to explore the project structure first.${domainTip}`;
+              this._autoNudge = `⚠️ You've searched ${this.searchPatternCache.failedSearchCount} times without finding results. STOP searching. Use list_directory to explore the project structure first.${domainTip}`;
             }
           } else {
             // Successful search - reset counter
-            this._failedSearchCount = 0;
-            this._lastSearchPattern = null;
+            this.searchPatternCache.failedSearchCount = 0;
+            this.searchPatternCache.lastSearchPattern = null;
           }
         }
       }
@@ -1917,48 +1826,15 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
    * Used for detecting similar search patterns (e.g., "ZoomToolsUI" vs "ZoomToolsUI|UnifiedEditor")
    */
   private normalizeSearchPattern(pattern: string): string {
-    return pattern.replace(/[|.*+?^${}()|[\]\\]/g, '').toLowerCase();
+    return this.searchPatternCache.normalizeSearchPattern(pattern);
   }
 
-  /**
-   * Check if current search pattern is similar to any previous search
-   * Returns the similar pattern if found, null otherwise
-   */
   private findSimilarSearch(currentPattern: string): string | null {
-    const normalizedCurrent = this.normalizeSearchPattern(currentPattern);
-    
-    for (const prevPattern of this._previousSearches) {
-      const normalizedPrev = this.normalizeSearchPattern(prevPattern);
-      
-      // Check for substring overlap in either direction
-      const currentInPrev = normalizedPrev.includes(normalizedCurrent);
-      const prevInCurrent = normalizedCurrent.includes(normalizedPrev);
-      
-      // Also check for significant overlap using Jaccard-like similarity
-      const currentTerms = normalizedCurrent.split(/[\s_]+/).filter(t => t.length > 2);
-      const prevTerms = normalizedPrev.split(/[\s_]+/).filter(t => t.length > 2);
-      
-      const intersection = currentTerms.filter(t => prevTerms.includes(t));
-      const union = [...new Set([...currentTerms, ...prevTerms])];
-      const overlapRatio = union.length > 0 ? intersection.length / union.length : 0;
-      
-      if (currentInPrev || prevInCurrent || overlapRatio >= AgentBridge.SIMILAR_SEARCH_THRESHOLD) {
-        return prevPattern;
-      }
-    }
-    
-    return null;
+    return this.searchPatternCache.findSimilarSearch(currentPattern);
   }
 
-  /**
-   * Record a search pattern for future similar-search detection
-   */
   private recordSearchPattern(pattern: string): void {
-    // Keep only last 10 searches to avoid unbounded growth
-    if (this._previousSearches.length >= 10) {
-      this._previousSearches.shift();
-    }
-    this._previousSearches.push(pattern);
+    this.searchPatternCache.recordSearchPattern(pattern);
   }
 
   /**
@@ -1967,85 +1843,28 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
    * Falls back to conservative character counting when no baseline exists.
    */
   private estimateTokens(messages: LLMMessage[]): number {
-    const baseline = this._lastKnownPromptTokens || 0;
-    if (baseline === 0) {
-      // No prior data — fallback to conservative estimate
-      const msgOverhead = messages.length * AgentBridge.PER_MESSAGE_OVERHEAD;
-      return messages.reduce((sum, msg) => sum + Math.ceil(msg.content.length / 3.5), msgOverhead);
-    }
-
-    // Calculate delta: how many new messages and new characters were added
-    const currentChars = messages.reduce((sum, msg) => sum + msg.content.length, 0);
-    const currentCount = messages.length;
-    const newChars = Math.max(0, currentChars - this._lastKnownMessageChars);
-    const newMessages = Math.max(0, currentCount - this._lastKnownMessageCount);
-
-    // Estimate only the new content added since the baseline was captured.
-    // Use a tighter ratio for deltas (3.5 chars/token) plus per-message overhead.
-    const deltaTokens = Math.ceil(newChars / 3.5) + (newMessages * AgentBridge.PER_MESSAGE_OVERHEAD);
-    return baseline + deltaTokens;
+    return this.llmAdapter.estimateTokens(messages);
   }
 
-  /**
-   * Summarize old conversation messages to reduce token usage
-   */
   private async summarizeConversation(messages: LLMMessage[]): Promise<string> {
-    if (messages.length === 0) return '';
-    
-    // Extract key information from old messages
-    const toolCalls = messages
-      .filter(m => m.role === 'tool' && typeof m.content === 'string')
-      .map(m => {
-        const content = m.content as string;
-        // Extract file paths and key results
-        const fileMatch = content.match(/(?:read|wrote|edited|found)\s+[^\n]+/gi);
-        return fileMatch ? fileMatch.slice(0, 3).join('; ') : content.substring(0, 100);
-      })
-      .filter(Boolean);
-
-    const summary = `Previous conversation covered: ${toolCalls.slice(0, 10).join(' | ')}`;
-    this.log(`Conversation summarized: ${toolCalls.length} tool results condensed`);
-    return summary;
+    return this.llmAdapter.summarizeConversation(messages);
   }
 
-  /**
-   * Trim messages to stay within token budget, summarizing old messages
-   */
   private async trimMessagesToBudget(messages: LLMMessage[], maxTokenPercentage: number = 0.8): Promise<LLMMessage[]> {
-    const maxTokens = this.config.model.contextLength * maxTokenPercentage;
-    let estimatedTokens = this.estimateTokens(messages);
-    
-    if (estimatedTokens <= maxTokens) {
-      return messages;
-    }
-
-    this.log(`Token warning: ${estimatedTokens} / ${this.config.model.contextLength} (${(estimatedTokens / this.config.model.contextLength * 100).toFixed(1)}%) - trimming conversation`);
-
-    // Keep system prompt + last 8 messages, summarize the rest
-    const systemMsg = messages[0];
-    const recentMsgs = messages.slice(-8);
-    const oldMessages = messages.slice(1, -8);
-    
-    if (oldMessages.length === 0) {
-      return messages; // Nothing to trim
-    }
-
-    const summary = await this.summarizeConversation(oldMessages);
-    const summaryMsg: LLMMessage = { role: 'user', content: `[Previous conversation summary: ${summary}]. Continue from recent messages above.` };
-    
-    return [systemMsg, summaryMsg, ...recentMsgs];
+    return this.llmAdapter.trimMessagesToBudget(this.config.model.contextLength, messages, maxTokenPercentage);
   }
 
   private async callLLM(messages: LLMMessage[], tools: LLMTool[]): Promise<LLMResponse> {
-    const result = await this.cli.callLLM(this.config.model.id, messages, { 
-      temperature: this.config.model.temperature, 
-      top_p: this.config.model.topP, 
-      max_tokens: this.config.model.maxOutputTokens,
-      thinking_enabled: this.config.model.thinkingEnabled,
-      search_enabled: this.config.model.searchEnabled
-    }, tools, false, this.config.model.provider);
-    if (Symbol.asyncIterator in result) throw new Error('Expected non-streaming response but got streaming generator');
-    return result as LLMResponse;
+    return this.llmAdapter.callLLM({
+      modelId: this.config.model.id,
+      provider: this.config.model.provider,
+      contextLength: this.config.model.contextLength,
+      maxOutputTokens: this.config.model.maxOutputTokens,
+      temperature: this.config.model.temperature,
+      topP: this.config.model.topP,
+      thinkingEnabled: this.config.model.thinkingEnabled,
+      searchEnabled: this.config.model.searchEnabled
+    }, messages, tools);
   }
 
   private async executeTool(toolCall: LLMToolCall): Promise<{ result: string; error?: string }> {
@@ -2103,8 +1922,7 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
             const preflightMessage = `[AUTO] Found ${runningTerminals.length} existing terminal(s) that may be running servers:\n${terminalList}\n\n**Check if the server is already running before starting a new one.**\n\nUse list_all_terminals to inspect them, or check the browser/application to see if it's responding.`;
 
             // Store for injection into messages
-            if (!(this as any)._pendingMessages) (this as any)._pendingMessages = [];
-            (this as any)._pendingMessages.push({
+            this.sessionBridge.pendingMessages.push({
               role: 'tool',
               content: preflightMessage,
               tool_call_id: `auto_preflight_${Date.now()}`
@@ -2165,7 +1983,7 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
       this.monitorToolExecution(toolCall, rawResult);
 
       // Compress large tool results before sending to LLM — apply for any provider with known capabilities
-      if (rawResult.result && this._lastProviderCapabilities) {
+      if (rawResult.result && this.llmAdapter.providerCapabilities) {
         const compressed = this.toolCompressor.compress(rawResult.result);
         if (compressed.wasCompressed) {
           this.log(`Tool result compressed: ${compressed.originalLength} → ${compressed.compressedLength} chars (${compressed.technique})`);
@@ -2429,47 +2247,15 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
   }
 
   private isSessionError(errorText: string): boolean {
-    const sessionIndicators = [
-      'session',
-      'empty_response',
-      '502',
-      'session_reset',
-      'expired',
-      'invalid session',
-      'exceeds_limit',
-      'too long',
-      'context_length',
-      'token limit',
-    ];
-    return sessionIndicators.some((ind) => errorText.toLowerCase().includes(ind));
+    return this.sessionBridge.isSessionError(errorText);
   }
 
   private isContextExhaustionError(errorText: string): boolean {
-    const contextIndicators = [
-      'exceeds_limit',
-      'too long',
-      'content too long',
-      'context_length',
-      'token limit',
-      'содержание слишком длинное', // Russian: "content too long"
-      'предел длины', // Russian: "length limit"
-    ];
-    return contextIndicators.some((ind) => errorText.toLowerCase().includes(ind));
+    return this.sessionBridge.isContextExhaustionError(errorText);
   }
 
   private injectSimplifiedToolPrompt(toolCall: LLMToolCall): void {
-    const simplifiedPrompt = `Your previous tool call had malformed JSON. Retry with SIMPLIFIED arguments:
-TOOL_CALL: ${toolCall.name}
-arguments: {"path": "/path/to/file"}  // Keep it minimal
-
-DO NOT include large content in arguments. Just reference files by path.`;
-
-    const pending = (this as any)._pendingMessages as LLMMessage[] | undefined;
-    if (!pending) {
-      (this as any)._pendingMessages = [];
-    }
-    (this as any)._pendingMessages.push({ role: 'user', content: simplifiedPrompt });
-    this.log(`Injected simplified tool prompt for ${toolCall.name}`);
+    this.sessionBridge.injectSimplifiedToolPrompt(toolCall);
   }
 
 
@@ -2514,7 +2300,7 @@ DO NOT include large content in arguments. Just reference files by path.`;
     }
   }
 
-  dispose(): void { this.terminalManager.dispose(); }
+  dispose(): void { this.diag.dispose(); }
 
   private buildSystemPrompt(variables: Record<string, string>): string {
     let prompt = this.config.systemPromptTemplate;
@@ -2559,7 +2345,6 @@ DO NOT include large content in arguments. Just reference files by path.`;
     const totalTools = this._toolCallHistory.length;
     const errorCount = this._toolCallHistory.filter(t => t.hasError).length;
     
-    // Get recent tool executions (last 10)
     const recentTools = this._toolCallHistory.slice(-10).map(t => ({
       toolName: t.toolName,
       success: !t.hasError,
@@ -2608,7 +2393,6 @@ DO NOT include large content in arguments. Just reference files by path.`;
       });
     }
     
-    // Add queue information if there are queued tools
     if (stats.queueLength > 0) {
       report += `\nQueued Tools (${stats.queueLength}):\n`;
       this._toolExecutionQueue.forEach((item, index) => {

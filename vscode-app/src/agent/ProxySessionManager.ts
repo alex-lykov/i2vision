@@ -509,8 +509,12 @@ export class ProxySessionManager implements SessionManager {
     try {
       const response = await fetch(resetUrl, { method: 'POST' });
       if (!response.ok) {
-        this.log(`Reset failed: ${response.status} ${response.statusText}`);
-        return false;
+        this.log(`Reset failed: ${response.status} ${response.statusText} — clearing local state anyway`);
+        // Clear local state even when proxy reset fails — prevents session reuse
+        this.proxySession.id = null;
+        this.proxySession.messageCount = 0;
+        this.proxySession.history = [];
+        return true; // Return true so caller treats this as a fresh session
       }
       const data: ProxyResetResponse = await response.json();
       this.log(`Session reset for ${effectiveAgentId}: ${data.history_preserved} history items preserved`);
@@ -526,8 +530,12 @@ export class ProxySessionManager implements SessionManager {
       
       return true;
     } catch (error: any) {
-      this.log(`Reset error: ${error.message}`);
-      return false;
+      this.log(`Reset error: ${error.message} — clearing local state as fallback`);
+      // Clear local state on error too — the next API call will create a fresh session
+      this.proxySession.id = null;
+      this.proxySession.messageCount = 0;
+      this.proxySession.history = [];
+      return true; // Return true so the caller treats this as a fresh session
     }
   }
 

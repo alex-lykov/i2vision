@@ -43,6 +43,7 @@ import {Diagnostics} from './AgentBridge.Diagnostics';
 import {LLMAdapter} from './AgentBridge.LLMAdapter';
 import {SearchCache} from './SearchCache';
 import {SessionManagerBridge} from './AgentBridge.SessionManagerBridge';
+import {ToolPipeline} from './AgentBridge.ToolPipeline';
 
 export interface ContextProfile {
   eager: { currentFile?: boolean; projectMetadata?: boolean; gitStatus?: boolean; gitDiff?: boolean; relatedFiles?: boolean; directoryStructure?: boolean };
@@ -195,6 +196,7 @@ export class AgentBridge {
   private llmAdapter!: LLMAdapter;
   private searchPatternCache!: SearchCache;
   private sessionBridge!: SessionManagerBridge;
+  private toolPipeline!: ToolPipeline;
 
   // Tool result compressor for large outputs
   private toolCompressor: ToolResultCompressor = new ToolResultCompressor();
@@ -342,6 +344,33 @@ export class AgentBridge {
 
     this.terminalManager = new TerminalManager(outputChannel, settings.terminal.autoCloseDelayMs, settings.terminal);
     this.diag.setTerminalManager(this.terminalManager);
+    
+    // Create tool pipeline and wire host via adapter
+    this.toolPipeline = new ToolPipeline();
+    this.toolPipeline.setHost({
+      get workspaceRoot() { return this.workspaceRoot; },
+      resolvePath: (p: string) => this.resolvePath(p),
+      readFileCached: (p: string) => this.readFileCached(p),
+      invalidateFileCache: (p: string) => this.invalidateFileCache(p),
+      cli: this.cli,
+      terminalManager: this.terminalManager,
+      toolRegistry: this.toolRegistry,
+      toolCompressor: this.toolCompressor,
+      llmAdapter: this.llmAdapter,
+      get sessionManager() { return this.sessionManager; },
+      get sessionBridge() { return this.sessionBridge; },
+      config: this.config,
+      get _forceActionMode() { return this._forceActionMode; },
+      set _forceActionMode(v: boolean) { this._forceActionMode = v; },
+      get _hasCheckedRunningServers() { return this._hasCheckedRunningServers; },
+      set _hasCheckedRunningServers(v: boolean) { this._hasCheckedRunningServers = v; },
+      _readFileCount: this._readFileCount,
+      get _autoNudge() { return this._autoNudge; },
+      set _autoNudge(v: string | null) { this._autoNudge = v; },
+      _fileSnapshots: this._fileSnapshots,
+      log: (msg: string, level?: 'info' | 'warn' | 'error') => this.log(msg, level),
+      emitProgress: (e: any) => this.emitProgress(e),
+    });
     
     // Initialize tool registry with all built-in tools
     this.toolRegistry.registerAll(fileTools);

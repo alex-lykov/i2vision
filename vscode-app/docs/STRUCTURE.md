@@ -10,7 +10,12 @@ vscode-app/
 │   ├── fileSystemIntegration.ts  # VSCode FileSystemProvider
 │   ├── treeViewProvider.ts       # Sidebar tree view
 │   ├── agent/                    # Agent-related code
-│   │   ├── AgentBridge.ts        # Bridge between VSCode and agent core
+│   │   ├── AgentBridge.ts        # Bridge between VSCode and agent core (hub)
+│   │   ├── AgentBridge.Diagnostics.ts       # Diagnostics logging and structured data
+│   │   ├── AgentBridge.LLMAdapter.ts        # Provider capability detection and model config
+│   │   ├── AgentBridge.SearchCache.ts       # TTL-based search result caching
+│   │   ├── AgentBridge.SessionManagerBridge.ts  # Session error classification
+│   │   ├── AgentBridge.ToolPipeline.ts      # Tool execution, retry, rate-limit, stats
 │   │   └── AgentTabManager.ts    # Manages agent tab UI
 │   ├── bridge/                   # Integration bridges
 │   │   └── UniversalBridge.ts    # Cross-module communication
@@ -48,12 +53,16 @@ vscode-app/
 Main entry point. Activates extension, registers commands, initializes providers.
 
 ### `AgentBridge.ts`
-Bridges VSCode extension with agent core. Handles:
+Bridges VSCode extension with agent core. Hub module delegating to spoke modules. Handles:
 - Agent lifecycle
-- Tool execution
+- Tool execution (delegated to `AgentBridge.ToolPipeline.ts`)
 - Streaming responses
 - Loop detection
 - Plan detection
+- Diagnostics (delegated to `AgentBridge.Diagnostics.ts`)
+- LLM adapter configuration (delegated to `AgentBridge.LLMAdapter.ts`)
+- Search caching (delegated to `AgentBridge.SearchCache.ts`)
+- Session error handling (delegated to `AgentBridge.SessionManagerBridge.ts`)
 
 ### `AgentTabManager.ts`
 Manages agent tab UI in webview. Handles:

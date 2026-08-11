@@ -121,8 +121,10 @@ AgentBridge.ts had grown into a monolithic 3,310-line file mixing concerns acros
 | `AgentBridge.SearchCache.ts` | 82 | ~80 lines | In-memory cache with TTL for directory scans, file search results, globs, and file context queries |
 | `AgentBridge.SessionManagerBridge.ts` | 109 | ~100 lines | Session error classification, context exhaustion detection, simplified prompt injection for JSON errors |
 | `AgentBridge.ToolPipeline.ts` | 325 | ~400 lines | Complete tool execution pipeline: execute, retry, rate-limit, queue, monitor, validate, stats/reporting |
+| `AgentBridge.CommandExecutor.ts` | 197 | ~180 lines | Command safety validation (blocked/long-running patterns), terminal execution, build commands (Gradle compile), Git operations |
+| `AgentBridge.LegacyTools.ts` | 142 | ~140 lines | Legacy tool wrappers (run_command, run_build, git_commit), tool name mapping for backward compatibility |
 
-**Total extracted**: ~850 lines into 5 focused modules
+**Total extracted**: ~1,189 lines into 7 focused modules
 
 ## Phases
 
@@ -163,6 +165,14 @@ AgentBridge.ts had grown into a monolithic 3,310-line file mixing concerns acros
 - **Net change**: -379 lines from AgentBridge.ts in Phase 4 alone
 - Compile verified clean after each replacement
 
+### Phase 5: Consolidate Command Patterns and Wire CommandExecutor/LegacyTools
+- **Duplicate elimination**: Removed `longRunningPatterns` (instance field) and `BLOCKED_COMMAND_PATTERNS` (static) from AgentBridge.ts — now canonical in CommandExecutor only
+- **Configurable patterns**: Renamed CommandExecutor statics to `DEFAULT_BLOCKED_PATTERNS` / `DEFAULT_LONG_RUNNING_PATTERNS` and added instance fields initialized from defaults; added optional `customLongRunningPatterns?: string[]` constructor parameter so YAML config overrides propagate to validation
+- **`getDefaultCompileCommand()`**: Extracted platform-specific Gradle command (`.\\gradlew :app:server:compileKotlin --console=plain`) from forced build verification block into CommandExecutor, removing hardcoded ternary from agent loop
+- **`runTerminal` fix**: Previously called nonexistent `terminalManager.executeCommand()`; now delegates to `runCommand` (child_process.exec) for short-lived commands; added `runInTerminal()` for long-running processes via actual `TerminalManager.runInTerminal()` API
+- **Wiring**: `CommandExecutor` and `LegacyTools` created in AgentBridge constructor with config-passed patterns; `LegacyTools` wraps `CommandExecutor` for backward-compatible tool name mapping
+- **Compile**: Zero TypeScript errors after all changes
+
 ## Architecture Pattern: setHost Adapter
 
 The `ToolPipelineHost` interface avoids circular dependency and private member access issues during construction:
@@ -180,9 +190,9 @@ AgentBridge constructor
 
 | Metric | Before | After | Change |
 |---|---|---|---|
-| AgentBridge.ts lines | 3,310 | 1,888 | -1,422 (-43%) |
-| Extraction modules | 0 | 5 | +850 lines in focused files |
-| Net code change | — | — | -572 lines |
+| AgentBridge.ts lines | 3,310 | 1,880 | -1,430 (-43%) |
+| Extraction modules | 0 | 7 | +1,189 lines in focused files |
+| Net code change | — | — | -241 lines |
 | Compilation | Passed | Passed | Zero regressions |
 | Method delegation depth | 0 (inline) | 1 (host adapter) | All 9 tool methods delegated |
 
@@ -193,3 +203,4 @@ AgentBridge constructor
 - 2026-08-05: Phase 2 — extracted 4 spoke modules (Diagnostics, LLMAdapter, SearchCache, SessionManagerBridge)
 - 2026-08-06: Phase 3 — created ToolPipeline module with setHost adapter; wired in AgentBridge constructor
 - 2026-08-06: Phase 4 — replaced all 9 tool-pipeline method bodies with delegations; -388 lines, compile clean
+- 2026-08-06: Phase 5 — consolidated command patterns (removed duplicates), wired CommandExecutor + LegacyTools; configurable patterns propagate YAML overrides; fixed runTerminal to use child_process.exec; extracted getDefaultCompileCommand()

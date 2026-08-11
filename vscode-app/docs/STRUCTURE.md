@@ -11,7 +11,9 @@ vscode-app/
 │   ├── treeViewProvider.ts       # Sidebar tree view
 │   ├── agent/                    # Agent-related code
 │   │   ├── AgentBridge.ts        # Bridge between VSCode and agent core (hub)
+│   │   ├── AgentBridge.CommandExecutor.ts    # Command validation, build/terminal/Git execution
 │   │   ├── AgentBridge.Diagnostics.ts       # Diagnostics logging and structured data
+│   │   ├── AgentBridge.LegacyTools.ts       # Legacy tool wrappers and name mapping
 │   │   ├── AgentBridge.LLMAdapter.ts        # Provider capability detection and model config
 │   │   ├── AgentBridge.SearchCache.ts       # TTL-based search result caching
 │   │   ├── AgentBridge.SessionManagerBridge.ts  # Session error classification
@@ -63,6 +65,8 @@ Bridges VSCode extension with agent core. Hub module delegating to spoke modules
 - LLM adapter configuration (delegated to `AgentBridge.LLMAdapter.ts`)
 - Search caching (delegated to `AgentBridge.SearchCache.ts`)
 - Session error handling (delegated to `AgentBridge.SessionManagerBridge.ts`)
+- Command execution, build verification, Git operations (delegated to `AgentBridge.CommandExecutor.ts`)
+- Legacy tool mapping (delegated to `AgentBridge.LegacyTools.ts`)
 
 ### `AgentTabManager.ts`
 Manages agent tab UI in webview. Handles:

@@ -44,6 +44,8 @@ import {LLMAdapter} from './AgentBridge.LLMAdapter';
 import {SearchCache} from './SearchCache';
 import {SessionManagerBridge} from './AgentBridge.SessionManagerBridge';
 import {ToolPipeline} from './AgentBridge.ToolPipeline';
+import {CommandExecutor} from './AgentBridge.CommandExecutor';
+import {LegacyTools} from './AgentBridge.LegacyTools';
 
 export interface ContextProfile {
   eager: { currentFile?: boolean; projectMetadata?: boolean; gitStatus?: boolean; gitDiff?: boolean; relatedFiles?: boolean; directoryStructure?: boolean };
@@ -197,6 +199,8 @@ export class AgentBridge {
   private searchPatternCache!: SearchCache;
   private sessionBridge!: SessionManagerBridge;
   private toolPipeline!: ToolPipeline;
+  private commandExecutor!: CommandExecutor;
+  private legacyTools!: LegacyTools;
 
   // Tool result compressor for large outputs
   private toolCompressor: ToolResultCompressor = new ToolResultCompressor();
@@ -244,16 +248,6 @@ export class AgentBridge {
   private static readonly MAX_LIST_FILES_RESULTS = 100;
   private static readonly MAX_APPLY_EDITS = 50;
   private static readonly MAX_SEARCH_ITERATIONS = 3; // Max iterations searching for same pattern
-
-  private longRunningPatterns: string[] = [
-    'run', 'serve', 'dev', 'start', 'watch', 'nodemon', 'vite', 'next dev',
-    'spring-boot:run', 'jetty:run', 'webpack --watch', 'tsc --watch',
-    'gulp watch', 'grunt watch', 'cargo run', 'go run', 'python -m uvicorn', 'poetry run'
-  ];
-
-  private static readonly BLOCKED_COMMAND_PATTERNS = [
-    'rm -rf /', 'del /F /S /Q C:\\*', 'format', 'mkfs', 'dd if=/dev/zero'
-  ];
 
   id: string;
 
@@ -345,8 +339,15 @@ export class AgentBridge {
     this.terminalManager = new TerminalManager(outputChannel, settings.terminal.autoCloseDelayMs, settings.terminal);
     this.diag.setTerminalManager(this.terminalManager);
     
+    // Load custom long-running patterns from config before creating CommandExecutor
+    const customPatterns = (config as any).execution?.longRunningPatterns;
+    const effectiveLongRunningPatterns: string[] | undefined = (customPatterns && Array.isArray(customPatterns) && customPatterns.length > 0)
+      ? customPatterns : undefined;
+
     // Create tool pipeline and wire host via adapter
     this.toolPipeline = new ToolPipeline();
+    this.commandExecutor = new CommandExecutor(this.diag, this.terminalManager, this.workspaceRoot, this.extensionRoot, effectiveLongRunningPatterns);
+    this.legacyTools = new LegacyTools(this.commandExecutor, this.diag);
     const self = this;
     this.toolPipeline.setHost({
       get workspaceRoot() { return self.workspaceRoot; },
@@ -392,11 +393,6 @@ export class AgentBridge {
     this.domainDetector.initialize(this.workspaceRoot).catch((e: any) => 
       this.log(`Domain detector initialization error: ${e.message}`)
     );
-    
-    const customPatterns = (config as any).execution?.longRunningPatterns;
-    if (customPatterns && Array.isArray(customPatterns) && customPatterns.length > 0) {
-      this.longRunningPatterns = customPatterns;
-    }
   }
 
   async initialize(): Promise<void> { 
@@ -1100,7 +1096,7 @@ DO NOT re-run build. DO NOT read more files. Call apply_edits NOW.`,
         smCtx.consecutiveEdits = 0;
         smCtx.pendingFixes = [];
 
-        const buildCmd = process.platform === 'win32' ? '.\\gradlew :app:server:compileKotlin --console=plain' : './gradlew :app:server:compileKotlin --console=plain';
+        const buildCmd = this.commandExecutor.getDefaultCompileCommand();
 
         try {
           const buildResult = await this.executeTool({ id: `auto_${Date.now()}`, name: 'run_terminal', arguments: { command: buildCmd, workingDir: this.workspaceRoot } });

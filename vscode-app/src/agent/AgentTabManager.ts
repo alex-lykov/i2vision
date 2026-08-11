@@ -335,6 +335,7 @@ export class AgentTabManager {
       tabState.accumulatedToolCalls = [];
       this.cancelTokenSource = new vscode.CancellationTokenSource();
       let responseText = '';
+      let hasAgentError = false;
       let startTime = Date.now();
       if (showThinking) this.sendToWebview({ command: 'thinking', message: 'Agent is thinking...', timestamp: Date.now() });
       // Force fresh session for new chats to prevent session reuse
@@ -401,6 +402,12 @@ export class AgentTabManager {
             }
             break;
           case 'done':
+            if (chunk.outcome === 'error') {
+              // Agent completed with an error — the preceding 'error' chunk handles webview notification
+              this.log(`Agent completed with error outcome`);
+              hasAgentError = true;
+              break;
+            }
             if (chunk.tokenUsage) {
               // Fallback: if token_usage wasn't emitted, update on done
               tabState.contextMeter.recordTokenUsage({
@@ -426,14 +433,17 @@ export class AgentTabManager {
             }
             break;
           case 'error':
+            this.log(`Agent error: ${chunk.error}`);
             vscode.window.showErrorMessage('Agent error: ' + chunk.error);
+            this.sendToWebview({ command: 'error', error: chunk.error, timestamp: chunk.timestamp });
+            hasAgentError = true;
             break;
           case 'thinking':
             this.sendToWebview({ command: 'thinking', message: chunk.message, timestamp: chunk.timestamp });
             break;
         }
       }
-      if (!this.cancelTokenSource?.token.isCancellationRequested) {
+      if (!this.cancelTokenSource?.token.isCancellationRequested && !hasAgentError) {
         const cleanedResponse = this.cleanResponseText(responseText);
         const assistantMessage: ChatMessage = { role: 'assistant', content: cleanedResponse, toolCalls: tabState.accumulatedToolCalls.map(tc => ({ toolName: tc.toolName, args: tc.args, result: tc.result })), timestamp: Date.now() };
         tabState.history.push(assistantMessage);

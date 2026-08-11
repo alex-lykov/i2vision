@@ -1218,23 +1218,23 @@ this.llmAdapter.lastKnownMessageChars = 0;
         const isAsyncGenerator = rawResponse && typeof (rawResponse as any)[Symbol.asyncIterator] === 'function';
         
         if (!isAsyncGenerator) {
-          // Streaming not supported, fall back to non-streaming
-          this.log(`Streaming not available, falling back to non-streaming mode`);
-          const nonStreamResponse = await this.cli.callLLM(this.config.model.id, messages, llmOptions, tools, false, this.config.model.provider) as LLMResponse;
-          responseText = nonStreamResponse.content;
-          streamingToolCalls = nonStreamResponse.toolCalls.map(tc => ({ id: tc.id, name: tc.name, arguments: tc.arguments }));
-          // Carry forward real or estimated token usage from non-streaming response
-          if (nonStreamResponse.tokenUsage) {
-            this._lastTokenUsage = nonStreamResponse.tokenUsage;
-            this.llmAdapter.lastKnownPromptTokens = nonStreamResponse.tokenUsage.prompt;
+          // Response is a plain object — either an error or the provider sent a complete
+          // response without streaming support. Use it directly; do NOT retry with stream=false.
+          const plainResponse = rawResponse as LLMResponse;
+          responseText = plainResponse.content;
+          streamingToolCalls = plainResponse.toolCalls?.map(tc => ({ id: tc.id, name: tc.name, arguments: tc.arguments })) || [];
+          // Carry forward token usage from the response
+          if (plainResponse.tokenUsage) {
+            this._lastTokenUsage = plainResponse.tokenUsage;
+            this.llmAdapter.lastKnownPromptTokens = plainResponse.tokenUsage.prompt;
             
             // Update session manager token tracking (only when contextCompaction is supported)
             if (this.llmAdapter.providerCapabilities?.contextCompaction && this.sessionManager) {
               const sessionManagerAny = this.sessionManager as any;
               if (sessionManagerAny.updateTokenUsage) {
                 sessionManagerAny.updateTokenUsage(
-                  nonStreamResponse.tokenUsage.prompt,
-                  nonStreamResponse.tokenUsage.completion
+                  plainResponse.tokenUsage.prompt,
+                  plainResponse.tokenUsage.completion
                 );
               }
             }

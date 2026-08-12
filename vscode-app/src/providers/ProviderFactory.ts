@@ -11,15 +11,18 @@ import { LLMProvider } from '../types/provider-types';
 
 export class ProviderFactory {
   private errorHandler: ErrorHandler;
+  private outputChannel?: any;
 
-  constructor() {
+  constructor(outputChannel?: any) {
     this.errorHandler = new ErrorHandler();
+    this.outputChannel = outputChannel;
   }
 
   /**
    * Create a provider instance based on model ID
    */
   createProvider(modelId: string, config: any): LLMProvider {
+    this.log(`Activating provider for model: ${modelId}`);
     // Determine provider based on model ID
     if (this.isMistralModel(modelId)) {
       return this.createMistralProvider(config);
@@ -78,7 +81,15 @@ export class ProviderFactory {
     const baseUrl = config.threeDLlmUrl || 'http://localhost:9655';
     const defaultModel = config.threeDLlmModel || 'deepseek-web-v3';
     
-    return new ThreeDLlmProvider(baseUrl, defaultModel, this.errorHandler);
+    return new ThreeDLlmProvider(baseUrl, defaultModel, this.errorHandler, this.outputChannel);
+  }
+
+  private log(message: string): void {
+    const formatted = `[Provider] ${message}`;
+    if (this.outputChannel) {
+      this.outputChannel.appendLine(formatted);
+    }
+    console.log(formatted);
   }
 
   /**

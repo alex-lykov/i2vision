@@ -165,7 +165,7 @@ export class CLI {
   constructor(workspaceRoot: string, outputChannel?: any) {
     this.workspaceRoot = workspaceRoot;
     this.outputChannel = outputChannel;
-    this.providerFactory = new ProviderFactory();
+    this.providerFactory = new ProviderFactory(outputChannel);
 
     // Validate workspace root
     if (!this.workspaceRoot) {

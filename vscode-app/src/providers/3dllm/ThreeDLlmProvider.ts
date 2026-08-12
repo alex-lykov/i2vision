@@ -22,15 +22,17 @@ export class ThreeDLlmProvider implements LLMProvider {
   private baseUrl: string;
   private defaultModel: string;
   private errorHandler: ErrorHandler;
+  private outputChannel?: any;
   private serverErrorCount: number = 0;
   private lastServerErrorTime: number = 0;
   private readonly MAX_SERVER_ERRORS: number = 3;
   private readonly SERVER_ERROR_COOLDOWN: number = 300000; // 5 minutes
 
-  constructor(baseUrl: string, defaultModel: string, errorHandler: ErrorHandler) {
+  constructor(baseUrl: string, defaultModel: string, errorHandler: ErrorHandler, outputChannel?: any) {
     this.baseUrl = baseUrl;
     this.defaultModel = defaultModel;
     this.errorHandler = errorHandler;
+    this.outputChannel = outputChannel;
   }
 
   getProviderName(): string {
@@ -59,6 +61,8 @@ export class ThreeDLlmProvider implements LLMProvider {
 
   async callAPI(request: LLMRequest): Promise<LLMResponse> {
     const model = request.model || this.defaultModel;
+    const callId = `call_${Date.now().toString(36)}_${Math.random().toString(36).substr(2, 6)}`;
+    this.log(`[3D LLM] callAPI START id=${callId} model=${model}`);
     const context: ErrorContext = {
       request: {
         model: model,
@@ -86,7 +90,7 @@ export class ThreeDLlmProvider implements LLMProvider {
         // Sanitize messages before sending (strip XML/file_action contamination)
         messages = this.sanitizeMessages(messages);
 
-        console.log(`[3D LLM] Sending to ${this.baseUrl}/v1/chat/completions: model=${model}, messages=${messages.length}, roles=[${messages.map(m => m.role).join(',')}]`);
+        this.log(`[3D LLM] Sending to ${this.baseUrl}/v1/chat/completions: model=${model}, messages=${messages.length}, roles=[${messages.map(m => m.role).join(',')}]`);
 
         // Respect the stream parameter from the request (default to true for better proxy behavior)
         const useStream = (request as any).stream !== undefined ? (request as any).stream : true;
@@ -116,7 +120,7 @@ export class ThreeDLlmProvider implements LLMProvider {
 
         const bodyStr = JSON.stringify(body);
         const toolNames = body.tools?.map((t: any) => t.function?.name || t.name).join(',') || 'none';
-        console.log(`[3D LLM] Body size: ${bodyStr.length} chars, tools: [${toolNames}]`);
+        this.log(`[3D LLM] Body size: ${bodyStr.length} chars, tools: [${toolNames}]`);
 
         const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
           method: 'POST',
@@ -149,6 +153,7 @@ export class ThreeDLlmProvider implements LLMProvider {
         let content = '';
         let toolCallsData: any[] = [];
         let usage: any = undefined;
+        let accumulatedReasoning = '';
 
         if (useStream && response.body) {
           // Handle SSE streaming response
@@ -156,7 +161,6 @@ export class ThreeDLlmProvider implements LLMProvider {
           const decoder = new TextDecoder('utf-8');
           let buffer = '';
           let accumulatedText = '';
-          let accumulatedReasoning = '';
           let promptTokens = 0;
           let completionTokens = 0;
           let reasoningTokens = 0;
@@ -269,8 +273,8 @@ export class ThreeDLlmProvider implements LLMProvider {
           toolCallsData = this.extractToolCallsFromText(content);
         }
 
-        console.log(`[3D LLM] Raw content (${content.length} chars): ${content.substring(0, 300)}${content.length > 300 ? '...' : ''}`);
-        console.log(`[3D LLM] Extracted tool_calls: ${toolCallsData.length}, displayText will be: ${content.length} chars before strip`);
+        this.log(`[3D LLM] Raw content (${content.length} chars): ${content.substring(0, 300)}${content.length > 300 ? '...' : ''}`);
+        this.log(`[3D LLM] Extracted tool_calls: ${toolCallsData.length}, displayText will be: ${content.length} chars before strip`);
 
         // Strip tool call blocks from display text so user sees clean output
         let displayText = content;
@@ -280,15 +284,16 @@ export class ThreeDLlmProvider implements LLMProvider {
 
         // Debug logging for empty responses
         if (!displayText) {
-          console.log(`[3D LLM] Empty response — content: "${content.substring(0, 200)}", tool_calls: ${toolCallsData.length}`);
+          this.log(`[3D LLM] Empty response — content: "${content.substring(0, 200)}", tool_calls: ${toolCallsData.length}`);
           if (toolCallsData.length === 0 && content) {
-            console.log(`[3D LLM] Full raw content (${content.length} chars):`, JSON.stringify(content).substring(0, 500));
+            this.log(`[3D LLM] Full raw content (${content.length} chars):`, JSON.stringify(content).substring(0, 500));
           }
         }
 
+        this.log(`[3D LLM] callAPI COMPLETE id=${callId} text=${displayText.length} reasoning=${accumulatedReasoning.length} toolCalls=${toolCallsData.length}`);
         return {
           text: displayText,
-          reasoning: undefined, //(finalReasoning || undefined) as any,
+          reasoning: (accumulatedReasoning || undefined) as any,
           model: model,
           provider: '3dllm',
           tool_calls: toolCallsData.map((tc: any) => ({
@@ -742,6 +747,14 @@ export class ThreeDLlmProvider implements LLMProvider {
     // Clean up triple+ newlines
     result = result.replace(/\n{3,}/g, '\n\n');
     return result.trim();
+  }
+
+  private log(message: string, ...args: any[]): void {
+    const line = args.length > 0 ? `${message} ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}` : message;
+    if (this.outputChannel) {
+      this.outputChannel.appendLine(line);
+    }
+    console.log(line);
   }
 
   // ---- Server error tracking ----

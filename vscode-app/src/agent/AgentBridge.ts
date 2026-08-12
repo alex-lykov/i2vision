@@ -1222,6 +1222,8 @@ this.llmAdapter.lastKnownMessageChars = 0;
           // response without streaming support. Use it directly; do NOT retry with stream=false.
           const plainResponse = rawResponse as LLMResponse;
           responseText = plainResponse.content;
+          let reasoningText = (plainResponse as any).reasoning || '';
+          if (reasoningText) { yield { type: 'reasoning', reasoning: reasoningText, timestamp: Date.now() }; }
           streamingToolCalls = plainResponse.toolCalls?.map(tc => ({ id: tc.id, name: tc.name, arguments: tc.arguments })) || [];
           // Carry forward token usage from the response
           if (plainResponse.tokenUsage) {
@@ -2018,6 +2020,7 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
       prompt += '\n• SEARCH TIP: If search_files finds files, READ them immediately. Do NOT search again with different patterns.';
       prompt += '\n• FOCUS: Fix source files (src/main), NOT test files (src/test), unless user specifically asks about tests.';
       prompt += '\n• Paths: relative to workspace root, use forward slashes (/).';
+      
     }
     return prompt;
   }

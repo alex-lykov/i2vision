@@ -288,6 +288,7 @@ export class ThreeDLlmProvider implements LLMProvider {
 
         return {
           text: displayText,
+          reasoning: undefined, //(finalReasoning || undefined) as any,
           model: model,
           provider: '3dllm',
           tool_calls: toolCallsData.map((tc: any) => ({

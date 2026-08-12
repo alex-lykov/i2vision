@@ -112,13 +112,20 @@ export const fileTools: ToolDefinition[] = [
       type: 'object',
       properties: {
         path: { type: 'string', description: 'File path relative to workspace root' },
-        content: { type: 'string', description: 'Full file content to write' }
+        content: { type: 'string', description: 'Full file content to write' },
+        content_b64: { type: 'string', description: 'Base64-encoded file content (avoids JSON escaping issues with angle brackets and special characters)' }
       },
-      required: ['path', 'content']
+      required: ['path']
     },
     async handler(args, ctx) {
       const filePath = ctx.resolvePath(args.path);
-      const content = args.content;
+      let content = args.content;
+      if (!content && args.content_b64) {
+        content = Buffer.from(args.content_b64, 'base64').toString('utf-8');
+      }
+      if (!content) {
+        return { result: '', error: 'Either "content" or "content_b64" is required' };
+      }
       
       // Snapshot before edit
       if (!ctx.fileSnapshots.has(filePath)) {

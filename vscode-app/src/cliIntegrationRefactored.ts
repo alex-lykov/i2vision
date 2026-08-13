@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * CLI Integration - Refactored with new provider system and error handling
  * 
@@ -18,8 +25,8 @@ import {exec} from 'child_process';
 import {promisify} from 'util';
 import * as vscode from 'vscode';
 import {getExtensionsFromArchitecture, ProjectArchitecture} from './agent/tools/DomainDetector';
-import { ProviderFactory } from './providers/ProviderFactory';
-import { LLMProvider } from './types/provider-types';
+import {ProviderFactory} from './providers/ProviderFactory';
+import {LLMProvider} from './types/provider-types';
 
 const execAsync = promisify(exec);
 
@@ -78,6 +85,7 @@ export interface LLMResponse {
 export interface LLMChunk {
   text: string;
   done: boolean;
+  reasoning?: string;
   toolCalls?: LLMToolCall[];
   tokenUsage?: {
     prompt: number;
@@ -384,11 +392,12 @@ export class CLI {
         maxTokens: options?.max_tokens,
         stream: stream,
         thinking_enabled: options?.thinking_enabled,
-        search_enabled: options?.search_enabled
+        search_enabled: options?.search_enabled,
+        tools: tools
       });
 
       const elapsed = Date.now() - startTime;
-      const rawTextLen = result.text?.length || 0;
+      const rawTextLen = (result as any).text?.length || 0;
       const toolCallsLen = (result as any).tool_calls?.length || 0;
       this.log(`[LLM SUCCESS] Completed in ${elapsed}ms | text: ${rawTextLen} chars | tool_calls: ${toolCallsLen}`);
       if (rawTextLen === 0 && toolCallsLen === 0) {

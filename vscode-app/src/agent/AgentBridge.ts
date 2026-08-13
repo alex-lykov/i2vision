@@ -16,10 +16,9 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import {CLI, LLMChunk, LLMMessage, LLMResponse, LLMTool, LLMToolCall} from '../cliIntegrationRefactored';
-import {getProviderCapabilities, LLMProviderCapabilities} from '../types/provider-types';
+import {getProviderCapabilities} from '../types/provider-types';
 import {TerminalManager} from './TerminalManager';
 import {AgentSettingsManager} from './AgentSettings';
-import {applyEditsToContent, EditOperation, formatEditFailure} from './ApplyEditsTool';
 import {AgentEvent, AgentState, AgentStateMachine, StateContext,} from './AgentStateMachine';
 import {
   buildTools,
@@ -32,7 +31,6 @@ import {
   ModuleDomain,
   terminalTools,
   ToolConfigLoader,
-  ToolContext,
   ToolRegistry,
   VslfcLayer
 } from './tools';
@@ -708,6 +706,7 @@ export class AgentBridge {
 
   private formatToolsForSystemPrompt(tools: LLMTool[]): string {
     return this.llmAdapter.formatToolsForSystemPrompt(tools);
+    //return this.llmAdapter.formatToolsForSystemPrompt(tools);
   }
 
   private emitProgress(event: ProgressEvent): void {
@@ -1253,6 +1252,9 @@ this.llmAdapter.lastKnownMessageChars = 0;
           const streamResponse = rawResponse as AsyncGenerator<LLMChunk>;
           let reasoningCaptured = false;
           for await (const chunk of streamResponse) {
+            if (chunk.reasoning) {
+              yield { type: 'reasoning', reasoning: chunk.reasoning, timestamp: Date.now() };
+            }
             if (chunk.text) {
               responseText += chunk.text;
               textBuffer.push(chunk.text);

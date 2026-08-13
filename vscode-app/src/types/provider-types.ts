@@ -42,6 +42,17 @@ export interface LLMResponse {
   text: string;
   model: string;
   provider: string;
+  /** Reasoning trace, typically from reasoning-capable models */
+  reasoning?: string;
+  /** Structured tool calls when the provider returns function calls */
+  tool_calls?: {
+    id: string;
+    type?: string;
+    function: {
+      name: string;
+      arguments: string;
+    };
+  }[];
   usage?: {
     promptTokens: number;
     completionTokens: number;
@@ -102,7 +113,7 @@ export interface LLMProvider {
    * @param request The LLM request
    * @returns Promise with LLM response
    */
-  callAPI(request: LLMRequest): Promise<LLMResponse>;
+  callAPI(request: LLMRequest): Promise<LLMResponse | AsyncGenerator<any>>;
 
   /**
    * Check if the provider is available

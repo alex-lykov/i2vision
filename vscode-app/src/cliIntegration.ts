@@ -1155,6 +1155,47 @@ export class CLI {
 
     if (toolCalls.length > 0) return toolCalls;
 
+    // Strategy 2b: Generic XML wrapper parser for accidental tool-call wrapping.
+    const fnXmlTagPatterns: Array<{ open: RegExp; close: string }> = [
+      { open: /<function-call\b[^>]*>/gi, close: '</function-call>' },
+      { open: /<function_calls\b[^>]*>/gi, close: '</function_calls>' },
+      { open: /<invoke\b[^>]*>/gi, close: '</invoke>' }
+    ];
+    for (const tagPattern of fnXmlTagPatterns) {
+      let fnCallXmlMatch;
+      while ((fnCallXmlMatch = tagPattern.open.exec(text)) !== null) {
+        const openTag = fnCallXmlMatch[0];
+        const fnCallXmlJsonStart = fnCallXmlMatch.index + openTag.length;
+        const fnCallXmlEnd = text.indexOf(tagPattern.close, fnCallXmlJsonStart);
+        if (fnCallXmlEnd === -1) continue;
+        const fnCallXmlJson = text.substring(fnCallXmlJsonStart, fnCallXmlEnd).trim();
+        let toolName = '';
+        let toolArgs: any = {};
+        if (fnCallXmlJson.startsWith('{') || fnCallXmlJson.startsWith('[')) {
+          try {
+            const fnCallXmlObj = JSON.parse(fnCallXmlJson);
+            if (fnCallXmlObj.name && typeof fnCallXmlObj.name === 'string') {
+              toolName = fnCallXmlObj.name;
+              toolArgs = fnCallXmlObj.arguments || {};
+            }
+          } catch (e: any) {}
+        }
+        if (!toolName) {
+          const nameMatch = openTag.match(/name\s*=\s*["']([^"']+)["']/i);
+          if (nameMatch) toolName = nameMatch[1];
+        }
+        if (toolName) {
+          toolCalls.push({
+            id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+            name: toolName,
+            arguments: toolArgs
+          });
+        }
+      }
+    }
+
+    if (toolCalls.length > 0) return toolCalls;
+
     // Strategy 3: Balance-brace JSON extraction (handles nested objects)
     const lines = text.split('\n');
     for (let i = 0; i < lines.length; i++) {

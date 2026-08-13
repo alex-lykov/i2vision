@@ -437,6 +437,48 @@ export class ThreeDLlmProvider implements LLMProvider {
     }
     if (results.length > 0) return results;
 
+    // Strategy 0b: <invoke name="tool"> with <parameter name="key">value</parameter> children.
+    // Handles both bare <invoke> and <tool_calls> wrapped forms, which deepseek-v4-pro
+    // emits in practice:
+    //   <invoke name="list_directory"><parameter name="path">.</parameter></invoke>
+    //   <tool_calls><invoke name="list_directory">...</invoke></tool_calls>
+    const invokePattern = /<invoke\s+([^>]*?)>([\s\S]*?)<\/invoke>/gi;
+    let invokeMatch;
+    const invokeResults: any[] = [];
+    while ((invokeMatch = invokePattern.exec(text)) !== null) {
+      try {
+        const attrs = invokeMatch[1] || '';
+        const inner = invokeMatch[2] || '';
+        const nameMatch = attrs.match(/name\s*=\s*["']([^"']+)["']/i);
+        if (!nameMatch) continue;
+        const toolName = nameMatch[1].trim();
+        const args: any = {};
+
+        // Parse <parameter name="key">value</parameter> children
+        const paramPattern = /<parameter\s+([^>]*?)>([\s\S]*?)<\/parameter>/gi;
+        let pm;
+        while ((pm = paramPattern.exec(inner)) !== null) {
+          const paramAttrs = pm[1] || '';
+          const keyMatch = paramAttrs.match(/name\s*=\s*["']([^"']+)["']/i);
+          if (!keyMatch) continue;
+          const key = keyMatch[1].trim();
+          const value = (pm[2] || '').trim();
+          // Parse booleans/numbers, fallback to string
+          if (value === 'true') args[key] = true;
+          else if (value === 'false') args[key] = false;
+          else if (/^-?\d+$/.test(value)) args[key] = parseInt(value, 10);
+          else args[key] = value;
+        }
+
+        invokeResults.push({
+          id: `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          type: 'function',
+          function: { name: toolName, arguments: JSON.stringify(args) }
+        });
+      } catch (e: any) {}
+    }
+    if (invokeResults.length > 0) return invokeResults;
+
     // Strategy 1: <file_action> XML format (DeepSeek v4-pro)
     const fileActionPattern = /<file_action>\s*<action>([^<]+)<\/action>(.*?)<\/file_action>/gs;
     let faMatch;

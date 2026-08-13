@@ -197,6 +197,20 @@ export class AgentTabManager {
   }
 
   async createTab(layer: string, conversationId?: string): Promise<string> {
+    // Always start from a fresh webview. This is the single choke point for all
+    // tab creation (new chat, resume, command palette) and prevents the previous
+    // conversation DOM from persisting when the new HTML is byte-identical.
+    this.disposeWebview();
+
+    // Reset processing state so a new tab never inherits a stuck flag or a
+    // stale cancellation token from a prior (possibly interruped) session.
+    this.isProcessing = false;
+    if (this.cancelTokenSource) {
+      this.cancelTokenSource.cancel();
+      this.cancelTokenSource.dispose();
+      this.cancelTokenSource = null;
+    }
+
     // HARDCODED: Until VSLFC layer support is fully implemented, all agent sessions
     // use only the CODE layer with .vision-ai/code-agent.yaml.
     const effectiveLayer = 'code';
@@ -482,6 +496,19 @@ export class AgentTabManager {
     return text.trim();
   }
 
+  /**
+   * Dispose the current webview panel (if any) so the next showWebview() creates a
+   * brand-new panel. This is required on new chat / resume because reassigning
+   * webview.html with identical markup (same provider/model/settings) is treated as
+   * a no-op by VS Code, leaving the previous conversation DOM intact.
+   */
+  private disposeWebview(): void {
+    if (this.webviewPanel) {
+      this.webviewPanel.dispose();
+      this.webviewPanel = null;
+    }
+  }
+
   private showWebview(loadConversation: boolean = false): void {
     if (this.webviewPanel) {
       this.webviewPanel.webview.html = this.getWebviewContent();
@@ -562,10 +589,9 @@ export class AgentTabManager {
               clearTimeout(this.loadedConversationTimeout);
               this.loadedConversationTimeout = null;
             }
-            // No 'clear_conversation' here: createTab() reloads the webview HTML,
-            // which already resets the UI. Sending 'clear_conversation' before the
-            // reload races with the navigation and can clear the freshly-rendered
-            // greeting, leaving the content area blank.
+            if (this.isProcessing) {
+              await this.stopAgent();
+            }
             if (this.activeTabId) {
               await this.closeTab(this.activeTabId);
             }
@@ -617,9 +643,9 @@ export class AgentTabManager {
   private async resumeConversationFromWebview(conversationId: string): Promise<void> {
     try {
       this.log('Resuming conversation: ' + conversationId);
-      // No 'clear_conversation' here for the same reason as new_chat:
-      // resumeConversation() reloads the webview HTML, which resets the UI.
-      // Sending it first races with the reload and can clear the loaded messages.
+      if (this.isProcessing) {
+        await this.stopAgent();
+      }
       if (this.activeTabId) {
         await this.closeTab(this.activeTabId);
       }

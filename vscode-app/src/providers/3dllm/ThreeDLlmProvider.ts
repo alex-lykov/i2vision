@@ -298,10 +298,15 @@ export class ThreeDLlmProvider implements LLMProvider {
           provider: '3dllm',
           tool_calls: toolCallsData.map((tc: any) => ({
             id: tc.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            name: tc.function?.name || tc.name || '',
-            arguments: typeof tc.function?.arguments === 'string'
-              ? (() => { try { return JSON.parse(tc.function.arguments); } catch { return tc.function.arguments; } })()
-              : (tc.function?.arguments || tc.arguments || {})
+            type: tc.type || 'function',
+            function: {
+              name: tc.function?.name || tc.name || '',
+              arguments: typeof tc.function?.arguments === 'string'
+                ? tc.function.arguments
+                : typeof tc.arguments === 'string'
+                  ? tc.arguments
+                  : JSON.stringify(tc.function?.arguments || tc.arguments || {})
+            }
           })),
           usage: usage
         };

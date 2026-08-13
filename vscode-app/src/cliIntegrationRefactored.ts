@@ -442,13 +442,13 @@ export class CLI {
     if (stream) {
       return this.createStreamingResponse(
         providerResponse.text || '',
-        providerResponse.tool_calls || [],
+        this.normalizeToolCalls(providerResponse.tool_calls),
         providerResponse.usage
       );
     } else {
       return {
         content: providerResponse.text || '',
-        toolCalls: providerResponse.tool_calls || [],
+        toolCalls: this.normalizeToolCalls(providerResponse.tool_calls),
         tokenUsage: providerResponse.usage ? {
           prompt: providerResponse.usage.promptTokens || 0,
           completion: providerResponse.usage.completionTokens || 0,
@@ -456,6 +456,27 @@ export class CLI {
         } : undefined
       };
     }
+  }
+
+  /**
+   * Normalize provider tool_calls into the flat LLMToolCall shape used downstream.
+   * Providers may return either the nested OpenAI shape ({ function: { name, arguments } })
+   * or an already-flat shape ({ name, arguments }). Both are handled.
+   */
+  private normalizeToolCalls(toolCalls: any[] | undefined): LLMToolCall[] {
+    if (!toolCalls || toolCalls.length === 0) return [];
+    return toolCalls.map((tc: any) => {
+      const rawName = tc.function?.name || tc.name || '';
+      const rawArgs = tc.function?.arguments ?? tc.arguments;
+      const arguments_ = typeof rawArgs === 'string'
+        ? (() => { try { return JSON.parse(rawArgs); } catch { return rawArgs as any; } })()
+        : (rawArgs || {});
+      return {
+        id: tc.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+        name: rawName,
+        arguments: arguments_
+      };
+    });
   }
 
   /**
@@ -478,14 +499,9 @@ export class CLI {
     }
     // Emit tool calls in the final chunk
     const finalChunk: LLMChunk = {text: '', done: true};
-    if (toolCalls && toolCalls.length > 0) {
-      finalChunk.toolCalls = toolCalls.map((tc: any) => ({
-        id: tc.id || `call_${Date.now()}`,
-        name: tc.name || '',
-        arguments: typeof tc.arguments === 'string'
-          ? (() => { try { return JSON.parse(tc.arguments); } catch { return tc.arguments; } })()
-          : (tc.arguments || {})
-      }));
+    const normalizedToolCalls = this.normalizeToolCalls(toolCalls);
+    if (normalizedToolCalls.length > 0) {
+      finalChunk.toolCalls = normalizedToolCalls;
     }
     if (usage) {
       finalChunk.tokenUsage = {

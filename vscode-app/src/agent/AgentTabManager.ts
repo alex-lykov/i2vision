@@ -562,8 +562,10 @@ export class AgentTabManager {
               clearTimeout(this.loadedConversationTimeout);
               this.loadedConversationTimeout = null;
             }
-            // Clear webview first to remove old conversation from UI
-            this.sendToWebview({ command: 'clear_conversation' });
+            // No 'clear_conversation' here: createTab() reloads the webview HTML,
+            // which already resets the UI. Sending 'clear_conversation' before the
+            // reload races with the navigation and can clear the freshly-rendered
+            // greeting, leaving the content area blank.
             if (this.activeTabId) {
               await this.closeTab(this.activeTabId);
             }
@@ -615,9 +617,9 @@ export class AgentTabManager {
   private async resumeConversationFromWebview(conversationId: string): Promise<void> {
     try {
       this.log('Resuming conversation: ' + conversationId);
-      // Clear current webview first
-      this.sendToWebview({ command: 'clear_conversation' });
-      // Close current tab if exists
+      // No 'clear_conversation' here for the same reason as new_chat:
+      // resumeConversation() reloads the webview HTML, which resets the UI.
+      // Sending it first races with the reload and can clear the loaded messages.
       if (this.activeTabId) {
         await this.closeTab(this.activeTabId);
       }

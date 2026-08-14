@@ -76,9 +76,6 @@ export class ProxySessionManager implements SessionManager {
   /** Logger callback injected from AgentBridge */
   private logFn: (msg: string) => void = () => {};
 
-  /** Auto-detected agent ID from the proxy (resolves model ID → proxy agent name mapping) */
-  private _resolvedAgentId: string | null = null;
-
   setLogger(fn: (msg: string) => void): void {
     this.logFn = fn;
   }
@@ -95,82 +92,13 @@ export class ProxySessionManager implements SessionManager {
   }
 
   /**
-   * Resolve the actual agent ID used by the proxy server.
-   * The proxy may use a different agent identifier than the model ID
-   * (e.g., model ID "deepseek-v4-pro" maps to proxy agent "dev-agent").
-   * This queries /v1/sessions to discover the actual agent name.
-   *
-   * @param _hint - The model ID or hint to help match sessions (used as fallback if no session found)
-   * @returns The resolved agent ID to use for session management calls
-   */
-  async resolveAgentId(_hint?: string): Promise<string> {
-    // Return cached resolution if available
-    if (this._resolvedAgentId) {
-      return this._resolvedAgentId;
-    }
-
-    try {
-      const response = await fetch(`${this.baseUrl}/v1/sessions`);
-      if (!response.ok) {
-        this.log(`Failed to query sessions for agent ID resolution: ${response.status}`);
-        return _hint || '';
-      }
-
-      const data: ProxySessionsResponse = await response.json();
-      const agents = data.agents || [];
-
-      if (agents.length === 0) {
-        this.log('No sessions found on proxy; using hint for agent ID resolution');
-        return _hint || '';
-      }
-
-      // If there's only one agent, use it directly (most common case for single-user proxy)
-      if (agents.length === 1) {
-        this._resolvedAgentId = agents[0].agent;
-        this.log(`Resolved agent ID: "${this._resolvedAgentId}" (sole agent on proxy)`);
-        return this._resolvedAgentId;
-      }
-
-      // Multiple agents: try to match by hint first, then use the first one
-      if (_hint) {
-        const matchByHint = agents.find((a) => a.agent === _hint);
-        if (matchByHint) {
-          this._resolvedAgentId = matchByHint.agent;
-          this.log(`Resolved agent ID: "${this._resolvedAgentId}" (matched by hint)`);
-          return this._resolvedAgentId;
-        }
-      }
-
-      // Fall back to first agent on the proxy
-      this._resolvedAgentId = agents[0].agent;
-      this.log(`Resolved agent ID: "${this._resolvedAgentId}" (first of ${agents.length} agents)`);
-      return this._resolvedAgentId;
-    } catch (error: any) {
-      this.log(`Agent ID resolution error: ${error.message}`);
-      return _hint || '';
-    }
-  }
-
-  /** Get the resolved agent ID, or fall back to the provided hint */
-  getResolvedAgentId(hint?: string): string {
-    return this._resolvedAgentId || hint || '';
-  }
-
-  /** Clear cached agent ID resolution (call when connections change) */
-  clearResolvedAgentId(): void {
-    this._resolvedAgentId = null;
-  }
-
-  /**
    * Sync session state with the proxy server.
-   * @param agentId - The agent identifier
+   * @param agentId - The session identifier (the proxy keys session reuse on it)
    * @param forceNew - If true, skip reusing any existing session and force a fresh one via reset
    */
   async syncSession(agentId: string, forceNew: boolean = false): Promise<void> {
     try {
-      // Resolve the actual agent ID from the proxy (handles model ID → proxy agent mapping)
-      const resolvedId = await this.resolveAgentId(agentId);
-      const effectiveAgentId = resolvedId || agentId;
+      const effectiveAgentId = agentId;
 
       // If forceNew is set, proactively reset the session on the proxy server first
       if (forceNew) {
@@ -195,16 +123,9 @@ export class ProxySessionManager implements SessionManager {
       }
 
       const data: ProxySessionsResponse = await response.json();
-      // Match by either the resolved agent ID or the caller-provided agentId
-      const entry = data.agents?.find((a) =>
-        a.agent === effectiveAgentId || a.agent === agentId
-      );
+      const entry = data.agents?.find((a) => a.agent === effectiveAgentId);
 
       if (entry) {
-        // Update cached agent ID from the actual proxy response
-        if (!this._resolvedAgentId) {
-          this._resolvedAgentId = entry.agent;
-        }
         const actualAgentId = entry.agent;
 
         // Check if existing session is near limits and should be reset
@@ -274,17 +195,20 @@ export class ProxySessionManager implements SessionManager {
         if (response.status === 404) {
           try {
             const modelsResponse = await fetch(`${this.baseUrl}/v1/models`);
-            if (modelsResponse.ok) {
+            // 2xx means the proxy is obviously alive and responding.
+            // 401/403 also means the proxy is alive — those endpoints simply
+            // require auth, whereas /v1/chat/completions works without auth.
+            if (modelsResponse.ok || modelsResponse.status === 401 || modelsResponse.status === 403) {
               return {
                 healthy: true,
                 diagnostics: {
                   statusCode: modelsResponse.status,
-                  note: `/health returned 404, /v1/models returned ${modelsResponse.status} (auth required — chat completions work without auth)`,
+                  note: `/health returned 404, /v1/models returned ${modelsResponse.status} (proxy reachable — chat completions work without auth)`,
                 },
                 warnings: [],
               };
             }
-            // /v1/models also returned an error for another reason
+            // /v1/models also returned a non-auth error for another reason
             return {
               healthy: false,
               diagnostics: { statusCode: response.status, modelsStatusCode: modelsResponse.status, error: errorBody },
@@ -498,13 +422,7 @@ export class ProxySessionManager implements SessionManager {
     agentId: string,
     reason?: 'message_limit' | 'token_limit' | 'age_limit' | 'manual'
   ): Promise<boolean> {
-    // Resolve the actual proxy agent ID if not yet cached.
-    // This handles the case where the proxy uses a different agent identifier than
-    // the model ID (e.g., model ID "deepseek-v4-pro" → proxy agent "dev-agent").
-    if (!this._resolvedAgentId) {
-      await this.resolveAgentId(agentId);
-    }
-    const effectiveAgentId = this._resolvedAgentId || agentId;
+    const effectiveAgentId = agentId;
     const resetUrl = `${this.baseUrl}/reset-session?agent=${encodeURIComponent(effectiveAgentId)}`;
     try {
       const response = await fetch(resetUrl, { method: 'POST' });

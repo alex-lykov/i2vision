@@ -29,6 +29,10 @@ export interface LLMAdapterConfig {
   topP: number;
   thinkingEnabled: boolean;
   searchEnabled: boolean;
+  /** Timeout for a single chat-completion (seconds), forwarded to the provider. */
+  timeoutSeconds?: number;
+  /** Per-conversation session identifier (e.g. 3D LLM proxy sticky-session key). */
+  user?: string;
 }
 
 export class LLMAdapter {
@@ -84,7 +88,9 @@ export class LLMAdapter {
       top_p: config.topP,
       max_tokens: config.maxOutputTokens,
       thinking_enabled: config.thinkingEnabled,
-      search_enabled: config.searchEnabled
+      search_enabled: config.searchEnabled,
+      user: config.user,
+      timeoutSeconds: config.timeoutSeconds
     }, tools, false, config.provider);
     if (Symbol.asyncIterator in result) throw new Error('Expected non-streaming response but got streaming generator');
     return result as LLMResponse;

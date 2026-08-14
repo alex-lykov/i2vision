@@ -303,23 +303,6 @@ export class AgentBridge {
     
     this.sessionManager = createSessionManager(provider, providerUrl);
     
-    // Resolve the actual proxy agent ID early so that resetSession/syncSession
-    // calls use the correct identifier even when the proxy assigns a different
-    // agent name than the model ID (e.g., model "deepseek-v4-pro" → proxy "dev-agent").
-    if (this.sessionManager.name !== 'Null') {
-      try {
-        // Use dynamic access since resolveAgentId is specific to ProxySessionManager
-        const mgr = this.sessionManager as any;
-        if (typeof mgr.resolveAgentId === 'function') {
-          mgr.resolveAgentId(this.config.model.id).then((resolvedId: string) => {
-            if (resolvedId && resolvedId !== this.config.model.id) {
-              this.log(`Proxy agent ID resolved: "${this.config.model.id}" → "${resolvedId}"`);
-            }
-          }).catch(() => { /* non-blocking */ });
-        }
-      } catch {}
-    }
-    
     // Providers that support session management (e.g. 3D LLM via ProxySessionManager)
     // need a fresh session on first use. Stateless providers get NullSessionManager
     // which is a no-op.
@@ -403,7 +386,7 @@ export class AgentBridge {
       this.log('Initializing fresh session for new agent instance');
       
       try {
-        const resetSuccess = await this.sessionManager.resetSession(this.config.model.id);
+        const resetSuccess = await this.sessionManager.resetSession(this.id);
         if (resetSuccess) {
           this.log('✅ Fresh session initialized - previous session context cleared');
         } else {
@@ -419,7 +402,7 @@ export class AgentBridge {
     if (this.sessionManager && this.sessionManager.name !== 'Null' && !this._needsFreshSession) {
       this.log('Resetting session manager for new chat to prevent session reuse');
       try {
-        const resetSuccess = await this.sessionManager.resetSession(this.config.model.id);
+        const resetSuccess = await this.sessionManager.resetSession(this.id);
         if (resetSuccess) {
           this.log('Session manager reset successful - new chat will use fresh session');
         } else {
@@ -779,7 +762,7 @@ export class AgentBridge {
     if (forceFreshSession && this.sessionManager && this.sessionManager.name !== 'Null') {
       this.log('Forcing fresh session as requested (forceFreshSession=true)');
       try {
-        const resetSuccess = await this.sessionManager.resetSession(this.config.model.id);
+        const resetSuccess = await this.sessionManager.resetSession(this.id);
         if (resetSuccess) {
           this.log('Fresh session initialized - old session context cleared');
         } else {
@@ -904,7 +887,7 @@ export class AgentBridge {
       // doesn't teach the model wrong formats (DSML XML, "Calling:", etc.)
       if (this.sessionManager && this.sessionManager.name !== 'Null') {
         this.log('Fresh conversation - resetting proxy session');
-        await this.sessionManager.resetSession(this.config.model.id);
+        await this.sessionManager.resetSession(this.id);
       }
     } else {
       this.log('Resumed conversation - preserving session state');
@@ -1153,7 +1136,7 @@ this.llmAdapter.lastKnownMessageChars = 0;
           if (isFreshConversation) {
             this.log('Skipping session sync — fresh conversation, using reset state');
           } else {
-            await this.sessionManager.syncSession(this.config.model.id);
+            await this.sessionManager.syncSession(this.id);
             const sessionState = this.sessionManager.getSessionState();
             if (sessionState) {
               this.log(`Session ${sessionState.id || 'new'} — ${sessionState.messageCount} msgs, ${Math.round((Date.now() - sessionState.createdAt) / 60000)} min old`);
@@ -1166,7 +1149,7 @@ this.llmAdapter.lastKnownMessageChars = 0;
           const health = await this.sessionManager.checkHealth();
           if (!health.healthy) {
             this.log(`Session unhealthy: ${health.warnings.join('; ')}`);
-            const resetOk = await this.sessionManager.resetSession(this.config.model.id);
+            const resetOk = await this.sessionManager.resetSession(this.id);
             if (resetOk) {
               this.log('Session reset due to health check failure');
             }
@@ -1185,7 +1168,7 @@ this.llmAdapter.lastKnownMessageChars = 0;
         if (isExhausted) {
           this.log('Context exhaustion detected - triggering automatic session reset');
           yield { type: 'thinking', message: 'Context limit reached - resetting session for stability', timestamp: Date.now() };
-          const resetOk = await sessionManagerAny.resetSession(this.config.model.id, 'token_limit');
+          const resetOk = await sessionManagerAny.resetSession(this.id, 'token_limit');
           if (resetOk) {
             this.log('Session reset successfully due to context exhaustion');
             // Clear token tracking after reset
@@ -1209,7 +1192,9 @@ this.llmAdapter.lastKnownMessageChars = 0;
           top_p: this.config.model.topP, 
           max_tokens: this.config.model.maxOutputTokens,
           thinking_enabled: this.config.model.thinkingEnabled,
-          search_enabled: this.config.model.searchEnabled
+          search_enabled: this.config.model.searchEnabled,
+          user: this.id,
+          timeoutSeconds: this.config.llm.timeoutSeconds
         };
         const rawResponse = await this.cli.callLLM(this.config.model.id, messages, llmOptions, tools, true, this.config.model.provider);
         
@@ -1442,10 +1427,10 @@ this.llmAdapter.lastKnownMessageChars = 0;
           if (this._consecutiveTextResponsesWithoutToolCalls >= 1) {
             this.log('Misbehavior detected — resetting proxy session and rebuilding clean context');
             if (this.sessionManager && this.sessionManager.name !== 'Null') {
-              const resetOk = await this.sessionManager.resetSession(this.config.model.id);
+              const resetOk = await this.sessionManager.resetSession(this.id);
               if (resetOk) {
                 this.log('Proxy session reset successfully, re-attempting with clean history');
-                await this.sessionManager.syncSession(this.config.model.id);
+                await this.sessionManager.syncSession(this.id);
               } else {
                 this.log('Proxy session reset failed');
               }
@@ -1893,7 +1878,11 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
       temperature: this.config.model.temperature,
       topP: this.config.model.topP,
       thinkingEnabled: this.config.model.thinkingEnabled,
-      searchEnabled: this.config.model.searchEnabled
+      searchEnabled: this.config.model.searchEnabled,
+      // Per-chat stable session key so the proxy does not reuse sessions across chats.
+      user: this.id,
+      // Per-agent request timeout so a hung proxy surfaces instead of hanging forever.
+      timeoutSeconds: this.config.llm.timeoutSeconds
     }, messages, tools);
   }
 

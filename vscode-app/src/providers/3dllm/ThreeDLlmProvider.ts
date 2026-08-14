@@ -27,6 +27,7 @@ export class ThreeDLlmProvider implements LLMProvider {
   private lastServerErrorTime: number = 0;
   private readonly MAX_SERVER_ERRORS: number = 3;
   private readonly SERVER_ERROR_COOLDOWN: number = 300000; // 5 minutes
+  private readonly REQUEST_TIMEOUT_MS: number = 120000; // 2 min for full chat completion (streaming)
 
   constructor(baseUrl: string, defaultModel: string, errorHandler: ErrorHandler, outputChannel?: any) {
     this.baseUrl = baseUrl;
@@ -118,15 +119,40 @@ export class ThreeDLlmProvider implements LLMProvider {
           body.search_enabled = options.search_enabled;
         }
 
+        // Forward user/session identifier. The 3D LLM proxy keys session reuse on
+        // this value ("sticky per x-agent-session/user"): omitting it causes all
+        // chats for a model to share the same sticky session.
+        if (options.user) {
+          body.user = options.user;
+        }
+
         const bodyStr = JSON.stringify(body);
         const toolNames = body.tools?.map((t: any) => t.function?.name || t.name).join(',') || 'none';
         this.log(`[3D LLM] Body size: ${bodyStr.length} chars, tools: [${toolNames}]`);
 
-        const response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: bodyStr
-        });
+        // Abort the request if the proxy hangs (connects but never responds).
+        // Without this, a frozen proxy blocks the agent silently forever.
+        const controller = new AbortController();
+        const timeoutMs = (request as any).timeoutSeconds
+          ? (request as any).timeoutSeconds * 1000
+          : this.REQUEST_TIMEOUT_MS;
+        const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
+
+        let response: Response;
+        try {
+          response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: bodyStr,
+            signal: controller.signal
+          });
+        } catch (error: any) {
+          clearTimeout(timeoutHandle);
+          if (error?.name === 'AbortError') {
+            throw this.timeoutError(timeoutMs);
+          }
+          throw new Error(`3D LLM connection failed: ${error?.message || error}`);
+        }
 
         if (!response.ok) {
           const errorText = await response.text();
@@ -169,7 +195,17 @@ export class ThreeDLlmProvider implements LLMProvider {
           const toolCallAccumulator = new Map<number, { id: string; name: string; argsStr: string }>();
 
           while (true) {
-            const { done, value } = await reader.read();
+            let chunk;
+            try {
+              chunk = await reader.read();
+            } catch (error: any) {
+              clearTimeout(timeoutHandle);
+              if (error?.name === 'AbortError') {
+                throw this.timeoutError(timeoutMs);
+              }
+              throw error;
+            }
+            const { done, value } = chunk;
             if (done) break;
 
             const decoded = decoder.decode(value, { stream: true });
@@ -268,6 +304,9 @@ export class ThreeDLlmProvider implements LLMProvider {
           } : undefined;
         }
 
+        // Response fully consumed — cancel the hang-detection timer.
+        clearTimeout(timeoutHandle);
+
         // Extract tool calls from text response (proxy returns tools as text, not native tool_calls)
         if (toolCallsData.length === 0 && content) {
           toolCallsData = this.extractToolCallsFromText(content);
@@ -313,6 +352,15 @@ export class ThreeDLlmProvider implements LLMProvider {
       },
       '3D LLM',
       context
+    );
+  }
+
+  // ---- Timeout error helper ----
+
+  private timeoutError(timeoutMs: number): Error {
+    return new Error(
+      `3D LLM proxy timed out after ${Math.round(timeoutMs / 1000)}s without responding. ` +
+      'The FreeDeepseekAPI proxy may be hung or unreachable — check that it is running and restart it if needed.'
     );
   }
 

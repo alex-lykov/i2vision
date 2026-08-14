@@ -343,6 +343,10 @@ export class AgentTabManager {
     const streamingEnabled = settings.streaming.enabled;
     const showThinking = settings.streaming.showThinkingIndicator;
     const userMessage: ChatMessage = { role: 'user', content: userInput, timestamp: Date.now() };
+    // Capture prior turns before appending the current input. processStreaming
+    // injects the live userInput itself, so passing the full history would
+    // duplicate the current message (roles=[...,user,user]).
+    const priorHistory = [...tabState.history];
     tabState.history.push(userMessage);
     this.sendToWebview({ command: 'user_message', content: userInput, timestamp: Date.now() });
     try {
@@ -369,7 +373,7 @@ export class AgentTabManager {
       const streamGenerator = this.currentAgentBridge.processStreaming(
         userInput, 
         currentFile,
-        tabState.history,  // Pass conversation history
+        priorHistory,  // Pass prior turns only — current input injected by processStreaming
         tabState.sessionState,  // Pass session state
         forceFreshSession  // Force fresh session for new chats
       );

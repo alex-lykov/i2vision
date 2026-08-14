@@ -64,6 +64,10 @@ export interface LLMOptions {
   max_tokens?: number;
   thinking_enabled?: boolean;
   search_enabled?: boolean;
+  /** Per-request timeout in seconds (forwarded to the provider). */
+  timeoutSeconds?: number;
+  /** Session/conversation identifier used by session-aware providers (e.g. 3D LLM proxy). */
+  user?: string;
 }
 
 export interface LLMToolCall {
@@ -393,6 +397,8 @@ export class CLI {
         stream: stream,
         thinking_enabled: options?.thinking_enabled,
         search_enabled: options?.search_enabled,
+        user: options?.user,
+        timeoutSeconds: options?.timeoutSeconds,
         tools: tools
       });
 

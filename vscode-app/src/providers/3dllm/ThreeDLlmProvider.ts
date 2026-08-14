@@ -110,15 +110,18 @@ export class ThreeDLlmProvider implements LLMProvider {
           body.tools = request.tools;
         }
 
-        // Forward thinking/search toggle if specified (supported by DeepSeek Web API proxy)
+        // Forward thinking/search toggle if specified (supported by DeepSeek Web API proxy).
+        // The FreeDeepseekAPI proxy expects `thinking` and `search` booleans, but
+        // accept the legacy *_enabled aliases as well for backward compatibility.
         const options = request as any;
-        if (options.thinking_enabled !== undefined) {
-          body.thinking_enabled = options.thinking_enabled;
+        const thinking = options.thinking ?? options.thinking_enabled;
+        if (thinking !== undefined) {
+          body.thinking = thinking;
         }
-        if (options.search_enabled !== undefined) {
-          body.search_enabled = options.search_enabled;
+        const search = options.search ?? options.search_enabled;
+        if (search !== undefined) {
+          body.search = search;
         }
-
         // Forward user/session identifier. The 3D LLM proxy keys session reuse on
         // this value ("sticky per x-agent-session/user"): omitting it causes all
         // chats for a model to share the same sticky session.

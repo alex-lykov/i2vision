@@ -243,7 +243,10 @@ export class AgentTabManager {
     };
     this.tabs.set(tabId, tabState);
     this.activeTabId = tabId;
-    this.currentAgentBridge = new AgentBridge(config, this.outputChannel, this.context.extensionPath, workspaceRoot, this.settingsManager, agent.id);
+    // Use the stable tab/conversation id as the AgentBridge session key, NOT the
+    // randomly-generated agent.id. agent.id changes on every resume, which would
+    // orphan the proxy's sticky session and prevent restarting an existing session.
+    this.currentAgentBridge = new AgentBridge(config, this.outputChannel, this.context.extensionPath, workspaceRoot, this.settingsManager, tabId);
     await this.currentAgentBridge.initialize();
     this.log('Created ' + layer + ' agent tab: ' + tabId);
     this.log('   Agent ID: ' + agent.id);
@@ -267,6 +270,12 @@ export class AgentTabManager {
     tabState.sessionState = saved.sessionState; // Restore session state
     tabState.lastActivityAt = saved.updatedAt;
     tabState.lastAutoSaveAt = saved.updatedAt;
+    // A resumed conversation is NOT a new chat — the first user input must not
+    // trigger forceFreshSession, otherwise the proxy session gets reset and the
+    // conversation context the user is resuming is lost.
+    if (saved.messages.length > 0) {
+      tabState.isFirstUserInput = false;
+    }
     this.log('Loaded conversation data with ' + saved.messages.length + ' messages');
     if (saved.sessionState) {
       this.log('Restored session state: ' + JSON.stringify({

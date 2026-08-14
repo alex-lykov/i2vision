@@ -239,9 +239,6 @@ export class AgentBridge {
   private _consecutiveToolErrors: number = 0;
   private _toolExecutionStartTimes: Map<string, number> = new Map();
   
-  // Session management
-  private _needsFreshSession: boolean = false;
-
   private static readonly MAX_TOOL_RESULT_LENGTH = 2000;
   private static readonly MAX_LIST_FILES_RESULTS = 100;
   private static readonly MAX_APPLY_EDITS = 50;
@@ -302,11 +299,6 @@ export class AgentBridge {
     }
     
     this.sessionManager = createSessionManager(provider, providerUrl);
-    
-    // Providers that support session management (e.g. 3D LLM via ProxySessionManager)
-    // need a fresh session on first use. Stateless providers get NullSessionManager
-    // which is a no-op.
-    this._needsFreshSession = this.sessionManager?.name !== 'Null';
     
     if (this.sessionManager && this.sessionManager.name !== 'Null') {
       this.log(`Session manager initialized: ${this.sessionManager.name}`);
@@ -380,38 +372,11 @@ export class AgentBridge {
     this.isInitialized = true;
     this.stateMachine.reset();
     
-    // Initialize fresh session if needed (for 3D LLM provider)
-    if (this._needsFreshSession && this.sessionManager && this.sessionManager.name !== 'Null') {
-      this._needsFreshSession = false; // Clear flag
-      this.log('Initializing fresh session for new agent instance');
-      
-      try {
-        const resetSuccess = await this.sessionManager.resetSession(this.id);
-        if (resetSuccess) {
-          this.log('✅ Fresh session initialized - previous session context cleared');
-        } else {
-          this.log('⚠️ Could not clear existing session - may continue with previous context');
-        }
-      } catch (error: any) {
-        this.log(`Session initialization error: ${error.message}`);
-      }
-    }
-    
-    // Reset session manager for new chats to prevent session reuse.
-    // Skip if already done above via _needsFreshSession to avoid double reset.
-    if (this.sessionManager && this.sessionManager.name !== 'Null' && !this._needsFreshSession) {
-      this.log('Resetting session manager for new chat to prevent session reuse');
-      try {
-        const resetSuccess = await this.sessionManager.resetSession(this.id);
-        if (resetSuccess) {
-          this.log('Session manager reset successful - new chat will use fresh session');
-        } else {
-          this.log('Session manager reset failed - this may cause session reuse issues');
-        }
-      } catch (error: any) {
-        this.log(`Session manager reset error: ${error.message} - continuing with potential session reuse`);
-      }
-    }
+    // NOTE: Do NOT reset the proxy session here. Session reset/resume is a
+    // per-conversation concern handled by executeAgentLoop (reset on
+    // forceFreshSession=true for new chats, sync on resume). Resetting here would
+    // fire on every AgentBridge construction — including a resumed conversation —
+    // destroying the existing proxy session before it can be restored.
     
     // Load YAML tool configuration
     if (this.toolConfigLoader) {

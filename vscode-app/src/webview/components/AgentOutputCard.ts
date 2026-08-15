@@ -5,215 +5,59 @@
  * SPDX-License-Identifier: MIT
  */
 
-/**
- * AgentOutputCard - Plain TypeScript HTML Generator
- * 
- * Unified agent output display with configurable formatting, collapsing, and styling.
- * Used in webview to display agent responses consistently across all agent types.
- * 
- * NOTE: This is NOT React/JSX - it's plain TypeScript that generates HTML strings.
- * No bundler required - works directly in VSCode webviews.
- */
+// AgentOutputCard.ts
+// Renders the output of an agent action (tool call, reasoning, etc.) in the VSCode webview.
 
-import {
-  AgentOutputCard,
-  AgentStatus,
-  CardContent,
-  CardFooter,
-  CardHeader,
-  DEFAULT_DISPLAY_CONFIG,
-  DisplayConfig,
-  formatDuration,
-  getPreviewText,
-  getProviderColor,
-  getProviderDisplayName,
-  getStatusIcon,
-  ProviderType,
-  shouldAutoCollapse,
-  ToolCallData,
-} from './AgentOutputCard.types';
-import { AutoScroll } from './AutoScroll';
-import { getToolStatusIcon, getSectionIcon, getExpandToggle, ICONS } from './AgentIcons';
+import {AgentOutput, DiffCardData, DisplayConfig} from './AgentOutputCard.types';
 
-/**
- * Escape HTML to prevent XSS
- */
-function escapeHtml(text: string): string {
-  if (!text) return '';
+const escapeHtml = (str: string): string => {
   const div = document.createElement('div');
-  div.textContent = text;
+  div.textContent = str;
   return div.innerHTML;
-}
+};
 
 /**
- * Create the complete output card HTML
+ * Get the appropriate icon for a section type
  */
-export function createOutputCard(card: AgentOutputCard): HTMLElement {
-  const cardDiv = document.createElement('div');
-  cardDiv.className = `agent-output-card theme-${card.display.theme} font-${card.display.fontSize}`;
-
-  // Build card structure
-  cardDiv.innerHTML = `
-    ${createCardHeader(card.header)}
-    ${createCardContent(card.content, card.display)}
-    ${createCardFooter(card.footer)}
-  `;
-
-  // Add event listeners
-  attachEventListeners(cardDiv, card.display);
-
-  // Add CSS for apply_edits specific styling
-  addApplyEditsCSS(cardDiv);
-
-  return cardDiv;
-}
-
-/**
- * Create card header section
- */
-function createCardHeader(header: CardHeader): string {
-  const providerColor = getProviderColor(header.provider);
-  const statusIcon = getStatusIcon(header.status);
-  const providerName = getProviderDisplayName(header.provider);
-
-  return `
-    <div class="output-card-header">
-      <div class="header-left">
-        <span class="provider-badge" style="background-color: ${providerColor}">
-          ${providerName}
-        </span>
-        <span class="model-name">${escapeHtml(header.model)}</span>
-      </div>
-      <div class="header-right">
-        <span class="status-icon">${statusIcon}</span>
-        <span class="duration-badge">${formatDuration(header.durationMs)}</span>
-        <span class="iterations-badge">${header.iterations} iter</span>
-      </div>
-    </div>
-    ${createStatusBanner(header.status)}
-  `;
-}
-
-function createStatusBanner(status: AgentStatus): string {
-  if (status === 'success') {
-    return '';
+function getSectionIcon(type: string): string {
+  switch (type) {
+    case 'thinking':
+      return '';
+    case 'tool':
+      return '';
+    case 'apply':
+      return '✏️';
+    case 'diff':
+      return '';
+    case 'error':
+      return '❌';
+    default:
+      return '•';
   }
-  
-  const statusMessages: Record<string, string> = {
-    'error': 'This run encountered an error',
-    'warning': 'This run completed with warnings',
-    'pending': 'This run is still in progress',
-    'running': 'Agent is currently running',
-  };
-  
-  const message = statusMessages[status] || '';
-  if (!message) return '';
-  
-  return `
-    <div class="status-banner status-${status}">
-      ${message}
-    </div>
-  `;
-}
-
-/**
- * Create card content section
- */
-function createCardContent(content: CardContent, display: DisplayConfig): string {
-  const parts: string[] = [];
-
-  // Thinking/reasoning stream section (DeepSeek thinking/reasoning_content)
-  if (content.thinkingStream && display.showReasoning) {
-    parts.push(createThinkingRawSection(content.thinkingStream, display));
-  }
-
-  // Main response text
-  if (content.text) {
-    parts.push(createResponseTextSection(content.text, display));
-  }
-
-  // Tool calls
-  if (content.toolCalls && content.toolCalls.length > 0 && display.showToolDetails) {
-    parts.push(createToolCallsSection(content.toolCalls, display));
-  }
-
-  // Code blocks
-  if (content.codeBlocks && content.codeBlocks.length > 0 && display.showToolDetails) {
-    parts.push(createCodeBlocksSection(content.codeBlocks, display));
-  }
-
-  // Build output
-  if (content.buildOutput && display.showToolDetails) {
-    parts.push(createBuildOutputSection(content.buildOutput));
-  }
-
-  return `
-    <div class="output-card-content">
-      ${parts.join('\n')}
-    </div>
-  `;
-}
-
-/**
- * Create thinking/reasoning stream section
- */
-function createThinkingSection(thinkingText: string, display: DisplayConfig): string {
-  if (!thinkingText || !thinkingText.trim()) return '';
-  
-  const isLong = thinkingText.length > 500;
-  const openAttr = display.showReasoning && !isLong ? 'open' : '';
-
-  return `
-    <details class="thinking-stream-section" ${openAttr}>
-      <summary class="thinking-stream-summary">
-        ${getSectionIcon('thinking')}
-        <span class="thinking-label">Thinking</span>
-        <span class="thinking-chars">(${thinkingText.length} chars)</span>
-      </summary>
-      <div class="thinking-stream-content">
-        <pre>${escapeHtml(thinkingText)}</pre>
-      </div>
-    </details>
-  `;
-}
-
-/**
- * Create response text section with collapsible content
- */
-function createResponseTextSection(text: string, display: DisplayConfig): string {
-  if (!text || !text.trim()) return '';
-
-  const previewText = getPreviewText(text, 10);
-  const isLong = text.length > 1000;
-  const collapsedClass = shouldAutoCollapse(text, display) ? 'collapsed' : '';
-
-  return `
-    <div class="response-text-section ${collapsedClass}">
-      <div class="response-text-full">
-        <pre>${escapeHtml(text)}</pre>
-      </div>
-      ${isLong ? createExpandButton(true) : ''}
-    </div>
-  `;
 }
 
 /**
  * Create thinking/reasoning stream section (DeepSeek R1 reasoning_content)
- * Rendered as a collapsible <details> block with distinct styling.
+ * Uses a <details> block that can be toggled; auto-opens if short or if showReasoning is true.
  */
-function createThinkingStreamSection(thinkingText: string, display: DisplayConfig): string {
+function createThinkingSection(
+  thinkingText: string,
+  display: DisplayConfig,
+  isFinal: boolean
+): string {
   if (!thinkingText || !thinkingText.trim()) return '';
   const escaped = escapeHtml(thinkingText);
-  // Collapse by default if content is long
   const isLong = thinkingText.length > 500;
+  // Auto-open if the user wants to see reasoning, unless it's too long
   const openAttr = display.showReasoning && !isLong ? 'open' : '';
-  
+
   return `
     <details class="thinking-stream-section" ${openAttr}>
       <summary class="thinking-stream-summary">
         ${getSectionIcon('thinking')}
         <span class="thinking-label">Thinking</span>
         <span class="thinking-chars">(${thinkingText.length} chars)</span>
+        ${isFinal ? '<span class="status-badge">✓</span>' : '<span class="status-badge streaming">●</span>'}
       </summary>
       <div class="thinking-stream-content">
         <pre>${escaped}</pre>
@@ -223,233 +67,113 @@ function createThinkingStreamSection(thinkingText: string, display: DisplayConfi
 }
 
 /**
- * Create thinking section with markdown (for main thinking stream)
+ * Create a tool call section
  */
-function createThinkingMarkdownSection(thinkingText: string, display: DisplayConfig): string {
-  if (!thinkingText || !thinkingText.trim()) return '';
-  
-  const isLong = thinkingText.length > 500;
-  const openAttr = display.showReasoning && !isLong ? 'open' : '';
-
+function createToolSection(toolName: string, toolArgs: any, display: DisplayConfig): string {
+  const argsStr = typeof toolArgs === 'string' ? toolArgs : JSON.stringify(toolArgs, null, 2);
+  const escapedArgs = escapeHtml(argsStr);
   return `
-    <details class="thinking-stream-section thinking-markdown" ${openAttr}>
-      <summary class="thinking-stream-summary">
-        ${getSectionIcon('thinking')}
-        <span class="thinking-label">Thinking</span>
-        <span class="thinking-chars">(${thinkingText.length} chars)</span>
+    <details class="tool-section" open>
+      <summary class="tool-summary">
+        ${getSectionIcon('tool')}
+        <span class="tool-name">${escapeHtml(toolName)}</span>
       </summary>
-      <div class="thinking-stream-content">
-        <pre>${escapeHtml(thinkingText)}</pre>
+      <div class="tool-args">
+        <pre>${escapedArgs}</pre>
       </div>
     </details>
   `;
 }
 
 /**
- * Create thinking section with raw pre (for reasoning_content)
+ * Create a diff card section
  */
-function createThinkingRawSection(thinkingText: string, display: DisplayConfig): string {
-  if (!thinkingText || !thinkingText.trim()) return '';
-  const escaped = escapeHtml(thinkingText);
-  const isLong = thinkingText.length > 500;
-  const openAttr = display.showReasoning && !isLong ? 'open' : '';
-  
+function createDiffSection(diffData: DiffCardData): string {
+  const { filePath, diff } = diffData;
   return `
-    <details class="thinking-stream-section" ${openAttr}>
-      <summary class="thinking-stream-summary">
-        ${getSectionIcon('thinking')}
-        <span class="thinking-label">Thinking</span>
-        <span class="thinking-chars">(${thinkingText.length} chars)</span>
-      </summary>
-      <div class="thinking-stream-content">
-        <pre>${escaped}</pre>
+    <div class="diff-card">
+      <div class="diff-header">
+        ${getSectionIcon('diff')}
+        <span class="diff-file">${escapeHtml(filePath)}</span>
       </div>
-    </details>
-  `;
-}
-
-/**
- * Create expand/collapse button
- */
-function createExpandButton(isCollapsed: boolean): string {
-  const toggleHtml = getExpandToggle(isCollapsed);
-  return `
-    <button class="expand-button" onclick="this.closest('.response-text-section').classList.toggle('collapsed'); const btn = this; const collapsed = this.closest('.response-text-section').classList.contains('collapsed'); btn.innerHTML = collapsed ? '${getExpandToggle(true).replace(/'/g, "\\'")}' : '${getExpandToggle(false).replace(/'/g, "\\'")}';">
-      ${toggleHtml}
-    </button>
-  `;
-}
-
-/**
- * Create tool calls section
- */
-function createToolCallsSection(toolCalls: ToolCallData[], display: DisplayConfig): string {
-  if (!toolCalls || toolCalls.length === 0) return '';
-  
-  const toolCards = toolCalls.map((tc, index) => createToolCallCard(tc, index, display)).join('');
-  
-  return `
-    <div class="tool-calls-section">
-      <div class="section-header">
-        ${getSectionIcon('toolCalls')}
-        <span class="section-title">Tool Calls (${toolCalls.length})</span>
-      </div>
-      <div class="tool-calls-list">
-        ${toolCards}
-      </div>
-    </div>
-  `;
-}
-
-function createToolCallCard(toolCall: ToolCallData, index: number, display: DisplayConfig): string {
-  const statusIconHtml = getToolStatusIcon(toolCall.error, toolCall.success);
-  const durationStr = toolCall.durationMs ? ` (${toolCall.durationMs}ms)` : '';
-  const detailsOpen = display.showToolDetails ? 'open' : '';
-  
-  return `
-    <details class="tool-call-card" ${detailsOpen}>
-      <summary class="tool-call-summary">
-        ${statusIconHtml}
-        <span class="tool-name">${escapeHtml(toolCall.toolName)}</span>
-        <span class="tool-duration">${durationStr}</span>
-      </summary>
-      <div class="tool-call-details">
-        <div class="tool-args">
-          <strong>Arguments:</strong>
-          <pre><code>${escapeHtml(JSON.stringify(toolCall.args, null, 2))}</code></pre>
-        </div>
-        ${toolCall.result ? `
-        <div class="tool-result">
-          <strong>Result:</strong>
-          <pre><code>${escapeHtml(toolCall.result)}</code></pre>
-        </div>
-        ` : ''}
-        ${toolCall.error ? `
-        <div class="tool-error">
-          <strong>Error:</strong>
-          <pre><code>${escapeHtml(toolCall.error)}</code></pre>
-        </div>
-        ` : ''}
-      </div>
-    </details>
-  `;
-}
-
-/**
- * Create build output section
- */
-function createBuildOutputSection(buildOutput: string): string {
-  if (!buildOutput) return '';
-  
-  return `
-    <details class="build-output-section">
-      <summary class="build-output-summary">
-        ${getSectionIcon('buildOutput')}
-        <span class="section-title">Build Output</span>
-      </summary>
-      <div class="build-output-content">
-        <pre><code>${escapeHtml(buildOutput)}</code></pre>
-      </div>
-    </details>
-  `;
-}
-
-/**
- * Create code blocks section
- */
-function createCodeBlocksSection(codeBlocks: { language: string; code: string; filePath?: string; startLine?: number }[], display: DisplayConfig): string {
-  if (!codeBlocks || codeBlocks.length === 0) return '';
-  
-  const blocks = codeBlocks.map((block) => {
-    const fileInfo = block.filePath ? ` <span class="code-file-path">${escapeHtml(block.filePath)}${block.startLine ? `:${block.startLine}` : ''}</span>` : '';
-    return `
-      <div class="code-block">
-        <div class="code-block-header">
-          <span class="code-language">${escapeHtml(block.language || 'text')}</span>
-          ${fileInfo}
-        </div>
-        <pre><code class="language-${escapeHtml(block.language || 'text')}">${escapeHtml(block.code)}</code></pre>
-      </div>
-    `;
-  }).join('');
-  
-  return `
-    <details class="code-blocks-section">
-      <summary class="code-blocks-summary">
-        ${getSectionIcon('codeBlocks')}
-        <span class="section-title">Code Blocks (${codeBlocks.length})</span>
-      </summary>
-      <div class="code-blocks-list">
-        ${blocks}
-      </div>
-    </details>
-  `;
-}
-
-/**
- * Create card footer section
- */
-function createCardFooter(footer: CardFooter): string {
-  const actions = footer.actions.map(action => `
-    <button class="footer-action ${action.enabled ? '' : 'disabled'}" 
-            ${!action.enabled ? 'disabled' : ''}
-            data-action-id="${escapeHtml(action.id)}">
-      <span class="action-icon">${action.icon}</span>
-      <span class="action-label">${escapeHtml(action.label)}</span>
-    </button>
-  `).join('');
-  
-  const tokenInfo = footer.tokensUsed ? `
-    <span class="tokens-info">
-      <span class="token-icon">${ICONS.tokens}</span>
-      ${footer.tokensUsed.toLocaleString()} tokens
-    </span>
-  ` : '';
-  
-  const confidenceInfo = footer.confidence !== undefined ? `
-    <span class="confidence-info">
-      <span class="confidence-icon">${ICONS.confidence}</span>
-      ${(footer.confidence * 100).toFixed(0)}% confidence
-    </span>
-  ` : '';
-  
-  return `
-    <div class="output-card-footer">
-      <div class="footer-left">
-        ${tokenInfo}
-        ${confidenceInfo}
-      </div>
-      <div class="footer-right">
-        ${actions}
+      <div class="diff-content">
+        <pre>${escapeHtml(diff)}</pre>
       </div>
     </div>
   `;
 }
 
 /**
- * Attach event listeners for interactive elements
+ * Create an apply_edits button card
  */
-function attachEventListeners(cardDiv: HTMLElement, display: DisplayConfig): void {
-  // Footer action buttons
-  cardDiv.querySelectorAll('.footer-action').forEach(button => {
-    button.addEventListener('click', (e) => {
-      const actionId = (button as HTMLElement).dataset.actionId;
-      if (actionId) {
-        // Dispatch custom event for action handling
-        const event = new CustomEvent('output-card-action', {
-          bubbles: true,
-          detail: { actionId }
-        });
-        cardDiv.dispatchEvent(event);
-      }
-    });
-  });
-  
-  // Apply edits buttons
-  cardDiv.querySelectorAll('.apply-edits-button').forEach(button => {
-    button.addEventListener('click', (e) => {
+function createApplyEditsButton(actionId: string): string {
+  return `
+    <div class="action-button-wrapper">
+      <button class="apply-edits-button" data-action-id="${escapeHtml(actionId)}">
+        ${getSectionIcon('apply')} Apply Edits
+      </button>
+    </div>
+  `;
+}
+
+/**
+ * Main render function for AgentOutputCard
+ * This is called from the webview to render a complete card.
+ */
+export function renderAgentOutputCard(output: AgentOutput, display: DisplayConfig): string {
+  const { toolCalls, reasoning, response, diff, applyActionId, isFinal } = output;
+
+  let sections: string[] = [];
+
+  // 1. Thinking/reasoning section (if present)
+  if (reasoning) {
+    sections.push(createThinkingSection(reasoning, display, isFinal));
+  }
+
+  // 2. Tool calls (if any)
+  if (toolCalls && toolCalls.length > 0) {
+    for (const tc of toolCalls) {
+      sections.push(createToolSection(tc.name, tc.args, display));
+    }
+  }
+
+  // 3. Diff (if present)
+  if (diff) {
+    sections.push(createDiffSection(diff));
+  }
+
+  // 4. Apply edits button (if present)
+  if (applyActionId) {
+    sections.push(createApplyEditsButton(applyActionId));
+  }
+
+  // 5. Final response (text) – show only if not already shown in tool or reasoning
+  if (response && !reasoning && !toolCalls) {
+    sections.push(`
+      <div class="response-text">
+        <pre>${escapeHtml(response)}</pre>
+      </div>
+    `);
+  }
+
+  return `
+    <div class="agent-output-card" data-final="${isFinal}">
+      ${sections.join('\n')}
+    </div>
+  `;
+}
+
+/**
+ * Attach event listeners to the card after mounting
+ * This is a separate function so the webview can call it after setting innerHTML.
+ */
+export function attachAgentOutputListeners(cardDiv: HTMLElement): void {
+  // Apply edits button
+  const applyBtn = cardDiv.querySelector('.apply-edits-button');
+  if (applyBtn) {
+    applyBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const actionId = (button as HTMLElement).dataset.actionId;
+      const actionId = (applyBtn as HTMLElement).dataset.actionId;
       if (actionId) {
         const event = new CustomEvent('output-card-action', {
           bubbles: true,
@@ -458,31 +182,113 @@ function attachEventListeners(cardDiv: HTMLElement, display: DisplayConfig): voi
         cardDiv.dispatchEvent(event);
       }
     });
-  });
+  }
+
+  // Add style for apply_edits button (if not already present)
+  if (cardDiv.querySelector('.apply-edits-button') && !document.getElementById('agent-card-apply-styles')) {
+    const style = document.createElement('style');
+    style.id = 'agent-card-apply-styles';
+    style.textContent = `
+      .apply-edits-button {
+        background: #27ae60;
+        color: white;
+        border: none;
+        padding: 4px 12px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 12px;
+        margin: 4px 0;
+      }
+      .apply-edits-button:hover {
+        background: #219a52;
+      }
+      .thinking-stream-section {
+        margin: 4px 0;
+        border-left: 2px solid #6a8bff;
+        padding-left: 8px;
+      }
+      .thinking-stream-summary {
+        cursor: pointer;
+        user-select: none;
+        font-size: 13px;
+        color: #6a8bff;
+      }
+      .thinking-stream-content {
+        margin: 4px 0;
+        background: rgba(106, 139, 255, 0.08);
+        border-radius: 4px;
+        padding: 6px 8px;
+      }
+      .thinking-stream-content pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 12px;
+        font-family: var(--vscode-editor-font-family, monospace);
+        color: var(--vscode-editor-foreground, #ccc);
+      }
+      .status-badge {
+        font-size: 11px;
+        margin-left: 6px;
+        opacity: 0.7;
+      }
+      .status-badge.streaming {
+        color: #f1c40f;
+      }
+      .tool-section {
+        margin: 4px 0;
+        border-left: 2px solid #e67e22;
+        padding-left: 8px;
+      }
+      .tool-summary {
+        cursor: pointer;
+        user-select: none;
+        font-size: 13px;
+        color: #e67e22;
+      }
+      .tool-args pre {
+        margin: 4px 0;
+        background: rgba(230, 126, 34, 0.08);
+        border-radius: 4px;
+        padding: 6px 8px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 12px;
+      }
+      .diff-card {
+        margin: 4px 0;
+        border-left: 2px solid #2ecc71;
+        padding-left: 8px;
+      }
+      .diff-header {
+        font-size: 13px;
+        color: #2ecc71;
+      }
+      .diff-content pre {
+        margin: 4px 0;
+        background: rgba(46, 204, 113, 0.08);
+        border-radius: 4px;
+        padding: 6px 8px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 12px;
+      }
+      .response-text {
+        margin: 4px 0;
+        background: rgba(255,255,255,0.05);
+        border-radius: 4px;
+        padding: 6px 8px;
+      }
+      .response-text pre {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 13px;
+        font-family: var(--vscode-editor-font-family, monospace);
+      }
+    `;
+    document.head.appendChild(style);
+  }
 }
 
-/**
- * Add CSS for apply_edits specific styling if apply_edits buttons are present
- */
-function addApplyEditsCSS(cardDiv: HTMLElement): void {
-  const hasApplyEdits = cardDiv.querySelector('.apply-edits-button');
-  if (!hasApplyEdits) return;
-  
-  const style = document.createElement('style');
-  style.textContent = `
-    .apply-edits-button {
-      background: #27ae60;
-      color: white;
-      border: none;
-      padding: 4px 12px;
-      border-radius: 4px;
-      cursor: pointer;
-      font-size: 12px;
-      margin-left: 8px;
-    }
-    .apply-edits-button:hover {
-      background: #219a52;
-    }
-  `;
-  cardDiv.appendChild(style);
-}
+export default { renderAgentOutputCard, attachAgentOutputListeners };

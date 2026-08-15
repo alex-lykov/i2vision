@@ -46,6 +46,28 @@ export interface ToolCallData {
 }
 
 /**
+ * Flat agent output used by AgentOutputCard's simplified render path.
+ * NOTE: This is distinct from the richer AgentOutputCard/CardContent model; it is
+ * the shape consumed by renderAgentOutputCard().
+ */
+export interface AgentOutput {
+  toolCalls: Array<{ name: string; args: Record<string, any> }>;
+  reasoning?: string;
+  response?: string;
+  diff?: DiffCardData;
+  applyActionId?: string;
+  isFinal: boolean;
+}
+
+/**
+ * Minimal diff representation for a single file in the agent output card.
+ */
+export interface DiffCardData {
+  filePath: string;
+  diff: string;
+}
+
+/**
  * Code block with syntax highlighting info
  */
 export interface CodeBlock {

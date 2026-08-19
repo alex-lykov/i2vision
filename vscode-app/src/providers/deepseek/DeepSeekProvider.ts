@@ -30,7 +30,7 @@ export class DeepSeekProvider implements LLMProvider {
 
   getCapabilities(): LLMProviderCapabilities {
     return {
-      streaming: false,
+      streaming: true,
       nativeToolCalls: false,
       structuredMessages: false, // uses flat prompt string
       sessionManagement: false,
@@ -73,7 +73,7 @@ export class DeepSeekProvider implements LLMProvider {
           temperature: request.temperature || 0.2,
           top_p: request.topP || 0.95,
           max_tokens: request.maxTokens || 4096,
-          stream: false
+          stream: true
         };
 
         const response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -98,17 +98,74 @@ export class DeepSeekProvider implements LLMProvider {
           throw new Error(errorMessage + (errorText ? ` - ${errorText}` : ''));
         }
 
-        const data = await response.json();
-        const choice = data.choices?.[0];
-        
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error('DeepSeek API error: streaming response body is not readable');
+        }
+
+        const decoder = new TextDecoder();
+        let content = '';
+        let reasoning = '';
+        let promptTokens = 0;
+        let completionTokens = 0;
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data:')) continue;
+
+            const payload = trimmed.slice(5).trim();
+            if (!payload || payload === '[DONE]') continue;
+
+            try {
+              const chunk = JSON.parse(payload);
+              const delta = chunk.choices?.[0]?.delta;
+              if (delta?.content) content += delta.content;
+              if (delta?.reasoning_content) reasoning += delta.reasoning_content;
+
+              if (chunk.usage?.prompt_tokens) promptTokens = chunk.usage.prompt_tokens;
+              if (chunk.usage?.completion_tokens) completionTokens = chunk.usage.completion_tokens;
+            } catch (e) {
+              // Ignore malformed SSE lines.
+            }
+          }
+        }
+
+        // Flush any remaining buffered SSE line after stream ends.
+        const finalLine = buffer.trim();
+        if (finalLine.startsWith('data:')) {
+          const payload = finalLine.slice(5).trim();
+          if (payload && payload !== '[DONE]') {
+            try {
+              const chunk = JSON.parse(payload);
+              const delta = chunk.choices?.[0]?.delta;
+              if (delta?.content) content += delta.content;
+              if (delta?.reasoning_content) reasoning += delta.reasoning_content;
+              if (chunk.usage?.prompt_tokens) promptTokens = chunk.usage.prompt_tokens;
+              if (chunk.usage?.completion_tokens) completionTokens = chunk.usage.completion_tokens;
+            } catch (e) {
+              // Ignore malformed SSE lines.
+            }
+          }
+        }
+
         return {
-          text: choice?.message?.content || '',
+          text: content,
+          reasoning: reasoning.trim() || undefined,
           model: model,
           provider: 'deepseek',
-          usage: data.usage ? {
-            promptTokens: data.usage.prompt_tokens || 0,
-            completionTokens: data.usage.completion_tokens || 0,
-            totalTokens: data.usage.total_tokens || 0
+          usage: (promptTokens > 0 || completionTokens > 0) ? {
+            promptTokens: promptTokens,
+            completionTokens: completionTokens,
+            totalTokens: promptTokens + completionTokens
           } : undefined
         };
       },

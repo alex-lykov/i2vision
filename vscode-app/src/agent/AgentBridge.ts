@@ -782,6 +782,7 @@ export class AgentBridge {
     // Inject conversation history if provided
     if (history && history.length > 0) {
       this.log(`Injecting ${history.length} historical messages into LLM context`);
+      let lastRole: string | null = null;
       for (const msg of history) {
         // Skip text-only assistant messages that had no tool calls.
         // These teach the model to output prose instead of JSON tool calls.
@@ -789,10 +790,21 @@ export class AgentBridge {
           this.log(`  Skipped text-only assistant message (${msg.content.length} chars) - no tool calls`);
           continue;
         }
+        // Avoid consecutive user messages which confuse the model.
+        if (msg.role === 'user' && lastRole === 'user') {
+          // Merge with the previous user message.
+          const prev = messages[messages.length - 1];
+          if (prev) {
+            prev.content = `${prev.content}\n${msg.content}`;
+          }
+          // Do not update lastRole (still user).
+          continue;
+        }
         messages.push({
           role: msg.role,
           content: msg.content
         });
+        lastRole = msg.role;
       }
     }
     
@@ -1200,12 +1212,13 @@ this.llmAdapter.lastKnownMessageChars = 0;
           this.llmAdapter.lastKnownMessageChars = messages.reduce((s, m) => s + m.content.length, 0);
         } else {
           const streamResponse = rawResponse as AsyncGenerator<LLMChunk>;
-          let reasoningCaptured = false;
+          let reasoningCaptured = false; let gotAnything = false;
           for await (const chunk of streamResponse) {
             if (chunk.reasoning) {
               yield { type: 'reasoning', reasoning: chunk.reasoning, timestamp: Date.now() };
             }
-            if (chunk.text) {
+            if (chunk.text && chunk.text.trim().length > 0) {
+              gotAnything = true;
               responseText += chunk.text;
               textBuffer.push(chunk.text);
               
@@ -1237,7 +1250,7 @@ this.llmAdapter.lastKnownMessageChars = 0;
                 }
               }
             }
-            if (chunk.toolCalls) streamingToolCalls = chunk.toolCalls;
+            if (chunk.toolCalls && chunk.toolCalls.length > 0) { gotAnything = true; streamingToolCalls = chunk.toolCalls; }
             if (chunk.tokenUsage) {
               this._lastTokenUsage = chunk.tokenUsage;
               this.llmAdapter.lastKnownPromptTokens = chunk.tokenUsage.prompt;
@@ -1254,6 +1267,37 @@ this.llmAdapter.lastKnownMessageChars = 0;
               }
             }
             if (chunk.done) break;
+          }
+
+          // If the stream yielded nothing, fallback to non‑streaming call
+          if (!gotAnything) {
+            this.log('[AgentBridge] Streaming yielded nothing – retrying non‑streaming');
+            const plainResponse = await this.cli.callLLM(this.config.model.id, messages, llmOptions, tools, false, this.config.model.provider);
+            const plain = plainResponse as LLMResponse;
+            responseText = plain.content;
+            let reasoningText = (plain as any).reasoning || '';
+            if (reasoningText) { yield { type: 'reasoning', reasoning: reasoningText, timestamp: Date.now() }; }
+            streamingToolCalls = plain.toolCalls?.map(tc => ({ id: tc.id, name: tc.name, arguments: tc.arguments })) || [];
+            if (plain.tokenUsage) {
+              this._lastTokenUsage = plain.tokenUsage;
+              this.llmAdapter.lastKnownPromptTokens = plain.tokenUsage.prompt;
+              if (this.llmAdapter.providerCapabilities?.contextCompaction && this.sessionManager) {
+                const sessionManagerAny = this.sessionManager as any;
+                if (sessionManagerAny.updateTokenUsage) {
+                  sessionManagerAny.updateTokenUsage(plain.tokenUsage.prompt, plain.tokenUsage.completion);
+                }
+              }
+            } else {
+              const promptTokens = this.estimateTokens(messages);
+              const completionTokens = Math.ceil(responseText.length / 4);
+              this._lastTokenUsage = { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens };
+              this.llmAdapter.lastKnownPromptTokens = promptTokens;
+              this.log(`Estimated token usage (non‑streaming fallback): prompt=${promptTokens}, completion=${completionTokens}`);
+            }
+            this.llmAdapter.lastKnownMessageCount = messages.length;
+            this.llmAdapter.lastKnownMessageChars = messages.reduce((s, m) => s + m.content.length, 0);
+            // Skip remaining streaming handling for this iteration (fallback already applied)
+            // No continue; let execution proceed to post‑stream processing
           }
 
           // If the LLM provider did not include usage data (e.g. 3D LLM proxy SSE stream),
@@ -1481,7 +1525,9 @@ this.llmAdapter.lastKnownMessageChars = 0;
         this.stateMachine.dispatch(responseEvent);
         if (options.streaming) {
           if (!textAlreadyStreamed) {
-            for (const textChunk of textBuffer) yield { type: 'text', text: textChunk, timestamp: Date.now() };
+            for (const textChunk of textBuffer) {
+              yield { type: 'text', text: textChunk, timestamp: Date.now() };
+            }
           }
           const doneChunk: any = { type: 'done', outcome: 'success', timestamp: Date.now(), iterations: iteration };
           if (this._lastTokenUsage) doneChunk.tokenUsage = this._lastTokenUsage;

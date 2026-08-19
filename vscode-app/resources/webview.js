@@ -949,9 +949,60 @@
                     }
                     break;
 
+                case 'thinking': {
+                    hideThinkingIndicator();
+                    let thinkingDiv = document.getElementById('live-thinking-stream');
+                    if (!thinkingDiv) {
+                        thinkingDiv = document.createElement('div');
+                        thinkingDiv.id = 'live-thinking-stream';
+                        thinkingDiv.className = 'thinking-stream live';
+                        messagesDiv.appendChild(thinkingDiv);
+                    }
+                    if (!thinkingDiv.querySelector('.thinking-stream-label')) {
+                        const label = document.createElement('div');
+                        label.className = 'thinking-stream-label';
+                        label.textContent = 'Thinking';
+                        thinkingDiv.appendChild(label);
+                    }
+                    let textEl = thinkingDiv.querySelector('.thinking-stream-text');
+                    if (!textEl) {
+                        textEl = document.createElement('div');
+                        textEl.className = 'thinking-stream-text';
+                        thinkingDiv.appendChild(textEl);
+                    }
+                    textEl.textContent += message.message || '';
+                    messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                    break;
+                }
+
                 case 'streamingText':
                     if (streamingMessageDiv && message.accumulated) {
                         streamingMessageDiv.innerHTML = message.accumulated.replace(/\n/g, '<br>');
+                        messagesDiv.scrollTop = messagesDiv.scrollHeight;
+                    }
+                    break;
+
+                case 'assistant_response':
+                    if (streamingMessageDiv) streamingMessageDiv.remove();
+                    const oldLiveThinking = document.getElementById('live-thinking-stream');
+                    if (oldLiveThinking) oldLiveThinking.remove();
+                    hideThinkingIndicator();
+                    {
+                        const responseDiv = document.createElement('div');
+                        responseDiv.className = 'response-card done';
+                        responseDiv.innerHTML = `
+                            <div class="response-card-body">
+                                ${message.reasoning ?`
+                                <div class="thinking-stream">
+                                    <div class="thinking-stream-label">Thinking</div>
+                                    <div class="thinking-stream-text">${formatResponseText(message.reasoning)}</div>
+                                </div>` : ''}
+                                <div class="response-text-section">
+                                    <div class="response-text">${formatResponseText(message.content)}</div>
+                                </div>
+                            </div>
+                        `;
+                        messagesDiv.appendChild(responseDiv);
                         messagesDiv.scrollTop = messagesDiv.scrollHeight;
                     }
                     break;
@@ -981,7 +1032,7 @@
                     console.log('[WebView] Response received:', message.response?.text?.length, 'chars, toolCards:', message.response?.toolCards?.length || 0);
                     
                     // Add final response text after the tools (don't rebuild tool cards)
-                    if (message.response && message.response.text) {
+                    if (message.response) {
                         const responseDiv = document.createElement('div');
                         responseDiv.className = 'agent-output-card';
                         responseDiv.innerHTML = `
@@ -995,9 +1046,13 @@
                                 </div>
                             </div>
                             <div class="output-card-content">
-                                <div class="response-text-section">
+                                ${message.response.reasoning ?`<div class="thinking-stream">
+                                    <div class="thinking-stream-label">Thinking</div>
+                                    <div class="thinking-stream-text">${formatResponseText(message.response.reasoning)}</div>
+                                </div>` : ''}
+                                ${message.response.text ?`<div class="response-text-section">
                                     <div class="response-text">${formatResponseText(message.response.text)}</div>
-                                </div>
+                                </div>` : ''}
                             </div>
                             <div class="output-card-footer">
                                 <div class="footer-meta">

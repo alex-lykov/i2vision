@@ -20,6 +20,7 @@ export interface ChatMessage {
     args: Record<string, any>;
     result?: string;
   }[];
+  reasoning?: string;
   timestamp: number;
 }
 

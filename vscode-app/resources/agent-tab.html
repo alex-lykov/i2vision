@@ -502,6 +502,7 @@
         case 'streaming_text': appendStreamingText(message.text); break;
         case 'assistant_response':
           if (!streamingElement && message.content) appendStreamingText(message.content);
+          if (message.reasoning) appendReasoningCard(message.reasoning);
           finalizeStreamingText(message.durationMs);
           setProcessingState(false);
           break;

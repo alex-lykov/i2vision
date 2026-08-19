@@ -351,6 +351,7 @@ export class AgentTabManager {
     const settings = this.settingsManager.getSettings();
     const streamingEnabled = settings.streaming.enabled;
     const showThinking = settings.streaming.showThinkingIndicator;
+    let accumulatedReasoning = '';
     const userMessage: ChatMessage = { role: 'user', content: userInput, timestamp: Date.now() };
     // Capture prior turns before appending the current input. processStreaming
     // injects the live userInput itself, so passing the full history would
@@ -395,6 +396,7 @@ export class AgentTabManager {
         switch (chunk.type) {
           case 'reasoning':
             this.sendToWebview({ command: 'reasoning', reasoning: chunk.reasoning, timestamp: chunk.timestamp });
+            accumulatedReasoning += chunk.reasoning;
             break;
           case 'tool_call_started':
             this.sendToWebview({ command: 'tool_start', toolName: chunk.toolName, args: chunk.args, timestamp: chunk.timestamp });
@@ -467,12 +469,13 @@ export class AgentTabManager {
             break;
           case 'thinking':
             this.sendToWebview({ command: 'thinking', message: chunk.message, timestamp: chunk.timestamp });
+            accumulatedReasoning += chunk.message;
             break;
         }
       }
       if (!this.cancelTokenSource?.token.isCancellationRequested && !hasAgentError) {
         const cleanedResponse = this.cleanResponseText(responseText);
-        const assistantMessage: ChatMessage = { role: 'assistant', content: cleanedResponse, toolCalls: tabState.accumulatedToolCalls.map(tc => ({ toolName: tc.toolName, args: tc.args, result: tc.result })), timestamp: Date.now() };
+        const assistantMessage: ChatMessage = { role: 'assistant', content: cleanedResponse, reasoning: accumulatedReasoning.trim() || undefined, toolCalls: tabState.accumulatedToolCalls.map(tc => ({ toolName: tc.toolName, args: tc.args, result: tc.result })), timestamp: Date.now() };
         tabState.history.push(assistantMessage);
       this.saveActiveTab(); // Persist immediately after each assistant response
         
@@ -483,7 +486,7 @@ export class AgentTabManager {
         await this.historyManager.save(this.activeTabId!, tabState.history, tabState.layer, tabState.sessionState);
       }
         const durationMs = Date.now() - startTime;
-        this.sendToWebview({ command: 'assistant_response', content: cleanedResponse, durationMs, timestamp: Date.now() });
+        this.sendToWebview({ command: 'assistant_response', content: cleanedResponse, reasoning: accumulatedReasoning.trim() || undefined, durationMs, timestamp: Date.now() });
         this.log('Complete: ' + tabState.accumulatedToolCalls.length + ' tools, ' + (Date.now() - tabState.lastActivityAt) + 'ms');
       }
     } catch (error: any) {

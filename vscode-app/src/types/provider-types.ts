@@ -161,7 +161,7 @@ export function getProviderCapabilities(provider: string): LLMProviderCapabiliti
       };
     case 'deepseek':
       return {
-        streaming: false,
+        streaming: true,
         nativeToolCalls: false,
         structuredMessages: false,
         sessionManagement: false,

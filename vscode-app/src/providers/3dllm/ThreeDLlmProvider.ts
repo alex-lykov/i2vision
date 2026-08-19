@@ -43,7 +43,7 @@ export class ThreeDLlmProvider implements LLMProvider {
   getCapabilities(): LLMProviderCapabilities {
     return {
       streaming: true,
-      nativeToolCalls: false,  // Proxy prompt-emulates tools; inject into system prompt
+      nativeToolCalls: true,  // Proxy prompt-emulates tools; inject into system prompt
       structuredMessages: true,
       sessionManagement: true, // proxy sessions via /v1/sessions
       contextCompaction: true, // POST /reset-session + compactMessages()
@@ -60,7 +60,7 @@ export class ThreeDLlmProvider implements LLMProvider {
     }
   }
 
-  async callAPI(request: LLMRequest): Promise<LLMResponse> {
+  async callAPI(request: LLMRequest): Promise<LLMResponse | AsyncGenerator<any>> {
     const model = request.model || this.defaultModel;
     const callId = `call_${Date.now().toString(36)}_${Math.random().toString(36).substr(2, 6)}`;
     this.log(`[3D LLM] callAPI START id=${callId} model=${model}`);
@@ -185,8 +185,10 @@ export class ThreeDLlmProvider implements LLMProvider {
         let accumulatedReasoning = '';
 
         if (useStream && response.body) {
+          return this.stream3DLlmResponseAsync(response, Date.now(), timeoutHandle) as any;
+        } else if (false) {
           // Handle SSE streaming response
-          const reader = response.body.getReader();
+          const reader = response.body!.getReader();
           const decoder = new TextDecoder('utf-8');
           let buffer = '';
           let accumulatedText = '';
@@ -356,6 +358,110 @@ export class ThreeDLlmProvider implements LLMProvider {
       '3D LLM',
       context
     );
+  }
+
+  private async *stream3DLlmResponseAsync(res: Response, startTime: number, timeoutHandle?: any): AsyncGenerator<any> {
+    if (!res.body) {
+      throw new Error('3D LLM streaming response body is not readable');
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let fullContent = '';
+    let fullReasoning = '';
+    let usage: any = undefined;
+    let done = false;
+
+    try {
+      while (!done) {
+        const { value, done: readerDone } = await reader.read();
+        if (readerDone) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          const payload = trimmed.slice(5).trim();
+          if (!payload || payload === '[DONE]') {
+            done = true;
+            break;
+          }
+          try {
+            const chunk = JSON.parse(payload);
+            const delta = chunk.choices?.[0]?.delta;
+            const content = delta?.content || '';
+            const reasoning = delta?.reasoning_content || '';
+            if (content) {
+              fullContent += content;
+              yield { text: content, done: false };
+            }
+            if (reasoning) fullReasoning += reasoning;
+            if (chunk.usage) {
+              usage = {
+                promptTokens: chunk.usage.prompt_tokens || 0,
+                completionTokens: chunk.usage.completion_tokens || 0,
+                totalTokens: chunk.usage.total_tokens || 0
+              };
+            }
+          } catch (e) {
+            // ignore malformed SSE line
+          }
+        }
+      }
+
+      // flush remaining buffer
+      const finalLine = buffer.trim();
+      if (finalLine.startsWith('data:')) {
+        const payload = finalLine.slice(5).trim();
+        if (payload && payload !== '[DONE]') {
+          try {
+            const chunk = JSON.parse(payload);
+            const delta = chunk.choices?.[0]?.delta;
+            if (delta?.content) {
+              fullContent += delta.content;
+              yield { text: delta.content, done: false };
+            }
+            if (delta?.reasoning_content) fullReasoning += delta.reasoning_content;
+            if (chunk.usage) {
+              usage = {
+                promptTokens: chunk.usage.prompt_tokens || 0,
+                completionTokens: chunk.usage.completion_tokens || 0,
+                totalTokens: chunk.usage.total_tokens || 0
+              };
+            }
+          } catch (e) {}
+        }
+      }
+
+      // Extract tool calls from the accumulated content
+      const extractedToolCalls = this.extractToolCallsFromText(fullContent);
+      
+      // Debug logging for streaming tool call extraction
+      this.log(`[3D LLM STREAMING] Full content length: ${fullContent.length}`);
+      this.log(`[3D LLM STREAMING] Full content preview: ${fullContent.substring(0, 200)}...`);
+      this.log(`[3D LLM STREAMING] Extracted tool calls: ${extractedToolCalls.length}`);
+      if (extractedToolCalls.length > 0) {
+        this.log(`[3D LLM STREAMING] Tool calls: ${JSON.stringify(extractedToolCalls)}`);
+      }
+
+      yield {
+        text: '',
+        reasoning: fullReasoning || undefined,
+        model: '',
+        provider: '3dllm',
+        toolCalls: extractedToolCalls,
+        tokenUsage: usage,
+        done: true
+      };
+    } finally {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+      reader.releaseLock();
+    }
   }
 
   // ---- Timeout error helper ----

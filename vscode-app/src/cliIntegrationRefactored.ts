@@ -402,6 +402,17 @@ export class CLI {
         tools: tools
       });
 
+      // Streaming providers (e.g. 3d-llm) return an AsyncGenerator of chunks
+      // directly from callAPI. Pass it through untouched — wrapping it via
+      // convertProviderResponseToLLMResponse would read .text/.tool_calls off an
+      // async iterable (both undefined), producing an empty response and
+      // dropping every tool call. The caller owns accumulation/extraction.
+      const isStreamGenerator = result && typeof (result as any)[Symbol.asyncIterator] === 'function';
+      if (isStreamGenerator) {
+        this.log(`[LLM SUCCESS] Streaming generator received in ${Date.now() - startTime}ms`);
+        return result as AsyncGenerator<LLMChunk>;
+      }
+
       const elapsed = Date.now() - startTime;
       const rawTextLen = (result as any).text?.length || 0;
       const toolCallsLen = (result as any).tool_calls?.length || 0;

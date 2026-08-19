@@ -1,0 +1,74 @@
+title Architecture Detection Flow
+
+participant "Discovery Pipeline" as Pipeline
+participant "ArchitectureDetector" as Detector
+participant "Module Analyzer" as Module
+
+note over Pipeline, Detector: === Phase 1: Module Discovery ===
+
+Pipeline->Detector: detectStack()
+activate Detector
+
+Detector->Detector: Check settings.gradle.kts
+Detector->Detector: Check pom.xml
+Detector->Detector: Parse module declarations
+
+alt Gradle multi-module found
+    Detector->Detector: Extract module names from settings.gradle
+    note right of Detector: Gradle modules:\n- core:orchestrator\n- core:session\n- launcher\n- etc.
+else Maven multi-module found
+    Detector->Detector: Extract module names from pom.xml
+    note right of Detector: Maven modules:\n- module1\n- module2\n- module3
+else Single module
+    Detector->Detector: Treat as single module project
+    note right of Detector: Single module:\n- root module
+end
+
+loop For each module
+    Detector->Module: analyzeModule(modulePath, moduleName)
+    activate Module
+    Module->Module: Detect primary language
+    Module->Module: Detect frameworks (Spring Boot, Ktor, React, etc.)
+    Module->Module: Detect platforms (Backend, Frontend, CLI, etc.)
+    Module-->Detector: Module(name, language, frameworks, platforms)
+    deactivate Module
+end
+
+Detector-->Pipeline: List<Module>
+
+note over Pipeline, Detector: === Phase 2: Technology Stack Aggregation ===
+
+Detector->Detector: Aggregate languages from all modules
+Detector->Detector: Determine primary language (most common)
+Detector->Detector: Collect secondary languages
+Detector->Detector: Aggregate frameworks (distinct across modules)
+Detector->Detector: Aggregate platforms (distinct across modules)
+Detector->Detector: Detect architecture patterns (based on modules)
+Detector->Detector: Build entry point patterns
+Detector->Detector: Calculate overall confidence (0.0 - 1.0)
+Detector->Detector: Collect detection indicators
+
+note right of Detector: TechnologyStack:\n  primaryLanguage\n  secondaryLanguages\n  frameworks\n  platforms\n  patterns\n  modules\n  entryPointPatterns\n  confidence\n  indicators
+
+Detector->Detector: TechnologyStack(\n  primaryLanguage,\n  secondaryLanguages,\n  frameworks,\n  platforms,\n  patterns,\n  modules,\n  entryPointPatterns,\n  confidence,\n  indicators\n)
+Detector-->Pipeline: TechnologyStack
+deactivate Detector
+
+note over Pipeline, Detector: === Phase 3: Pattern Detection ===
+
+Pipeline->Pipeline: Analyze module structure
+Pipeline->Pipeline: Check for multiple modules with independence
+Pipeline->Pipeline: Assess module dependencies
+Pipeline->Pipeline: Evaluate cluster count
+
+alt Single module
+    Pipeline->Pipeline: MONOLITH pattern
+else Multiple independent modules
+    Pipeline->Pipeline: MICROSERVICES pattern
+else Multiple dependent modules
+    Pipeline->Pipeline: MODULAR_MONOLITH pattern
+end
+
+Pipeline->Pipeline: Generate architecture-detection.yaml
+Pipeline->Pipeline: Save to semantic cache
+Pipeline-->Pipeline: Architecture detection complete

@@ -1,61 +1,83 @@
-# VSCode Extension Documentation
+# i2vision Documentation
 
-## Guides
+Welcome to the i2vision documentation, organized using the Diátaxis framework.
 
-- [**Extension Structure**](structure.md) - Directory layout and key files
-- [**Agent Tool Calling Test**](agent-tool-calling-test.md) - How to test agent tool calls
-- [**apply_edits Tool**](apply-edits-tool.md) - Modern structured editing with retry logic
-- [**Fix Mode**](fix_mode_implementation.md) - Build failure auto-fix workflow
+## Core Concepts
 
-## Architecture
+Understanding the fundamental concepts behind i2vision:
 
-- **AgentBridge**: Core agent integration with loop detection, fix mode, and streaming
-- **AgentTabManager**: Webview UI for agent interactions
-- **CLI Integration**: Tool execution via command-line interface
-- **File System Provider**: Virtual file system for agent tabs
+- [VSLFC Layers](concepts/vslfc-layers.md) - Five-layer contract system (Vision, Structure, Logic, Flow, Code)
+- [Documentation Contracts](concepts/contracts.md) - Bidirectional validation between definitions and artifacts
 
-## Key Features
+## How-To Guides
 
-### Agent Loop
-- **Max Iterations**: 10 iterations per task
-- **Loop Detection**: Tracks repeated tool calls, nudges LLM to try different approaches
-- **Plan Detection**: Identifies when LLM describes plans instead of executing tools
-- **Force Completion**: Stops after 4+ repeated tool calls
+Step-by-step guides for specific tasks:
 
-### Tool Calling
-- **7 Tools**: read_file, write_file, apply_edits, list_directory, search_files, run_terminal, run_build
-- **Tool Result Linking**: Uses `tool_call_id` for proper OpenAI/Ollama compatibility
-- **Blocked Commands**: Prevents long-running servers (npm run dev, gradlew run, etc.)
-- **Path Resolution**: Workspace-aware relative path handling
+### LLM Providers & Configuration
 
-### Fix Mode (Auto-Fix Workflow)
-- **Immediate Activation**: Activates on first build failure
-- **Edit-Only Tools**: Filters to 4 tools (apply_edits, read_file, write_file, get_file_context)
-- **Auto-Read**: Automatically reads all failing files before LLM acts
-- **Retry Logic**: Failed edits retry up to 3 times before skipping the file
-- **Guided Rebuild**: Auto-nudge suggests when to re-run the build
+- [Ollama Integration](guides/ollama-integration.md) - **Primary provider** (local + cloud models)
+- [DeepSeek Integration](guides/deepseek-integration.md) - Direct DeepSeek API (advanced)
+- [VSCode Provider Selection](guides/vscode-provider-model-selection.md) - VSCode extension UI guide
 
-### Streaming
-- **Real-Time Progress**: Shows tool calls as they execute
-- **Chunk-Based**: Streams text and tool events separately
-- **Fallback Support**: Falls back to non-streaming if needed
+### MCP & Tools
 
-### Safety
-- **Path Validation**: Blocks paths outside workspace
-- **Extension Isolation**: workspaceRoot ≠ extensionRoot enforced
-- **Command Blocking**: Long-running servers blocked
-- **Error Handling**: DIRECTORY_NOT_FOUND, FILE_NOT_FOUND handled gracefully
+- [MCP Tools](guides/mcp-tools.md) - Model Context Protocol toolset reference
+- [MCP Integration](guides/mcp-integration.md) - Claude Desktop, Cursor setup
+- [Custom Tools](guides/custom-tools.md) - Creating custom MCP tools
 
-## Configuration
+### Deployment & Configuration
 
-Agents are configured in `.vscode/i2vision/agents/*.yaml`. See main docs for configuration reference.
+- [Deployment](guides/deployment.md) - Deployment guide
+- [Presets](guides/presets.md) - Discovery preset configuration
+- [Context Management](guides/context-management.md) - YAML context profile configuration
+- [Agent Implementation](guides/agent-implementation.md) - Agent framework guide
 
-## Development
+## Reference
 
-See [structure.md](structure.md) for development workflow and packaging instructions.
+Technical reference material:
 
-## Related Documentation
+- [API Reference](reference/api.md) - HTTP endpoints and interfaces
+- [Strategies](reference/strategies.md) - Discovery strategy definitions
 
-- [Main Project Documentation](../../docs/README.md)
-- [Agent Implementation Guide](../../docs/guides/agent-implementation.md)
-- [Architecture Decisions](../../docs/adr/)
+## Diagrams
+
+Visual documentation (click to view in browser):
+
+- **[Architecture Detection Flow](diagrams/links/architecture-detection-flow.md)** - Build system, cluster, and pattern detection
+- **[CLI Flow](diagrams/links/cli-flow.md)** - Command parsing and execution
+- **[Cluster-Based Discovery](diagrams/links/cluster-based-discovery.md)** - Multi-cluster discovery pipeline
+- **[Contract Lifecycle](diagrams/links/contract-lifecycle.md)** - Contract definition and validation flow
+- **[Discovery Flow](diagrams/links/discovery-flow.md)** - Unified framework discovery pipeline
+- **[Full Project Discovery](diagrams/links/full-project-discovery-flow.md)** - End-to-end discovery with architecture detection
+- **[Incremental Sync Flow](diagrams/links/incremental-sync-flow.md)** - File change detection and targeted rediscovery
+- **[Instant Context Flow](diagrams/links/instant-context-flow.md)** - Task-aware context optimization
+- **[MCP Server Flow](diagrams/links/mcp-server-flow.md)** - MCP tool registration and execution
+- **[Parallel Discovery Concurrency](diagrams/links/parallel-discovery-concurrency.md)** - Concurrent cluster processing techniques
+- **[Quality Metrics Flow](diagrams/links/quality-metrics-flow.md)** - Cohesion, coupling, and complexity analysis
+
+## Module Documentation
+
+Individual module documentation:
+
+- [architecture-types](../architecture-types/) - Multi-dimensional architecture detection
+- [vslfc-core](../vslfc-core/) - VSLFC data models and contracts
+- [i2vision-architecture](../i2vision-architecture/) - Architecture detection engine
+- [llm-client](../llm-client/) - Unified LLM client abstraction
+- [conf-agent-core](../conf-agent-core/) - YAML-configurable agent framework
+- [storage-core](../storage-core/) - Storage abstraction layer
+- [intent-parser](../intent-parser/) - Intent resolution engine
+- [discovery-api](../discovery-api/) - Discovery interfaces
+- [i2vision-discover](../i2vision-discover/) - Discovery pipeline implementation
+- [i2vision-cli](../i2vision-cli/) - Command-line interface
+- [i2vision-instant](../i2vision-instant/) - Instant context API
+- [i2vision-mcp](../i2vision-mcp/) - MCP server implementation
+
+---
+
+## Internal Documentation
+
+Developer-facing documentation is located in [`../dev-docs/`](../dev-docs/):
+
+- Test plans
+- Cleanup documentation
+- Refactoring strategies

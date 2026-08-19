@@ -1,0 +1,77 @@
+title Parallel Discovery Concurrency Techniques
+
+participant "SelfDiscoveryTest" as Test
+participant "CoroutineScope" as Scope
+participant "DiscoveryPipeline" as Pipeline
+participant "ArtifactWriter" as Writer
+participant "CacheStore" as Cache
+participant "Cluster Locks" as Locks
+
+note over Test, Locks: === Initialization Phase ===
+
+Test->Pipeline: Initialize discovery
+Pipeline->Pipeline: Load shared discovery context\n(architecture, symbols, files)
+Pipeline-->Test: Context loaded
+
+note over Test, Locks: === Parallel Cluster Discovery ===
+
+Test->Scope: Create CoroutineScope
+Scope->Scope: Launch parallel jobs for each cluster
+
+loop For each cluster
+    Scope->Pipeline: discover(clusterId, depth, contracts)
+    activate Pipeline
+    
+    Pipeline->Pipeline: Extract source files
+    Pipeline->Pipeline: Build components
+    
+    Pipeline->Writer: writeArtifacts(clusterId, flows, rules, components)
+    activate Writer
+    
+    Writer->Locks: getClusterLock(clusterId)
+    Locks-->Writer: Mutex for cluster
+    
+    note right of Writer: Cluster-level lock prevents\nconcurrent writes to same cluster
+    Writer->Writer: withLock(mutex) {
+        Writer->Cache: writeFlow(flow1)
+        Cache-->Writer: Success
+        Writer->Cache: writeFlow(flow2)
+        Cache-->Writer: Success
+        Writer->Cache: writeBusinessRule(rule1)
+        Cache-->Writer: Success
+        Writer->Cache: writeComponent(component1)
+        Cache-->Writer: Success
+    }
+    
+    Writer->Locks: Release cluster lock
+    Writer-->Pipeline: Artifact references
+    deactivate Writer
+    
+    Pipeline->Pipeline: Collect cluster links\n(in memory buffer)
+    note right of Pipeline: Links buffered in memory\nprevents concurrent file corruption
+    
+    Pipeline-->Scope: PipelineResult
+    deactivate Pipeline
+end
+
+note over Test, Locks: === Completion Phase ===
+
+Scope->Scope: awaitAll() - wait for all clusters
+Scope-->Test: All cluster results
+
+Test->Pipeline: flushLinks()
+activate Pipeline
+Pipeline->Pipeline: Merge all buffered links
+Pipeline->Pipeline: Write links.yaml in single operation
+Pipeline-->Test: Links saved
+deactivate Pipeline
+
+note over Test, Locks: === Concurrency Safety Summary ===
+
+note right of Locks: **Cluster-Level Locking**\n- Each cluster has its own Mutex\n- Prevents concurrent writes to same cluster\n- Allows parallel writes to different clusters
+
+note right of Pipeline: **In-Memory Link Buffering**\n- Links buffered in memory during discovery\n- Single disk write at end\n- Eliminates concurrent file corruption
+
+note right of Pipeline: **Shared Immutable Context**\n- Architecture detected once at start\n- Shared across all clusters\n- No concurrent modification
+
+note right of Test: **Parallel Coroutine Execution**\n- Each cluster runs in separate coroutine\n- 82% performance improvement\n- 4m 41s vs 26m 51s

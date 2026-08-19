@@ -1,52 +1,52 @@
-﻿# VSCode Extension Structure
+# VSCode Extension Structure
 
 ## Directory Layout
 
 ```
 vscode-app/
-├── src/                          # Source code
-│   ├── extension.ts              # Extension entry point
-│   ├── cliIntegration.ts         # CLI wrapper for agent tools
-│   ├── fileSystemIntegration.ts  # VSCode FileSystemProvider
-│   ├── treeViewProvider.ts       # Sidebar tree view
-│   ├── agent/                    # Agent-related code
-│   │   ├── AgentBridge.ts        # Bridge between VSCode and agent core (hub)
-│   │   ├── AgentBridge.CommandExecutor.ts    # Command validation, build/terminal/Git execution
-│   │   ├── AgentBridge.Diagnostics.ts       # Diagnostics logging and structured data
-│   │   ├── AgentBridge.LegacyTools.ts       # Legacy tool wrappers and name mapping
-│   │   ├── AgentBridge.LLMAdapter.ts        # Provider capability detection and model config
-│   │   ├── AgentBridge.SearchCache.ts       # TTL-based search result caching
-│   │   ├── AgentBridge.SessionManagerBridge.ts  # Session error classification
-│   │   ├── AgentBridge.ToolPipeline.ts      # Tool execution, retry, rate-limit, stats
-│   │   └── AgentTabManager.ts    # Manages agent tab UI
-│   ├── bridge/                   # Integration bridges
-│   │   └── UniversalBridge.ts    # Cross-module communication
-│   └── test/                     # Test files
-│       └── extension.test.ts
-│
-├── .vscode/                      # VSCode configuration
-│   ├── launch.json               # Debug configurations
-│   ├── settings.json             # Workspace settings
-│   ├── tasks.json                # Build tasks
-│   └── i2vision/                 # Extension-specific config
-│       └── agents/               # Agent YAML configurations
-│           ├── coding-agent.yaml
-│           ├── logic-agent.yaml
-│           ├── flow-agent.yaml
-│           ├── structure-agent.yaml
-│           └── vision-agent.yaml
-│
-├── resources/                    # Static resources (icons, images)
-├── scripts/                      # Build and utility scripts
-│   └── copy-resources.js         # Resource copying script
-│
-├── package.json                  # Extension manifest
-├── tsconfig.json                 # TypeScript configuration
-├── .gitignore                    # Git ignore rules
-├── .vscodeignore                 # VSCE packaging ignore
-├── LICENSE                       # License file
-├── README.md                     # User-facing documentation
-└── CHANGELOG.md                  # Version history
++-- src/                          # Source code
+�   +-- extension.ts              # Extension entry point
+�   +-- cliIntegration.ts         # CLI wrapper for agent tools
+�   +-- fileSystemIntegration.ts  # VSCode FileSystemProvider
+�   +-- treeViewProvider.ts       # Sidebar tree view
+�   +-- agent/                    # Agent-related code
+�   �   +-- AgentBridge.ts        # Bridge between VSCode and agent core (hub)
+�   �   +-- AgentBridge.CommandExecutor.ts    # Command validation, build/terminal/Git execution
+�   �   +-- AgentBridge.Diagnostics.ts       # Diagnostics logging and structured data
+�   �   +-- AgentBridge.LegacyTools.ts       # Legacy tool wrappers and name mapping
+�   �   +-- AgentBridge.LLMAdapter.ts        # Provider capability detection and model config
+�   �   +-- AgentBridge.SearchCache.ts       # TTL-based search result caching
+�   �   +-- AgentBridge.SessionManagerBridge.ts  # Session error classification
+�   �   +-- AgentBridge.ToolPipeline.ts      # Tool execution, retry, rate-limit, stats
+�   �   +-- AgentTabManager.ts    # Manages agent tab UI
+�   +-- bridge/                   # Integration bridges
+�   �   +-- UniversalBridge.ts    # Cross-module communication
+�   +-- test/                     # Test files
+�       +-- extension.test.ts
+�
++-- .vscode/                      # VSCode configuration
+�   +-- launch.json               # Debug configurations
+�   +-- settings.json             # Workspace settings
+�   +-- tasks.json                # Build tasks
+�   +-- i2vision/                 # Extension-specific config
+�       +-- agents/               # Agent YAML configurations
+�           +-- coding-agent.yaml
+�           +-- logic-agent.yaml
+�           +-- flow-agent.yaml
+�           +-- structure-agent.yaml
+�           +-- vision-agent.yaml
+�
++-- resources/                    # Static resources (icons, images)
++-- scripts/                      # Build and utility scripts
+�   +-- copy-resources.js         # Resource copying script
+�
++-- package.json                  # Extension manifest
++-- tsconfig.json                 # TypeScript configuration
++-- .gitignore                    # Git ignore rules
++-- .vscodeignore                 # VSCE packaging ignore
++-- LICENSE                       # License file
++-- README.md                     # User-facing documentation
++-- CHANGELOG.md                  # Version history
 ```
 
 ## Key Files
@@ -132,6 +132,7 @@ code --install-extension i2-vision-vscode-1.0.0.vsix
 
 ## Related Documentation
 
-- [Main Documentation](../../docs/README.md)
-- [Agent Implementation Guide](../../docs/guides/agent-implementation.md)
-- [Agent Configuration Reference](../../docs/reference/agent-config.md)
+- [Main Documentation](../vscode-app/docs/README.md)
+- [Agent Implementation Guide](../vscode-app/docs/guides/agent-implementation.md)
+- [Agent Configuration Reference](../vscode-app/docs/reference/agent-config.md)
+

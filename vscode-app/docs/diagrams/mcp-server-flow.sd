@@ -1,0 +1,145 @@
+title MCP Server Flow
+
+participant "MCP Client" as Client
+participant "MCP Server" as Server
+participant "JSON-RPC Handler" as RPC
+participant "Tool Registry" as Registry
+participant "Discovery Tool" as Discovery
+participant "Context Tool" as Context
+participant "Contract Tool" as Contract
+participant "Quality Tool" as Quality
+participant "Discovery Pipeline" as Pipeline
+participant "Semantic Cache" as Cache
+
+note over Client, Cache: === Server Initialization ===
+
+Client->Server: Connect (stdio or HTTP)
+activate Server
+Server->Registry: Register tools
+Registry->Registry: Load 30+ tools
+note right of Registry: Tools:\n- discover_project\n- get_instant_context\n- get_quality_metrics\n- validate_contract\n- suggest_refactoring\n- get_related_files
+Registry-->Server: Tool registry ready
+Server-->Client: Server initialized
+
+note over Client, Cache: === Tool Discovery ===
+
+Client->Server: tools/list
+Server->Registry: Get all tools
+Registry-->Server: Tool list
+Server->RPC: Format JSON-RPC response
+RPC-->Server: Formatted response
+Server-->Client: tools/list response
+
+note over Client, Cache: === Tool Execution: discover_project ===
+
+Client->Server: tools/call\n{method: "discover_project",\n params: {projectRoot, intent}}
+Server->RPC: Parse JSON-RPC request
+RPC->Registry: Get tool handler for "discover_project"
+Registry-->RPC: Discovery tool handler
+RPC->Discovery: Execute discovery
+activate Discovery
+
+Discovery->Discovery: Parse parameters
+Discovery->Pipeline: Execute discovery pipeline
+activate Pipeline
+
+Pipeline->Pipeline: Architecture detection
+Pipeline->Pipeline: Cluster detection
+Pipeline->Pipeline: VSLFC discovery (parallel)
+Pipeline->Cache: Store artifacts
+Cache-->Pipeline: Success
+Pipeline-->Discovery: Discovery results
+deactivate Pipeline
+
+Discovery->Discovery: Format results
+Discovery-->RPC: Tool result
+deactivate Discovery
+RPC->RPC: Format JSON-RPC response
+RPC-->Server: Formatted response
+Server-->Client: tools/call response
+
+note over Client, Cache: === Tool Execution: get_instant_context ===
+
+Client->Server: tools/call\n{method: "get_instant_context",\n params: {filePath, task}}
+Server->RPC: Parse JSON-RPC request
+RPC->Registry: Get tool handler for "get_instant_context"
+Registry-->RPC: Context tool handler
+RPC->Context: Execute context retrieval
+activate Context
+
+Context->Context: Parse parameters
+Context->Context: Analyze file/directory
+Context->Cache: Query semantic cache
+Cache-->Context: Cached artifacts
+Context->Context: Generate context
+Context->Context: Apply task-aware optimization
+Context-->RPC: Context result
+deactivate Context
+RPC->RPC: Format JSON-RPC response
+RPC-->Server: Formatted response
+Server-->Client: tools/call response
+
+note over Client, Cache: === Tool Execution: get_quality_metrics ===
+
+Client->Server: tools/call\n{method: "get_quality_metrics",\n params: {module}}
+Server->RPC: Parse JSON-RPC request
+RPC->Registry: Get tool handler for "get_quality_metrics"
+Registry-->RPC: Quality tool handler
+RPC->Quality: Execute quality analysis
+activate Quality
+
+Quality->Quality: Parse parameters
+Quality->Cache: Query semantic cache
+Cache-->Quality: Artifacts
+Quality->Quality: Calculate cohesion
+Quality->Quality: Calculate coupling
+Quality->Quality: Calculate complexity
+Quality->Quality: Detect code smells
+Quality-->RPC: Quality metrics
+deactivate Quality
+RPC->RPC: Format JSON-RPC response
+RPC-->Server: Formatted response
+Server-->Client: tools/call response
+
+note over Client, Cache: === Tool Execution: validate_contract ===
+
+Client->Server: tools/call\n{method: "validate_contract",\n params: {layer, module}}
+Server->RPC: Parse JSON-RPC request
+RPC->Registry: Get tool handler for "validate_contract"
+Registry-->RPC: Contract tool handler
+RPC->Contract: Execute contract validation
+activate Contract
+
+Contract->Contract: Parse parameters
+Contract->Cache: Query contract registry
+Cache-->Contract: Registry data
+Contract->Contract: Validate contracts
+Contract->Contract: Check violations
+Contract->Contract: Identify gaps
+Contract-->RPC: Validation results
+deactivate Contract
+RPC->RPC: Format JSON-RPC response
+RPC-->Server: Formatted response
+Server-->Client: tools/call response
+
+note over Client, Cache: === Error Handling ===
+
+alt Tool execution fails
+    RPC->RPC: Catch exception
+    RPC->RPC: Format error response
+    note right of RPC: JSON-RPC error:\n- code: -32603\n- message: "Tool execution failed"\n- data: error details
+    Server-->Client: tools/call error response
+else Invalid request
+    RPC->RPC: Validate request
+    RPC->RPC: Format error response
+    note right of RPC: JSON-RPC error:\n- code: -32600\n- message: "Invalid request"\n- data: validation errors
+    Server-->Client: tools/call error response
+end
+
+note over Client, Cache: === Server Shutdown ===
+
+Client->Server: Close connection
+Server->Server: Cleanup resources
+Server->Registry: Unregister tools
+Server-->Client: Connection closed
+deactivate Server

@@ -19,6 +19,8 @@
 import { CLI, LLMMessage, LLMResponse, LLMTool } from '../cliIntegrationRefactored';
 import { LLMProviderCapabilities } from '../types/provider-types';
 import { Diagnostics } from './AgentBridge.Diagnostics';
+import {assemblePrompt} from './prompt/PromptAssembler';
+import {PromptContext} from './prompt/PromptPart';
 
 export interface LLMAdapterConfig {
   modelId: string;
@@ -33,6 +35,10 @@ export interface LLMAdapterConfig {
   timeoutSeconds?: number;
   /** Per-conversation session identifier (e.g. 3D LLM proxy sticky-session key). */
   user?: string;
+  /** Layered prompt parts. These are sent once / on change, not repeated per turn. */
+  systemPromptTemplate?: string;
+  systemPromptRules?: { rules: string[] };
+  projectContext?: string;
 }
 
 export class LLMAdapter {
@@ -83,7 +89,8 @@ export class LLMAdapter {
   // --- LLM Call ---
 
   async callLLM(config: LLMAdapterConfig, messages: LLMMessage[], tools: LLMTool[]): Promise<LLMResponse> {
-    const result = await this.cli.callLLM(config.modelId, messages, {
+    const preparedMessages = this.prepareMessages(config, messages, tools);
+    const result = await this.cli.callLLM(config.modelId, preparedMessages, {
       temperature: config.temperature,
       top_p: config.topP,
       max_tokens: config.maxOutputTokens,
@@ -94,6 +101,51 @@ export class LLMAdapter {
     }, tools, false, config.provider);
     if (Symbol.asyncIterator in result) throw new Error('Expected non-streaming response but got streaming generator');
     return result as LLMResponse;
+  }
+
+  /**
+   * Assemble layered prompt parts once instead of re-sending every rule/tool catalog
+   * on every LLM request. Core rules go to system (or first user), context chunks go
+   * to the first user message, and tool protocol is sent only when tools are present.
+   */
+  private prepareMessages(config: LLMAdapterConfig, messages: LLMMessage[], tools: LLMTool[]): LLMMessage[] {
+    const coreRules = (config.systemPromptRules?.rules || []).join('\n');
+    const ctx: PromptContext = {
+      userPrompt: config.modelId,
+      projectContext: config.projectContext,
+      toolProtocol: this.formatToolsForSystemPrompt(tools),
+      coreRules: coreRules || config.systemPromptTemplate,
+      useSystemPrompt: true,
+      isFirstMessage: messages.length <= 1,
+      toolSetChanged: tools.length > 0,
+      domainChanged: false,
+      hasError: false,
+    };
+    const assembled = assemblePrompt(ctx);
+    const out: LLMMessage[] = [...messages];
+
+    // Only inject if not already present (send once, not every turn)
+    const systemText = assembled.system;
+    if (systemText && !out.some(m => m.role === 'system' && (m.content as string).includes(systemText))) {
+      const existingSystem = out.findIndex(m => m.role === 'system');
+      if (existingSystem >= 0) {
+        out[existingSystem] = { ...out[existingSystem], content: `${out[existingSystem].content}\n\n${systemText}` };
+      } else {
+        out.unshift({ role: 'system', content: systemText });
+      }
+    }
+
+    const firstUserText = assembled.firstUser;
+    if (firstUserText && !out.some(m => m.role === 'user' && (m.content as string).includes(firstUserText))) {
+      const firstUserIdx = out.findIndex(m => m.role === 'user');
+      if (firstUserIdx >= 0) {
+        out[firstUserIdx] = { ...out[firstUserIdx], content: `${firstUserText}\n\n${out[firstUserIdx].content}` };
+      } else {
+        out.push({ role: 'user', content: firstUserText });
+      }
+    }
+
+    return out;
   }
 
   // --- Token Estimation ---
@@ -176,6 +228,8 @@ export class LLMAdapter {
     let text = '--- AVAILABLE TOOLS ---\n';
     text += 'Call tools using raw JSON on a single line: {"name":"tool_name","arguments":{"param":"value"}}\n';
     text += 'Do not use markdown code blocks or XML tags.\n\n';
+    // Enforce strict JSON output: no raw newlines inside string values; escape them as \n.
+    text += 'NOTE: Do NOT include raw newline characters inside JSON string values; escape them as \\n.\n';
     text += 'Available tools:\n';
 
     for (const tool of tools) {

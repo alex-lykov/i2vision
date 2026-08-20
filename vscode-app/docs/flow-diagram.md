@@ -1,55 +1,78 @@
-# Tool‑Call Flow – Sequence Diagram
+# 3D LLM Tool-Call and Extraction Flow
 
-title Tool‑Call Flow (VS Code Extension)
+This diagram reflects the current implementation in `src/providers/3dllm/ThreeDLlmProvider.ts`.
+The old CLI-based extraction path (`cliIntegration.ts`) has been replaced by provider-level
+multi-strategy parsing.
 
-participant User
-participant VSCodeUI
-participant AgentBridge
-participant CLI
-participant Provider
-participant ToolPipeline
-participant ToolRegistry
-participant Tool
-participant Result
+```mermaid
+sequenceDiagram
+    participant User
+    participant VSCodeUI
+    participant AgentBridge
+    participant ProviderFactory
+    participant ThreeDLlmProvider
+    participant ProxySessionManager
+    participant ThreeDLLM as 3D LLM Proxy (FreeDeepseekAPI)
+    participant ToolPipeline
+    participant ToolRegistry
+    participant Tool
 
-note right of CLI: • If `tool_calls` is empty, raw `content` is parsed by `extractToolCallsFromText` (fallback parser).\n• All tool calls are normalized to the same shape.
+    User -> VSCodeUI: send prompt
+    VSCodeUI -> AgentBridge: runAgentLoop(userPrompt)
+    AgentBridge -> AgentBridge: dispatch state transitions / loop detection
 
-note right of ToolPipeline: • Handles rate‑limiting, retries, and execution stats.\n• May queue calls if concurrency limits are reached.
+    AgentBridge -> ProviderFactory: createProvider(modelId)
+    ProviderFactory --> AgentBridge: LLMProvider
 
+    AgentBridge -> ThreeDLlmProvider: callAPI(LLMRequest)
+    note right of ThreeDLlmProvider: request carries messages, tools,<br/>stream, thinking/search, user/session
 
-== User initiates a chat ==
-User -> VSCodeUI: type prompt & press Enter
-VSCodeUI -> AgentBridge: receiveUserInput(userInput)
+    ThreeDLlmProvider -> ThreeDLlmProvider: sanitizeMessages()
+    ThreeDLlmProvider -> ThreeDLLM: POST /v1/chat/completions (stream)
 
-== AgentBridge prepares request ==
-AgentBridge -> CLI: callLLM(messages, tools)
-CLI -> Provider: HTTP POST /chat/completions
-Provider -> Provider: generate response (may include tool_calls)
+    loop SSE stream
+        ThreeDLLM --> ThreeDLlmProvider: streamed chunk
+        ThreeDLlmProvider -> ThreeDLlmProvider: accumulate content / usage
+    end
 
-== Provider returns response ==
-Provider --> CLI: { content, tool_calls, usage }
+    alt HTTP OK
+        ThreeDLlmProvider -> ThreeDLlmProvider: processStreamResponse()
 
-== CLI handles response ==
-alt native tool_calls present
-CLI -> CLI: normalizeToolCalls(tool_calls)
-else
-CLI -> CLI: extractToolCallsFromText(content)
-CLI -> CLI: normalizeToolCalls(extracted)
-end
-CLI --> AgentBridge: LLMResponse { content, toolCalls }
+        alt native structured tool_calls present
+            ThreeDLlmProvider -> ThreeDLlmProvider: normalize native tool_calls
+        else text-based tool call
+            ThreeDLlmProvider -> ThreeDLlmProvider: run multi-strategy extraction (strategies 1..8)
+            ThreeDLlmProvider -> ThreeDLlmProvider: normalize extracted tool calls
+        end
 
-== AgentBridge processes tool calls ==
-AgentBridge -> ToolPipeline: executeToolCalls(toolCalls)
-ToolPipeline -> ToolRegistry: executeTool(tool)
-ToolRegistry -> Tool: invoke handler(arguments)
-Tool --> ToolRegistry: result (or error)
-ToolRegistry --> ToolPipeline: toolResult
-ToolPipeline --> AgentBridge: toolResults
+        ThreeDLlmProvider --> AgentBridge: LLMResponse { content, toolCalls }
+    else HTTP / network failure
+        ThreeDLlmProvider -> ThreeDLlmProvider: recordServerError() / classify error
+        ThreeDLlmProvider --> AgentBridge: error response
+    end
 
-== AgentBridge sends back to UI ==
-AgentBridge -> VSCodeUI: displayToolResults(toolResults)
-AgentBridge -> VSCodeUI: displayMessage(content)
+    alt toolCalls present
+        AgentBridge -> ToolPipeline: executeToolCalls(toolCalls)
+        ToolPipeline -> ToolRegistry: executeTool(tool)
+        ToolRegistry -> Tool: invoke handler(arguments)
+        Tool --> ToolRegistry: result (or error)
+        ToolRegistry --> ToolPipeline: toolResult
+        ToolPipeline --> AgentBridge: toolResults
 
-== Final UI update ==
-VSCodeUI -> User: show assistant reply & tool output
+        AgentBridge -> VSCodeUI: displayToolResults(toolResults)
+        note right of AgentBridge: if more tool rounds remain,<br/>AgentBridge loops back to callAPI
+    else no tool calls
+        AgentBridge -> VSCodeUI: displayMessage(content)
+    end
 
+    VSCodeUI -> User: show assistant reply and tool output
+```
+
+## Notes
+
+- `nativeToolCalls: true` for 3D LLM is prompt-emulated by the proxy; the provider
+  still runs text-based extraction as a fallback when structured `tool_calls` are absent.
+- The provider performs request sanitization before sending messages to the proxy.
+- Tool-call extraction supports inline JSON, XML tags, prose mentions, `Calling:`
+  blocks, and other legacy formats.
+- Timeout / abort and server-error cooldown are handled inside `ThreeDLlmProvider`.

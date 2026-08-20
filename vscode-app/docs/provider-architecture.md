@@ -305,7 +305,7 @@ Model ID patterns determine the provider:
 
 Because the 3D LLM proxy sometimes returns tool calls as raw text rather than
 native `tool_calls` in the API response, `ThreeDLlmProvider` has 8 strategies
-for extracting tools from text. These live in `extractToolCallsFromText()`:
+for extracting tools from text. These are inline parsing strategies in `ThreeDLlmProvider.callAPI()` / `processStreamResponse()`:
 
 1. **`<file_action>` XML** — DeepSeek v4-pro format
 2. **JSON in markdown code blocks** — ` ```json { "name": "..." } ``` `
@@ -317,6 +317,12 @@ for extracting tools from text. These live in `extractToolCallsFromText()`:
 8. **Prose-prefixed JSON** — `Executed: {"name":"run_terminal",...}`
 
 ## Current Limitations & Migration Path
+
+### Tool-Call Extraction Ownership
+
+- **Tool-call text extraction is currently a `ThreeDLlmProvider`-specific capability.**
+- **The shared/generic layer is only the `LLMProvider` interface + `ProviderFactory`.**
+- **Future work: extract text tool-call parsing into a reusable base provider or helper.**
 
 ### Stage 1 (completed): Provider-specific branches in AgentBridge
 

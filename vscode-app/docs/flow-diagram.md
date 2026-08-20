@@ -73,6 +73,7 @@ sequenceDiagram
 - `nativeToolCalls: true` for 3D LLM is prompt-emulated by the proxy; the provider
   still runs text-based extraction as a fallback when structured `tool_calls` are absent.
 - The provider performs request sanitization before sending messages to the proxy.
-- Tool-call extraction supports inline JSON, XML tags, prose mentions, `Calling:`
-  blocks, and other legacy formats.
+- Tool-call extraction now uses shared helpers in `src/providers/common/toolCalls.ts`:
+  native `tool_calls` normalization, canonical text fallback extraction, and tool-result compaction.
+  Legacy proxy-specific fallback remains for 3D LLM compatibility.
 - Timeout / abort and server-error cooldown are handled inside `ThreeDLlmProvider`.

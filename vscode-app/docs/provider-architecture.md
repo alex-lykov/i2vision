@@ -320,9 +320,10 @@ for extracting tools from text. These are inline parsing strategies in `ThreeDLl
 
 ### Tool-Call Extraction Ownership
 
-- **Tool-call text extraction is currently a `ThreeDLlmProvider`-specific capability.**
-- **The shared/generic layer is only the `LLMProvider` interface + `ProviderFactory`.**
-- **Future work: extract text tool-call parsing into a reusable base provider or helper.**
+- **Tool-call text extraction is now owned by shared provider helpers in `src/providers/common/toolCalls.ts`.**
+- **`normalizeNativeToolCalls()` converts provider-native `tool_calls` into the canonical internal shape.**
+- **`extractToolCallFromText()` provides the canonical text fallback; provider-specific legacy fallback may remain for compatibility.**
+- **`compactToolResult()` is provider-agnostic and reusable by all providers.**
 
 ### Stage 1 (completed): Provider-specific branches in AgentBridge
 

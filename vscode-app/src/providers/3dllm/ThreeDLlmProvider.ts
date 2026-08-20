@@ -17,6 +17,7 @@
 import {LLMProvider, LLMProviderCapabilities, LLMRequest, LLMResponse} from '../../types/provider-types';
 import {ErrorHandler} from '../../core/ErrorHandler';
 import {ErrorContext} from '../../core/types';
+import {extractToolCallFromText} from '../common/toolCalls';
 
 export class ThreeDLlmProvider implements LLMProvider {
   private baseUrl: string;
@@ -437,7 +438,10 @@ export class ThreeDLlmProvider implements LLMProvider {
       }
 
       // Extract tool calls from the accumulated content
-      const extractedToolCalls = this.extractToolCallsFromText(fullContent);
+      const sharedExtracted = extractToolCallFromText(fullContent);
+      const extractedToolCalls = sharedExtracted.length > 0
+        ? sharedExtracted
+        : this.extractToolCallsFromText(fullContent);
       
       // Debug logging for streaming tool call extraction
       this.log(`[3D LLM STREAMING] Full content length: ${fullContent.length}`);

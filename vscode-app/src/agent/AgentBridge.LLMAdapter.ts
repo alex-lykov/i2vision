@@ -39,6 +39,14 @@ export interface LLMAdapterConfig {
   systemPromptTemplate?: string;
   systemPromptRules?: { rules: string[] };
   projectContext?: string;
+  /** Configurable prompt part toggles/text from AgentSettings. */
+  prompt?: {
+    coreRulesEnabled: boolean;
+    projectContextEnabled: boolean;
+    toolProtocolEnabled: boolean;
+    coreRulesText: string;
+    projectContextText: string;
+  };
 }
 
 export class LLMAdapter {
@@ -109,12 +117,21 @@ export class LLMAdapter {
    * to the first user message, and tool protocol is sent only when tools are present.
    */
   private prepareMessages(config: LLMAdapterConfig, messages: LLMMessage[], tools: LLMTool[]): LLMMessage[] {
-    const coreRules = (config.systemPromptRules?.rules || []).join('\n');
+    const promptCfg = config.prompt;
+    const coreRules = promptCfg?.coreRulesEnabled === false
+      ? ''
+      : (promptCfg?.coreRulesText || (config.systemPromptRules?.rules || []).join('\n') || config.systemPromptTemplate || '');
+    const projectContext = promptCfg?.projectContextEnabled === false
+      ? undefined
+      : (config.projectContext || promptCfg?.projectContextText);
+    const toolProtocol = promptCfg?.toolProtocolEnabled === false
+      ? ''
+      : this.formatToolsForSystemPrompt(tools);
     const ctx: PromptContext = {
       userPrompt: config.modelId,
-      projectContext: config.projectContext,
-      toolProtocol: this.formatToolsForSystemPrompt(tools),
-      coreRules: coreRules || config.systemPromptTemplate,
+      projectContext,
+      toolProtocol,
+      coreRules,
       useSystemPrompt: true,
       isFirstMessage: messages.length <= 1,
       toolSetChanged: tools.length > 0,

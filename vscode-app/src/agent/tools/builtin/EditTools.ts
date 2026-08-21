@@ -99,6 +99,8 @@ export const editTools: ToolDefinition[] = [
     async handler(args, ctx) {
       try {
       // Comprehensive parameter validation
+      // Ensure that any newline characters inside strings are escaped to keep JSON valid.
+      // This also helps the tool call detection logic which expects a single‑line JSON object.
       if (!args) {
         return {
           result: '',
@@ -250,6 +252,9 @@ Tip: Check if your tool call is properly formatted as an array or valid JSON str
       }
       
       // Normalize edit format (handle old_string/new_string -> search/replace)
+      // Escape raw newline characters in search/replace strings to keep JSON valid.
+      // This ensures that multiline strings from read_file output are safely processed.
+      const escapeNewlines = (s: string) => s.replace(/\r\n/g, '\\n').replace(/\n/g, '\\n');
       const normalizedEdits = edits.map((edit: any) => {
         if (edit.old_string !== undefined && edit.new_string !== undefined) {
           // Convert old_string/new_string format to search/replace

@@ -1893,7 +1893,11 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
       // Per-chat stable session key so the proxy does not reuse sessions across chats.
       user: this.id,
       // Per-agent request timeout so a hung proxy surfaces instead of hanging forever.
-      timeoutSeconds: this.config.llm.timeoutSeconds
+      timeoutSeconds: this.config.llm.timeoutSeconds,
+      // Layered prompt parts from config and settings
+      systemPromptTemplate: this.config.systemPromptTemplate,
+      systemPromptRules: this.config.systemPromptRules,
+      prompt: this.settingsManager.getSettings().prompt
     }, messages, tools);
   }
 

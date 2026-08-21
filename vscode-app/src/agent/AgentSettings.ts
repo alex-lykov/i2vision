@@ -93,6 +93,15 @@ export interface AgentSettings {
     logLLMRequests: boolean;
     enableExperimentalFeatures: boolean;
   };
+
+  // ===== PROMPT PARTS =====
+  prompt: {
+    coreRulesEnabled: boolean;
+    projectContextEnabled: boolean;
+    toolProtocolEnabled: boolean;
+    coreRulesText: string;
+    projectContextText: string;
+  };
 }
 
 /**
@@ -165,6 +174,14 @@ const DEFAULT_SETTINGS: AgentSettings = {
     logToolCalls: true,
     logLLMRequests: false,
     enableExperimentalFeatures: false
+  },
+
+  prompt: {
+    coreRulesEnabled: true,
+    projectContextEnabled: true,
+    toolProtocolEnabled: true,
+    coreRulesText: 'You are an AI assistant for the VSLFC (Vision-Structure-Logic-Flow-Code) architecture.',
+    projectContextText: ''
   }
 };
 

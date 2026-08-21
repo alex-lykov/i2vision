@@ -833,6 +833,55 @@ export class SettingsPanel {
       </div>
     </div>
   </div>
+
+  <div class="section">
+    <h2>Prompt Parts</h2>
+    <div class="setting-row">
+      <div class="setting-label">
+        <div>Core Rules</div>
+        <div class="setting-description">Send core rules in system prompt</div>
+      </div>
+      <div class="setting-control">
+        <input type="checkbox" id="prompt.coreRulesEnabled" ${settings.prompt.coreRulesEnabled ? 'checked' : ''}>
+      </div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">
+        <div>Project Context</div>
+        <div class="setting-description">Send project-specific context</div>
+      </div>
+      <div class="setting-control">
+        <input type="checkbox" id="prompt.projectContextEnabled" ${settings.prompt.projectContextEnabled ? 'checked' : ''}>
+      </div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">
+        <div>Tool Protocol</div>
+        <div class="setting-description">Send tool protocol when tools change</div>
+      </div>
+      <div class="setting-control">
+        <input type="checkbox" id="prompt.toolProtocolEnabled" ${settings.prompt.toolProtocolEnabled ? 'checked' : ''}>
+      </div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">
+        <div>Core Rules Text</div>
+        <div class="setting-description">Custom core rules text</div>
+      </div>
+      <div class="setting-control">
+        <textarea id="prompt.coreRulesText" rows="3">${settings.prompt.coreRulesText}</textarea>
+      </div>
+    </div>
+    <div class="setting-row">
+      <div class="setting-label">
+        <div>Project Context Text</div>
+        <div class="setting-description">Custom project context text</div>
+      </div>
+      <div class="setting-control">
+        <textarea id="prompt.projectContextText" rows="3">${settings.prompt.projectContextText}</textarea>
+      </div>
+    </div>
+  </div>
   
   <!-- Action Buttons -->
   </div>
@@ -915,6 +964,13 @@ export class SettingsPanel {
           logToolCalls: document.getElementById('advanced.logToolCalls').checked,
           logLLMRequests: document.getElementById('advanced.logLLMRequests').checked,
           enableExperimentalFeatures: document.getElementById('advanced.enableExperimentalFeatures').checked
+        },
+        prompt: {
+          coreRulesEnabled: document.getElementById('prompt.coreRulesEnabled').checked,
+          projectContextEnabled: document.getElementById('prompt.projectContextEnabled').checked,
+          toolProtocolEnabled: document.getElementById('prompt.toolProtocolEnabled').checked,
+          coreRulesText: document.getElementById('prompt.coreRulesText').value,
+          projectContextText: document.getElementById('prompt.projectContextText').value
         }
       };
       

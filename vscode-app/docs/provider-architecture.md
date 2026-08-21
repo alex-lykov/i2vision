@@ -388,6 +388,15 @@ To add a new provider (e.g., OpenAI, Anthropic, Groq):
 4. **Update `getAvailableProviders()`** in `ProviderFactory`
 5. **No changes to `AgentBridge`** — the agent loop adapts automatically via capabilities (Stage 2+) or receives a `NullSessionManager` for session management
 
+## Prompt Assembly (Layered)
+
+Prompts are assembled from composable, configurable parts instead of repeating all rules/tools on every request.
+
+- `PromptPart` / `PromptAssembler` (`src/agent/prompt/`) build prompt sections as layers.
+- `AgentBridge.LLMAdapter.prepareMessages()` injects assembled system/first-user parts only when absent.
+- Prompt parts are configurable via `AgentSettings.prompt` (core rules, project context, tool protocol).
+- Core rules are sent once (system prompt or first user message); tool protocol only when tools change.
+
 ## Files Reference
 
 | File | Purpose |

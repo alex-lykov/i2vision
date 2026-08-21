@@ -76,4 +76,7 @@ sequenceDiagram
 - Tool-call extraction now uses shared helpers in `src/providers/common/toolCalls.ts`:
   native `tool_calls` normalization, canonical text fallback extraction, and tool-result compaction.
   Legacy proxy-specific fallback remains for 3D LLM compatibility.
+- Prompt assembly is layered via `PromptAssembler` / `PromptPart` before messages reach the
+  provider. Core rules, project context, and tool protocol are injected only when needed,
+  avoiding rule/tool-catalog duplication on every request.
 - Timeout / abort and server-error cooldown are handled inside `ThreeDLlmProvider`.

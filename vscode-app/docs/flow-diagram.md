@@ -79,4 +79,7 @@ sequenceDiagram
 - Prompt assembly is layered via `PromptAssembler` / `PromptPart` before messages reach the
   provider. Core rules, project context, and tool protocol are injected only when needed,
   avoiding rule/tool-catalog duplication on every request. Model-specific prompt parts may be overridden per model via `modelProfiles`; resolution falls back to `prompt.*` defaults.
+- After a tool round, `AgentBridge.LLMAdapter.compactToolTurnMessages()` minimizes the outgoing
+  history to system, first user, the assistant tool-call request, and tool results only.
+  This keeps 3D LLM follow-up requests compact instead of resending the full prompt.
 - Timeout / abort and server-error cooldown are handled inside `ThreeDLlmProvider`.

@@ -396,6 +396,7 @@ Prompts are assembled from composable, configurable parts instead of repeating a
 - `AgentBridge.LLMAdapter.prepareMessages()` injects assembled system/first-user parts only when absent.
 - Prompt parts are configurable via `AgentSettings.prompt` (core rules, project context, tool protocol).
 - Core rules are sent once (system prompt or first user message); tool protocol only when tools change.
+- After a tool round, `compactToolTurnMessages()` trims history to system, first user, the assistant tool-call request, and tool results, avoiding full prompt replays.
 
 ## Files Reference
 

@@ -102,6 +102,15 @@ export interface AgentSettings {
     coreRulesText: string;
     projectContextText: string;
   };
+
+  // ===== PER-MODEL PROMPT OVERRIDES =====
+  modelProfiles: {
+    [modelId: string]: {
+      coreRulesText?: string;
+      projectContextText?: string;
+      toolProtocolEnabled?: boolean;
+    };
+  };
 }
 
 /**
@@ -182,7 +191,8 @@ const DEFAULT_SETTINGS: AgentSettings = {
     toolProtocolEnabled: true,
     coreRulesText: 'You are an AI assistant for the VSLFC (Vision-Structure-Logic-Flow-Code) architecture.',
     projectContextText: ''
-  }
+  },
+  modelProfiles: {}
 };
 
 /**

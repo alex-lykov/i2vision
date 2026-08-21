@@ -78,5 +78,5 @@ sequenceDiagram
   Legacy proxy-specific fallback remains for 3D LLM compatibility.
 - Prompt assembly is layered via `PromptAssembler` / `PromptPart` before messages reach the
   provider. Core rules, project context, and tool protocol are injected only when needed,
-  avoiding rule/tool-catalog duplication on every request.
+  avoiding rule/tool-catalog duplication on every request. Model-specific prompt parts may be overridden per model via `modelProfiles`; resolution falls back to `prompt.*` defaults.
 - Timeout / abort and server-error cooldown are handled inside `ThreeDLlmProvider`.

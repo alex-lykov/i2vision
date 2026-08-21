@@ -47,6 +47,15 @@ export interface LLMAdapterConfig {
     coreRulesText: string;
     projectContextText: string;
   };
+
+  /** Per-model prompt overrides; keyed by modelId. */
+  modelProfiles?: {
+    [modelId: string]: {
+      coreRulesText?: string;
+      projectContextText?: string;
+      toolProtocolEnabled?: boolean;
+    };
+  };
 }
 
 export class LLMAdapter {
@@ -118,13 +127,15 @@ export class LLMAdapter {
    */
   private prepareMessages(config: LLMAdapterConfig, messages: LLMMessage[], tools: LLMTool[]): LLMMessage[] {
     const promptCfg = config.prompt;
+    const modelProfile = config.modelProfiles?.[config.modelId];
     const coreRules = promptCfg?.coreRulesEnabled === false
       ? ''
-      : (promptCfg?.coreRulesText || (config.systemPromptRules?.rules || []).join('\n') || config.systemPromptTemplate || '');
+      : (modelProfile?.coreRulesText || promptCfg?.coreRulesText || (config.systemPromptRules?.rules || []).join('\n') || config.systemPromptTemplate || '');
     const projectContext = promptCfg?.projectContextEnabled === false
       ? undefined
-      : (config.projectContext || promptCfg?.projectContextText);
-    const toolProtocol = promptCfg?.toolProtocolEnabled === false
+      : (modelProfile?.projectContextText || config.projectContext || promptCfg?.projectContextText);
+    const toolProtocolEnabled = modelProfile?.toolProtocolEnabled ?? promptCfg?.toolProtocolEnabled;
+    const toolProtocol = toolProtocolEnabled === false
       ? ''
       : this.formatToolsForSystemPrompt(tools);
     const ctx: PromptContext = {

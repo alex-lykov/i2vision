@@ -161,9 +161,11 @@ export class LLMAdapter {
     const assembled = assemblePrompt(ctx);
     const out: LLMMessage[] = [...messages];
     // Debug: log injection flag status before possible injection
-    this.diag.log(`prepareMessages: systemInjected=${this._systemPromptInjected}, toolProtoInjected=${this._toolProtocolInjected}`);
-    // Debug: log current message roles for visibility
-    this.diag.log(`prepareMessages: current roles = ${out.map(m=>m.role).join(',')}`);
+    if (this.diag) {
+      this.diag.log(`prepareMessages: systemInjected=${this._systemPromptInjected}, toolProtoInjected=${this._toolProtocolInjected}`);
+      // Debug: log current message roles for visibility
+      this.diag.log(`prepareMessages: current roles = ${out.map(m=>m.role).join(',')}`);
+    }
 
     // Only inject if not already present (send once, not every turn)
     const systemText = assembled.system;

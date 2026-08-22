@@ -632,7 +632,7 @@ export class AgentBridge {
     if (toolFilter === 'action_only') {
       // ACTION-ONLY: only write/edit/execute tools. No read/explore tools.
       // The model has enough information — it must take action now.
-      const actionTools = this.toolRegistry.getLLMToolsByName(['apply_edits', 'write_file', 'run_terminal', 'run_build', 'git_commit']);
+      const actionTools = this.toolRegistry.getLLMToolsByName(['apply_edits', 'write_file', 'run_terminal', 'run_build', 'git_commit', 'get_file_context']);
       this.log(`Tool filter: action_only (${actionTools.length}/${allTools.length} tools) - forcing action mode (write/edit/execute only, NO reads)`);
       return actionTools;
     }
@@ -840,6 +840,8 @@ export class AgentBridge {
     const isFreshConversation = forceFreshSession || (!hasExistingHistory && !this._sessionState);
     
     if (isFreshConversation) {
+  // Reset LLMAdapter injection flags so system prompt and tool protocol are not re‑injected
+  if (this.llmAdapter) this.llmAdapter.resetPromptInjectionFlags();
       this.log('Fresh conversation - resetting all state');
       this.stateMachine.reset();
       this._autoReadFiles.clear();

@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: MIT
  */
 
-import type { SettingDescriptor } from '../model/SettingDescriptor';
+import type {SettingDescriptor} from '../model/SettingDescriptor';
 
 /**
  * Built-in setting descriptors migrated from the legacy AgentSettings model.
@@ -321,106 +321,6 @@ export const BUILTIN_SETTING_DESCRIPTORS: SettingDescriptor[] = [
     min: 1,
     max: 500,
     step: 1,
-    visibility: 'advanced'
-  },
-
-  // ===== Model =====
-  {
-    key: 'model.defaultProvider',
-    type: 'enum',
-    defaultValue: 'ollama',
-    label: 'Default Provider',
-    description: 'Default model provider',
-    group: 'Model',
-    order: 10,
-    enumValues: [
-      { value: 'ollama', label: 'Ollama' },
-      { value: 'deepseek', label: 'DeepSeek' },
-      { value: '3d-llm', label: '3D LLM' },
-      { value: 'mistral', label: 'Mistral' }
-    ],
-    visibility: 'basic'
-  },
-  {
-    key: 'model.defaultModel',
-    type: 'string',
-    defaultValue: 'llama3.2:3b',
-    label: 'Default Model',
-    description: 'Default model identifier',
-    group: 'Model',
-    order: 20,
-    visibility: 'basic'
-  },
-  {
-    key: 'model.contextLength',
-    type: 'range',
-    defaultValue: 8192,
-    label: 'Context Length',
-    description: 'Maximum context length',
-    group: 'Model',
-    order: 30,
-    min: 512,
-    max: 131072,
-    step: 512,
-    visibility: 'advanced'
-  },
-  {
-    key: 'model.maxOutputTokens',
-    type: 'range',
-    defaultValue: 4096,
-    label: 'Max Output Tokens',
-    description: 'Maximum generated tokens',
-    group: 'Model',
-    order: 40,
-    min: 128,
-    max: 32768,
-    step: 128,
-    visibility: 'advanced'
-  },
-  {
-    key: 'model.temperature',
-    type: 'range',
-    defaultValue: 0.7,
-    label: 'Temperature',
-    description: 'Model sampling temperature',
-    group: 'Model',
-    order: 50,
-    min: 0,
-    max: 2,
-    step: 0.1,
-    visibility: 'advanced'
-  },
-  {
-    key: 'model.topP',
-    type: 'range',
-    defaultValue: 0.9,
-    label: 'Top P',
-    description: 'Nucleus sampling threshold',
-    group: 'Model',
-    order: 60,
-    min: 0,
-    max: 1,
-    step: 0.05,
-    visibility: 'advanced'
-  },
-  {
-    key: 'model.thinkingEnabled',
-    type: 'boolean',
-    defaultValue: false,
-    label: 'Thinking Enabled',
-    description: 'Enable extended model thinking',
-    group: 'Model',
-    order: 70,
-    visibility: 'advanced'
-  },
-  {
-    key: 'model.searchEnabled',
-    type: 'boolean',
-    defaultValue: false,
-    label: 'Search Enabled',
-    description: 'Enable model-backed search',
-    group: 'Model',
-    order: 80,
     visibility: 'advanced'
   },
 

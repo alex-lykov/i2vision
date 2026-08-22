@@ -231,7 +231,7 @@ export class AgentTabManager {
     );
 
     const tabState: AgentTabState = { 
-      tabId, agent, layer, 
+      tabId, agent, layer: effectiveLayer, 
       history: [], 
       accumulatedToolCalls: [], 
       isActive: true, 
@@ -249,7 +249,7 @@ export class AgentTabManager {
     // orphan the proxy's sticky session and prevent restarting an existing session.
     this.currentAgentBridge = new AgentBridge(config, this.outputChannel, this.context.extensionPath, workspaceRoot, this.settingsManager, tabId);
     await this.currentAgentBridge.initialize();
-    this.log('Created ' + layer + ' agent tab: ' + tabId);
+    this.log('Created ' + effectiveLayer + ' agent tab: ' + tabId);
     this.log('   Agent ID: ' + agent.id);
     this.log('   Provider: ' + config.model.provider + ', Model: ' + config.model.id);
     if (conversationId && this.historyManager) {

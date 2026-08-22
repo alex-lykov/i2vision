@@ -187,3 +187,12 @@ Create `.vscode/i2-vision-settings.json` with an optional `customSettings` key:
 - Custom descriptors can be added via workspace JSON without extension recompilation
 - `tsc -p ./` passes after every phase
 - Existing VS Code configuration overrides continue to work
+
+## 11. Intentional hardcoded layer in session creation
+
+As of this migration phase, `AgentTabManager.createTab` intentionally hardcodes `effectiveLayer = 'code'`. All new agent sessions and resumed conversations use the CODE layer with `.vision-ai/code-agent.yaml`. The `layer` argument supplied by `new_chat` / `resume_conversation` is currently ignored.
+
+Implications for settings flow:
+- Agent/provider/model/thinking/search selections come from `LocalAgentProvider.getConfig(tabState.layer)`.
+- `AgentSettingsManager.getSettings()` supplies global/agent behavior settings such as `conversationHistoryLimit` and `streaming.enabled`, plus provider base URLs used when constructing `SessionManager`.
+- Since `tabState.layer` is always `code` today, all provider config updates (`changeProvider`, `changeModel`, `changeThinking`, `changeSearch`) operate on the CODE layer config only.

@@ -59,6 +59,15 @@ export interface LLMAdapterConfig {
 }
 
 export class LLMAdapter {
+  private _systemPromptInjected: boolean = false;
+  private _toolProtocolInjected: boolean = false;
+  
+  /** Reset injection flags – called when a fresh conversation starts */
+  resetPromptInjectionFlags(): void {
+    this._systemPromptInjected = false;
+    this._toolProtocolInjected = false;
+  }
+
   private cli: CLI;
   private diag: Diagnostics;
 
@@ -151,29 +160,77 @@ export class LLMAdapter {
     };
     const assembled = assemblePrompt(ctx);
     const out: LLMMessage[] = [...messages];
+    // Debug: log injection flag status before possible injection
+    this.diag.log(`prepareMessages: systemInjected=${this._systemPromptInjected}, toolProtoInjected=${this._toolProtocolInjected}`);
+    // Debug: log current message roles for visibility
+    this.diag.log(`prepareMessages: current roles = ${out.map(m=>m.role).join(',')}`);
 
     // Only inject if not already present (send once, not every turn)
     const systemText = assembled.system;
-    if (systemText && !out.some(m => m.role === 'system' && (m.content as string).includes(systemText))) {
+    if (systemText && !this._systemPromptInjected) {
       const existingSystem = out.findIndex(m => m.role === 'system');
       if (existingSystem >= 0) {
         out[existingSystem] = { ...out[existingSystem], content: `${out[existingSystem].content}\n\n${systemText}` };
       } else {
         out.unshift({ role: 'system', content: systemText });
       }
+      this._systemPromptInjected = true;
     }
 
     const firstUserText = assembled.firstUser;
-    if (firstUserText && !out.some(m => m.role === 'user' && (m.content as string).includes(firstUserText))) {
+    if (firstUserText && !this._toolProtocolInjected) {
       const firstUserIdx = out.findIndex(m => m.role === 'user');
       if (firstUserIdx >= 0) {
         out[firstUserIdx] = { ...out[firstUserIdx], content: `${firstUserText}\n\n${out[firstUserIdx].content}` };
       } else {
         out.push({ role: 'user', content: firstUserText });
       }
+      this._toolProtocolInjected = true;
     }
 
-    return out;
+    return this.compactToolTurnMessages(out);
+  }
+
+  /**
+   * When the conversation contains tool results, reduce the outgoing messages to the
+   * minimal tool-response turn: system, first user, the assistant message that requested
+   * the tool, and the tool-result messages. This prevents re-sending the full chat
+   * history (and all prompt parts) after every tool call.
+   */
+  private compactToolTurnMessages(messages: LLMMessage[]): LLMMessage[] {
+    const hasToolResult = messages.some(m => m.role === 'tool');
+    if (!hasToolResult) return messages;
+
+    // Find the most recent assistant message that contains tool_calls
+    const lastAssistantToolCall = [...messages].reverse().find(
+      m => m.role === 'assistant' && Array.isArray((m as any).tool_calls) && (m as any).tool_calls.length > 0
+    );
+    const toolResults = messages.filter(m => m.role === 'tool');
+
+    // Find the user message that triggered the assistant tool‑call request (the one just before the assistant)
+    let precedingUser: LLMMessage | undefined;
+    if (lastAssistantToolCall) {
+      const idx = messages.findIndex(m => m === lastAssistantToolCall);
+      for (let i = idx - 1; i >= 0; i--) {
+        if (messages[i].role === 'user') {
+          precedingUser = messages[i];
+          break;
+        }
+      }
+    }
+
+    const compacted: LLMMessage[] = [];
+    // Preserve system prompt if it exists (it will be re‑added by prepareMessages if needed)
+    const systemMsg = messages.find(m => m.role === 'system');
+    if (systemMsg) compacted.push(systemMsg);
+    // Preserve the user message that led to the tool call
+    if (precedingUser) compacted.push(precedingUser);
+    // Preserve the assistant request that contains the tool_calls
+    if (lastAssistantToolCall) compacted.push(lastAssistantToolCall);
+    // Finally add the tool result messages
+    compacted.push(...toolResults);
+
+    return compacted;
   }
 
   // --- Token Estimation ---

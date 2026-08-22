@@ -18,6 +18,9 @@ import {LLMProvider, LLMProviderCapabilities, LLMRequest, LLMResponse} from '../
 import {ErrorHandler} from '../../core/ErrorHandler';
 import {ErrorContext} from '../../core/types';
 import {extractToolCallFromText} from '../common/toolCalls';
+import {LLMAdapter, LLMAdapterConfig} from '../../agent/AgentBridge.LLMAdapter';
+import {CLI} from '../../cliIntegrationRefactored';
+import {Diagnostics} from '../../agent/AgentBridge.Diagnostics';
 
 export class ThreeDLlmProvider implements LLMProvider {
   private baseUrl: string;
@@ -29,12 +32,16 @@ export class ThreeDLlmProvider implements LLMProvider {
   private readonly MAX_SERVER_ERRORS: number = 3;
   private readonly SERVER_ERROR_COOLDOWN: number = 300000; // 5 minutes
   private readonly REQUEST_TIMEOUT_MS: number = 120000; // 2 min for full chat completion (streaming)
+  private llmAdapter: LLMAdapter;
 
   constructor(baseUrl: string, defaultModel: string, errorHandler: ErrorHandler, outputChannel?: any) {
     this.baseUrl = baseUrl;
     this.defaultModel = defaultModel;
     this.errorHandler = errorHandler;
     this.outputChannel = outputChannel;
+    // Initialise LLMAdapter for prompt compaction. Passing null for CLI and Diagnostics because
+    // we only need the prepareMessages method which does not depend on them.
+    this.llmAdapter = new LLMAdapter(null as any, null as any);
   }
 
   getProviderName(): string {

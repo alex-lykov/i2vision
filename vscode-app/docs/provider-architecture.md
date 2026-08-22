@@ -212,6 +212,21 @@ in AgentBridge, and proxy-aware compaction in ProxySessionManager.
               │    └───────────────────────────────┘     │
               │                                         │
               └─────────────────────────────────────────┘
+
+## Prompt Composition
+
+Prompts are now assembled from configurable parts using a builder pattern. This decouples prompt construction from provider logic and allows per-provider customization.
+
+- **`PromptBuilder`** – Central class that collects system instructions, context, user input, and optional extras into a `parts` array and joins them into a final prompt string.  
+  Usage: `builder.buildPrompt(userInput, { system: "", context: "" })`.
+
+- **`PromptConfig`** – Defines which parts are included and their order. Configuration can be loaded from external files (e.g., `prompt-config.json`) via `PromptConfigLoader`, with defaults merged.
+
+- **`PromptTemplates`** – Pre-defined templates for common scenarios (e.g., `'agent'`, `'chat'`, `'code-review'`). Providers can select a template or supply their own.
+
+- **Integration** – Both `ChatService` and `AgentService` now use `PromptBuilder` instead of hard-coded strings. Providers can override prompt parts by passing options to `buildPrompt`.
+
+**Current State:** The core infrastructure is in place and integrated. The configuration loader is stubbed and needs to be wired to actual JSON files. Unit tests and full provider-specific overrides are the next steps.
 ```
 
 #### Compaction Detail

@@ -13,7 +13,7 @@ import { AgentTabManager } from './agent/AgentTabManager';
 import { LocalAgentProvider } from './agent/LocalAgentProvider';
 import { registerDebugCommands } from './agent/ToolCallDebugger';
 import { AgentSettingsManager } from './agent/AgentSettings';
-import { SettingsPanel } from './agent/SettingsPanel';
+import { SettingsWebviewHost } from './agent/settings/view/SettingsWebviewHost';
 
 /**
  * Extension context
@@ -290,7 +290,7 @@ function registerCommands(context: vscode.ExtensionContext, workspaceRoot: strin
     
     // Open Settings command
     const settingsCmd = vscode.commands.registerCommand('i2vision.settings', async () => {
-        SettingsPanel.show(context);
+        SettingsWebviewHost.show(context);
     });
     context.subscriptions.push(settingsCmd);
 }

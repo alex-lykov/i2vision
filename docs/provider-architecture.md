@@ -381,6 +381,81 @@ To add a new provider (e.g., OpenAI, Anthropic, Groq):
 4. **Update `getAvailableProviders()`** in `ProviderFactory`
 5. **No changes to `AgentBridge`** — the agent loop adapts automatically via capabilities (Stage 2+) or receives a `NullSessionManager` for session management
 
+## Per-Provider Settings & Tool Rules
+
+Provider selection must not only choose an `LLMProvider`; it must also select the provider's model/session/prompt profile. Otherwise sampling settings and tool-calling instructions are global and drift across providers.
+
+### ProviderProfile contract
+
+```ts
+interface ProviderProfile {
+  modelDefaults: ModelSettings
+  capabilities: ProviderCapabilities
+  prompt?: {
+    systemRole?: string
+    toolRules?: string
+  }
+  sessionPolicy?: {
+    compactionThreshold: number
+    resetOnProviderChange: boolean
+  }
+}
+```
+
+`ProviderProfile` owns:
+
+- model defaults: temperature, max tokens, top-p, stop, etc.
+- capability flags: native tool calling vs prompt-based tools, streaming, vision, context limit
+- provider-specific prompt parts: system role formatting, tool rules
+- session policy: compaction thresholds, reset behavior
+
+### Settings layering
+
+```text
+AgentSettings.global
+   ↓ overrides
+AgentSettings.perProvider[modelPrefix]
+   ↓ overrides
+ProviderProfile.defaults
+   ↓ merged into
+LLMRequest.settings
+```
+
+### Session binding
+
+Provider selection produces a `ProviderProfile`; session creation consumes it.
+
+```text
+ProviderFactory.resolve(modelId)
+  → returns { provider, profile }
+
+createSessionManager(provider, profile)
+  → initializes session using that profile
+```
+
+On provider change:
+
+- same provider family → update model/sampling settings only
+- different provider → reset the session, because message format, tool history, and system prompt may be incompatible
+
+### Prompt assembly
+
+Prompt parts are composed in this order:
+
+```text
+coreRules        → once
+projectContext   → once, merged into first user turn
+toolProtocol     → when tools change
+toolRules        → provider-specific, when tools are enabled
+```
+
+`toolRules` must be provider-specific:
+
+- `ThreeDLlmProvider` uses prompt-based / 8-stage tool extraction → needs explicit tool rules in the prompt.
+- `MistralProvider` / `DeepSeekProvider` / `OllamaProvider` may support native tool calls → prompt-based rules are unnecessary or shorter.
+
+`PromptAssembler.build(context, profile)` should source `toolRules` from `ProviderProfile.prompt`, not from global `AgentSettings`.
+
 ## Files Reference
 
 | File | Purpose |

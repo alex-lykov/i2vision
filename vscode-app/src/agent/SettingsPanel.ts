@@ -47,32 +47,6 @@ export class SettingsPanel {
     );
     
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
-    this.updateWebview();
-  }
-  
-  /**
-   * Show settings panel
-   */
-  public static show(context: vscode.ExtensionContext): void {
-    const settingsManager = AgentSettingsManager.getInstance(context);
-    
-    if (SettingsPanel.currentPanel) {
-      SettingsPanel.currentPanel.panel.reveal(vscode.ViewColumn.One);
-      return;
-    }
-    
-    SettingsPanel.currentPanel = new SettingsPanel(context, settingsManager);
-  }
-  
-  /**
-   * Update webview content
-   */
-  private updateWebview(): void {
-    const settings = this.settingsManager.getSettings();
-    
-    this.panel.webview.html = this.getHtmlContent(settings);
-    
-    // Handle messages from webview
     this.panel.webview.onDidReceiveMessage(async (message) => {
       switch (message.type) {
         case 'saveSettings':
@@ -100,6 +74,30 @@ export class SettingsPanel {
           break;
       }
     }, null, this.disposables);
+    this.updateWebview();
+  }
+  
+  /**
+   * Show settings panel
+   */
+  public static show(context: vscode.ExtensionContext): void {
+    const settingsManager = AgentSettingsManager.getInstance(context);
+    
+    if (SettingsPanel.currentPanel) {
+      SettingsPanel.currentPanel.panel.reveal(vscode.ViewColumn.One);
+      return;
+    }
+    
+    SettingsPanel.currentPanel = new SettingsPanel(context, settingsManager);
+  }
+  
+  /**
+   * Update webview content
+   */
+  private updateWebview(): void {
+    const settings = this.settingsManager.getSettings();
+    
+    this.panel.webview.html = this.getHtmlContent(settings);
   }
   
   /**

@@ -209,6 +209,26 @@
                     ],
                     "description": "Which tool results to display in agent chat"
                 },
+                "i2vision.prompt.coreRulesEnabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Include core rules in the prompt."
+                },
+                "i2vision.prompt.projectContextEnabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Include project context in the prompt."
+                },
+                "i2vision.prompt.toolProtocolEnabled": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Include tool protocol in the prompt."
+                },
+                "i2vision.prompt.customTemplate": {
+                    "type": "string",
+                    "default": "",
+                    "description": "Custom system prompt template (overrides default)."
+                },
                 "i2vision.toolCards.defaultMaxLines": {
                     "type": "integer",
                     "default": 20,

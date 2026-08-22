@@ -16,10 +16,10 @@
  *   - Token estimation and message trimming
  */
 
-import { CLI, LLMMessage, LLMResponse, LLMTool } from '../cliIntegrationRefactored';
-import { LLMProviderCapabilities } from '../types/provider-types';
-import { Diagnostics } from './AgentBridge.Diagnostics';
-import {assemblePrompt} from './prompt/PromptAssembler';
+import {CLI, LLMMessage, LLMResponse, LLMTool} from '../cliIntegrationRefactored';
+import {LLMProviderCapabilities} from '../types/provider-types';
+import {Diagnostics} from './AgentBridge.Diagnostics';
+import {PromptBuilder} from './prompt/PromptBuilder';
 import {PromptContext} from './prompt/PromptPart';
 
 export interface LLMAdapterConfig {
@@ -158,7 +158,11 @@ export class LLMAdapter {
       domainChanged: false,
       hasError: false,
     };
-    const assembled = assemblePrompt(ctx);
+    const builder = new PromptBuilder();
+    const builtPrompt = builder.build(ctx);
+    const sections = builtPrompt.split('\n\n');
+    const systemText = sections[0] || undefined;
+    const firstUserText = sections.slice(1).join('\n\n') || undefined;
     const out: LLMMessage[] = [...messages];
     // Debug: log injection flag status before possible injection
     if (this.diag) {
@@ -168,7 +172,6 @@ export class LLMAdapter {
     }
 
     // Only inject if not already present (send once, not every turn)
-    const systemText = assembled.system;
     if (systemText && !this._systemPromptInjected) {
       const existingSystem = out.findIndex(m => m.role === 'system');
       if (existingSystem >= 0) {
@@ -179,7 +182,6 @@ export class LLMAdapter {
       this._systemPromptInjected = true;
     }
 
-    const firstUserText = assembled.firstUser;
     if (firstUserText && !this._toolProtocolInjected) {
       const firstUserIdx = out.findIndex(m => m.role === 'user');
       if (firstUserIdx >= 0) {

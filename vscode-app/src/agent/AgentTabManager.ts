@@ -59,6 +59,7 @@ export class AgentTabManager {
     this.agentProvider = agentProvider;
     this.settingsManager = AgentSettingsManager.getInstance(context);
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
+    this.log('Creating tab with workspaceRoot=' + workspaceRoot);
     if (workspaceRoot) {
       this.historyManager = new ConversationHistoryManager(workspaceRoot);
     }
@@ -276,7 +277,7 @@ export class AgentTabManager {
     if (saved.messages.length > 0) {
       tabState.isFirstUserInput = false;
     }
-    this.log('Loaded conversation data with ' + saved.messages.length + ' messages');
+    this.log('Loaded conversation data with ' + saved.messages.length + ' messages from workspaceRoot=' + tabState.workspaceRoot);
     if (saved.sessionState) {
       this.log('Restored session state: ' + JSON.stringify({
         visitedPaths: saved.sessionState.visitedPaths?.length || 0,
@@ -378,7 +379,7 @@ export class AgentTabManager {
         tabState.isFirstUserInput = false;
       }
       
-      this.log(`Processing user input - ${forceFreshSession ? 'NEW CHAT' : 'continuing'} (history: ${tabState.history.length} messages)`);
+      this.log(`Processing user input - ${forceFreshSession ? 'NEW CHAT' : 'continuing'} (history: ${tabState.history.length} messages) from workspaceRoot=${tabState.workspaceRoot}`);
       
       const streamGenerator = this.currentAgentBridge.processStreaming(
         userInput, 
@@ -888,7 +889,9 @@ export class AgentTabManager {
   }
 
   private getWebviewContent(): string {
-    const workspaceName = vscode.workspace.workspaceFolders?.[0]?.name || 'Unknown';
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || 'Unknown';
+    const workspaceName = path.basename(workspaceRoot);
+
     let currentProvider = 'ollama';
     let currentModel = 'llama3.2:3b';
     let thinkingEnabled = false;
@@ -917,6 +920,7 @@ export class AgentTabManager {
 
     // Replace placeholders
     html = html.replace(/{workspaceName}/g, workspaceName);
+    html = html.replace(/{workspacePath}/g, workspaceRoot);
     html = html.replace(/{currentProvider}/g, currentProvider);
     html = html.replace(/{currentModel}/g, currentModel);
     html = html.replace(/{selectedProviderOllama}/g, selectedProviderOllama);

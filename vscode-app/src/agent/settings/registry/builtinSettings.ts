@@ -450,5 +450,87 @@ export const BUILTIN_SETTING_DESCRIPTORS: SettingDescriptor[] = [
     group: 'Prompt Parts',
     order: 50,
     visibility: 'advanced'
+  },
+
+  // ===== Provider Prompt Rules =====
+  {
+    key: 'providerPromptRules.ollama.toolRules',
+    type: 'string',
+    defaultValue: '',
+    label: 'Ollama Tool Rules',
+    description: 'Per-provider tool prompt rules for Ollama',
+    group: 'Provider Prompt Rules',
+    order: 10,
+    visibility: 'advanced'
+  },
+  {
+    key: 'providerPromptRules.ollama.promptRules',
+    type: 'string',
+    defaultValue: '',
+    label: 'Ollama Prompt Rules',
+    description: 'Legacy per-provider prompt rules for Ollama',
+    group: 'Provider Prompt Rules',
+    order: 20,
+    visibility: 'advanced'
+  },
+  {
+    key: 'providerPromptRules.deepseek.toolRules',
+    type: 'string',
+    defaultValue: '',
+    label: 'DeepSeek Tool Rules',
+    description: 'Per-provider tool prompt rules for DeepSeek',
+    group: 'Provider Prompt Rules',
+    order: 30,
+    visibility: 'advanced'
+  },
+  {
+    key: 'providerPromptRules.deepseek.promptRules',
+    type: 'string',
+    defaultValue: '',
+    label: 'DeepSeek Prompt Rules',
+    description: 'Legacy per-provider prompt rules for DeepSeek',
+    group: 'Provider Prompt Rules',
+    order: 40,
+    visibility: 'advanced'
+  },
+  {
+    key: 'providerPromptRules.3d-llm.toolRules',
+    type: 'string',
+    defaultValue: '',
+    label: '3D LLM Tool Rules',
+    description: 'Per-provider tool prompt rules for 3D LLM',
+    group: 'Provider Prompt Rules',
+    order: 50,
+    visibility: 'advanced'
+  },
+  {
+    key: 'providerPromptRules.3d-llm.promptRules',
+    type: 'string',
+    defaultValue: '',
+    label: '3D LLM Prompt Rules',
+    description: 'Legacy per-provider prompt rules for 3D LLM',
+    group: 'Provider Prompt Rules',
+    order: 60,
+    visibility: 'advanced'
+  },
+  {
+    key: 'providerPromptRules.mistral.toolRules',
+    type: 'string',
+    defaultValue: '',
+    label: 'Mistral Tool Rules',
+    description: 'Per-provider tool prompt rules for Mistral',
+    group: 'Provider Prompt Rules',
+    order: 70,
+    visibility: 'advanced'
+  },
+  {
+    key: 'providerPromptRules.mistral.promptRules',
+    type: 'string',
+    defaultValue: '',
+    label: 'Mistral Prompt Rules',
+    description: 'Legacy per-provider prompt rules for Mistral',
+    group: 'Provider Prompt Rules',
+    order: 80,
+    visibility: 'advanced'
   }
 ];

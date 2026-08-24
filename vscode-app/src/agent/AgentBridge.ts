@@ -17,6 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {CLI, LLMChunk, LLMMessage, LLMResponse, LLMTool, LLMToolCall} from '../cliIntegrationRefactored';
 import {getProviderCapabilities} from '../types/provider-types';
+import {getProviderProfile} from '../providers/ProviderProfile';
 import {TerminalManager} from './TerminalManager';
 import {AgentSettingsManager} from './AgentSettings';
 import {AgentEvent, AgentState, AgentStateMachine, StateContext,} from './AgentStateMachine';
@@ -1892,6 +1893,7 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
       topP: this.config.model.topP,
       thinkingEnabled: this.config.model.thinkingEnabled,
       searchEnabled: this.config.model.searchEnabled,
+      providerProfile: getProviderProfile(this.config.model.provider),
       // Per-chat stable session key so the proxy does not reuse sessions across chats.
       user: this.id,
       // Per-agent request timeout so a hung proxy surfaces instead of hanging forever.
@@ -1899,7 +1901,9 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
       // Layered prompt parts from config and settings
       systemPromptTemplate: this.config.systemPromptTemplate,
       systemPromptRules: this.config.systemPromptRules,
-      prompt: this.settingsManager.getSettings().prompt
+      prompt: this.settingsManager.getSettings().prompt,
+      modelProfiles: this.settingsManager.getSettings().modelProfiles,
+      providerPromptRules: this.settingsManager.getSettings().providerPromptRules
     }, messages, tools);
   }
 

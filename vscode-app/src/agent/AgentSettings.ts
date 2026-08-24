@@ -1,3 +1,10 @@
+/*
+ * Copyright (c) 2026. Oleksii Lykov.
+ *
+ * Licensed under the MIT License.
+ * SPDX-License-Identifier: MIT
+ */
+
 /**
  * AgentSettings - Manages agent configuration and settings
  * 
@@ -111,6 +118,14 @@ export interface AgentSettings {
       toolProtocolEnabled?: boolean;
     };
   };
+
+  // ===== PER-PROVIDER PROMPT RULES =====
+  providerPromptRules: {
+    [providerId: string]: {
+      toolRules?: string;
+      promptRules?: string;
+    };
+  };
 }
 
 /**
@@ -192,7 +207,8 @@ const DEFAULT_SETTINGS: AgentSettings = {
     coreRulesText: 'You are an AI assistant for the VSLFC (Vision-Structure-Logic-Flow-Code) architecture.',
     projectContextText: ''
   },
-  modelProfiles: {}
+  modelProfiles: {},
+  providerPromptRules: {}
 };
 
 /**

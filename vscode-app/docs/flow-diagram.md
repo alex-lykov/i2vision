@@ -86,3 +86,41 @@ sequenceDiagram
   * and all tool‑result messages.
   This guarantees that the LLM receives a minimal context without duplicating the full rule‑set or tool catalog on every turn.
 - Timeout / abort and server-error cooldown are handled inside `ThreeDLlmProvider`.
+
+## Provider Prompt Rules: UI → Session
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant SettingsUI as VS Code Settings / Webview
+    participant AgentSettingsManager
+    participant AgentBridge
+    participant LLMAdapter
+    participant ProviderProfile
+    participant PromptAssembler
+    participant Provider
+
+    User->>SettingsUI: edit provider prompt rules / per-model overrides
+    SettingsUI->>AgentSettingsManager: updateSettings({ prompt, modelProfiles })
+    AgentSettingsManager->>AgentSettingsManager: save i2-vision-settings.json
+    AgentSettingsManager-->>AgentBridge: onDidChange(partial settings)
+
+    AgentBridge->>AgentBridge: read settings.prompt / modelProfiles
+    AgentBridge->>LLMAdapter: callLLM(LLMAdapterConfig)
+    Note over LLMAdapter: config.providerProfile = getProviderProfile(config.model.provider)
+
+    LLMAdapter->>ProviderProfile: getToolRules(profile, tools.length > 0)
+    ProviderProfile-->>LLMAdapter: toolRules = prompt.toolRules || toolPolicy.promptRules
+
+    LLMAdapter->>PromptAssembler: build(PromptContext { toolRules, coreRules, ... })
+    PromptAssembler-->>LLMAdapter: system/user prompt parts
+
+    LLMAdapter->>Provider: send assembled messages
+    Provider-->>LLMAdapter: response
+    LLMAdapter-->>AgentBridge: LLMResponse
+```
+
+Current implementation note: `src/providers/ProviderProfile.ts` is the static
+per-provider source for `toolRules`. UI/settings plumbing for editing those rules is still
+being migrated; when present, `AgentSettingsManager` should feed the same values into
+`AgentBridge.LLMAdapter` so user overrides can replace or merge with provider defaults.

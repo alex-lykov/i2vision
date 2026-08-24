@@ -61,6 +61,14 @@ export interface LLMAdapterConfig {
       toolProtocolEnabled?: boolean;
     };
   };
+
+  /** Per-provider prompt rule overrides; keyed by providerId. */
+  providerPromptRules?: {
+    [providerId: string]: {
+      toolRules?: string;
+      promptRules?: string;
+    };
+  };
 }
 
 export class LLMAdapter {
@@ -152,9 +160,12 @@ export class LLMAdapter {
     const toolProtocol = toolProtocolEnabled === false
       ? ''
       : this.formatToolsForSystemPrompt(tools);
-    const toolRules = config.providerProfile
-      ? getToolRules(config.providerProfile, tools.length > 0)
-      : undefined;
+    const providerPromptOverrides = config.providerPromptRules?.[config.provider];
+    const toolRules = providerPromptOverrides?.toolRules
+      ?? providerPromptOverrides?.promptRules
+      ?? (config.providerProfile
+        ? getToolRules(config.providerProfile, tools.length > 0)
+        : undefined);
     const ctx: PromptContext = {
       userPrompt: config.modelId,
       projectContext,

@@ -7,7 +7,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { SettingDescriptor, SettingType } from '../model/SettingDescriptor';
+import type {SettingDescriptor, SettingType} from '../model/SettingDescriptor';
 
 interface CustomSettingsFile {
   sections?: Array<{
@@ -58,6 +58,7 @@ export class CustomSettingsLoader {
           for (const setting of section.settings ?? []) {
             descriptors.push({
               key: setting.key,
+              section: group,
               type: setting.type,
               defaultValue: setting.defaultValue,
               label: setting.label,

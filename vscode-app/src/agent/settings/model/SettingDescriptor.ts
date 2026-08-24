@@ -5,33 +5,44 @@
  * SPDX-License-Identifier: MIT
  */
 
-/**
- * Declarative metadata describing a single user-configurable setting.
- */
+// SettingDescriptor - describes a single configurable setting for MVVM UI
 
 export type SettingType = 'boolean' | 'number' | 'string' | 'enum' | 'range';
-
-export interface SettingEnumOption {
-  value: string;
-  label: string;
-}
-
-export type SettingValidator = (value: unknown) => string[];
+export type SettingValidator = (value: any) => string[];
 
 export interface SettingDescriptor {
+  /** Unique key used for storage and retrieval */
   key: string;
-  type: SettingType;
-  defaultValue: unknown;
+  /** UI section name (e.g., "Ollama Provider") */
+  section: string;
+  /** Human readable label */
   label: string;
+  /** Optional description shown in UI */
   description?: string;
-  group: string;
-  order: number;
-  validator?: SettingValidator;
-  enumValues?: ReadonlyArray<SettingEnumOption>;
+  /** Data type */
+  type: SettingType;
+  /** Default value */
+  defaultValue: any;
+  /** Validation constraints */
+  validation?: {
+    min?: number;
+    max?: number;
+    enumValues?: string[];
+  };
+  /** UI hints */
+  ui?: {
+    order?: number;
+    placeholder?: string;
+    group?: string;
+  };
+  /** Additional properties used by view and validation */
+  enumValues?: { value: string; label: string }[];
   min?: number;
   max?: number;
   step?: number;
-  scope?: 'workspace' | 'global';
+  validator?: SettingValidator;
+  group?: string;
+  order?: number;
   visibility?: 'basic' | 'advanced';
-  tags?: string[];
+  scope?: 'workspace' | 'user';
 }

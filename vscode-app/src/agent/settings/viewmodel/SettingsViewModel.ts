@@ -6,12 +6,13 @@
  */
 
 import * as vscode from 'vscode';
-import { SettingsStore } from '../model/SettingsStore';
-import type { SettingsSchema } from '../model/SettingsSchema';
-import { SettingsRegistry } from '../registry/SettingsRegistry';
-import { BUILTIN_SETTING_DESCRIPTORS } from '../registry/builtinSettings';
-import { CustomSettingsLoader } from '../registry/customSettingsLoader';
-import { SettingSectionViewModel } from './SettingSectionViewModel';
+import {SettingsStore} from '../model/SettingsStore';
+import {AgentSettings} from '../../AgentSettings';
+import type {SettingsSchema} from '../model/SettingsSchema';
+import {SettingsRegistry} from '../registry/SettingsRegistry';
+import {BUILTIN_SETTING_DESCRIPTORS} from '../registry/builtinSettings';
+import {CustomSettingsLoader} from '../registry/customSettingsLoader';
+import {SettingSectionViewModel} from './SettingSectionViewModel';
 
 export interface SettingsState {
   schema: SettingsSchema;
@@ -46,7 +47,7 @@ export class SettingsViewModel {
     const initialValues = this.store.getAll();
 
     this.sections = schema.sections.map(
-      (section) => new SettingSectionViewModel(section, initialValues)
+      (section) => new SettingSectionViewModel(section, initialValues as unknown as Record<string, unknown>)
     );
   }
 
@@ -114,7 +115,7 @@ export class SettingsViewModel {
       return false;
     }
 
-    await this.store.update(this.toValueRecord());
+    await this.store.update(this.toValueRecord() as Partial<AgentSettings>);
 
     for (const section of this.sections) {
       for (const item of section.items) {

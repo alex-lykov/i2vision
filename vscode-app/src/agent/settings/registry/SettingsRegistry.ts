@@ -5,66 +5,50 @@
  * SPDX-License-Identifier: MIT
  */
 
-import type { SettingDescriptor } from '../model/SettingDescriptor';
-import type { SettingsSchema, SettingsSection } from '../model/SettingsSchema';
+// SettingsRegistry - aggregates provider descriptors and UI sections
 
-/**
- * Registry for built-in and user-defined setting descriptors.
- */
+import {SettingDescriptor} from '../model/SettingDescriptor';
+import {BUILTIN_PROVIDER_DESCRIPTORS} from './builtinSettings';
+
+import {SettingsSchema, SettingsSection} from '../model/SettingsSchema';
+
 export class SettingsRegistry {
-  private readonly descriptors = new Map<string, SettingDescriptor>();
+  private descriptors: SettingDescriptor[] = [];
 
-  register(descriptor: SettingDescriptor): void {
-    if (!descriptor.key) {
-      throw new Error('Setting descriptor must have a key');
-    }
-    this.descriptors.set(descriptor.key, descriptor);
+  constructor() {
+    // Load built-in provider descriptors
+    this.descriptors.push(...BUILTIN_PROVIDER_DESCRIPTORS);
+    // TODO: load custom descriptors from workspace config
   }
 
+  /** Register additional descriptors */
   registerMany(descriptors: SettingDescriptor[]): void {
-    for (const descriptor of descriptors) {
-      this.register(descriptor);
-    }
+    this.descriptors.push(...descriptors);
   }
 
-  unregister(key: string): void {
-    this.descriptors.delete(key);
+  /** Get all descriptors */
+  getDescriptors(): SettingDescriptor[] {
+    return this.descriptors;
   }
 
-  get(key: string): SettingDescriptor | undefined {
-    return this.descriptors.get(key);
-  }
-
+  /** Build a schema grouping descriptors by their section */
   getSchema(): SettingsSchema {
-    const sections = new Map<string, SettingsSection>();
-
-    for (const descriptor of this.descriptors.values()) {
-      const section = sections.get(descriptor.group) ?? {
-        id: descriptor.group,
-        title: descriptor.group,
-        order: Number.MAX_SAFE_INTEGER,
-        settings: []
-      };
-
-      section.settings.push(descriptor);
-      sections.set(descriptor.group, section);
+    const sectionsMap: Map<string, SettingsSection> = new Map();
+    for (const desc of this.descriptors) {
+      const sectionId = desc.section.toLowerCase().replace(/\s+/g, '-');
+      let section = sectionsMap.get(sectionId);
+      if (!section) {
+        section = {
+          id: sectionId,
+          title: desc.section,
+          order: 0,
+          settings: []
+        };
+        sectionsMap.set(sectionId, section);
+      }
+      section.settings.push(desc);
     }
-
-    const orderedSections = Array.from(sections.values())
-      .map((section) => ({
-        ...section,
-        settings: section.settings.sort((a, b) => a.order - b.order)
-      }))
-      .sort((a, b) => a.order - b.order);
-
-    return { sections: orderedSections };
-  }
-
-  getAll(): SettingDescriptor[] {
-    return Array.from(this.descriptors.values());
-  }
-
-  clear(): void {
-    this.descriptors.clear();
+    const sections = Array.from(sectionsMap.values()).sort((a, b) => a.title.localeCompare(b.title));
+    return { sections };
   }
 }

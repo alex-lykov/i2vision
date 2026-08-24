@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import {CLI, LLMChunk, LLMMessage, LLMResponse, LLMTool, LLMToolCall} from '../cliIntegrationRefactored';
 import {getProviderCapabilities} from '../types/provider-types';
-import {getProviderProfile} from '../providers/ProviderProfile';
+import {ProviderFactory} from '../providers/ProviderFactory';
 import {TerminalManager} from './TerminalManager';
 import {AgentSettingsManager} from './AgentSettings';
 import {AgentEvent, AgentState, AgentStateMachine, StateContext,} from './AgentStateMachine';
@@ -1893,7 +1893,7 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
       topP: this.config.model.topP,
       thinkingEnabled: this.config.model.thinkingEnabled,
       searchEnabled: this.config.model.searchEnabled,
-      providerProfile: getProviderProfile(this.config.model.provider),
+      providerProfile: new ProviderFactory(this.outputChannel).resolveProfile(this.config.model.id),
       // Per-chat stable session key so the proxy does not reuse sessions across chats.
       user: this.id,
       // Per-agent request timeout so a hung proxy surfaces instead of hanging forever.

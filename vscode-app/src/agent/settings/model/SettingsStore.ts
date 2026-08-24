@@ -5,70 +5,96 @@
  * SPDX-License-Identifier: MIT
  */
 
-import * as vscode from 'vscode';
-import { AgentSettingsManager } from '../../AgentSettings';
+// SettingsStore - MVVM store for agent settings
+// Provides loading, persistence, and reactive updates.
 
-/**
- * Persistence adapter for settings values.
- *
- * Initially wraps the existing AgentSettingsManager so the MVVM migration can
- * proceed without losing current persistence behavior.
- */
+import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
+import {AgentSettings, DEFAULT_SETTINGS} from '../../AgentSettings';
+
 export class SettingsStore {
-  private readonly legacyManager: AgentSettingsManager;
+  private settings: AgentSettings;
+  private settingsPath: string;
+  private onDidChangeEmitter: vscode.EventEmitter<Partial<AgentSettings>>;
 
   constructor(context: vscode.ExtensionContext) {
-    this.legacyManager = AgentSettingsManager.getInstance(context);
+    this.settingsPath = this.getSettingsPath(context);
+    this.onDidChangeEmitter = new vscode.EventEmitter<Partial<AgentSettings>>();
+    this.settings = { ...DEFAULT_SETTINGS };
+    this.load();
   }
 
-  getAll(): Record<string, unknown> {
-    return this.toRecord(this.legacyManager.getSettings());
+  /** Event for external listeners */
+  get onDidChange(): vscode.Event<Partial<AgentSettings>> {
+    return this.onDidChangeEmitter.event;
   }
 
-  async update(values: Record<string, unknown>): Promise<void> {
-    const nested = this.fromFlatRecord(values);
-    await this.legacyManager.updateSettings(nested as never);
-  }
-
-  async resetToDefaults(): Promise<void> {
-    await this.legacyManager.resetToDefaults();
-  }
-
-  private toRecord(value: unknown): Record<string, unknown> {
-    const result: Record<string, unknown> = {};
-
-    const visit = (prefix: string, current: unknown): void => {
-      if (current && typeof current === 'object' && !Array.isArray(current)) {
-        for (const [key, child] of Object.entries(current as Record<string, unknown>)) {
-          const fullKey = prefix ? `${prefix}.${key}` : key;
-          visit(fullKey, child);
-        }
-        return;
-      }
-
-      result[prefix] = current;
-    };
-
-    visit('', value);
-    return result;
-  }
-
-  private fromFlatRecord(values: Record<string, unknown>): Record<string, unknown> {
-    const result: Record<string, unknown> = {};
-
-    for (const [key, value] of Object.entries(values)) {
-      const parts = key.split('.');
-      let target: Record<string, unknown> = result;
-
-      for (let i = 0; i < parts.length - 1; i++) {
-        const part = parts[i];
-        target[part] = target[part] ?? {};
-        target = target[part] as Record<string, unknown>;
-      }
-
-      target[parts[parts.length - 1]] = value;
+  private getSettingsPath(context: vscode.ExtensionContext): string {
+    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      return path.join(context.storagePath || context.extensionPath, 'i2-vision-settings.json');
     }
+    return path.join(workspaceRoot, '.vscode', 'i2-vision-settings.json');
+  }
 
-    return result;
+  private load(): void {
+    try {
+      if (fs.existsSync(this.settingsPath)) {
+        const content = fs.readFileSync(this.settingsPath, 'utf-8');
+        const user = JSON.parse(content);
+        this.settings = this.deepMerge(this.settings, user);
+      }
+    } catch (e: any) {
+      console.error('SettingsStore load error:', e.message);
+    }
+  }
+
+  private save(): void {
+    try {
+      const dir = path.dirname(this.settingsPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(this.settingsPath, JSON.stringify(this.settings, null, 2), 'utf-8');
+    } catch (e: any) {
+      console.error('SettingsStore save error:', e.message);
+    }
+  }
+
+  /** Deep merge helper */
+  private deepMerge<T extends object>(target: T, source: Partial<T>): T {
+    const result = { ...target } as any;
+    for (const key in source) {
+      if (Object.prototype.hasOwnProperty.call(source, key)) {
+        const srcVal = (source as any)[key];
+        const tgtVal = result[key];
+        if (srcVal && typeof srcVal === 'object' && !Array.isArray(srcVal) && tgtVal && typeof tgtVal === 'object' && !Array.isArray(tgtVal)) {
+          result[key] = this.deepMerge(tgtVal, srcVal);
+        } else {
+          result[key] = srcVal;
+        }
+      }
+    }
+    return result as T;
+  }
+
+  /** Get a shallow copy of all settings */
+  getAll(): AgentSettings {
+    return { ...this.settings };
+  }
+
+  /** Update partial settings */
+  async update(partial: Partial<AgentSettings>): Promise<void> {
+    this.settings = this.deepMerge(this.settings, partial);
+    this.save();
+    this.onDidChangeEmitter.fire(partial);
+  }
+
+  /** Reset to defaults */
+  async reset(): Promise<void> {
+    this.settings = { ...DEFAULT_SETTINGS };
+    this.save();
+    this.onDidChangeEmitter.fire(this.settings);
   }
 }

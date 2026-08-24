@@ -11,6 +11,7 @@ export interface PromptContext {
   compressedContext?: string;
   dynamicLearning?: string;
   toolProtocol?: string;
+  toolRules?: string;
   coreRules?: string;
   useSystemPrompt: boolean;
   isFirstMessage: boolean;

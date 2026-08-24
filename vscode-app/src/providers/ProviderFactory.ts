@@ -8,6 +8,7 @@ import { DeepSeekProvider } from './deepseek/DeepSeekProvider';
 import { ThreeDLlmProvider } from './3dllm/ThreeDLlmProvider';
 import { MistralProvider } from './mistral/MistralProvider';
 import { LLMProvider } from '../types/provider-types';
+import { getProviderProfile, ProviderProfile } from './ProviderProfile';
 
 export class ProviderFactory {
   private errorHandler: ErrorHandler;
@@ -167,6 +168,28 @@ export class ProviderFactory {
         description: 'FreeDeepseekAPI proxy (no API key required)'
       }
     ];
+  }
+
+  /**
+   * Resolve the per-provider profile for the selected model.
+   * Provider profiles own model defaults, tool policy, prompt tool rules,
+   * and session policy so sessions can pick them up when the provider changes.
+   */
+  resolveProfile(modelId: string): ProviderProfile {
+    const profile = getProviderProfile(this.resolveProviderId(modelId));
+    this.log(`Resolved provider profile: ${profile.id}`);
+    return profile;
+  }
+
+  /**
+   * Map a model ID to the provider identifier used by ProviderProfile.
+   */
+  private resolveProviderId(modelId: string): string {
+    if (this.isMistralModel(modelId)) return 'mistral';
+    if (this.isDeepSeekModel(modelId)) return 'deepseek';
+    if (this.isThreeDLlmModel(modelId)) return '3dllm';
+    if (this.isOllamaModel(modelId)) return 'ollama';
+    return '3dllm';
   }
 
   /**

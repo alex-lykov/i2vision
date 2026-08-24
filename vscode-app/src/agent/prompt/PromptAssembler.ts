@@ -84,12 +84,25 @@ export const toolProtocolPart: PromptPart = {
   },
 };
 
+export const toolRulesPart: PromptPart = {
+  id: 'tool-rules',
+  priority: 55,
+  placement: 'system',
+  include(ctx: PromptContext): boolean {
+    return !!ctx.toolRules && (ctx.useSystemPrompt || ctx.isFirstMessage || ctx.toolSetChanged);
+  },
+  render(ctx: PromptContext): string {
+    return ctx.toolRules!;
+  },
+};
+
 export const defaultPromptParts: PromptPart[] = [
   coreRulesPart,
   projectContextPart,
   taskContextPart,
   dynamicLearningPart,
   compressedContextPart,
+  toolRulesPart,
   toolProtocolPart,
 ];
 

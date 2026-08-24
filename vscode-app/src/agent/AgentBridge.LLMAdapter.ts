@@ -18,8 +18,11 @@
 
 import {CLI, LLMMessage, LLMResponse, LLMTool} from '../cliIntegrationRefactored';
 import {LLMProviderCapabilities} from '../types/provider-types';
+import {getToolRules, ProviderProfile} from '../providers/ProviderProfile';
 import {Diagnostics} from './AgentBridge.Diagnostics';
 import {PromptBuilder} from './prompt/PromptBuilder';
+import {PromptConfig} from './prompt/PromptConfig';
+import {defaultPromptParts} from './prompt/PromptAssembler';
 import {PromptContext} from './prompt/PromptPart';
 
 export interface LLMAdapterConfig {
@@ -31,6 +34,8 @@ export interface LLMAdapterConfig {
   topP: number;
   thinkingEnabled: boolean;
   searchEnabled: boolean;
+  /** Per-provider profile that owns model defaults, tool policy, and prompt tool rules. */
+  providerProfile?: ProviderProfile;
   /** Timeout for a single chat-completion (seconds), forwarded to the provider. */
   timeoutSeconds?: number;
   /** Per-conversation session identifier (e.g. 3D LLM proxy sticky-session key). */
@@ -115,7 +120,7 @@ export class LLMAdapter {
   // --- LLM Call ---
 
   async callLLM(config: LLMAdapterConfig, messages: LLMMessage[], tools: LLMTool[]): Promise<LLMResponse> {
-    const preparedMessages = this.prepareMessages(config, messages, tools);
+    const preparedMessages = await this.prepareMessages(config, messages, tools);
     const result = await this.cli.callLLM(config.modelId, preparedMessages, {
       temperature: config.temperature,
       top_p: config.topP,
@@ -134,7 +139,7 @@ export class LLMAdapter {
    * on every LLM request. Core rules go to system (or first user), context chunks go
    * to the first user message, and tool protocol is sent only when tools are present.
    */
-  private prepareMessages(config: LLMAdapterConfig, messages: LLMMessage[], tools: LLMTool[]): LLMMessage[] {
+  private async prepareMessages(config: LLMAdapterConfig, messages: LLMMessage[], tools: LLMTool[]): Promise<LLMMessage[]> {
     const promptCfg = config.prompt;
     const modelProfile = config.modelProfiles?.[config.modelId];
     const coreRules = promptCfg?.coreRulesEnabled === false
@@ -147,10 +152,14 @@ export class LLMAdapter {
     const toolProtocol = toolProtocolEnabled === false
       ? ''
       : this.formatToolsForSystemPrompt(tools);
+    const toolRules = config.providerProfile
+      ? getToolRules(config.providerProfile, tools.length > 0)
+      : undefined;
     const ctx: PromptContext = {
       userPrompt: config.modelId,
       projectContext,
       toolProtocol,
+      toolRules,
       coreRules,
       useSystemPrompt: true,
       isFirstMessage: messages.length <= 1,
@@ -158,41 +167,54 @@ export class LLMAdapter {
       domainChanged: false,
       hasError: false,
     };
-    const builder = new PromptBuilder();
+    // Build PromptConfig based on user settings
+    const promptConfig: PromptConfig = {
+      parts: defaultPromptParts.filter(p => {
+        if (p.id === 'core-rules') return config.prompt?.coreRulesEnabled ?? true;
+        if (p.id === 'project-context') return config.prompt?.projectContextEnabled ?? true;
+        if (p.id === 'tool-protocol') return config.prompt?.toolProtocolEnabled ?? true;
+        return true;
+      })
+    };
+    const builder = new PromptBuilder(promptConfig);
+
     const builtPrompt = builder.build(ctx);
     const sections = builtPrompt.split('\n\n');
     const systemText = sections[0] || undefined;
     const firstUserText = sections.slice(1).join('\n\n') || undefined;
+    // Copy original messages array for manipulation
+    // Trim messages to stay within context length before building prompt
     const out: LLMMessage[] = [...messages];
+    const trimmedMessages = await this.trimMessagesToBudget(config.contextLength, out);
     // Debug: log injection flag status before possible injection
     if (this.diag) {
       this.diag.log(`prepareMessages: systemInjected=${this._systemPromptInjected}, toolProtoInjected=${this._toolProtocolInjected}`);
       // Debug: log current message roles for visibility
-      this.diag.log(`prepareMessages: current roles = ${out.map(m=>m.role).join(',')}`);
+      this.diag.log(`prepareMessages: current roles = ${trimmedMessages.map((m: LLMMessage)=>m.role).join(',')}`);
     }
 
     // Only inject if not already present (send once, not every turn)
     if (systemText && !this._systemPromptInjected) {
-      const existingSystem = out.findIndex(m => m.role === 'system');
+      const existingSystem = trimmedMessages.findIndex(m => m.role === 'system');
       if (existingSystem >= 0) {
-        out[existingSystem] = { ...out[existingSystem], content: `${out[existingSystem].content}\n\n${systemText}` };
+        trimmedMessages[existingSystem] = { ...trimmedMessages[existingSystem], content: `${trimmedMessages[existingSystem].content}\n\n${systemText}` };
       } else {
-        out.unshift({ role: 'system', content: systemText });
+        trimmedMessages.unshift({ role: 'system', content: systemText });
       }
       this._systemPromptInjected = true;
     }
 
     if (firstUserText && !this._toolProtocolInjected) {
-      const firstUserIdx = out.findIndex(m => m.role === 'user');
+      const firstUserIdx = trimmedMessages.findIndex(m => m.role === 'user');
       if (firstUserIdx >= 0) {
-        out[firstUserIdx] = { ...out[firstUserIdx], content: `${firstUserText}\n\n${out[firstUserIdx].content}` };
+        trimmedMessages[firstUserIdx] = { ...trimmedMessages[firstUserIdx], content: `${firstUserText}\n\n${trimmedMessages[firstUserIdx].content}` };
       } else {
-        out.push({ role: 'user', content: firstUserText });
+        trimmedMessages.push({ role: 'user', content: firstUserText });
       }
       this._toolProtocolInjected = true;
     }
 
-    return this.compactToolTurnMessages(out);
+    return this.compactToolTurnMessages(trimmedMessages);
   }
 
   /**

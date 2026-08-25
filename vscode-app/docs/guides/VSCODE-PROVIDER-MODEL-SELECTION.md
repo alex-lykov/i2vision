@@ -1,23 +1,25 @@
-# VSCode Extension: Provider & Model Selection UI
+# VSCode Extension: Provider & Model Selection
 
 ## Overview
 
-The i2-Vision VSCode extension now includes a **Provider and Model Selection UI** in each agent tab, allowing you to easily switch between different LLM providers and models without manually editing configuration files.
+The i2-Vision VSCode extension supports **four LLM providers** with a unified interface for switching between them. Each provider offers different capabilities for local and cloud-based AI assistance.
 
-## Features
+## Supported Providers
 
-### 🎯 Provider Selection
-- **Ollama (Local + Cloud)** - Single provider for both local and cloud models via Ollama API
-- **DeepSeek Direct (Cloud)** - Direct API access to DeepSeek models (bypasses Ollama)
+| Provider | Type | Session Support | Context Compaction | Best For |
+|----------|------|----------------|-------------------|----------|
+| **Ollama** | Local/Cloud | ❌ | ❌ | Privacy, offline work, fast iteration |
+| **DeepSeek** | Cloud | ❌ | ❌ | Advanced reasoning, code generation |
+| **Mistral** | Cloud | ✅ | ✅ | Enterprise features, session persistence |
+| **3D LLM** | Proxy | ✅ | ✅ | Multi-provider routing, advanced session mgmt |
 
-> 💡 **Key Insight**: Ollama provides access to BOTH local models (running on your machine) AND cloud models (via Ollama Cloud API) through the same endpoint. See [Ollama Architecture Guide](OLLAMA-ARCHITECTURE.md) for details.
+### Provider Details
 
-### 🤖 Model Selection
-Dynamic model dropdown that updates based on the selected provider:
+#### Ollama (Local + Cloud)
 
-#### Ollama Models (Organized by Type)
+Ollama provides access to both local models (running on your machine) and cloud models via Ollama Cloud API through the same endpoint.
 
-**Local Models** (Run on your machine):
+**Local Models** (require Ollama installed locally):
 - Gemma 3 1B (Ultra-fast, 815 MB)
 - Qwen 2.5 Coder 0.5B (Quick code, 397 MB)
 - Llama 3.2 3B (Fast general purpose, ~2 GB)
@@ -27,25 +29,71 @@ Dynamic model dropdown that updates based on the selected provider:
 - CodeLlama 7B (Code generation, ~4 GB)
 - CodeLlama 13B (Advanced coding, ~8 GB)
 - Mistral 7B (General purpose, ~4 GB)
-- Qwen 2.5 7B (Multilingual, ~4 GB)
-- Llama 2 7B (Legacy, 3.8 GB)
 
-**Cloud Models** (Via Ollama Cloud API):
+**Cloud Models** (via Ollama Cloud API):
 - MiniMax M2.1 (Multilingual code)
 - Mistral Large 3 675B (Enterprise reasoning)
 - Gemma 4 31B (Multimodal)
 - DeepSeek V3.1 671B (Advanced reasoning)
 - Qwen 3 Coder 480B (Expert coding)
-- Qwen 3.5 (Balanced performance)
-- GLM 5.1 / 4.7 / 4.6 (Agentic engineering)
-- Kimi K2.6 (Long context)
-- Nemotron 3 Super (Multi-agent)
-- GPT-OSS 20B (Open GPT alternative)
 
-#### DeepSeek Direct Models
-- DeepSeek Chat (V3)
-- DeepSeek Coder
-- DeepSeek Reasoner (R1)
+**Configuration**:
+```yaml
+model:
+  id: llama3.2:3b
+  provider: ollama
+```
+
+#### DeepSeek (Cloud)
+
+Direct API access to DeepSeek models for advanced reasoning and code generation.
+
+**Models**:
+- DeepSeek Chat (V3) - General purpose
+- DeepSeek Coder - Code-specific tasks
+- DeepSeek Reasoner (R1) - Complex reasoning
+
+**Configuration**:
+```yaml
+model:
+  id: deepseek-chat
+  provider: deepseek
+```
+
+#### Mistral (Cloud)
+
+Mistral AI provider with session management and context compaction capabilities.
+
+**Features**:
+- ✅ Session persistence across requests
+- ✅ Context compaction when approaching token limits
+- ✅ Automatic session reset on errors
+- ✅ Token usage tracking
+
+**Configuration**:
+```yaml
+model:
+  id: mistral-large
+  provider: mistral
+```
+
+#### 3D LLM (Proxy)
+
+3D LLM proxy provider for advanced session management and multi-provider routing.
+
+**Features**:
+- ✅ Session management via proxy
+- ✅ Context compaction
+- ✅ Token tracking
+- ✅ Multi-provider routing (FreeDeepseekAPI)
+- ✅ Native tool call emulation
+
+**Configuration**:
+```yaml
+model:
+  id: 3d-llm-proxy
+  provider: 3d-llm
+```
 
 ## Usage
 
@@ -64,14 +112,14 @@ In the agent tab header, you'll see the configuration panel:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ Provider: [Ollama (Local) ▼]  Model: [Llama 3.2 3B ▼]      │
+│ Provider: [Ollama ▼]  Model: [Llama 3.2 3B ▼]              │
 │                                              Max Iterations: 10 │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 **To change provider:**
 1. Click the **Provider** dropdown
-2. Select either "Ollama (Local)" or "DeepSeek (Cloud)"
+2. Select from: Ollama, DeepSeek, Mistral, or 3D LLM
 3. The model dropdown will automatically update with available models
 
 **To change model:**
@@ -90,56 +138,75 @@ Changes are automatically saved to your project's `.vision-ai/` directory:
 
 Each layer has its own independent configuration.
 
+## Provider Selection Guidelines
+
+### When to Use Each Provider
+
+| Use Case | Recommended Provider | Reason |
+|----------|---------------------|--------|
+| **Local development** | Ollama | Privacy, no API costs, offline capable |
+| **Quick iterations** | Ollama (small models) | Fast response times |
+| **Complex reasoning** | DeepSeek or Mistral | Advanced capabilities |
+| **Code generation** | DeepSeek Coder or Ollama CodeLlama | Specialized training |
+| **Long conversations** | Mistral or 3D LLM | Session management, context compaction |
+| **Enterprise features** | Mistral | Session persistence, token tracking |
+| **Multi-provider routing** | 3D LLM | Proxy-based flexibility |
+
+### Model Selection Guidelines
+
+**For Local Development (Ollama):**
+- Use **Llama 3.2 3B** for fast iterations
+- Use **CodeLlama 13B** for complex code tasks
+- Ensure you have enough RAM (3B ≈ 2GB, 13B ≈ 8GB)
+
+**For Cloud Analysis (DeepSeek/Mistral):**
+- Use **DeepSeek Chat** or **Mistral Medium** for general tasks
+- Use **DeepSeek Coder** for code-specific tasks
+- Use **DeepSeek Reasoner** or **Mistral Large** for complex reasoning
+
+**For Long Sessions (Mistral/3D LLM):**
+- Use when conversation exceeds 50+ messages
+- Enable automatic context compaction
+- Monitor token usage for cost control
+
 ## Architecture
 
-### File Structure
-```
-vscode-app/src/agent/
-├── AgentTabManager.ts          # Main UI manager (updated)
-├── LocalAgentProvider.ts       # Config loader/saver
-├── LocalI2VisionAgent.ts       # Agent implementation
-└── AgentBridge.ts              # Type definitions
-```
+### Provider Factory Pattern
 
-### Configuration Flow
+The extension uses a `ProviderFactory` to create provider-specific instances:
 
-```
-User selects provider/model in UI
-        ↓
-AgentTabManager.handleWebviewMessage()
-        ↓
-changeProvider() / changeModel()
-        ↓
-saveAgentConfig() → Writes to .vision-ai/{layer}-agent.yaml
-        ↓
-reloadAgent() → Recreates agent with new config
-        ↓
-Webview notified: 'configUpdated'
-```
-
-### Webview Communication
-
-**Messages from Webview to Extension:**
 ```typescript
-// Change provider
-{ command: 'changeProvider', provider: 'deepseek' }
-
-// Change model
-{ command: 'changeModel', model: 'deepseek-chat' }
+const provider = ProviderFactory.createProvider(modelId)
 ```
 
-**Messages from Extension to Webview:**
-```typescript
-// Configuration updated successfully
-{ 
-  command: 'configUpdated', 
-  provider: 'deepseek', 
-  model: 'deepseek-chat' 
-}
+This pattern allows:
+- Unified interface across providers
+- Provider-specific optimizations
+- Easy addition of new providers
 
-// Reload webview with new config
-{ command: 'configReloaded' }
+### Session Management
+
+Providers with session support (Mistral, 3D LLM) use `ProxySessionManager`:
+
 ```
+AgentBridge
+    ↓
+SessionManager (Interface)
+├── ProxySessionManager (Mistral, 3D LLM)
+└── NullSessionManager (Ollama, DeepSeek)
+```
+
+See [Session Management Architecture](../architecture/session-management.md) for details.
+
+### Provider Capabilities
+
+| Capability | Ollama | DeepSeek | Mistral | 3D LLM |
+|------------|--------|----------|---------|--------|
+| Streaming | ✅ | ✅ | ✅ | ✅ |
+| Native Tool Calls | ❌ | ❌ | ✅ | ✅ (emulated) |
+| Session Management | ❌ | ❌ | ✅ | ✅ |
+| Context Compaction | ❌ | ❌ | ✅ | ✅ |
+| Token Tracking | ❌ | ❌ | ✅ | ✅ |
 
 ## Configuration File Format
 
@@ -153,8 +220,8 @@ version: 1.0.0
 isActive: true
 
 model:
-  id: deepseek-chat          # ← Updated by UI
-  provider: deepseek         # ← Updated by UI
+  id: mistral-large          # ← Updated by UI
+  provider: mistral          # ← Updated by UI
   contextLength: 32768
   maxOutputTokens: 4096
   temperature: 0.7
@@ -163,129 +230,92 @@ model:
 # ... rest of config
 ```
 
-## Technical Details
-
-### Dynamic Model Population
-
-The model dropdown is populated dynamically based on the selected provider:
-
-```javascript
-const MODELS_BY_PROVIDER = {
-    'ollama': [
-        { id: 'llama3.2:3b', name: 'Llama 3.2 3B (Fast)' },
-        { id: 'llama3.2:7b', name: 'Llama 3.2 7B' },
-        // ... more models
-    ],
-    'deepseek': [
-        { id: 'deepseek-chat', name: 'DeepSeek Chat (V3)' },
-        { id: 'deepseek-coder', name: 'DeepSeek Coder' },
-        { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner (R1)' }
-    ]
-};
-```
-
-### Config Save Logic
-
-The `saveAgentConfig()` method:
-1. Converts `AgentConfig` TypeScript object to YAML format
-2. Ensures `.vision-ai/` directory exists
-3. Writes YAML file with proper formatting
-4. Preserves all other configuration settings
-
-### Agent Reload
-
-When provider/model changes:
-1. Config is saved to disk
-2. Agent is recreated with new config
-3. Webview is notified to update UI
-4. Next user input uses the new model
-
 ## Adding New Providers
 
 To add a new provider:
 
-### 1. Update `AgentTabManager.ts`
+### 1. Create Provider Implementation
 
-Add provider to the dropdown:
+```typescript
+// src/providers/newprovider/NewProvider.ts
+export class NewProvider implements LLMProvider {
+  async callAPI(request: LLMRequest): Promise<LLMResponse> {
+    // Implementation
+  }
+}
+```
+
+### 2. Register in ProviderFactory
+
+```typescript
+// src/providers/ProviderFactory.ts
+switch (provider) {
+  case 'newprovider':
+    return new NewProvider()
+}
+```
+
+### 3. Add Provider Capabilities
+
+```typescript
+// src/types/provider-types.ts
+getProviderCapabilities('newprovider'): ProviderCapabilities {
+  return {
+    streaming: true,
+    nativeToolCalls: false,
+    sessionManagement: false,
+    contextCompaction: false
+  }
+}
+```
+
+### 4. Update UI
+
+Add provider to the dropdown in `AgentTabManager.ts`:
+
 ```html
-<option value="openai" ${providerId === 'openai' ? 'selected' : ''}>OpenAI (Cloud)</option>
+<option value="newprovider" ${providerId === 'newprovider' ? 'selected' : ''}>New Provider</option>
 ```
-
-### 2. Add Models
-
-Add to `MODELS_BY_PROVIDER`:
-```javascript
-'openai': [
-    { id: 'gpt-4o', name: 'GPT-4o' },
-    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
-    { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' }
-]
-```
-
-### 3. Update Backend
-
-Ensure `LocalAgentProvider` and `LocalI2VisionAgent` support the new provider.
 
 ## Troubleshooting
 
-### Provider/Model Not Saving
+### Provider Not Connecting
 
 **Check:**
-1. Verify `.vision-ai/` directory exists in workspace
-2. Check write permissions
+1. Verify API key is configured (for cloud providers)
+2. Check network connectivity
 3. Look for errors in Output Channel → i2-Vision
+4. Verify provider endpoint is accessible
 
-### Dropdown Not Updating
-
-**Check:**
-1. Open Developer Tools in webview (Ctrl+Shift+P → "Developer: Toggle Developer Tools")
-2. Check console for JavaScript errors
-3. Verify `MODELS_BY_PROVIDER` is correctly formatted
-
-### Agent Not Reloading
+### Session Errors (Mistral/3D LLM)
 
 **Check:**
-1. Output Channel → i2-Vision for reload messages
-2. Verify YAML file was written correctly
-3. Try manual reload: Command Palette → "i2-Vision Debug: Reload Agent Config"
+1. Session may have expired - try resetting
+2. Context may be exhausted - check token usage
+3. Network issues - verify connectivity
 
-## Best Practices
+### Model Not Available
 
-### Model Selection Guidelines
+**For Ollama:**
+1. Run `ollama list` to see available models
+2. Pull missing models: `ollama pull <model-name>`
+3. Check Ollama is running: `ollama serve`
 
-**For Local Development (Ollama):**
-- Use **Llama 3.2 3B** for fast iterations
-- Use **CodeLlama 13B** for complex code tasks
-- Ensure you have enough RAM (3B ≈ 2GB, 13B ≈ 8GB)
-
-**For Cloud Analysis (DeepSeek):**
-- Use **DeepSeek Chat (V3)** for general tasks
-- Use **DeepSeek Coder** for code-specific tasks
-- Use **DeepSeek Reasoner (R1)** for complex reasoning
-
-### Configuration Management
-
-- **Per-Layer Config**: Each agent layer can use different providers
-- **Project-Specific**: Config is saved per-project in `.vision-ai/`
-- **Version Control**: Consider committing `.vision-ai/*.yaml` to share team settings
-
-## Future Enhancements
-
-Potential improvements:
-- [ ] Add more providers (OpenAI, Anthropic, Google)
-- [ ] Model parameters UI (temperature, top_p, etc.)
-- [ ] Provider health check / connectivity test
-- [ ] Token usage tracking and cost estimation
-- [ ] Model comparison / A/B testing
-- [ ] Custom model endpoints (for Ollama)
+**For Cloud Providers:**
+1. Verify API key is valid
+2. Check model is available in your region
+3. Review provider documentation for model availability
 
 ## Related Documentation
 
-- [DeepSeek Integration Guide](deepseek-integration.md)
-- [Deployment Guide](DEPLOYMENT.md)
-- [Agent Configuration](../reference/AGENT-CONFIG.md)
+- [Provider Architecture](../architecture/provider-architecture.md)
+- [Session Management](../architecture/session-management.md)
+- [DeepSeek Integration](deepseek-integration.md)
+- [Ollama Integration](ollama-integration.md)
+- [Provider Rules](../concepts/provider-rules.md)
 
 ---
 
-**Version:** 1.0.0  
-**Last Updated:** 2026-06-06
+**Version:** 2.0.0  
+**Last Updated:** 2026-08-24  
+**Changes:** Added Mistral and 3D LLM providers, updated provider capabilities table

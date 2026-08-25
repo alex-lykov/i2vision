@@ -14,6 +14,10 @@ export interface SettingsSection {
   settings: SettingDescriptor[];
 }
 
+import type { ProviderRules } from './ProviderRules';
+
 export interface SettingsSchema {
   sections: SettingsSection[];
+  /** Provider‑specific rule collections */
+  providerRules?: ProviderRules;
 }

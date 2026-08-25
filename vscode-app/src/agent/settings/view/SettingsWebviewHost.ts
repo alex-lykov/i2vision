@@ -8,12 +8,30 @@
 import * as vscode from 'vscode';
 import { SettingsViewModel } from '../viewmodel/SettingsViewModel';
 import { buildSettingsView } from './settingsViewBuilder';
+import type { ProviderRule } from '../model/ProviderRule';
 
 interface WebviewToHostMessage {
-  type: 'settingChanged' | 'save' | 'export' | 'import' | 'resetAll' | 'close';
+  type:
+    | 'settingChanged'
+    | 'save'
+    | 'export'
+    | 'import'
+    | 'resetAll'
+    | 'close'
+    // Provider rule CRUD
+    | 'getProviderRules'
+    | 'setProviderRules'
+    | 'addProviderRule'
+    | 'updateProviderRule'
+    | 'deleteProviderRule';
   key?: string;
   value?: unknown;
   json?: string;
+  // Provider rule payloads
+  providerId?: string;
+  rules?: ProviderRule[];
+  rule?: ProviderRule;
+  ruleId?: string;
 }
 
 export class SettingsWebviewHost {
@@ -49,7 +67,7 @@ export class SettingsWebviewHost {
     );
 
     this.panel.webview.onDidReceiveMessage(
-      (message: WebviewToHostMessage) => void this.handleMessage(message),
+      (message: WebviewToHostMessage) => this.handleMessage(message),
       null,
       this.disposables
     );
@@ -108,6 +126,39 @@ export class SettingsWebviewHost {
       case 'close':
         this.dispose();
         break;
+
+      // Provider rule CRUD handling
+      case 'getProviderRules': {
+        const rules = this.viewModel.getProviderRules(message.providerId ?? '');
+        this.panel.webview.postMessage({ type: 'providerRules', providerId: message.providerId, rules });
+        break;
+      }
+      case 'setProviderRules': {
+        await this.viewModel.setProviderRules(message.providerId ?? '', message.rules ?? []);
+        this.panel.webview.postMessage({ type: 'providerRulesUpdated', providerId: message.providerId });
+        break;
+      }
+      case 'addProviderRule': {
+        const existing = this.viewModel.getProviderRules(message.providerId ?? '') ?? [];
+        const updated = [...existing, message.rule!];
+        await this.viewModel.setProviderRules(message.providerId ?? '', updated);
+        this.panel.webview.postMessage({ type: 'providerRuleAdded', providerId: message.providerId, rule: message.rule });
+        break;
+      }
+      case 'updateProviderRule': {
+        const existing = this.viewModel.getProviderRules(message.providerId ?? '') ?? [];
+        const updated = existing.map(r => r.id === message.ruleId ? message.rule! : r);
+        await this.viewModel.setProviderRules(message.providerId ?? '', updated);
+        this.panel.webview.postMessage({ type: 'providerRuleUpdated', providerId: message.providerId, rule: message.rule });
+        break;
+      }
+      case 'deleteProviderRule': {
+        const existing = this.viewModel.getProviderRules(message.providerId ?? '') ?? [];
+        const updated = existing.filter(r => r.id !== message.ruleId);
+        await this.viewModel.setProviderRules(message.providerId ?? '', updated);
+        this.panel.webview.postMessage({ type: 'providerRuleDeleted', providerId: message.providerId, ruleId: message.ruleId });
+        break;
+      }
     }
   }
 

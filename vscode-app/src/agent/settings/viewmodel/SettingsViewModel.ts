@@ -7,12 +7,15 @@
 
 import * as vscode from 'vscode';
 import {SettingsStore} from '../model/SettingsStore';
+import {ProviderRulesStore} from '../model/ProviderRulesStore';
 import {AgentSettings} from '../../AgentSettings';
 import type {SettingsSchema} from '../model/SettingsSchema';
 import {SettingsRegistry} from '../registry/SettingsRegistry';
 import {BUILTIN_SETTING_DESCRIPTORS} from '../registry/builtinSettings';
 import {CustomSettingsLoader} from '../registry/customSettingsLoader';
 import {SettingSectionViewModel} from './SettingSectionViewModel';
+import type { ProviderRules } from '../model/ProviderRules';
+import type { ProviderRule } from '../model/ProviderRule';
 
 export interface SettingsState {
   schema: SettingsSchema;
@@ -24,15 +27,21 @@ export interface SettingsState {
 
 export class SettingsViewModel {
   private readonly store: SettingsStore;
+  private readonly rulesStore: ProviderRulesStore;
   private readonly registry: SettingsRegistry;
   private readonly sections: SettingSectionViewModel[];
   private readonly onDidChangeEmitter = new vscode.EventEmitter<SettingsState>();
   private readonly onDidSaveEmitter = new vscode.EventEmitter<void>();
   private readonly onDidValidationChangeEmitter = new vscode.EventEmitter<Record<string, string[]>>();
+  private readonly onRulesChangedEmitter = new vscode.EventEmitter<ProviderRules>();
+  private readonly onProviderChangedEmitter = new vscode.EventEmitter<string>();
+  private disposables: vscode.Disposable[] = [];
 
   readonly onDidChange = this.onDidChangeEmitter.event;
   readonly onDidSave = this.onDidSaveEmitter.event;
   readonly onDidValidationChange = this.onDidValidationChangeEmitter.event;
+  readonly onRulesChanged = this.onRulesChangedEmitter.event;
+  readonly onProviderChanged = this.onProviderChangedEmitter.event;
 
   constructor(context: vscode.ExtensionContext) {
     this.registry = new SettingsRegistry();
@@ -43,12 +52,52 @@ export class SettingsViewModel {
     this.registry.registerMany(customLoader.load(workspaceRoot));
 
     this.store = new SettingsStore(context);
+    this.rulesStore = new ProviderRulesStore(context);
+    
+    // Wire up rules store change events
+    this.disposables.push(
+      this.rulesStore.onDidChange((rules) => {
+        this.onRulesChangedEmitter.fire(rules);
+      })
+    );
+    
     const schema = this.registry.getSchema();
     const initialValues = this.store.getAll();
 
     this.sections = schema.sections.map(
       (section) => new SettingSectionViewModel(section, initialValues as unknown as Record<string, unknown>)
     );
+  }
+
+  // Provider rule helpers
+  /** Get all rule blocks for a provider */
+  getProviderRules(providerId: string): ProviderRule[] | undefined {
+    return this.rulesStore.getRulesForProvider(providerId);
+  }
+
+  /** Replace rule blocks for a provider */
+  async setProviderRules(providerId: string, rules: ProviderRule[]): Promise<void> {
+    await this.rulesStore.setRulesForProvider(providerId, rules);
+  }
+  
+  /** Add a single rule */
+  async addProviderRule(providerId: string, rule: ProviderRule): Promise<void> {
+    await this.rulesStore.addRule(providerId, rule);
+  }
+  
+  /** Update an existing rule */
+  async updateProviderRule(providerId: string, ruleId: string, rule: ProviderRule): Promise<void> {
+    await this.rulesStore.updateRule(providerId, ruleId, rule);
+  }
+  
+  /** Delete a rule */
+  async deleteProviderRule(providerId: string, ruleId: string): Promise<void> {
+    await this.rulesStore.deleteRule(providerId, ruleId);
+  }
+  
+  /** Notify that provider has changed - triggers prompt rebuild */
+  notifyProviderChanged(providerId: string): void {
+    this.onProviderChangedEmitter.fire(providerId);
   }
 
   getState(): SettingsState {
@@ -166,6 +215,13 @@ export class SettingsViewModel {
       }
     }
     return result;
+  }
+  
+  dispose(): void {
+    for (const d of this.disposables) {
+      d.dispose();
+    }
+    this.disposables = [];
   }
 }
 

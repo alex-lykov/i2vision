@@ -8,7 +8,7 @@
 // SettingsRegistry - aggregates provider descriptors and UI sections
 
 import {SettingDescriptor} from '../model/SettingDescriptor';
-import {BUILTIN_PROVIDER_DESCRIPTORS} from './builtinSettings';
+import {BUILTIN_SETTING_DESCRIPTORS} from './builtinSettings';
 
 import {SettingsSchema, SettingsSection} from '../model/SettingsSchema';
 
@@ -16,8 +16,8 @@ export class SettingsRegistry {
   private descriptors: SettingDescriptor[] = [];
 
   constructor() {
-    // Load built-in provider descriptors
-    this.descriptors.push(...BUILTIN_PROVIDER_DESCRIPTORS);
+    // Load built-in setting descriptors
+    this.descriptors.push(...BUILTIN_SETTING_DESCRIPTORS);
     // TODO: load custom descriptors from workspace config
   }
 

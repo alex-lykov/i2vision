@@ -45,6 +45,8 @@ import {SessionManagerBridge} from './AgentBridge.SessionManagerBridge';
 import {ToolPipeline} from './AgentBridge.ToolPipeline';
 import {CommandExecutor} from './AgentBridge.CommandExecutor';
 import {LegacyTools} from './AgentBridge.LegacyTools';
+import {PromptBuilder} from './settings/builder/PromptBuilder';
+import {ProviderRulesResolver} from './settings/resolver/ProviderRulesResolver';
 
 export interface ContextProfile {
   eager: { currentFile?: boolean; projectMetadata?: boolean; gitStatus?: boolean; gitDiff?: boolean; relatedFiles?: boolean; directoryStructure?: boolean };
@@ -203,6 +205,12 @@ export class AgentBridge {
 
   // Tool result compressor for large outputs
   private toolCompressor: ToolResultCompressor = new ToolResultCompressor();
+
+  // Prompt builder and rules resolver for dynamic system prompt composition
+  private promptBuilder!: PromptBuilder;
+  private rulesResolver!: ProviderRulesResolver;
+  private cachedSystemPrompt: string | undefined;
+  private disposables: vscode.Disposable[] = [];
 
   // Legacy state tracking (migrated to state machine context)
   private _forceActionMode: boolean = false;
@@ -367,6 +375,12 @@ export class AgentBridge {
     this.domainDetector.initialize(this.workspaceRoot).catch((e: any) => 
       this.log(`Domain detector initialization error: ${e.message}`)
     );
+    
+    // Initialize prompt builder and rules resolver
+    // Note: ProviderRulesResolver requires ExtensionContext which is available in extension.ts
+    // For now, initialize lazily on first use to avoid circular dependency
+    this.promptBuilder = new PromptBuilder();
+    // rulesResolver will be initialized when ExtensionContext is available
   }
 
   async initialize(): Promise<void> { 
@@ -2005,36 +2019,48 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
     }
   }
 
-  dispose(): void { this.diag.dispose(); }
+  dispose(): void {
+    for (const d of this.disposables) {
+      d.dispose();
+    }
+    this.diag.dispose();
+  }
 
   private buildSystemPrompt(variables: Record<string, string>): string {
-    let prompt = this.config.systemPromptTemplate;
-    for (const [key, value] of Object.entries(variables)) prompt = prompt.replace(new RegExp(`\\$\\{${key}\\}`, 'g'), value);
-    prompt += '\n\n--- RULES ---';
-    if (this.config.systemPromptRules?.rules?.length) {
-      for (const rule of this.config.systemPromptRules.rules) {
-        prompt += '\n• ' + rule;
-      }
-    } else {
-      // Default hardcoded rules for backward compatibility
-      prompt += '\n• ALWAYS use tool calls. Never describe plans.';
-      prompt += '\n• FOR "run backend" or "run server": use run_terminal with gradlew :app:server:run (NOT run_build)';
-      prompt += '\n• FOR compilation: use run_build with compileKotlin (source code ONLY, NO tests). NEVER use "build" - it runs ALL tests.';
-      prompt += '\n• apply_edits: MAX 50 edits per call. For large changes, use write_file instead.';
-      prompt += '\n• When build fails: READ failing files, FIX code, THEN re-run compileKotlin.';
-      prompt += '\n• NEVER re-run build without fixing first.';
-      prompt += '\n• SERVER STARTUP WORKFLOW:';
-      prompt += '\n  1. Start server with run_terminal';
-      prompt += '\n  2. WAIT 20-30 seconds (Gradle servers take time!)';
-      prompt += '\n  3. Check terminal_status';
-      prompt += '\n  4. If terminal shows "not running" or BUILD FAILED: run .\\gradlew :app:server:compileKotlin to see errors';
-      prompt += '\n  5. Fix errors with apply_edits, then retry';
-      prompt += '\n• SEARCH TIP: If search_files finds files, READ them immediately. Do NOT search again with different patterns.';
-      prompt += '\n• FOCUS: Fix source files (src/main), NOT test files (src/test), unless user specifically asks about tests.';
-      prompt += '\n• Paths: relative to workspace root, use forward slashes (/).';
-      
+    // Return cached prompt if available (prevents rebuilding on every call)
+    if (this.cachedSystemPrompt) {
+      return this.cachedSystemPrompt;
     }
-    return prompt;
+
+    const providerId = this.config.model.provider;
+    const rules = this.rulesResolver.getRulesForProvider(providerId);
+    
+    // Build prompt using the new PromptBuilder with provider-specific rules
+    this.cachedSystemPrompt = PromptBuilder.buildWithDefaults({
+      providerId,
+      templateVariables: variables,
+      systemPromptTemplate: this.config.systemPromptTemplate,
+      rules
+    });
+    
+    this.log(`System prompt built for provider '${providerId}' with ${rules.length} custom rules`);
+    return this.cachedSystemPrompt;
+  }
+  
+  /**
+   * Invalidate cached prompt - call this when provider changes
+   */
+  invalidatePromptCache(): void {
+    this.cachedSystemPrompt = undefined;
+    this.log('System prompt cache invalidated');
+  }
+
+  /**
+   * Force rebuild of system prompt - call when provider or rules change mid-session
+   */
+  rebuildSystemPrompt(variables: Record<string, string>): string {
+    this.cachedSystemPrompt = undefined; // Invalidate cache
+    return this.buildSystemPrompt(variables);
   }
 
   /**

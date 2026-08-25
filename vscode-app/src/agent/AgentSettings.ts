@@ -17,6 +17,7 @@
 
 import * as vscode from 'vscode';
 import {SettingsStore} from './settings/model/SettingsStore';
+import type { ProviderRules } from './settings/model/ProviderRules';
 
 /**
  * Agent settings interface
@@ -125,6 +126,9 @@ export interface AgentSettings {
       promptRules?: string;
     };
   };
+
+  /** Editable per‑provider rule blocks */
+  providerRules?: ProviderRules;
 }
 
 /**

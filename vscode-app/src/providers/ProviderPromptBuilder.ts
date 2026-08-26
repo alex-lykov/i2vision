@@ -81,7 +81,12 @@ export class ProviderPromptBuilder {
         prompt += `- ${rule}\n`;
       }
       for (const rule of customRules) {
-        prompt += `- ${rule.description}: ${String(rule.defaultValue)}\n`;
+        // Safely convert rule properties to strings
+        const desc = typeof rule.description === 'string' ? rule.description : JSON.stringify(rule.description);
+        const val = rule.defaultValue !== undefined && rule.defaultValue !== null 
+          ? (typeof rule.defaultValue === 'string' ? rule.defaultValue : JSON.stringify(rule.defaultValue))
+          : '';
+        prompt += `- ${desc}: ${val}\n`;
       }
     }
 

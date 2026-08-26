@@ -12,6 +12,7 @@ import * as vscode from 'vscode';
 import { AgentBridge, AgentConfig, AgentResponse as BridgeAgentResponse, ProgressCallback } from './AgentBridge';
 import type { AgentChunk } from './AgentBridge';
 import { AgentSettingsManager } from './AgentSettings';
+import { ProviderPromptConfigLoader } from '../providers/ProviderPromptConfigLoader';
 
 /**
  * VSLFC Layer enumeration (matches Kotlin VslfcLayer)
@@ -104,6 +105,7 @@ export class LocalI2VisionAgent implements vscode.Disposable {
   private config: AgentConfig;
   private bridge: AgentBridge;
   private settingsManager: AgentSettingsManager;
+  private configLoader: ProviderPromptConfigLoader;
   private isInitialized: boolean = false;
   private outputChannel?: vscode.OutputChannel;
   private pendingRequests: Map<string, boolean> = new Map();
@@ -133,6 +135,10 @@ export class LocalI2VisionAgent implements vscode.Disposable {
       availableTools: this.extractAvailableTools(config)
     };
     
+    // Create prompt config loader
+    const extensionPath = vscode.extensions.getExtension('i2vision.i2-vision-vscode')?.extensionPath || '';
+    this.configLoader = new ProviderPromptConfigLoader(extensionPath);
+    
     // Create the agent bridge
     // Pass extension root so agent can access extension source files
     // CRITICAL: workspaceRoot MUST be provided - get from workspace folders
@@ -144,9 +150,11 @@ export class LocalI2VisionAgent implements vscode.Disposable {
     this.bridge = new AgentBridge(
       config, 
       outputChannel,
-      vscode.extensions.getExtension('i2vision.i2-vision-vscode')?.extensionPath || '',
+      extensionPath,
       workspaceRoot,
-      this.settingsManager
+      this.settingsManager,
+      undefined,
+      this.configLoader
     );
     
     this.log(`LocalI2VisionAgent created: ${this.id}`);
@@ -161,6 +169,15 @@ export class LocalI2VisionAgent implements vscode.Disposable {
     }
 
     this.log(`Initializing agent: ${this.displayName}`);
+    
+    // Initialize prompt config loader (creates default YAML files if missing)
+    await this.configLoader.initialize();
+    this.log('Prompt config loader initialized');
+    
+    // Pre-load provider prompt configs into cache
+    await AgentBridge.preloadProviderPromptConfigs(this.configLoader);
+    this.log('Provider prompt configs pre-loaded');
+    
     await this.bridge.initialize();
     this.isInitialized = true;
     this.log(`Agent initialized: ${this.id}`);

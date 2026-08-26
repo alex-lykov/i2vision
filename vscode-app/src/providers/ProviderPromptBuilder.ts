@@ -8,15 +8,14 @@
 /**
  * ProviderPromptBuilder - Builds provider-specific system prompts
  * 
- * Combines:
- *   1. Provider-specific base template from VSCode settings (or defaults)
- *   2. Custom rules from settings store
+ * Loads prompt configurations from YAML files and builds complete system prompts.
+ * Config files are located in: resources/provider-prompts/{providerId}.yaml
  */
 
 import type { ProviderRule } from '../agent/settings/model/ProviderRule';
-import { DEFAULT_PROVIDER_PROMPTS, ProviderPromptSettingsData } from '../settings/ProviderPromptSettings';
 import type { ProviderProfile } from './ProviderProfile';
 import { getProviderProfile } from './ProviderProfile';
+import { ProviderPromptConfigLoader, type ProviderPromptFileConfig } from './ProviderPromptConfigLoader';
 
 export interface ProviderPromptBuilderOptions {
   /** Provider ID (e.g., "ollama", "deepseek", "3dllm") */
@@ -27,31 +26,45 @@ export interface ProviderPromptBuilderOptions {
   customRules?: ProviderRule[];
   /** Provider profile for tool/prompt policies (optional, auto-resolved if not provided) */
   providerProfile?: ProviderProfile;
-  /** Provider prompt settings (optional, uses defaults if not provided) */
-  providerPromptSettings?: ProviderPromptSettingsData;
+  /** Prompt config loader (optional, for testing) */
+  configLoader?: ProviderPromptConfigLoader;
 }
 
 export class ProviderPromptBuilder {
+  private static configCache: Map<string, ProviderPromptFileConfig> = new Map();
+
   /**
    * Build a complete system prompt for the specified provider
    */
-  static build(options: ProviderPromptBuilderOptions): string {
+  static async build(options: ProviderPromptBuilderOptions): Promise<string> {
     const {
       providerId,
       templateVariables,
       customRules = [],
       providerProfile,
-      providerPromptSettings
+      configLoader
     } = options;
 
     // Resolve provider profile if not provided
     const profile = providerProfile ?? getProviderProfile(providerId);
 
-    // Get provider prompt settings (or use defaults)
-    const settings = providerPromptSettings ?? DEFAULT_PROVIDER_PROMPTS[providerId] ?? DEFAULT_PROVIDER_PROMPTS['ollama'];
+    // Load provider prompt config from YAML file
+    let config: ProviderPromptFileConfig | undefined;
+    
+    if (configLoader) {
+      config = await configLoader.loadProviderConfig(providerId);
+    } else {
+      // Use cached config or load from default location
+      config = this.configCache.get(providerId);
+      if (!config) {
+        // Fallback: create loader with extension path
+        // This should be initialized by extension.ts
+        throw new Error('ProviderPromptBuilder requires configLoader or pre-loaded config');
+      }
+    }
 
     // Start with base template
-    let prompt = settings.baseTemplate;
+    let prompt = config.baseTemplate;
 
     // Interpolate template variables
     for (const [key, value] of Object.entries(templateVariables)) {
@@ -59,12 +72,12 @@ export class ProviderPromptBuilder {
     }
 
     // Append tool calling format
-    prompt += '\n\n' + settings.toolCallingFormat;
+    prompt += '\n\n' + config.toolCallingFormat;
 
     // Append behavioral rules
-    if (settings.behavioralRules.length > 0 || customRules.length > 0) {
+    if (config.behavioralRules.length > 0 || customRules.length > 0) {
       prompt += '\n\n## BEHAVIORAL RULES\n';
-      for (const rule of settings.behavioralRules) {
+      for (const rule of config.behavioralRules) {
         prompt += `- ${rule}\n`;
       }
       for (const rule of customRules) {
@@ -73,9 +86,9 @@ export class ProviderPromptBuilder {
     }
 
     // Append constraints
-    if (settings.constraints.length > 0) {
+    if (config.constraints.length > 0) {
       prompt += '\n\n## CONSTRAINTS\n';
-      for (const constraint of settings.constraints) {
+      for (const constraint of config.constraints) {
         prompt += `- ${constraint}\n`;
       }
     }
@@ -91,10 +104,36 @@ export class ProviderPromptBuilder {
   }
 
   /**
-   * Build with default fallback rules (backward compatibility)
-   * Used when no custom rules are defined in settings
+   * Build with default fallback (synchronous, uses cached config)
    */
   static buildWithDefaults(options: ProviderPromptBuilderOptions): string {
-    return this.build(options);
+    // Note: This synchronous version requires config to be pre-loaded
+    // Use async build() for automatic loading
+    throw new Error('Use async build() method instead of buildWithDefaults()');
+  }
+
+  /**
+   * Pre-load provider configs (call during extension activation)
+   */
+  static async preloadConfigs(configLoader: ProviderPromptConfigLoader): Promise<void> {
+    const providers = configLoader.getAvailableProviders();
+    for (const providerId of providers) {
+      const config = await configLoader.loadProviderConfig(providerId);
+      this.configCache.set(providerId, config);
+    }
+  }
+
+  /**
+   * Clear cached configs (useful for testing or reloading)
+   */
+  static clearCache(): void {
+    this.configCache.clear();
+  }
+
+  /**
+   * Set cached config directly (for testing)
+   */
+  static setConfig(providerId: string, config: ProviderPromptFileConfig): void {
+    this.configCache.set(providerId, config);
   }
 }

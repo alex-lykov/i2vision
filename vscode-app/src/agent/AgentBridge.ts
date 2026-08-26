@@ -47,6 +47,7 @@ import {CommandExecutor} from './AgentBridge.CommandExecutor';
 import {LegacyTools} from './AgentBridge.LegacyTools';
 import {ProviderRulesResolver} from './settings/resolver/ProviderRulesResolver';
 import {ProviderPromptBuilder} from '../providers/ProviderPromptBuilder';
+import {ProviderPromptConfigLoader} from '../providers/ProviderPromptConfigLoader';
 
 export interface ContextProfile {
   eager: { currentFile?: boolean; projectMetadata?: boolean; gitStatus?: boolean; gitDiff?: boolean; relatedFiles?: boolean; directoryStructure?: boolean };
@@ -208,6 +209,7 @@ export class AgentBridge {
 
   // Rules resolver for dynamic system prompt composition
   private rulesResolver!: ProviderRulesResolver;
+  private configLoader: ProviderPromptConfigLoader;
   private cachedSystemPrompt: string | undefined;
   private disposables: vscode.Disposable[] = [];
 
@@ -260,7 +262,8 @@ export class AgentBridge {
     extensionRoot: string,
     workspaceRoot: string,
     settingsManager?: AgentSettingsManager,
-    agentId?: string
+    agentId?: string,
+    configLoader?: ProviderPromptConfigLoader
   ) {
     this.id = agentId || `bridge-${Date.now()}-${Math.random().toString(16).substring(2, 6)}`;
     this.config = config;
@@ -277,6 +280,7 @@ export class AgentBridge {
     this.workspaceRoot = workspaceRoot;
     this.extensionRoot = extensionRoot;
     this.settingsManager = settingsManager!;
+    this.configLoader = configLoader ?? new ProviderPromptConfigLoader(extensionRoot);
 
     this.log(`Workspace root: ${this.workspaceRoot}`);
     this.cli = new CLI(this.workspaceRoot, outputChannel);
@@ -680,7 +684,7 @@ export class AgentBridge {
     const startTime = Date.now();
     try {
       const templateVars = { ...this.config.templateVariables, currentFile: currentFile || this.config.templateVariables.currentFile || '', task: userInput };
-      const systemPrompt = this.buildSystemPrompt(templateVars);
+      const systemPrompt = await this.buildSystemPrompt(templateVars);
       
       const chunks: AgentChunk[] = [];
       const toolCallArgs = new Map<string, Record<string, any>>();
@@ -726,7 +730,7 @@ export class AgentBridge {
     
     try {
       const templateVars = { ...this.config.templateVariables, currentFile: currentFile || this.config.templateVariables.currentFile || '', task: userInput };
-      const systemPrompt = this.buildSystemPrompt(templateVars);
+      const systemPrompt = await this.buildSystemPrompt(templateVars);
       for await (const chunk of this.executeAgentLoop(userInput, systemPrompt, { streaming: true }, history, sessionState, forceFreshSession)) yield chunk;
     } catch (error: any) {
       yield { type: 'error', error: error.message, timestamp: Date.now() };
@@ -2024,7 +2028,14 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
     this.diag.dispose();
   }
 
-  private buildSystemPrompt(variables: Record<string, string>): string {
+  /**
+   * Pre-load provider prompt configs (call during agent initialization)
+   */
+  static async preloadProviderPromptConfigs(configLoader: ProviderPromptConfigLoader): Promise<void> {
+    await ProviderPromptBuilder.preloadConfigs(configLoader);
+  }
+
+  private async buildSystemPrompt(variables: Record<string, string>): Promise<string> {
     // Return cached prompt if available (prevents rebuilding on every call)
     if (this.cachedSystemPrompt) {
       return this.cachedSystemPrompt;
@@ -2033,12 +2044,13 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
     const providerId = this.config.model.provider;
     const rules = this.rulesResolver?.getRulesForProvider(providerId) || [];
     
-    // Delegate to ProviderPromptBuilder - uses VSCode settings for provider prompts
-    // Provider-specific prompts are configured in VSCode settings under 'i2vision.providers'
-    this.cachedSystemPrompt = ProviderPromptBuilder.buildWithDefaults({
+    // Delegate to ProviderPromptBuilder - loads from YAML config files
+    // Config files located in: resources/provider-prompts/{providerId}.yaml
+    this.cachedSystemPrompt = await ProviderPromptBuilder.build({
       providerId,
       templateVariables: variables,
-      customRules: rules
+      customRules: rules,
+      configLoader: this.configLoader
     });
     
     this.log(`System prompt built for provider '${providerId}' with ${rules.length} custom rules`);
@@ -2056,9 +2068,9 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
   /**
    * Force rebuild of system prompt - call when provider or rules change mid-session
    */
-  rebuildSystemPrompt(variables: Record<string, string>): string {
+  async rebuildSystemPrompt(variables: Record<string, string>): Promise<string> {
     this.cachedSystemPrompt = undefined; // Invalidate cache
-    return this.buildSystemPrompt(variables);
+    return await this.buildSystemPrompt(variables);
   }
 
   /**

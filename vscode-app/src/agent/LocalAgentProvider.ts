@@ -34,6 +34,7 @@ import * as yaml from 'js-yaml';
 import {LocalI2VisionAgent, VslfcLayer} from './LocalI2VisionAgent';
 import {AgentConfig, ContextProfile, TaskContextProfile} from './AgentBridge';
 import {AgentSettingsManager} from './AgentSettings';
+import {buildProviderPrompt} from '../providers/ProviderPromptConfig';
 
 /**
  * LocalAgentProvider - Creates and manages LocalI2VisionAgent instances
@@ -343,8 +344,9 @@ export class LocalAgentProvider {
       version: yamlConfig.version || '1.0.0',
       isActive: yamlConfig.isActive ?? true,
       
-      // Prompt section
-      systemPromptTemplate: yamlConfig.systemPromptTemplate || 'You are an AI assistant.',
+      // Prompt section - IGNORE yaml systemPromptTemplate, use ProviderPromptConfig defaults
+      // Provider-specific prompts are defined in ProviderPromptConfig.ts, NOT in YAML
+      systemPromptTemplate: '', // Empty = use provider default from ProviderPromptConfig
       templateVariables: yamlConfig.templateVariables || {},
       ruleSetKeys: yamlConfig.ruleSetKeys,
       parserTemplateName: yamlConfig.parserTemplateName,
@@ -573,13 +575,26 @@ export class LocalAgentProvider {
    * Create default configuration for a layer
    */
   private createDefaultConfig(layer: string): AgentConfig {
+    // Use provider-specific default prompt template from ProviderPromptConfig
+    // This ensures all agents get the full VSLFC template with UNIVERSAL RULES
+    // Default provider is 'ollama' but will be overridden when user selects provider
+    const defaultPrompt = buildProviderPrompt('ollama', {
+      projectName: 'i2vision',
+      currentFile: '',
+      task: ''
+    });
+    
     return {
       key: `${layer}-agent`,
       agentType: 'configurable',
       version: '1.0.0',
       isActive: true,
-      systemPromptTemplate: 'You are an AI assistant.',
-      templateVariables: {},
+      systemPromptTemplate: defaultPrompt,
+      templateVariables: {
+        projectName: 'i2vision',
+        currentFile: '',
+        task: ''
+      },
       model: {
         id: 'minimax-m2.1:cloud',
         provider: 'ollama',

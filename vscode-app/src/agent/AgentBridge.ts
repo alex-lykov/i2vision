@@ -45,8 +45,8 @@ import {SessionManagerBridge} from './AgentBridge.SessionManagerBridge';
 import {ToolPipeline} from './AgentBridge.ToolPipeline';
 import {CommandExecutor} from './AgentBridge.CommandExecutor';
 import {LegacyTools} from './AgentBridge.LegacyTools';
-import {PromptBuilder} from './settings/builder/PromptBuilder';
 import {ProviderRulesResolver} from './settings/resolver/ProviderRulesResolver';
+import {ProviderPromptBuilder} from '../providers/ProviderPromptBuilder';
 
 export interface ContextProfile {
   eager: { currentFile?: boolean; projectMetadata?: boolean; gitStatus?: boolean; gitDiff?: boolean; relatedFiles?: boolean; directoryStructure?: boolean };
@@ -206,8 +206,7 @@ export class AgentBridge {
   // Tool result compressor for large outputs
   private toolCompressor: ToolResultCompressor = new ToolResultCompressor();
 
-  // Prompt builder and rules resolver for dynamic system prompt composition
-  private promptBuilder!: PromptBuilder;
+  // Rules resolver for dynamic system prompt composition
   private rulesResolver!: ProviderRulesResolver;
   private cachedSystemPrompt: string | undefined;
   private disposables: vscode.Disposable[] = [];
@@ -376,10 +375,9 @@ export class AgentBridge {
       this.log(`Domain detector initialization error: ${e.message}`)
     );
     
-    // Initialize prompt builder and rules resolver
+    // Initialize rules resolver
     // Note: ProviderRulesResolver requires ExtensionContext which is available in extension.ts
     // For now, initialize lazily on first use to avoid circular dependency
-    this.promptBuilder = new PromptBuilder();
     // rulesResolver will be initialized when ExtensionContext is available
   }
 
@@ -2033,14 +2031,14 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
     }
 
     const providerId = this.config.model.provider;
-    const rules = this.rulesResolver.getRulesForProvider(providerId);
+    const rules = this.rulesResolver?.getRulesForProvider(providerId) || [];
     
-    // Build prompt using the new PromptBuilder with provider-specific rules
-    this.cachedSystemPrompt = PromptBuilder.buildWithDefaults({
+    // Delegate to ProviderPromptBuilder - uses VSCode settings for provider prompts
+    // Provider-specific prompts are configured in VSCode settings under 'i2vision.providers'
+    this.cachedSystemPrompt = ProviderPromptBuilder.buildWithDefaults({
       providerId,
       templateVariables: variables,
-      systemPromptTemplate: this.config.systemPromptTemplate,
-      rules
+      customRules: rules
     });
     
     this.log(`System prompt built for provider '${providerId}' with ${rules.length} custom rules`);

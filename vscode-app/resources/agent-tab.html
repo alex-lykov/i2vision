@@ -7,8 +7,39 @@
   <title>i2-Vision Agent</title>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codicons/0.0.36/codicon.min.css">
   <style>
-    *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:var(--vscode-font-family);font-size:var(--vscode-font-size);color:var(--vscode-foreground);background-color:var(--vscode-editor-background);padding:0;line-height:1.6;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+    /* ===== COMMON WEBVIEW STYLES (shared with Settings UI) ===== */
+    body { font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); color: var(--vscode-foreground); background-color: var(--vscode-editor-background); padding: 0; margin: 0; line-height: 1.6; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+    h1, h2, h3 { color: var(--vscode-foreground); font-weight: 600; margin-top: 24px; margin-bottom: 12px; }
+    a { color: var(--vscode-textLink-foreground); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    input[type="text"], input[type="number"], input[type="password"], select, textarea { width: 100%; padding: 6px 10px; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px; font-family: var(--vscode-font-family); font-size: 13px; }
+    input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var(--vscode-checkbox-background); }
+    input[type="range"] { width: 100%; height: 4px; background: var(--vscode-input-background); border-radius: 2px; }
+    button { padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; font-family: var(--vscode-font-family); font-size: 13px; font-weight: 500; transition: all 0.2s ease; }
+    button.primary { background: var(--vscode-button-background); color: var(--vscode-button-foreground); }
+    button.primary:hover { background: var(--vscode-button-hoverBackground); }
+    button.secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+    button.secondary:hover { background: var(--vscode-button-secondaryHoverBackground); }
+    .badge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+    .badge-info { background-color: #2196f320; color: #2196f3; border: 1px solid #2196f3; }
+    .badge-success { background-color: #4caf5020; color: #4caf50; border: 1px solid #4caf50; }
+    .badge-warning { background-color: #ff980020; color: #ff9800; border: 1px solid #ff9800; }
+    .badge-error { background-color: #f4433620; color: #f44336; border: 1px solid #f44336; }
+    .card { background: var(--vscode-editor-background); border: 1px solid var(--vscode-widget-border); border-radius: 6px; padding: 12px; margin: 8px 0; }
+    .card-header { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--vscode-widget-border); margin-bottom: 8px; }
+    .card-title { font-weight: 600; font-size: 13px; color: var(--vscode-foreground); }
+    .text-muted { color: var(--vscode-descriptionForeground); font-size: 0.9em; }
+    .text-error { color: var(--vscode-errorForeground); }
+    .text-success { color: var(--vscode-terminal-ansiGreen); }
+    .flex { display: flex; }
+    .flex-col { flex-direction: column; }
+    .items-center { align-items: center; }
+    .justify-between { justify-content: space-between; }
+    .gap-1 { gap: 4px; }
+    .gap-2 { gap: 8px; }
+    .gap-3 { gap: 16px; }
+
+    /* ===== AGENT TAB SPECIFIC STYLES ===== */
     .header{flex:0 0 auto;padding:8px 16px;background-color:var(--vscode-editorWidget-background);border-bottom:1px solid var(--vscode-editorWidget-border);display:flex;flex-wrap:nowrap;gap:16px;align-items:center;justify-content:space-between}
     .header-left{display:flex;gap:12px;align-items:center;flex-wrap:nowrap}
     .header-item{display:flex;align-items:center;gap:6px;font-size:0.85em;color:var(--vscode-foreground);white-space:nowrap}

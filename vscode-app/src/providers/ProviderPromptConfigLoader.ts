@@ -68,11 +68,13 @@ export class ProviderPromptConfigLoader {
       return cached;
     }
 
-    const configPath = this.getConfigFilePath(providerId);
+    // Normalize provider ID (handle both '3d-llm' and '3dllm' formats)
+    const normalizedProviderId = this.normalizeProviderId(providerId);
+    const configPath = this.getConfigFilePath(normalizedProviderId);
     
     // If file doesn't exist, create it from defaults
     if (!fs.existsSync(configPath)) {
-      await this.resetToDefaults(providerId);
+      await this.resetToDefaults(normalizedProviderId);
     }
 
     // Load from YAML file
@@ -89,9 +91,19 @@ export class ProviderPromptConfigLoader {
     } catch (error: any) {
       console.error(`Failed to load provider prompt config for ${providerId}:`, error.message);
       // Fallback to defaults
-      await this.resetToDefaults(providerId);
+      await this.resetToDefaults(normalizedProviderId);
       return await this.loadProviderConfig(providerId);
     }
+  }
+
+  /**
+   * Normalize provider ID to handle variations
+   */
+  private normalizeProviderId(providerId: string): string {
+    // Handle common variations
+    return providerId
+      .toLowerCase()
+      .replace(/-/g, ''); // Remove dashes: '3d-llm' -> '3dllm'
   }
 
   /**

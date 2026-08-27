@@ -77,16 +77,52 @@ export class ProviderPromptBuilder {
     // Append behavioral rules
     if (config.behavioralRules.length > 0 || customRules.length > 0) {
       prompt += '\n\n## BEHAVIORAL RULES\n';
+      
+      // Debug: Log what we're about to process
+      console.log('[ProviderPromptBuilder] Processing behavioralRules:', {
+        count: config.behavioralRules.length,
+        types: config.behavioralRules.map(r => typeof r),
+        sample: config.behavioralRules.slice(0, 3).map(r => typeof r === 'string' ? r.substring(0, 50) : r)
+      });
+      
+      // Debug: check if behavioralRules contains objects instead of strings
+      const badRules = config.behavioralRules.filter(r => typeof r !== 'string');
+      if (badRules.length > 0) {
+        console.error('[ProviderPromptBuilder] YAML parsing issue: behavioralRules contains', badRules.length, 'non-string values:');
+        badRules.forEach((r, i) => console.error(`  Rule ${i}:`, typeof r, JSON.stringify(r)));
+      }
+      
       for (const rule of config.behavioralRules) {
-        prompt += `- ${rule}\n`;
+        // Ensure rule is a string (handle any unexpected object types from YAML parsing)
+        let ruleText: string;
+        if (typeof rule === 'string') {
+          ruleText = rule;
+        } else if (rule && typeof rule === 'object' && 'toString' in rule) {
+          // Try to get a meaningful string from the object
+          ruleText = String(rule);
+          // If it's still [object Object], try to extract useful info
+          if (ruleText === '[object Object]' && typeof (rule as any).rule === 'string') {
+            ruleText = (rule as any).rule;
+          }
+        } else {
+          ruleText = String(rule);
+        }
+        prompt += `- ${ruleText}\n`;
       }
       for (const rule of customRules) {
-        // Safely convert rule properties to strings
-        const desc = typeof rule.description === 'string' ? rule.description : JSON.stringify(rule.description);
+        // Debug: log what we're receiving
+        if (!rule || typeof rule !== 'object' || !('description' in rule)) {
+          console.warn('[ProviderPromptBuilder] Invalid rule object:', JSON.stringify(rule, null, 2));
+        }
+        
+        // Safely convert rule properties to strings with proper null/undefined checks
+        const desc = (rule.description && typeof rule.description === 'string') 
+          ? rule.description 
+          : (rule.id || String(rule.description || 'Unknown rule'));
         const val = rule.defaultValue !== undefined && rule.defaultValue !== null 
-          ? (typeof rule.defaultValue === 'string' ? rule.defaultValue : JSON.stringify(rule.defaultValue))
+          ? (typeof rule.defaultValue === 'string' ? rule.defaultValue : String(rule.defaultValue))
           : '';
-        prompt += `- ${desc}: ${val}\n`;
+        prompt += `- ${desc}${val ? ': ' + val : ''}\n`;
       }
     }
 

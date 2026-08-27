@@ -32,6 +32,9 @@ export class ThreeDLlmProvider implements LLMProvider {
   private readonly MAX_SERVER_ERRORS: number = 3;
   private readonly SERVER_ERROR_COOLDOWN: number = 300000; // 5 minutes
   private readonly REQUEST_TIMEOUT_MS: number = 120000; // 2 min for full chat completion (streaming)
+  private readonly MAX_RETRY_ATTEMPTS: number = 3;
+  private readonly BASE_RETRY_DELAY_MS: number = 1000; // 1 second base delay
+  private readonly MAX_RETRY_DELAY_MS: number = 10000; // 10 seconds max delay
   private llmAdapter: LLMAdapter;
 
   constructor(baseUrl: string, defaultModel: string, errorHandler: ErrorHandler, outputChannel?: any) {
@@ -84,8 +87,12 @@ export class ThreeDLlmProvider implements LLMProvider {
       }
     };
 
-    return this.errorHandler.handleError(
-      async () => {
+    // Exponential backoff retry logic for transient errors
+    let lastError: Error | null = null;
+    for (let attempt = 0; attempt <= this.MAX_RETRY_ATTEMPTS; attempt++) {
+      try {
+        return await this.errorHandler.handleError(
+          async () => {
         // Use structured messages if available, otherwise fall back to flat prompt string
         let messages = request.messages && request.messages.length > 0
           ? request.messages.map(msg => ({
@@ -343,6 +350,14 @@ export class ThreeDLlmProvider implements LLMProvider {
         }
 
         this.log(`[3D LLM] callAPI COMPLETE id=${callId} text=${displayText.length} reasoning=${accumulatedReasoning.length} toolCalls=${toolCallsData.length}`);
+
+        // Per-request token logging for optimization tracking
+        if (usage) {
+          this.log(`[3D LLM] Token usage: prompt=${usage.promptTokens}, completion=${usage.completionTokens}, total=${usage.totalTokens}, reasoning=${usage.reasoningTokens || 0}`);
+        } else {
+          this.log(`[3D LLM] Token usage: not available`);
+        }
+
         return {
           text: displayText,
           reasoning: (accumulatedReasoning || undefined) as any,
@@ -366,6 +381,24 @@ export class ThreeDLlmProvider implements LLMProvider {
       '3D LLM',
       context
     );
+      } catch (error: any) {
+        lastError = error;
+        const isRetryable = this.isRetryableError(error);
+
+        if (attempt < this.MAX_RETRY_ATTEMPTS && isRetryable) {
+          const delay = this.calculateRetryDelay(attempt);
+          this.log(`[3D LLM] Retry attempt ${attempt + 1}/${this.MAX_RETRY_ATTEMPTS} after ${delay}ms. Error: ${error.message}`);
+          await this.sleep(delay);
+          continue;
+        }
+
+        this.log(`[3D LLM] callAPI FAILED after ${attempt + 1} attempts. Error: ${error.message}`);
+        throw error;
+      }
+    }
+
+    // Should never reach here, but satisfy TypeScript
+    throw lastError || new Error('Unknown error during API call');
   }
 
   private async *stream3DLlmResponseAsync(res: Response, startTime: number, timeoutHandle?: any): AsyncGenerator<any> {
@@ -456,6 +489,11 @@ export class ThreeDLlmProvider implements LLMProvider {
       this.log(`[3D LLM STREAMING] Extracted tool calls: ${extractedToolCalls.length}`);
       if (extractedToolCalls.length > 0) {
         this.log(`[3D LLM STREAMING] Tool calls: ${JSON.stringify(extractedToolCalls)}`);
+      }
+
+      // Per-request token logging for streaming responses
+      if (usage) {
+        this.log(`[3D LLM STREAMING] Token usage: prompt=${usage.promptTokens}, completion=${usage.completionTokens}, total=${usage.totalTokens}`);
       }
 
       yield {
@@ -1076,5 +1114,34 @@ export class ThreeDLlmProvider implements LLMProvider {
            message.includes('enotfound') ||
            message.includes('getaddrinfo') ||
            message.includes('network error');
+  }
+
+  private isRetryableError(error: any): boolean {
+    if (!error || !error.message) return false;
+    const message = error.message.toLowerCase();
+    // Retry on transient errors: network issues, server errors, timeouts
+    return message.includes('connection refused') ||
+           message.includes('econnrefused') ||
+           message.includes('fetch failed') ||
+           message.includes('network error') ||
+           message.includes('500') ||
+           message.includes('502') ||
+           message.includes('503') ||
+           message.includes('504') ||
+           message.includes('timed out') ||
+           message.includes('abort');
+  }
+
+  private calculateRetryDelay(attempt: number): number {
+    // Exponential backoff: baseDelay * 2^attempt + jitter
+    const exponentialDelay = this.BASE_RETRY_DELAY_MS * Math.pow(2, attempt);
+    // Add jitter: ±20% randomization to prevent thundering herd
+    const jitter = (Math.random() - 0.5) * 0.4 * exponentialDelay;
+    const delay = Math.min(exponentialDelay + jitter, this.MAX_RETRY_DELAY_MS);
+    return Math.max(0, Math.round(delay));
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }

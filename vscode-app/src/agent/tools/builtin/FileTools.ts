@@ -1,4 +1,5 @@
 import { ToolDefinition } from '../ToolTypes';
+import { BinaryFileDetector } from '../../../tools/utils/BinaryFileDetector';
 
 /**
  * File system tools for reading, writing, and exploring files
@@ -70,6 +71,23 @@ export const fileTools: ToolDefinition[] = [
       const limit = typeof args.limit === 'number' ? args.limit : undefined;
 
       try {
+        // Quick check: if it's a known binary extension, skip reading
+        if (BinaryFileDetector.isLikelyBinaryByExtension(filePath)) {
+          ctx.log(`read_file: Skipping binary file (by extension): ${filePath}`);
+          return {
+            result: `BINARY_FILE_DETECTED: '${args.path}' appears to be a binary file (${filePath.split('.').pop()}). Use content_b64 parameter to read binary content, or skip if not relevant.`
+          };
+        }
+
+        // Full binary detection for unknown extensions
+        const isBinary = await BinaryFileDetector.isBinaryFile(filePath);
+        if (isBinary) {
+          ctx.log(`read_file: Skipping binary file (by content): ${filePath}`);
+          return {
+            result: `BINARY_FILE_DETECTED: '${args.path}' appears to be a binary file. Use content_b64 parameter to read binary content, or skip if not relevant.`
+          };
+        }
+
         let content = await ctx.readFile(filePath);
 
         if (!content || content.trim() === '') {

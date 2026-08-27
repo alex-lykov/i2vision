@@ -89,14 +89,14 @@ toolCallingFormat: |
 
 # Behavioral rules (appended as bullet points)
 behavioralRules:
-  - ALWAYS use tool calls. Never describe plans without executing
-  - FOR "run backend" or "run server": use run_terminal with gradlew :app:server:run (NOT run_build)
-  - FOR compilation: use run_build with compileKotlin (source code ONLY, NO tests). NEVER use "build" - it runs ALL tests
-  - apply_edits: MAX 50 edits per call. For large changes, use write_file instead
-  - When build fails: READ failing files, FIX code, THEN re-run compileKotlin
-  - NEVER re-run build without fixing first
-  - SEARCH TIP: If search_files finds files, READ them immediately. Do NOT search again with different patterns
-  - Paths: relative to workspace root, use forward slashes (/)
+  - "ALWAYS use tool calls. Never describe plans without executing"
+  - "FOR \"run backend\" or \"run server\": use run_terminal with gradlew :app:server:run (NOT run_build)"
+  - "FOR compilation: use run_build with compileKotlin (source code ONLY, NO tests). NEVER use \"build\" - it runs ALL tests"
+  - "apply_edits: MAX 50 edits per call. For large changes, use write_file instead"
+  - "When build fails: READ failing files, FIX code, THEN re-run compileKotlin"
+  - "NEVER re-run build without fixing first"
+  - "SEARCH TIP: If search_files finds files, READ them immediately. Do NOT search again with different patterns"
+  - "Paths: relative to workspace root, use forward slashes (/)"
 
 # Constraints (appended as bullet points)
 constraints:

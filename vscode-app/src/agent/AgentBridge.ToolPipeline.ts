@@ -165,15 +165,22 @@ export class ToolPipeline {
 
       this.monitorToolExecution(toolCall, rawResult);
 
-      if (rawResult.result && this.host.llmAdapter.providerCapabilities) {
-        const compressed = this.host.toolCompressor.compress(rawResult.result);
+      // Apply semantic deduplication for verbose tool results
+      const deduplicated = this.semanticDeduplicateToolResult(toolCall, rawResult.result);
+      if (deduplicated !== rawResult.result) {
+        const reduction = ((rawResult.result.length - deduplicated.length) / rawResult.result.length * 100).toFixed(1);
+        this.log(`Tool result deduplicated: ${rawResult.result.length} → ${deduplicated.length} chars (${reduction}% reduction)`);
+      }
+
+      if (deduplicated && this.host.llmAdapter.providerCapabilities) {
+        const compressed = this.host.toolCompressor.compress(deduplicated);
         if (compressed.wasCompressed) {
           this.log(`Tool result compressed: ${compressed.originalLength} → ${compressed.compressedLength} chars (${compressed.technique})`);
         }
         return { result: compressed.compressed, error: rawResult.error };
       }
 
-      return this.validateToolResult(rawResult, toolCall);
+      return { result: deduplicated, error: rawResult.error };
     } catch (error: any) {
       this.log(`  Tool error: ${error.message}`);
       return { result: '', error: error.message };
@@ -363,5 +370,160 @@ export class ToolPipeline {
       this._toolExecutionQueue.forEach((item, index) => { report += `  ${index + 1}. ${item.toolCall.name}\n`; });
     }
     return report;
+  }
+
+  // ---- Semantic Deduplication ------------------------------------------------
+
+  /**
+   * Apply semantic deduplication to verbose tool results.
+   * Reduces token usage by removing redundant patterns in list_directory and search_files results.
+   */
+  private semanticDeduplicateToolResult(toolCall: LLMToolCall, result: string): string {
+    if (!result || result.length < 500) {
+      return result; // Skip short results
+    }
+
+    const toolName = toolCall.name;
+
+    // Deduplicate list_directory results: collapse similar file extensions
+    if (toolName === 'list_directory' || toolName === 'search_files') {
+      result = this.collapseSimilarFileExtensions(result);
+    }
+
+    // Deduplicate repeated path prefixes
+    if (toolName === 'search_files') {
+      result = this.collapseRepeatedPaths(result);
+    }
+
+    // Remove exact duplicate lines (keep first occurrence)
+    result = this.removeDuplicateLines(result);
+
+    return result;
+  }
+
+  /**
+   * Collapse listings with similar file extensions into summary format.
+   * E.g., "file1.ts, file2.ts, file3.ts" → "file1.ts, file2.ts, file3.ts (3 .ts files)"
+   */
+  private collapseSimilarFileExtensions(result: string): string {
+    const lines = result.split('\n');
+    const extensionCounts = new Map<string, number>();
+    const extensionFiles = new Map<string, string[]>();
+
+    // Count file extensions
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      const extMatch = trimmed.match(/\.([a-zA-Z0-9]+)(?:\s|$)/);
+      if (extMatch) {
+        const ext = extMatch[1].toLowerCase();
+        extensionCounts.set(ext, (extensionCounts.get(ext) || 0) + 1);
+        if (!extensionFiles.has(ext)) {
+          extensionFiles.set(ext, []);
+        }
+        extensionFiles.get(ext)!.push(trimmed);
+      }
+    }
+
+    // If any extension has 5+ files, summarize
+    let modified = false;
+    for (const [ext, count] of extensionCounts) {
+      if (count >= 5) {
+        const files = extensionFiles.get(ext)!;
+        const summary = `${files.slice(0, 3).join(', ')}${count > 3 ? ' ...' : ''} (${count} .${ext} files)`;
+        const newLines = lines.map(line => {
+          const extPattern = new RegExp(`\\.${ext}(?:\\s|$)`, 'i');
+          if (extPattern.test(line) && files.some(f => line.includes(f))) {
+            return null; // Will be replaced
+          }
+          return line;
+        }).filter(l => l !== null);
+
+        // Add summary line
+        const summaryIndex = newLines.findIndex(l => l.toLowerCase().includes('directory') || l.toLowerCase().includes('found'));
+        if (summaryIndex >= 0) {
+          newLines.splice(summaryIndex + 1, 0, `  .${ext}: ${summary}`);
+        } else {
+          newLines.unshift(`  .${ext}: ${summary}`);
+        }
+
+        result = newLines.join('\n');
+        modified = true;
+      }
+    }
+
+    return modified ? result : result;
+  }
+
+  /**
+   * Collapse repeated path prefixes in search results.
+   * E.g., multiple files under src/components/ → single directory header + file list
+   */
+  private collapseRepeatedPaths(result: string): string {
+    const lines = result.split('\n');
+    const dirFiles = new Map<string, string[]>();
+
+    // Group files by directory
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.includes('/')) continue;
+
+      const lastSlash = trimmed.lastIndexOf('/');
+      if (lastSlash > 0) {
+        const dir = trimmed.substring(0, lastSlash);
+        const file = trimmed.substring(lastSlash + 1);
+        if (!dirFiles.has(dir)) {
+          dirFiles.set(dir, []);
+        }
+        dirFiles.get(dir)!.push(file);
+      }
+    }
+
+    // Rebuild with collapsed directories
+    const output: string[] = [];
+    for (const [dir, files] of dirFiles) {
+      if (files.length >= 3) {
+        // Collapse: show first 2 files + count
+        output.push(`${dir}/:`);
+        for (const file of files.slice(0, 2)) {
+          output.push(`  ${file}`);
+        }
+        if (files.length > 2) {
+          output.push(`  ... and ${files.length - 2} more files`);
+        }
+      } else {
+        // Keep individual files
+        for (const file of files) {
+          output.push(`${dir}/${file}`);
+        }
+      }
+    }
+
+    return output.length > 0 ? output.join('\n') : result;
+  }
+
+  /**
+   * Remove exact duplicate lines while preserving order.
+   */
+  private removeDuplicateLines(result: string): string {
+    const lines = result.split('\n');
+    const seen = new Set<string>();
+    const uniqueLines: string[] = [];
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!seen.has(trimmed)) {
+        seen.add(trimmed);
+        uniqueLines.push(line);
+      }
+    }
+
+    // Only apply if we removed duplicates
+    if (uniqueLines.length < lines.length) {
+      return uniqueLines.join('\n');
+    }
+
+    return result;
   }
 }

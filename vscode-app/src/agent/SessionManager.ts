@@ -58,6 +58,10 @@ export interface SessionLimits {
   maxHistoryLength: number;
   maxHistoryChars: number;
 
+  /** Token-based compaction thresholds (Phase 2 optimization) */
+  maxPromptTokens?: number;       // Trigger compaction when prompt exceeds this
+  targetPromptTokens?: number;    // Compact down to this many tokens
+
   /** Proactive reset triggers (before hard limits) */
   autoResetTriggers: {
     messageCount: number;

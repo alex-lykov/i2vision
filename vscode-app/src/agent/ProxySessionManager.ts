@@ -50,6 +50,8 @@ const DEFAULT_3D_LLM_LIMITS: SessionLimits = {
   maxPromptChars: 80000,
   maxHistoryLength: 30,
   maxHistoryChars: 80000,
+  // Token-based compaction: trigger when prompt tokens exceed this threshold
+  maxPromptTokens: 4000,  // Compact when prompt exceeds 4000 tokens (leaves room for completion)
   autoResetTriggers: {
     messageCount: 90,
     ageMinutes: 100,
@@ -376,14 +378,25 @@ export class ProxySessionManager implements SessionManager {
   /**
    * Compact messages: keep system prompt + last 15 exchanges,
    * summarize older exchanges into a single context message.
+   * Also supports token-based compaction when prompt exceeds maxPromptTokens.
    */
   private compactMessages<T extends { role: string; content: string }>(messages: T[]): T[] {
     const systemIdx = messages.findIndex((m) => m.role === 'system');
     const systemMsg = systemIdx >= 0 ? messages[systemIdx] : undefined;
     const nonSystem = messages.filter((m) => m.role !== 'system');
 
+    // Check if token-based compaction should trigger (Phase 2 optimization)
+    const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
+    const estimatedTokens = Math.ceil(totalChars / 4); // Rough estimate: 4 chars per token
+    
+    if (this.limits.maxPromptTokens && estimatedTokens > this.limits.maxPromptTokens) {
+      this.log(`Token-based compaction triggered: ${estimatedTokens} > ${this.limits.maxPromptTokens} tokens`);
+      return this.compactMessagesByTokens(messages, systemMsg, nonSystem);
+    }
+
+    // Fallback to message-count-based compaction
     if (nonSystem.length <= this.limits.maxHistoryLength * 2) {
-      this.log(`No compaction needed (${nonSystem.length} non-system messages)`);
+      this.log(`No compaction needed (${nonSystem.length} non-system messages, ~${estimatedTokens} tokens)`);
       return messages;
     }
 
@@ -401,6 +414,55 @@ export class ProxySessionManager implements SessionManager {
     } as unknown as T;
 
     this.log(`Compacted ${old.length} messages into summary (${recent.length} recent kept)`);
+
+    const result: T[] = [];
+    if (systemMsg) result.push(systemMsg);
+    result.push(compactionMsg);
+    result.push(...recent);
+    return result;
+  }
+
+  /**
+   * Token-based message compaction: aggressively summarize old messages
+   * to reduce prompt size when token threshold is exceeded.
+   */
+  private compactMessagesByTokens<T extends { role: string; content: string }>(
+    messages: T[],
+    systemMsg: T | undefined,
+    nonSystem: T[]
+  ): T[] {
+    // Keep only the last N exchanges to meet token target
+    const targetTokens = this.limits.maxPromptTokens || 4000;
+    const avgTokenPerMsg = 150; // Conservative estimate
+    const maxMessagesToKeep = Math.max(4, Math.floor(targetTokens / avgTokenPerMsg));
+    
+    const recent = nonSystem.slice(-maxMessagesToKeep * 2);
+    const old = nonSystem.slice(0, -maxMessagesToKeep * 2);
+
+    if (old.length === 0) {
+      // Not enough old messages to compact, return as-is
+      return messages;
+    }
+
+    // Create aggressive summary of old conversation
+    const summaryLines: string[] = [];
+    let summaryChars = 0;
+    const maxSummaryChars = 2000; // Limit summary size
+    
+    for (const msg of old) {
+      const snippet = msg.content.substring(0, 50).replace(/\n/g, ' ');
+      const line = `${msg.role}: ${snippet}...`;
+      if (summaryChars + line.length > maxSummaryChars) break;
+      summaryLines.push(line);
+      summaryChars += line.length;
+    }
+
+    const compactionMsg = {
+      role: 'user',
+      content: `[Earlier conversation summarized for token efficiency]: ${summaryLines.join(' | ')}`,
+    } as unknown as T;
+
+    this.log(`Token-based compaction: ${old.length} msgs → summary, kept ${recent.length} recent`);
 
     const result: T[] = [];
     if (systemMsg) result.push(systemMsg);

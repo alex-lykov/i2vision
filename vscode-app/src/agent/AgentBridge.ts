@@ -2046,13 +2046,13 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
     
     // Delegate to ProviderPromptBuilder - loads from YAML config files
     // Config files located in: resources/provider-prompts/{providerId}.yaml
-    // Pass hasNativeTools=true because we send tools in the request body
+    // hasNativeTools=false for 3D LLM/DeepSeek (uses text-based XML, not real tool_calls field)
     this.cachedSystemPrompt = await ProviderPromptBuilder.build({
       providerId,
       templateVariables: variables,
       customRules: rules,
       configLoader: this.configLoader,
-      hasNativeTools: true  // Tools are sent via request.tools array
+      hasNativeTools: false  // 3D LLM uses text-based XML format, not native tool_calls
     });
     
     this.log(`System prompt built for provider '${providerId}' with ${rules.length} custom rules`);

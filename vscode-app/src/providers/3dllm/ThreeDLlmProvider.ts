@@ -545,6 +545,11 @@ export class ThreeDLlmProvider implements LLMProvider {
   }
 
   // ---- Tool call extraction from text (from cliIntegration.ts) ----
+  // 
+  // OPTIMIZATION NOTE (Phase 2):
+  // Strategies 0b, 1, 2b, 6, 7 support XML formats which we want to discourage.
+  // With conditional prompts (hasNativeTools=true) and stronger JSON-only instructions,
+  // these XML strategies should rarely trigger. Consider removing them after testing.
 
   private extractToolCallsFromText(text: string): any[] {
     // Strategy 0: Numbered list with code blocks (deepseek-v4-pro conversational style)

@@ -28,6 +28,8 @@ export interface ProviderPromptBuilderOptions {
   providerProfile?: ProviderProfile;
   /** Prompt config loader (optional, for testing) */
   configLoader?: ProviderPromptConfigLoader;
+  /** Whether tools are being sent in the request (for conditional prompt generation) */
+  hasNativeTools?: boolean;
 }
 
 export class ProviderPromptBuilder {
@@ -42,7 +44,8 @@ export class ProviderPromptBuilder {
       templateVariables,
       customRules = [],
       providerProfile,
-      configLoader
+      configLoader,
+      hasNativeTools = false
     } = options;
 
     // Resolve provider profile if not provided
@@ -71,8 +74,8 @@ export class ProviderPromptBuilder {
       prompt = prompt.replace(new RegExp(`\\$\\{${key}\\}`, 'g'), value);
     }
 
-    // Append tool calling format
-    prompt += '\n\n' + config.toolCallingFormat;
+    // Append tool calling format - use conditional version if hasNativeTools
+    prompt += '\n\n' + this.buildToolCallingFormat(config.toolCallingFormat, hasNativeTools);
 
     // Append behavioral rules
     if (config.behavioralRules.length > 0 || customRules.length > 0) {
@@ -176,5 +179,33 @@ export class ProviderPromptBuilder {
    */
   static setConfig(providerId: string, config: ProviderPromptFileConfig): void {
     this.configCache.set(providerId, config);
+  }
+
+  /**
+   * Build conditional tool calling format based on whether native tools are available
+   * 
+   * When hasNativeTools=true: Emphasize using the tool_calls field
+   * When hasNativeTools=false: Emphasize JSON-only text format
+   */
+  private static buildToolCallingFormat(baseFormat: string, hasNativeTools: boolean): string {
+    if (hasNativeTools) {
+      // Native tools available - instruct model to use tool_calls field
+      return `## TOOL CALLING FORMAT (NATIVE TOOLS AVAILABLE)
+
+You have access to native tool calling via the \`tool_calls\` field.
+
+✅ CORRECT: Use the tool_calls field in your response
+❌ FORBIDDEN: Do NOT output JSON in your message content
+
+When you need to call a tool:
+1. Set your response to use the tool_calls field
+2. Do NOT include the tool call JSON in your message text
+3. Do NOT use XML tags or markdown formatting
+
+Note: The tool_calls field is handled automatically by the system.`;
+    } else {
+      // No native tools - use text-based JSON format
+      return baseFormat;
+    }
   }
 }

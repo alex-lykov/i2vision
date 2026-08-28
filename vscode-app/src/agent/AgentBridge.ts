@@ -2046,11 +2046,13 @@ Do NOT search, list, or read any more files. RESPOND NOW.`;
     
     // Delegate to ProviderPromptBuilder - loads from YAML config files
     // Config files located in: resources/provider-prompts/{providerId}.yaml
+    // Pass hasNativeTools=true because we send tools in the request body
     this.cachedSystemPrompt = await ProviderPromptBuilder.build({
       providerId,
       templateVariables: variables,
       customRules: rules,
-      configLoader: this.configLoader
+      configLoader: this.configLoader,
+      hasNativeTools: true  // Tools are sent via request.tools array
     });
     
     this.log(`System prompt built for provider '${providerId}' with ${rules.length} custom rules`);

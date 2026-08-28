@@ -73,19 +73,25 @@ baseTemplate: |
 
 # Tool calling format instructions
 toolCallingFormat: |
-  ## TOOL CALLING FORMAT (STRICT)
+  ## TOOL CALLING FORMAT (STRICT - CRITICAL)
 
-  You must call tools using raw JSON on a single line:
+  You MUST call tools using ONLY this JSON format on a single line:
   {"name":"tool_name","arguments":{"param":"value"}}
 
-  CRITICAL RULES:
-  - Do NOT use markdown code blocks (no ```json)
-  - Do NOT use XML tags (no <file_action>, <invoke>, etc.)
-  - Do NOT use "Calling:" text format
-  - Do NOT include raw newline characters inside JSON string values; escape them as \n
-  - Output ONLY the JSON tool call line. Nothing else. No explanations.
-  - When a tool is required, return exactly one JSON tool call
-  - Do not describe a tool call in prose; emit the tool call itself
+  ⚠️ FORBIDDEN FORMATS (will cause errors):
+  - NO XML tags: <tool_calls>, <invoke>, <file_action>, <parameter>
+  - NO markdown code blocks: ```json ... ```
+  - NO "Calling:" text format
+  - NO explanations before or after the JSON
+
+  ✅ CORRECT EXAMPLE:
+  {"name":"read_file","arguments":{"path":"src/main.kt"}}
+
+  Rules:
+  - Output ONLY the JSON tool call line. Nothing else.
+  - One tool call per response when action is needed
+  - Escape newlines as \n in JSON string values
+  - Do NOT describe the tool call in prose - just emit the JSON
 
 # Behavioral rules (appended as bullet points)
 behavioralRules:

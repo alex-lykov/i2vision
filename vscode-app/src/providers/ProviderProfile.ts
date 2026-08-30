@@ -34,7 +34,7 @@ const RESET_SESSION = true;
 
 const TOOL_RULES_COMMON = 'You may call tools using the tool-call protocol described in the system instructions. Use only tools that are currently available. When a tool is required, return exactly one JSON tool call. Do not describe a tool call in prose; emit the tool call itself.';
 
-const TOOL_RULES_3DLLM = 'Tool-call format: { "tool": "toolName", "input": {} }. Always call a tool when a task requires filesystem, terminal, build, or edit operations. If tool output contains an error, fix the input and retry once. After the final tool result, answer the user directly.';
+const TOOL_RULES_3DLLM = 'Tool-call format: {"name":"toolName","arguments":{"param":"value"}}. Always call a tool when a task requires filesystem, terminal, build, or edit operations. If tool output contains an error, fix the input and retry once. After the final tool result, answer the user directly.';
 
 export const PROVIDER_PROFILES: Record<ProviderId, ProviderProfile> = {
   mistral: {

@@ -363,17 +363,12 @@ export class ThreeDLlmProvider implements LLMProvider {
           reasoning: (accumulatedReasoning || undefined) as any,
           model: model,
           provider: '3dllm',
-          tool_calls: toolCallsData.map((tc: any) => ({
+          toolCalls: toolCallsData.map((tc: any) => ({
             id: tc.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-            type: tc.type || 'function',
-            function: {
-              name: tc.function?.name || tc.name || '',
-              arguments: typeof tc.function?.arguments === 'string'
-                ? tc.function.arguments
-                : typeof tc.arguments === 'string'
-                  ? tc.arguments
-                  : JSON.stringify(tc.function?.arguments || tc.arguments || {})
-            }
+            name: tc.function?.name || tc.name || '',
+            arguments: typeof tc.function?.arguments === 'string'
+              ? (() => { try { return JSON.parse(tc.function.arguments); } catch { return {}; } })()
+              : tc.function?.arguments || tc.arguments || {}
           })),
           usage: usage
         };
@@ -496,12 +491,28 @@ export class ThreeDLlmProvider implements LLMProvider {
         this.log(`[3D LLM STREAMING] Token usage: prompt=${usage.promptTokens}, completion=${usage.completionTokens}, total=${usage.totalTokens}`);
       }
 
+      // Normalize tool calls to flat format expected by AgentBridge
+      const normalizedToolCalls = extractedToolCalls.map((tc: any) => {
+        const name = tc.name || tc.function?.name || '';
+        let args = tc.arguments;
+        if (!args && tc.function?.arguments) {
+          args = typeof tc.function.arguments === 'string'
+            ? (() => { try { return JSON.parse(tc.function.arguments); } catch { return {}; } })()
+            : tc.function.arguments;
+        }
+        return {
+          id: tc.id || `call_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+          name,
+          arguments: args || {}
+        };
+      });
+
       yield {
         text: '',
         reasoning: fullReasoning || undefined,
         model: '',
         provider: '3dllm',
-        toolCalls: extractedToolCalls,
+        toolCalls: normalizedToolCalls,
         tokenUsage: usage,
         done: true
       };
